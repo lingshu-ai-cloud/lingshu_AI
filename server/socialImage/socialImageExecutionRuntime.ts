@@ -15,11 +15,18 @@ import { socialImagePackagingLabelHint } from './socialImagePackagingLabel.js';
 import { repairSocialImageLocalComposite } from './socialImageLocalCompositeRepair.js';
 import type { ImageExecutionPorts } from './socialImageExecution.js';
 import type { SocialImageElementInventory } from '../../shared/contracts/socialImageProduction.js';
+import { requireSocialImageBudgetLimit } from './socialImageBudgetGate.js';
 export function createImageExecutionPorts(store: DataStore, job: ContentExecutionJob): ImageExecutionPorts {
     const assets = imageWorkflowAssets(store);
     const allowPaidCall = async () => {
         if (process.env.SOCIAL_IMAGE_EXECUTION_PAID_ENABLED === 'false')
             throw new Error('social_image_paid_execution_disabled');
+        const content = await store.list<{ brief?: unknown }>('starter_social_content_tasks', {
+            where: { tenant_id: job.tenantId, task_id: job.taskId }, perPage: 2,
+        });
+        if (content.totalItems !== 1 || content.items.length !== 1)
+            throw new Error('social_image_content_task_unavailable');
+        requireSocialImageBudgetLimit(content.items[0]!.brief);
         if(isSubscriptionEnforced()&&!isEntitled(await getTenantSubscription(job.tenantId)))throw new Error('social_image_subscription_required');
         const quota = await consumeIdentityDemoQuota({ tenantId: job.tenantId, userId: job.userId }, 'generation');
         if (!quota.ok)

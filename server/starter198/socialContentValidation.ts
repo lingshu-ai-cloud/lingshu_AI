@@ -281,7 +281,8 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     requestedOutputCount: mode === 'instant' ? 1 : requestedOutputCount,
     weeklyBudgetCny: optionalNumber(source.weeklyBudgetCny, 'social_content_weekly_budget_invalid', 10_000_000),
     perItemBudgetCny: optionalNumber(source.perItemBudgetCny, 'social_content_per_item_budget_invalid', 10_000_000)
-      ?? productionBudgetLimitCny(productionBudgetDuration({targetDurationSeconds})),
+      ?? (Array.isArray(source.formats) && source.formats.length === 1 && source.formats[0] === 'social_image'
+        ? null : productionBudgetLimitCny(productionBudgetDuration({targetDurationSeconds}))),
     targetDurationSeconds,
     retryReserveCny: optionalNumber(source.retryReserveCny, 'social_content_retry_reserve_invalid', 10_000_000),
     planningMode: planningMode as CreateSocialContentTaskInput['planningMode'],

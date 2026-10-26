@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Button, Input, Select, Spin } from 'antd';
+import { Alert, Button, Input, InputNumber, Select, Spin } from 'antd';
 import LsPageHeader from '../ui/LsPageHeader';
 import ImageReplicationReferencePicker from './ImageReplicationReferencePicker';
 import { IMAGE_LANGUAGE_OPTIONS, imageLanguageLabel } from '../../../shared/contracts/imageLanguages';
@@ -50,6 +50,7 @@ export default function ImageReplicationConversation({ request, onShowCreations,
     checkpoint?.aspectRatio || (hintedRatio === '1:1' || hintedRatio === '9:16' || hintedRatio === '16:9' ? hintedRatio : '4:5'));
   const [language, setLanguage] = useState<ImageReplicationDraft['language']>(checkpoint?.language || 'en');
   const [callToAction, setCallToAction] = useState(checkpoint?.callToAction || '');
+  const [budgetLimitCny, setBudgetLimitCny] = useState<number | null>(checkpoint?.budgetLimitCny ?? null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -98,14 +99,14 @@ export default function ImageReplicationConversation({ request, onShowCreations,
   useEffect(() => { bottom.current?.scrollIntoView({ block: 'nearest' }); }, [step, created]);
   const product = products.find(item => item.id === productId);
   const resolved = product ? resolveImageReplicationIntake(product, { objective, audience, callToAction }) : { objective, audience, callToAction };
-  const draft = (): ImageReplicationDraft => ({ reference: reference!, product: product!, ...resolved, platform, aspectRatio, language });
+  const draft = (): ImageReplicationDraft => ({ reference: reference!, product: product!, ...resolved, platform, aspectRatio, language, budgetLimitCny });
   useEffect(() => {
     if (!isCurrent()) return;
-    checkpointWriter.current?.({ step, productId, objective, audience, callToAction, platform, aspectRatio, language, submitted,
+    checkpointWriter.current?.({ step, productId, objective, audience, callToAction, platform, aspectRatio, language, budgetLimitCny, submitted,
       ...((created?.id || checkpoint?.imageTaskId) ? { imageTaskId: created?.id || checkpoint?.imageTaskId } : {}) }, reference?.sourceRecordId ? { sourceRecordId: reference.sourceRecordId,
         imageIndex: reference.imageIndex || 0, name: reference.title.slice(0, 200) }
       : reference?.materialId ? { materialId: reference.materialId, name: reference.title.slice(0, 200) } : loading ? undefined : null);
-  }, [step, productId, objective, audience, callToAction, platform, aspectRatio, language, submitted, created?.id,
+  }, [step, productId, objective, audience, callToAction, platform, aspectRatio, language, budgetLimitCny, submitted, created?.id,
     reference?.materialId, reference?.sourceRecordId, reference?.imageIndex, loading]);
   const answers = [reference ? `参考图：${reference.title || '已选图文'}` : '',
     product ? `推广产品：${product.name}\n${PLATFORM_LABELS[platform]} · ${aspectRatio} · ${imageLanguageLabel(language)}` : ''];
@@ -199,7 +200,8 @@ export default function ImageReplicationConversation({ request, onShowCreations,
               <div><dt className="text-text-secondary">受众安排</dt><dd>{audience || '由系统依据企业资料策划，资料不足时使用通用产品介绍'}</dd></div>
               <div><dt className="text-text-secondary">交付规格</dt><dd>{PLATFORM_LABELS[platform]} · {aspectRatio} · {imageLanguageLabel(language)} · 一张图片、帖子配文与话题标签</dd></div>
               <div><dt className="text-text-secondary">客户行动</dt><dd>{resolved.callToAction}</dd></div></dl>
-            <p className="text-sm text-text-secondary">确认后自动分析参考图、核验企业素材、策划构图与文案、生成图片并质检，使用已配置的模型与额度。有需要你补充的信息时会提示，生成结果由你审阅采用。</p>
+            <label className="block space-y-2 text-sm"><span>单条费用上限（元）</span><InputNumber aria-label="单条费用上限" className="w-full" min={0.01} precision={2} value={budgetLimitCny} onChange={setBudgetLimitCny} placeholder="可稍后设置" disabled={submitted}/></label>
+            <p className="text-sm text-text-secondary">确认后任务会先入队。未设置费用上限时，付费策划、出图和质检会暂停；设置后仍须通过执行前的费用核验。生成结果由你审阅采用。</p>
           </section>}
           {error && <Alert type="error" showIcon title={error}/>}
           <div className="flex flex-wrap gap-3">

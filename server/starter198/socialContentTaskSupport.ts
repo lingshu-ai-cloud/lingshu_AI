@@ -241,7 +241,8 @@ export function defaultBrief(value: CreateSocialContentTaskInput) {
     cadence: value.cadence ?? null,
     requestedOutputCount: value.mode === 'instant' ? 1 : value.requestedOutputCount ?? null,
     weeklyBudgetCny: value.weeklyBudgetCny ?? null,
-    perItemBudgetCny: productionBudgetMaximumCny(value),
+    perItemBudgetCny: value.formats?.length === 1 && value.formats[0] === 'social_image'
+      ? value.perItemBudgetCny ?? null : productionBudgetMaximumCny(value),
     targetDurationSeconds: value.targetDurationSeconds ?? null,
     retryReserveCny: value.retryReserveCny ?? null,
     planningMode: value.planningMode ?? 'auto_adjust',

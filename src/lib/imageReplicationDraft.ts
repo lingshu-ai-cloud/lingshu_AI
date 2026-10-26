@@ -17,6 +17,7 @@ export type ImageReplicationDraft = {
   aspectRatio: '1:1' | '4:5' | '9:16' | '16:9';
   language: ImageLanguage;
   callToAction: string;
+  budgetLimitCny?: number | null;
 };
 
 export function imageReplicationDraftIssue(draft: ImageReplicationDraft): string | null {
@@ -28,6 +29,7 @@ export function imageReplicationDraftIssue(draft: ImageReplicationDraft): string
     || !['1:1', '4:5', '9:16', '16:9'].includes(draft.aspectRatio)
     || !imageLanguageSchema.safeParse(draft.language).success) return '请选择支持的平台、画幅和配文语言。';
   if (!draft.callToAction.trim() || draft.callToAction.length > 500) return '请填写希望客户采取的行动（不超过500字）。';
+  if (draft.budgetLimitCny != null && (!Number.isFinite(draft.budgetLimitCny) || draft.budgetLimitCny <= 0)) return '单条费用上限须大于 0 元。';
   return null;
 }
 
@@ -57,6 +59,7 @@ export async function createImageReplicationDraft(input: {
     aspectRatio: draft.aspectRatio, requestedOutputCount: 1, callToAction: draft.callToAction.trim(),
     creationMode: 'viral_replication', assetAvailability: 'none', managementMode: 'one_click_managed',
     productionMode: 'social_ready', productionApproach: 'ai_enhanced', mode: 'instant', themeId: 'product_value',
+    ...(draft.budgetLimitCny != null ? { perItemBudgetCny: draft.budgetLimitCny } : {}),
   }, `${operationKey}:content`);
   assertCurrent();
   const { task } = await ports.createOrResumeRun(content.taskId, {

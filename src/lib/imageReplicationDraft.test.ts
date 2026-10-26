@@ -67,3 +67,14 @@ test('invalid inputs and session changes stop subsequent writes', async () => {
     } }), /登录状态/);
   assert.equal(calls, 1);
 });
+
+test('a confirmed image budget is carried into the canonical task', async () => {
+  let savedCap: number | null | undefined;
+  await createImageReplicationDraft({ draft: { ...draft, budgetLimitCny: 5 }, operationKey: 'budget-five',
+    entrySource: 'assistant', isCurrent: () => true, ports: {
+      createTask: async value => { savedCap = value.perItemBudgetCny; return { taskId: 'budget-task', version: '1' } as SocialContentTaskDetail; },
+      createOrResumeRun: async () => ({ task: defaultSocialImageTask({ creationPath: 'viral_replication' }) }),
+      updateTask: async task => ({ task }),
+    } });
+  assert.equal(savedCap, 5);
+});

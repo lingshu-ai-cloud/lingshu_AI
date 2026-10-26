@@ -50,6 +50,7 @@ export const assistantCreationPortalSchema = z.object({
       platform: z.enum(['facebook', 'instagram', 'linkedin']),
       aspectRatio: z.enum(['1:1', '4:5', '9:16', '16:9']),
       language: imageLanguageSchema,
+      budgetLimitCny: z.number().positive().max(10_000_000).nullable().optional(),
       submitted: z.boolean(),
       imageTaskId: z.string().min(1).max(200).optional(),
     }).strict().optional(),
