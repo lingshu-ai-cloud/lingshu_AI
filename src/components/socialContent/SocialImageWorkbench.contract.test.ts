@@ -7,7 +7,7 @@ const presentation = fs.readFileSync(new URL('./socialImageWorkbenchPresentation
 const reviewActions = fs.readFileSync(new URL('./SocialImageReviewActions.tsx', import.meta.url), 'utf8');
 const planning = fs.readFileSync(new URL('./SocialContentPlanningPage.tsx', import.meta.url), 'utf8');
 const studioRoute = readStudioApplicationSources();
-const socialImageRoute = fs.readFileSync(new URL('../../../server/routes/socialImage.ts', import.meta.url), 'utf8');
+const socialImageRoute = ['routes/socialImage.ts','socialImage/socialImageWorkflowCommands.ts','socialImage/socialImageWorkflowAssets.ts'].map(file=>fs.readFileSync(new URL(`../../../server/${file}`,import.meta.url),'utf8')).join('\n');
 const formalPlanRoute = fs.readFileSync(new URL('../../../server/routes/socialImageFormalPlanRoutes.ts', import.meta.url), 'utf8');
 const continuation = fs.readFileSync(new URL('../../../server/socialImage/socialImageProductionContinuation.ts', import.meta.url), 'utf8');
 

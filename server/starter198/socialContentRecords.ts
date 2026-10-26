@@ -1,3 +1,4 @@
+import {hydrateSocialContentExecutionSummaries} from './socialContentQueueProjection.js';
 import { guidedMaterialRoutingRequests, guidedProductIdentityGroups } from './guidedCreationRouting.js';
 import { bindTaskContactCards } from './socialContentContactCard.js';
 import {applySocialContentRevisionSupply} from './socialContentRevisionProjection.js';
@@ -82,7 +83,9 @@ export async function readSocialTaskDetail(input: {
     taskRows(input.repository, STARTER_COLLECTIONS.socialPublications, input.tenantId, input.taskId),
     taskRows(input.repository, STARTER_COLLECTIONS.socialMetricSubmissions, input.tenantId, input.taskId),
   ]);
-  const summary = socialTaskSummary(task);
+  const savedSummary = socialTaskSummary(task);
+  const summary = savedSummary.brief.formats.includes('social_image')
+    ? (await hydrateSocialContentExecutionSummaries({store:input.repository.dataStore,tenantId:input.tenantId,items:[savedSummary]}))[0] : savedSummary;
   const storedScriptBaseline = parseStoredSocialScriptBaseline(task.script_baseline);
   const executionTaskRows = summary.runId
     ? await input.repository.list(STARTER_COLLECTIONS.tasks, input.tenantId, {

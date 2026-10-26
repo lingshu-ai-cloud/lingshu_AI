@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import sharp from 'sharp';
-import { LOCAL_PRODUCT_OCR_LIMITS, localProductOcrReadiness, recognizeProductImageLocally, withLocalProductOcrSession } from './localProductOcr.js';
+import { LOCAL_PRODUCT_OCR_LIMITS, localProductOcrReadiness, recognizeProductImageLocally, recognizeProductImageTokensLocally, withLocalProductOcrSession } from './localProductOcr.js';
 
 test('local OCR readiness finds project-bundled Simplified Chinese and English data', () => {
   const ready = localProductOcrReadiness();
@@ -32,6 +32,9 @@ test('bundled OCR worker recognizes a real page without an external executable o
   const page = await sharp(Buffer.from('<svg width="1200" height="420" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="white"/><text x="40" y="150" font-family="Arial" font-size="72" fill="black">Product Name: LIGHT CREAM</text><text x="40" y="280" font-family="Arial" font-size="72" fill="black">SKU: CR-01</text></svg>')).png().toBuffer();
   const text = await recognizeProductImageLocally({ bytes: page, mimeType: 'image/png' });
   assert.match(text, /Product Name/i); assert.match(text, /CR-01/i);
+  const tokens = await recognizeProductImageTokensLocally({ bytes: page, mimeType: 'image/png' });
+  assert.ok(tokens.some(token => /Product|LIGHT|CREAM/i.test(token.text) && token.confidence > 0.5));
+  assert.ok(tokens.every(token => token.bbox.width > 0 && token.bbox.height > 0));
 });
 
 test('one OCR session keeps image limits and reads each frame rather than reusing earlier text', async () => {

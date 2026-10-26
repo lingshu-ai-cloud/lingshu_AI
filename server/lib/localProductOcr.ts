@@ -45,16 +45,16 @@ async function createLocalOcrWorker(): Promise<LocalOcrWorker> {
   try { await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK }); return worker; }
   catch (error) { await worker.terminate(); throw error; }
 }
-async function recognizeDataWithWorker(worker: LocalOcrWorker, bytes: Buffer): Promise<{ text?: string; words?: LocalOcrWord[]; blocks?: Array<{ paragraphs?: Array<{ lines?: Array<{ words?: LocalOcrWord[] }> }> }> }> {
+async function recognizeDataWithWorker(worker: LocalOcrWorker, bytes: Buffer, withBlocks = false): Promise<{ text?: string; words?: LocalOcrWord[]; blocks?: Array<{ paragraphs?: Array<{ lines?: Array<{ words?: LocalOcrWord[] }> }> }> }> {
   let timeout: NodeJS.Timeout | undefined;
-  const result = await Promise.race([worker.recognize(bytes), new Promise<never>((_, reject) => {
+  const result = await Promise.race([worker.recognize(bytes, {}, withBlocks ? { text: true, blocks: true } : undefined), new Promise<never>((_, reject) => {
     timeout = setTimeout(() => reject(new Error('LOCAL_OCR_TIMEOUT')), LOCAL_PRODUCT_OCR_LIMITS.timeoutMs);
   })]).finally(() => { if (timeout) clearTimeout(timeout); });
   return result.data as unknown as { text?: string; words?: LocalOcrWord[]; blocks?: Array<{ paragraphs?: Array<{ lines?: Array<{ words?: LocalOcrWord[] }> }> }> };
 }
-async function recognizeDataWithBundledTesseract(bytes: Buffer) {
+async function recognizeDataWithBundledTesseract(bytes: Buffer, withBlocks = false) {
   const worker = await createLocalOcrWorker();
-  try { return await recognizeDataWithWorker(worker, bytes); }
+  try { return await recognizeDataWithWorker(worker, bytes, withBlocks); }
   finally { await worker.terminate(); }
 }
 
@@ -100,7 +100,7 @@ export async function createLocalProductOcrSession() {
 
 export async function recognizeProductImageTokensLocally(input: { bytes: Buffer; mimeType: string }) {
   const { normalized, width, height } = await normalizedOcrInput(input);
-  const data = await recognizeDataWithBundledTesseract(normalized);
+  const data = await recognizeDataWithBundledTesseract(normalized, true);
   const words = data.words || (data.blocks || []).flatMap(block => (block.paragraphs || [])
     .flatMap(paragraph => (paragraph.lines || []).flatMap(line => line.words || [])));
   return words.flatMap(word => {

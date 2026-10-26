@@ -3,7 +3,7 @@ import { Alert, Button, Input, Select, Spin } from 'antd';
 import LsPageHeader from '../ui/LsPageHeader';
 import ImageReplicationReferencePicker from './ImageReplicationReferencePicker';
 import { IMAGE_LANGUAGE_OPTIONS, imageLanguageLabel } from '../../../shared/contracts/imageLanguages';
-import SocialImageWorkbench from './SocialImageWorkbench';
+import { openImageCreationTask } from '../../lib/imageCreationTaskNavigation';
 import type { SocialContentCreateRequest } from './SocialContentWorkspace';
 import type { SocialImageCreationTask } from '../../../shared/contracts/socialImageCreation';
 import { readAssistantProductCatalog, type AssistantCatalogProduct } from '../../lib/assistantProductCatalog';
@@ -58,6 +58,7 @@ export default function ImageReplicationConversation({ request, onShowCreations,
   const [created, setCreated] = useState<SocialImageCreationTask>();
   const [submitted, setSubmitted] = useState(checkpoint?.submitted || false);
   const startNew = useRef(false);
+  const handedOff = useRef('');
   const checkpointWriter = useRef(onCheckpoint); checkpointWriter.current = onCheckpoint;
   const alive = useRef(true);
   const identity = useRef(productionNavigationIdentity());
@@ -142,16 +143,18 @@ export default function ImageReplicationConversation({ request, onShowCreations,
       const task = await createImageReplicationDraft({ draft: frozen.current, operationKey: key.current,
         entrySource: request?.assistantEntry ? 'assistant' : 'workspace', isCurrent,
         ports: { createTask: socialContentApi.createTask, createOrResumeRun: socialImageApi.createOrResumeRun, updateTask: socialImageApi.updateTask } });
-      if (isCurrent()) { startNew.current = true; setCreated(task); }
+      if (!isCurrent()) return;
+      const queued = await socialImageApi.enqueueExecution(task);
+      if (isCurrent()) { startNew.current = true; setCreated(queued.task); }
     } catch (cause) { if (isCurrent()) setError(cause instanceof Error ? cause.message : '复刻任务保存失败，请重试'); }
     finally { locked.current = false; if (isCurrent()) setBusy(false); }
   };
 
-  if (created) return <SocialImageWorkbench creationPath="viral_replication" initialTask={created} autoStart={startNew.current} compact
-    contentTaskId={created.productionRuntime?.binding?.contentTaskId} entrySource={request?.assistantEntry ? 'assistant' : 'workspace'}
-    referenceTitle={created.referenceSnapshot?.title} referenceMediaUrl={created.referenceSnapshot?.imageUrls[0]}
-    referenceCaption={created.referenceSnapshot?.caption} referenceLayerBlueprints={created.replicationRecipe?.referenceLayerBlueprints}
-    onShowCreations={onShowCreations}/>;
+  useEffect(() => {
+    if (!created || !startNew.current || handedOff.current === created.id || !isCurrent()) return;
+    handedOff.current = created.id; openImageCreationTask(created);
+  }, [created]);
+  if (created) return <Button onClick={() => openImageCreationTask(created)}>进入创作任务</Button>;
 
   return <div className={embedded ? "min-w-0 space-y-3" : "flex h-full min-h-0 flex-col bg-surface"} data-image-replication-conversation>
     {!embedded && <LsPageHeader title="图文爆款复刻" extra={<Button onClick={onShowCreations} disabled={busy}>我的创作</Button>}/>}

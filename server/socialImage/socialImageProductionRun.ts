@@ -28,7 +28,7 @@ import { defaultSocialImageTask, readSocialImageTask, SOCIAL_IMAGE_TASKS_COLLECT
 import { initializeSocialImageProductionRuntime, projectSocialImageProductionSnapshot } from './socialImageProductionRuntime.js';
 import { resolveSocialImageReviewSet, socialImageDirectorReviewMatchesSet, socialImageReviewRefsMatch } from './socialImageReviewSet.js';
 import { createSocialImageTaskContextSnapshot, taskContextSnapshotIssue } from './taskContextSnapshot.js';
-import { socialImageProductionHash as hash } from './socialImageProductionHash.js';
+import { socialImageProductionHash as hash, socialImageRunId } from './socialImageProductionHash.js';
 
 export class SocialImageProductionRunError extends Error {
   constructor(readonly code: string, readonly status = 409) {
@@ -81,7 +81,7 @@ async function canonicalEnterpriseFactVersionId(store: DataStore, tenantId: stri
 /** Paid admission requires a current binding; review may use a verified frozen snapshot after payment began. */
 export async function assertSocialImageCurrentContentTask(
   store: DataStore, tenantId: string, task: SocialImageCreationTask,
-  purpose: 'paid_admission' | 'review_original_output' = 'paid_admission',
+  purpose: 'dispatch' | 'paid_admission' | 'review_original_output' = 'paid_admission',
 ): Promise<void> {
   if (task.schemaVersion !== 'social-image-creation.v3') return;
   const binding = task.productionRuntime?.binding;
@@ -94,6 +94,7 @@ export async function assertSocialImageCurrentContentTask(
   });
   if (snapshotIssue) throw new SocialImageProductionRunError(snapshotIssue, 409);
   const current = await canonicalContentTask(store, tenantId, binding.contentTaskId);
+  if(purpose==='dispatch') { if(current.version!==binding.contentTaskVersion)throw new SocialImageProductionRunError('social_image_content_task_binding_stale',409); return; }
   const business = task.productionRuntime?.nodeOutputs.filter(output => output.nodeId === 'business_context').at(-1);
   const source = business?.inputRefs.find(ref => ref.objectType === 'social_content_task' && ref.id === binding.contentTaskId);
   const paidStarted = task.generationJobs.some(job => job.attempt > 0 || Boolean(job.inputHash));
@@ -291,7 +292,7 @@ export async function createOrResumeBoundSocialImageRun(
   if (String(contentTask.version) !== String(input.expectedContentTaskVersion)) {
     throw new SocialImageProductionRunError('social_image_content_task_version_conflict', 409);
   }
-  const productionRunId = `img${hash({ tenantId, contentTaskId, deliverableKey }).slice(0, 12)}`;
+  const productionRunId = socialImageRunId(tenantId,contentTaskId,deliverableKey);
   const requestedImageType = input.imageType || 'product_poster';
   // Entry source is presentation provenance, not run identity. The same
   // ContentTask must resume when an assistant-created task is later opened in

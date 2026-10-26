@@ -12,3 +12,5 @@ function canonical(value: unknown): unknown {
 export function socialImageProductionHash(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 }
+
+export const socialImageRunId = (tenantId:string,contentTaskId:string,deliverableKey='primary-image') => `img${socialImageProductionHash({tenantId,contentTaskId,deliverableKey}).slice(0,12)}`;

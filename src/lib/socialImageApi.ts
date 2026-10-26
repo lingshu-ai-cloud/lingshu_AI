@@ -1,3 +1,4 @@
+import type {SocialImageExecutionReceipt} from '../../shared/contracts/socialImageExecution';
 import { authHeader } from './auth';
 import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation';
 import type { SocialImageLayerGraph } from '../../shared/contracts/socialImageLayerGraph';
@@ -15,6 +16,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const socialImageApi = {
+  enqueueExecution: (task:SocialImageCreationTask) => request<{ok:true;task:SocialImageCreationTask;execution:SocialImageExecutionReceipt}>(`/tasks/${encodeURIComponent(task.id)}/execution`,{method:'POST',body:JSON.stringify({expectedVersion:task.version})}),
+  getContentExecution: (contentId:string) => request<{ok:true;task:SocialImageCreationTask;execution:SocialImageExecutionReceipt|null}>(`/content-tasks/${encodeURIComponent(contentId)}/execution`),
   createOrResumeRun: (contentTaskId: string, input: {
     expectedContentTaskVersion: string;
     idempotencyKey: string;

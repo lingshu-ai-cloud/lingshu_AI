@@ -241,23 +241,19 @@ function estimateRequestTokens(req: Request, kind: DemoQuotaKind): number {
   return Math.max(1, Math.ceil(bodyTokens + tokenReserveFor(kind)));
 }
 
-export async function consumeDemoQuota(req: Request, res: Response, kind: DemoQuotaKind): Promise<boolean> {
-  const locals = res.locals as { userId?: unknown; tenantId?: unknown };
-  const id = typeof locals.userId === 'string' && locals.userId
-    && typeof locals.tenantId === 'string' && locals.tenantId
-    ? { userId: locals.userId, tenantId: locals.tenantId }
-    : await auth.verifyToken(req.headers.authorization);
-  if (isDemoQuotaExemptTenant(id?.tenantId)) return true;
+export type IdentityQuotaResult = {ok:true}|{ok:false;status:number;error:string;quota?:string;tokenCost?:number};
+export async function consumeIdentityDemoQuota(id:{userId?:string;tenantId?:string;usageKey?:string},kind:DemoQuotaKind,tokenCost=2000):Promise<IdentityQuotaResult> {
+  if (isDemoQuotaExemptTenant(id?.tenantId)) return {ok:true};
   const sub = id?.tenantId ? await getTenantSubscription(id.tenantId) : null;
-  if (isAdminSubscription(sub)) return true;
+  if (isAdminSubscription(sub)) return {ok:true};
   const quotaEnforced = isDemoMode() || isTrialSubscription(sub);
 
   if (quotaEnforced && sub?.expiresAt && isExpired(sub.expiresAt)) {
-    res.status(402).json({ error: 'demo_expired', demo: await buildDemoStatus(req, id?.tenantId, sub.expiresAt) });
-    return false;
+    return {ok:false,status:402,error:'demo_expired'};
   }
 
-  const key = id?.tenantId ? `tenant:${id.tenantId}` : await identityKey(req);
+  const key = id.tenantId ? `tenant:${id.tenantId}` : id.usageKey;
+  if(!key)throw new Error('demo_quota_identity_required');
   const tokenKey = id?.userId ? `user:${id.userId}` : key;
   const day = todayKey();
   const store = readUsage();
@@ -266,21 +262,14 @@ export async function consumeDemoQuota(req: Request, res: Response, kind: DemoQu
   const limits = demoLimits();
   const used = kind === 'videoGeneration' ? totalVideoGenerationUsage(store, key) : usage[kind];
   if (quotaEnforced && used >= limitFor(kind, limits)) {
-    res.status(429).json({ error: 'demo_quota_exceeded', quota: kind, demo: await buildDemoStatus(req, id?.tenantId, sub?.expiresAt) });
-    return false;
+    return {ok:false,status:429,error:'demo_quota_exceeded',quota:kind};
   }
 
-  const tokenCost = kind === 'render' ? 0 : estimateRequestTokens(req, kind);
+
   const usedTokensToday = tokenUsage.tokens ?? 0;
   const usedTokensTotal = totalTokenUsage(store, tokenKey);
   if (quotaEnforced && (usedTokensToday + tokenCost > limits.tokenDaily || usedTokensTotal + tokenCost > limits.tokenTotal)) {
-    res.status(429).json({
-      error: 'demo_token_quota_exceeded',
-      quota: 'tokens',
-      tokenCost,
-      demo: await buildDemoStatus(req, id?.tenantId, sub?.expiresAt),
-    });
-    return false;
+    return {ok:false,status:429,error:'demo_token_quota_exceeded',quota:'tokens',tokenCost};
   }
 
   usage[kind] += 1;
@@ -292,7 +281,19 @@ export async function consumeDemoQuota(req: Request, res: Response, kind: DemoQu
     store[tokenKey] = { ...(store[tokenKey] ?? {}), [day]: tokenUsage };
   }
   writeUsage(store);
-  return true;
+  return {ok:true};
+}
+
+export async function consumeDemoQuota(req:Request,res:Response,kind:DemoQuotaKind):Promise<boolean> {
+  const locals=res.locals as {userId?:unknown;tenantId?:unknown};
+  const identity=typeof locals.userId==='string'&&locals.userId&&typeof locals.tenantId==='string'&&locals.tenantId
+    ? {userId:locals.userId,tenantId:locals.tenantId} : await auth.verifyToken(req.headers.authorization);
+  const result=await consumeIdentityDemoQuota({tenantId:identity?.tenantId,userId:identity?.userId,
+    ...(!identity?.tenantId?{usageKey:await identityKey(req)}:{})},kind,kind==='render'?0:estimateRequestTokens(req,kind));
+  if(result.ok)return true;
+  const subscription=identity?.tenantId?await getTenantSubscription(identity.tenantId):null;
+  const {ok:_,status,...payload}=result;
+  res.status(status).json({...payload,demo:await buildDemoStatus(req,identity?.tenantId,subscription?.expiresAt)});return false;
 }
 
 export function resetDemoUsage(): void {
