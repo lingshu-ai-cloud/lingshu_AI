@@ -36,19 +36,23 @@ function ref(output: SocialImageNodeEnvelope<unknown>): SocialImageVersionedRef 
 
 /** Bound plans never use browser-supplied product, platform or material descriptions. */
 export function socialImageV3TrustedPlanningRequest(task: SocialImageCreationTask) {
+  // A benchmark is evidence for composition, never a customer request for the
+  // competitor's commercial claims. Pass only measured structure to planning.
+  const layout = (task.replicationRecipe?.layoutRegions || []).map(region =>
+    `${region.role} (${region.x}, ${region.y}, ${region.width}, ${region.height})`).slice(0, 12);
   return {
     productInfo: task.contentBrief.productNames.map(name => `产品名称：${name}`).join('\n'),
     platform: task.deliverySpec.platform, ratio: task.deliverySpec.aspectRatio,
     posterStyle: task.imageType === 'brand_news' ? 'news-editorial'
-      : task.imageType === 'experiment_comparison' ? 'comparison-proof' : 'oem-factory',
+      : task.imageType === 'experiment_comparison' ? 'comparison-proof' : 'product-reference-structure',
     language: task.deliverySpec.language,
     materials: task.enterpriseAssets.filter(asset => task.materialIds.includes(asset.assetId))
       .map(asset => ({ id: asset.assetId, name: asset.name, role: asset.role })),
-    referenceNotes: [task.referenceSnapshot?.title || '', task.contentBrief.coreClaim,
-      task.imageType].filter(Boolean).join(' · '),
-    referenceCaption: task.referenceSnapshot?.caption || '',
+    referenceNotes: [task.contentBrief.coreClaim, `Structure: ${layout.join('; ')}`,
+      `Preserve: ${(task.replicationRecipe?.preserve || []).join(', ')}`].filter(Boolean).join(' · '),
+    referenceCaption: '',
     categoryTerms: [...task.contentBrief.productNames],
-    targetMarket: task.contentBrief.audience.join(', '),
+    targetMarket: '',
     confirmedFields: Object.fromEntries(task.contentBrief.evidenceItems.filter(item => item.source === 'user_input')
       .map(item => [item.label, item.value])),
   };

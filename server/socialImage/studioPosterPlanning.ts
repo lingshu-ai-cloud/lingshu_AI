@@ -213,18 +213,19 @@ Schema:
                 // user requirements. Strip them from the draft and only block when the
                 // user's own brief/reference explicitly asks to retain such a claim.
                 const requestedCommercialFields = auditCommercialClaims(referenceNotes, commercialEvidence).fieldsToConfirm;
-                let fieldsToConfirm = confirmationFields([...requestedCommercialFields, ...audit.fieldsToConfirm]);
+                // Claims invented by the model are removed from the draft; they
+                // are not extra requirements that the customer must confirm.
+                let fieldsToConfirm = confirmationFields(requestedCommercialFields);
                 let safeDraft = audit.issues.length || audit.fieldsToConfirm.length
                     ? sanitizePosterCommercialClaims(normalized, commercialEvidence)
                     : normalized;
                 if (!safeDraft.poster.headline)
                     safeDraft.poster.headline = neutral.headline;
                 const remainingAudit = auditCommercialClaims(userFacingPosterText(safeDraft), commercialEvidence);
-                if (remainingAudit.issues.length) {
+                if (remainingAudit.issues.length || remainingAudit.fieldsToConfirm.length) {
                     // A stubborn model sentence must not block first-draft production.
-                    // Fall back to deterministic neutral copy and carry every unresolved
-                    // claim into review, where it blocks publishing rather than creation.
-                    fieldsToConfirm = confirmationFields([...fieldsToConfirm, ...remainingAudit.fieldsToConfirm]);
+                    // It cannot become a customer requirement: replace it with
+                    // neutral copy, leaving only the customer's own claims pending.
                     safeDraft = {
                         ...safeDraft,
                         poster: {

@@ -64,7 +64,10 @@ export function createImageExecutionPorts(store: DataStore, job: ContentExecutio
                     throw new Error(code);
                 }
                 const planned = await readSocialImageTask(store, job.tenantId, task.id);
-                if (!planned || planned.productionRuntime?.nodes.find(node => node.nodeId === 'director_brief')?.status !== 'completed')
+                const directorCompleted = planned?.productionRuntime?.nodes.find(node => node.nodeId === 'director_brief')?.status === 'completed';
+                await recordCurrentContentExecutionCheckpoint({ ...claim, payload: directorCompleted
+                    ? { state: 'completed' } : { state: 'completed_requires_review', code: 'social_image_planner_result_requires_review' } });
+                if (!planned || !directorCompleted)
                     throw new Error('social_image_planner_result_requires_review');
                 task = planned;
             }

@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {analyzeSocialImageReference,inspectSocialImageAsset,socialImageAssetAuthorization} from './socialImageEvidenceWorker.js';
 import {recordSocialImageBusinessContext,recordSocialImageNodeOutput,runSocialImageDirectorReview} from './socialImageProductionRun.js';
 import {compileSocialImageReferencePlan,prepareSocialImageReferenceStrategy} from './socialImageReferenceStrategy.js';
-import {compileSocialImageV3PaidPlan,recordSocialImageV3DirectorBrief} from './socialImageFormalPlan.js';
+import {compileSocialImageV3PaidPlan,recordSocialImageV3DirectorBrief,socialImageV3TrustedPlanningRequest} from './socialImageFormalPlan.js';
 import {socialImageV3PaidPrerequisiteIssue,socialImageV3SingleRenderInput} from './socialImagePaidPrerequisites.js';
 import {admitSocialImageV3QueuedJob,completeSocialImagePaidJob} from './socialImagePaidJob.js';
 import {renderSocialImagePaidWorker} from './socialImagePaidWorkerRender.js';
@@ -252,6 +252,33 @@ test('viral image task freezes the existing GPT Image 2 route without sending a 
     assert.equal(frozen?.referenceImageUrls.length,0,'structure-only crawled bytes must not go to image provider');
     assert.match(frozen?.imagePrompt||'',/Reference layout measurements/);
   }
+});
+
+test('structure-only benchmark copy is excluded from the paid planning request', async () => {
+  const {task}=await preparedViralTask('product_poster','paid');
+  const tainted={...task,referenceSnapshot:{...task.referenceSnapshot!,
+    title:'Competitor OEM private label export',caption:'OEM wholesale claims from competitor'}};
+  const request=socialImageV3TrustedPlanningRequest(tainted);
+  assert.doesNotMatch(JSON.stringify(request),/Competitor|wholesale|private label/);
+  assert.match(request.referenceNotes,/Structure:/);
+  assert.equal(request.posterStyle,'product-reference-structure');
+  assert.equal(request.targetMarket,'');
+});
+
+test('invented model commercial claims are removed without asking the customer to confirm them',async()=>{
+  const {store,task}=await preparedViralTask('product_poster','paid');
+  const response=await planStudioPoster({store,tenantId:'tenant-a',
+    body:{imageTaskId:task.id,expectedImageTaskVersion:task.version},
+    enterpriseCtx:async()=>`公司名称：示例企业\n产品1：${task.contentBrief.productNames[0]}`,
+    allowPaidCall:async()=>true,
+    callPlanner:async()=>JSON.stringify({poster:{headline:'产品 A',
+      subheadline:'OEM private label production',cta:'Learn more'},
+      caption:'产品 A 产品介绍。',hashtags:[]}),
+  });
+  assert.deepEqual(response?.fieldsToConfirm,[]);
+  const saved=await readSocialImageTask(store,'tenant-a',task.id);
+  assert.equal(saved?.productionRuntime?.nodes.find(node=>node.nodeId==='director_brief')?.status,'completed');
+  assert.doesNotMatch(JSON.stringify(response?.poster),/OEM|private label|Wholesale|wholesale/i);
 });
 
 test('a timed-out bound planner keeps the director node unapproved and exposes the provider uncertainty', async () => {
