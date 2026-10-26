@@ -2,6 +2,26 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前本机集成基线：快捷卡片回复优化 v2（2026-10-27）
+
+本节覆盖下方旧基线声明。工作树 `/Users/jiejie/Documents/lingshu-AI`、本地基线分支 `节节1025服务器上传`，从 `e572161f1d7f2b77bb1ed50c1d6520e23cc3e7aa` 推进到源码封装提交 `f5486b4dd10f6b1e407381e5c2f0134d5905b98d`；本治理补记另行提交。用户指定本次 GitHub 新分支为 `快捷卡片回复优化v2`，旧版交付分支不移动。
+
+- 本次修改已位于基线工作树，按明确的 15 文件清单提交，不重复合并其他分支。包含新手引导目标市场/买家选项、首页输入文字上移、来源跳转按钮及按需视频预览；主要文件为 `DigitalEmployeeOnboardingSteps.tsx`、`onboardingMarketOptions.ts`、`creator-workspace.css`、`AgentReply.tsx`、`AssistantSourceLink.tsx`、`assistantSourceLinks.ts` 和共享固定资讯目录 `shared/authoritativeNewsSources.ts`，连同相关测试及 UI 规范。没有加入 `.env.local`、账号凭据、素材、运行缓存或数据库内容。
+- 上一轮对这份源码实际执行 `NODE_OPTIONS=--max-old-space-size=4096 pnpm run lint --pretty false`，退出 0；本轮核对修改范围没有变化，复用该 TypeScript 结果，不重复启动重型检查。
+- 本轮重新执行以下必要检查：定向回归 16/16，3009 个生产 TypeScript 文件架构及相对 `e572161f` 的预算 ratchet、205 项迁移清单只读检查、checksum guard 和 `git diff --cached --check` 全部通过。检查在提交前的同一暂存源码上运行；迁移与清单没有变更。
+
+```sh
+node --import tsx --test --test-concurrency=1 src/components/smartBusiness/onboardingMarketOptions.test.ts src/lib/assistantSourceLinks.test.ts src/components/AgentReply.readable.test.tsx src/components/ContentCreationHome.contract.test.ts src/components/DigitalEmployeePage.contract.test.ts server/externalInformation/authoritativeNews.test.ts src/lib/inspirationVideoPlayback.test.ts
+ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture
+pnpm run check:digital-employee-migrations
+pnpm run test:migration-guard
+git diff --cached --check
+```
+
+- 推送前已确认远端新分支不存在，规范 origin 为 `https://github.com/lingshu-ai-cloud/lingshu_AI.git`。工作流的部署/回滚仅手动触发，push 构建仅匹配 `v*` 标签，普通新分支推送不触发部署。未创建 PR、未执行部署、数据库迁移、真实供应商或付费调用，无外部 run/task 标识；未重复全仓 quality/verify 或构建。
+- 已知验证边界：普通资讯页面只跳转原文；视频直链和支持的平台链接提供点击后加载的预览，但本次未验证各真实平台的播放/嵌入限制。前轮新增的会话生命周期迁移仍未应用于目标数据库。源码封装不代表真实供应商 Ready 或生产发布就绪。
+- 安全恢复点为旧版分支 `快捷卡片回复优化` / `e572161f1d7f2b77bb1ed50c1d6520e23cc3e7aa`；其他工作树、其未提交现场以及图片 AIGC 保留树未触碰。下一步仅在另行授权后执行真实平台验收或部署。
+
 ## 当前本机集成基线：快捷卡片回复优化（2026-10-27）
 
 本节覆盖下方阶段性“待确认”状态。工作树 `/Users/jiejie/Documents/lingshu-AI`，本地基线分支 `节节1025服务器上传`；用户指定本次 GitHub 交付新分支为 `快捷卡片回复优化`。以下为源码 SHA，本治理补记另行提交，随同一基线快照交付。
