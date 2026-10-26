@@ -2,6 +2,31 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前本机集成基线：快捷卡片回复优化（2026-10-27）
+
+本节覆盖下方阶段性“待确认”状态。工作树 `/Users/jiejie/Documents/lingshu-AI`，本地基线分支 `节节1025服务器上传`；用户指定本次 GitHub 交付新分支为 `快捷卡片回复优化`。以下为源码 SHA，本治理补记另行提交，随同一基线快照交付。
+
+- 本会话封装 `75b330e058afc1df93fae2ffbfbddd342a616b56` 保留；第一来源 `codex/assistant-conversation-management-20261027` / `eeb936f8025519dca1e1049d527381dec4e4a156` 已通过 `8d7ade7a7b484ab124a2b06696cbfe0d92c8d32b` 合入。
+- 用户确认兼容方案后，第二来源 `codex/session-ui-onboarding-20261027` / `7a1e2422b9d2a0a4b7644d84d3af9abef3c0c253` 合入为 `bc060fb8852c3d98d4f6ffcfda6e10bb491cdac1`。三处冲突保留现有 `strategy.ts` 内部简短回复与固定资讯来源分流、`AssistantConversationBubbles.tsx` 的对话内业务选择及 `useAssistantSend.ts` 的快捷任务分派；同时接入新手引导重启、产品稍后设置、草稿与确认契约变更，没有覆盖会话清空/删除隔离保护。
+- 合成后 TypeScript 找到新手引导跳过产品时可能访问空 `current.strategy`；以可选链修复，提交 `e7c9129b4497d8b38fffde386d5443568175f3cf` 为最终源码检查点。没有扩展业务流程或放宽产品确认/来源核验门禁。
+
+实际必要检查：
+
+```sh
+node --import tsx --test --test-concurrency=1 src/components/assistant/globalAssistantRuntime.hydration.test.ts src/components/assistant/useAssistantThreadSaveQueue.test.tsx server/routes/assistantThreads.actions.test.ts src/components/assistant/useAssistantSend.test.tsx src/components/HomeGrowthTour.test.ts shared/contracts/enterpriseOnboarding.test.ts src/components/ContentCreationHome.contract.test.ts src/components/DigitalEmployeePage.contract.test.ts server/routes/strategy.grounding.integration.test.ts shared/assistantReadableReply.test.ts
+node --import tsx --test --test-concurrency=1 shared/contracts/enterpriseOnboarding.test.ts server/routes/enterpriseOnboardingDraft.test.ts
+NODE_OPTIONS=--max-old-space-size=4096 pnpm run lint --pretty false
+ARCHITECTURE_BASE_REF=2276b7b14a8aea1a758df296e215c890c8b4ea36 pnpm run check:architecture
+pnpm run check:digital-employee-migrations
+pnpm run test:migration-guard
+git diff --check
+```
+
+- 首组 42/42 通过；空值修复后的新手引导合同/草稿 11/11 通过（含重复合同用例，不作为额外独立覆盖计数）；完整 TypeScript 复跑退出 0。3005 个生产 TypeScript 文件架构与相对 `2276b7b1` 的预算 ratchet 通过；205 项迁移清单及 checksum guard 通过，后续空值修复未改变迁移；diff 检查通过。
+- 本地前端 `http://127.0.0.1:5181/` 返回 200，后端已在最终源码以 `PROCESS_ROLE=web` / `backgroundJobs=false` 重启。`/api/overseas/health`、美妆预览账号的 `POST /api/overseas/auth/local-preview-session` 和 `GET /api/overseas/auth/me` 均返回 200，账号仍为 `local_user_customer_aurelia_beauty` / `local_tenant_customer_aurelia_beauty`。未复制或提交账号密钥、`.env.local`、素材或缓存；登录接口检查不等于浏览器视觉验收或真实供应商验收。
+- 推送前核对仓库工作流：部署/回滚为手工触发；构建推送仅匹配 `v*` 标签，普通新分支不触发部署。未创建 PR、未执行部署或数据库迁移，未做真实模型/渠道/付费调用，无外部 run/task 标识。遵照用户要求未重复全仓 `quality` / `verify`、构建或真实 E2E；新会话生命周期迁移尚未应用于目标数据库，不能声明生产发布就绪。
+- 安全恢复点：`codex/recovery-pre-quicktasks-integration-20261027-0c4fda22`、完整会话封装 `75b330e0` 和第二次合并前检查点 `2276b7b1`。两个来源工作树及其他未提交现场未改动，图片 AIGC 保留树未触碰。下一步如需发布，须另行授权并核验目标库迁移与真实供应商状态。
+
 ## 当前本机会话阶段性基线：快捷任务封装与会话管理合入（2026-10-27）
 
 - 工作树 `/Users/jiejie/Documents/lingshu-AI`、分支 `节节1025服务器上传`。在 `0c4fda229bf564dbde2120e446aec5e9f6ba8397` 上封装本会话 53 个源码、测试及说明文件为 `75b330e058afc1df93fae2ffbfbddd342a616b56`；不包含忽略的 `.env.local`、账号资料、素材或运行缓存。
