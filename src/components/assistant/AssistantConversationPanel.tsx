@@ -3,7 +3,7 @@ import ContentCreationChoices from './ContentCreationChoices';
 import { useCreationMode } from '../../lib/creationMode';
 import { type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ArrowDown, ArrowLeft, Bot, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, X } from 'lucide-react';
 import type { AgentAction, Page } from '../../App';
 import { isLegacyUnboundOperationNotice } from '../../lib/assistantOperationNotice';
 import { lsMotion } from '../../lib/designTokens';
@@ -12,6 +12,7 @@ import type { AssistantProductionContext } from '../../lib/assistantProductionDe
 import { useAssistantStore, type AgentThreadState, type OrbitAgentId } from '../../stores/assistantStore';
 import KnowledgeIntakePanel, { type AppliedProfile } from '../enterprise/KnowledgeIntakePanel';
 import AssistantComposer from './AssistantComposer';
+import AssistantMascot from './AssistantMascot';
 import { assistantFollowUpSuggestion } from '../../lib/assistantFollowUp';
 import AssistantConversationBubbles from './AssistantConversationBubbles';
 import AssistantCustomerTodoView from './AssistantCustomerTodoView';
@@ -128,12 +129,12 @@ export default function AssistantConversationPanel(props: Props) {
         animate={mode === 'chat' || inlineHomeBounds ? { opacity: 1, y: 0 } : { opacity: 0, y: reduceMotion ? 0 : 8 }}
         exit={{ y: reduceMotion ? 0 : 8, opacity: 0, transition: { ...spatialTransition, opacity: fadeExit.transition } }}
         transition={spatialTransition}
-        className={`absolute bottom-14 right-0 z-10 flex max-h-[calc(100dvh-env(safe-area-inset-bottom)-96px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' || inlineHomeBounds ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
+        className={`ls-assistant-panel absolute bottom-14 right-0 z-10 flex max-h-[calc(100dvh-env(safe-area-inset-bottom)-96px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden border border-border bg-surface outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' || inlineHomeBounds ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
         style={{ height: inlineHomeBounds?.height ?? assistantPanelHeight, width: inlineHomeBounds?.width ?? assistantPanelWidth, maxWidth: inlineHomeBounds ? '100%' : 'calc(100vw - 32px)' }}
       >
         {inlineHome && <div className="sr-only"><h2 id="global-assistant-panel-title">灵小枢创作对话</h2><p id="global-assistant-panel-description">描述创作需求，或添加图片、视频和音频参考。</p></div>}
-        {!inlineHome && <header className="ls-assistant-panel__header flex h-12 shrink-0 items-center justify-between border-b border-border bg-surface px-4">
-          <div className="flex min-w-0 items-center gap-2">
+        {!inlineHome && <header className="ls-assistant-panel__header flex shrink-0 items-center justify-between border-b border-border bg-surface">
+          <div className="ls-assistant-panel__identity">
             <button type="button" onClick={() => {
               if (assistantTool === 'knowledge-intake') { setAssistantTool(null); returnToConversation(); }
               else if (panelView !== 'chat') returnToConversation();
@@ -144,6 +145,7 @@ export default function AssistantConversationPanel(props: Props) {
               title={assistantTool === 'knowledge-intake' || panelView !== 'chat' ? '返回灵小枢对话' : '收起灵小枢对话'}>
               <ArrowLeft size={16} />
             </button>
+            <AssistantMascot size="sm" interactive reduceMotion={reduceMotion} />
             <div className="min-w-0">
               <p id="global-assistant-panel-title" className="ls-type-title-small truncate text-text-primary">{panelTitle}</p>
               <p id="global-assistant-panel-description" className="ls-type-body-small truncate text-text-muted">{panelSubtitle}</p>
@@ -178,7 +180,7 @@ export default function AssistantConversationPanel(props: Props) {
                 setFollowingLatest(activeAgent, scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 24);
               }}>
               {inlineHome && activeThread.creationDraft && !activeThread.creationDraft.guided && !activeThread.messages.length && !loading && <div className="creator-conversation-intro flex items-start gap-2" data-assistant-bubble="reference-question" role="group" aria-label="灵小枢提问">
-                <div aria-hidden="true" className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13}/></div>
+                <AssistantMascot size="xs" reduceMotion={reduceMotion} />
                 <div className="ls-messenger-bubble ls-messenger-bubble--inbound">
                   <p className="font-semibold text-text-primary">想用这条参考视频创作什么？</p>
                   <p className="mt-2 text-text-secondary">告诉我产品和想借鉴的内容，我们从产品、分镜到口播逐步确认。参考视频只用于结构参考，素材与授权会单独核验。</p>
@@ -193,6 +195,7 @@ export default function AssistantConversationPanel(props: Props) {
                 onOpenFeedDetail={trigger => openDecisionDialog({ kind: 'feed' }, trigger)}
                 onFeedChange={handleDecisionFeedChange}
                 welcomeBubbleVisible={welcomeBubbleVisible} activeAgentLabel="灵小枢"
+                reduceMotion={reduceMotion}
                 messages={activeThread.messages} onAction={onAction}
                 onSuggest={suggestion => void send(suggestion, currentPageAgent)}
                 contentIntakeNode={contentIntake.node} loading={loading} focusedTaskCard={focusedTaskCard}
@@ -223,6 +226,7 @@ export default function AssistantConversationPanel(props: Props) {
 
             {!inlineHome && !contentIntake.active && <AssistantQuickEntries
               page={page}
+              emptyConversation={!activeThread.messages.length && !loading && !activeThread.creationDraft}
               executions={[
                 ...(page === 'digitalEmployees' ? [{ id: 'business-create-week-plan', kind: 'execute' as const,
                   label: weeklyPlanKickoffAvailable ? '制定本周计划' : '查看当前周计划', prompt: '打开当前周计划', confirmation: 'none' as const }] : []),
