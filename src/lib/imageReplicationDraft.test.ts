@@ -5,7 +5,8 @@ import type { CreateSocialContentTaskInput, SocialContentTaskDetail } from '../.
 import { createImageReplicationDraft, imageReplicationDraftIssue, type ImageReplicationDraft } from './imageReplicationDraft';
 
 const draft: ImageReplicationDraft = {
-  reference: { url: '/api/overseas/videos/ref-1/image/0', title: '参考图', caption: '参考配文' },
+  reference: { url: '/api/overseas/videos/ref-1/image/0', title: '参考图', caption: '参考配文',
+    sourceRecordId: 'ref-1', sourceUrl: 'https://www.instagram.com/p/ABC/', collectedAt: '2026-10-25T00:00:00Z' },
   product: { id: 'product-1', name: '企业产品' }, objective: '突出已确认的产品卖点', audience: '品牌采购',
   platform: 'instagram', aspectRatio: '4:5', language: 'en', callToAction: '申请样品',
 };
@@ -27,6 +28,9 @@ test('replication creates one canonical content task and one image run without t
       updateTask: async (task: ReturnType<typeof defaultSocialImageTask>, patch: Partial<ReturnType<typeof defaultSocialImageTask>>) => {
         calls.push('reference'); assert.equal(patch.materialIds, undefined); assert.equal(patch.enterpriseAssets, undefined);
         assert.deepEqual(patch.referenceSnapshot?.imageUrls, [draft.reference.url]);
+        assert.equal(patch.referenceSnapshot?.sourceRecordId, 'ref-1');
+        assert.equal(patch.referenceSnapshot?.sourceUrl, draft.reference.sourceUrl);
+        assert.equal(patch.referenceSnapshot?.collectedAt, draft.reference.collectedAt);
         assert.equal(patch.referenceSnapshot?.caption, '参考配文'); return { task: { ...task, ...patch } };
       },
     } };

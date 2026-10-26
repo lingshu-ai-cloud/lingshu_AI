@@ -30,7 +30,7 @@ export async function verifyFrozenGifProductAssets(
 }
 
 export function buildStudioSocialImagePaidPrompt(input: {
-  sceneIntent: string; ratio: string; poster: Record<string, unknown>;
+  sceneIntent: string; ratio: string; poster: Record<string, unknown>; language?: string;
   deliverableType: ImageDeliverable; productionStrategy: ImageProductionStrategy;
   referenceRoleText: string; benchmarkCount: number; ownedReferenceCount: number;
   gifUnit?: { index: number; count: number };
@@ -40,6 +40,7 @@ export function buildStudioSocialImagePaidPrompt(input: {
     hasBenchmark: input.benchmarkCount > 0 });
   return [
     input.sceneIntent,
+    input.language ? `Output language: ${input.language}. Newly authored headlines and CTA must use this language and its reading direction. Preserve original brand names and physical packaging labels.` : '',
     `Generate one finished ${IMAGE_DELIVERABLE_LABELS[input.deliverableType]} (${input.deliverableType}). Production strategy: ${input.productionStrategy}.`,
     'Do not imply OEM/ODM, export, factory, certification, pricing, MOQ, lead-time, delivery, or customization capabilities unless they appear verbatim in the verified JSON.',
     `Use this exact poster JSON as the content source:\n${JSON.stringify(input.poster, null, 2)}`,

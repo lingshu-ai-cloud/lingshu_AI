@@ -1,3 +1,5 @@
+import { imageLanguageSchema, normalizeImageLanguage } from '../../shared/contracts/imageLanguages.js';
+import { neutralSocialImageCopy } from '../socialImage/socialImageLanguageCopy.js';
 import { extractJSON, langName } from './studioTranslationCore.js';
 import { IMAGE_DELIVERABLES, IMAGE_DELIVERABLE_LABELS, IMAGE_PRODUCTION_STRATEGIES, type ImageDeliverable, type ImageProductionStrategy } from '../../shared/imageCreativePlanning.js';
 import { callLLM } from '../agents/llm.js';
@@ -55,7 +57,6 @@ export function createStudioPosterPlanningRoutes(deps: Pick<StudioApplicationPor
           res.status(failure.status).json({ ok: false, code: failure.code, error: failure.code });
         }
       };
-      if (!await consumeDemoQuota(req, res, 'generation')) return;
       const {
         deliverableType: rawDeliverableType = 'social_poster',
         productionStrategy: rawProductionStrategy = 'reference_generate',
@@ -63,12 +64,19 @@ export function createStudioPosterPlanningRoutes(deps: Pick<StudioApplicationPor
         platform = 'facebook',
         ratio = '1:1',
         posterStyle = 'oem-factory',
-        language = 'en',
+        language: rawLanguage = 'en',
         provider,
         materials = [],
         referenceNotes = '', referenceCaption = '', brandName = '', categoryTerms = [], targetMarket = '',
         confirmedFields = {},
       } = boundTask ? socialImageV3TrustedPlanningRequest(boundTask) : req.body ?? {};
+      const parsedLanguage = imageLanguageSchema.safeParse(normalizeImageLanguage(rawLanguage));
+      if (!parsedLanguage.success) {
+        res.status(400).json({ ok: false, code: 'social_image_language_unsupported', error: '请选择支持的图文语言。' }); return;
+      }
+      const language = parsedLanguage.data;
+      if (!await consumeDemoQuota(req, res, 'generation')) return;
+      const neutral = neutralSocialImageCopy(language);
       const deliverableType: ImageDeliverable = IMAGE_DELIVERABLES.includes(rawDeliverableType)
         ? rawDeliverableType : 'social_poster';
       const productionStrategy: ImageProductionStrategy = IMAGE_PRODUCTION_STRATEGIES.includes(rawProductionStrategy) ? rawProductionStrategy : 'reference_generate';
@@ -121,6 +129,7 @@ export function createStudioPosterPlanningRoutes(deps: Pick<StudioApplicationPor
 
       const prompt = `You are a senior B2B social media creative director. Never assume that the company is a factory, exporter, OEM/ODM supplier, private-label provider, or certified business unless the authenticated enterprise profile explicitly says so.
 Create a structured poster brief and ${platform} caption in ${lang}.
+All newly authored poster headlines, subheadlines, CTA and caption must use ${lang}, with its correct script and reading direction. Preserve original brand names and physical product-label text; do not translate or redraw packaging labels.
 
 Requested finished image: ${IMAGE_DELIVERABLE_LABELS[deliverableType]} (${deliverableType})
 Agent-selected production strategy: ${productionStrategy}
@@ -199,7 +208,7 @@ Schema:
             let safeDraft = audit.issues.length || audit.fieldsToConfirm.length
               ? sanitizePosterCommercialClaims(normalized, commercialEvidence)
               : normalized;
-            if (!safeDraft.poster.headline) safeDraft.poster.headline = language === 'zh' ? '产品概览' : 'Product overview';
+            if (!safeDraft.poster.headline) safeDraft.poster.headline = neutral.headline;
             const remainingAudit = auditCommercialClaims(userFacingPosterText(safeDraft), commercialEvidence);
             if (remainingAudit.issues.length) {
               // A stubborn model sentence must not block first-draft production.
@@ -210,19 +219,17 @@ Schema:
                 ...safeDraft,
                 poster: {
                   ...normalizePosterBrief({}),
-                  headline: language === 'zh' ? '产品概览' : 'Product overview',
-                  subheadline: language === 'zh' ? '查看产品外观与包装信息' : 'Explore the product and packaging',
-                  cta: language === 'zh' ? '联系获取已核实资料' : 'Message us for verified product details',
+                  headline: neutral.headline,
+                  subheadline: neutral.subheadline,
+                  cta: neutral.cta,
                 },
-                caption: language === 'zh'
-                  ? '查看本次产品与包装展示。具体商业信息请以企业确认资料为准。'
-                  : 'Explore this product and its packaging. Contact us for verified commercial details.',
+                caption: neutral.caption,
                 hashtags: [],
                 commentCta: '',
                 dmOpening: '',
                 imagePrompt: language === 'zh'
                   ? '使用已提供的企业产品图片，制作不含额外商业声明的中性产品展示海报。'
-                  : 'Create a neutral product presentation using the supplied enterprise product images, without additional commercial claims.',
+                  : `Create a neutral product presentation using the supplied enterprise product images, without additional commercial claims. All newly authored visible text must be in ${lang}.`,
               };
             }
             const publishable = fieldsToConfirm.length === 0;
@@ -251,7 +258,7 @@ Schema:
       }
       console.warn('[studio] fb-poster generation failed:', failures.join(' | '));
       const selectedProductName = String(productInfo).match(/^\s*产品名称[：:]\s*([^\r\n]+)/m)?.[1]?.trim().slice(0, 120)
-        || (language === 'zh' ? '企业产品' : 'Enterprise product');
+        || neutral.headline;
       await respond({
         ok: true,
         source: 'ai',
@@ -262,20 +269,18 @@ Schema:
         layoutModules: [],
         poster: {
           ...normalizePosterBrief({}),
-          headline: selectedProductName,
-          subheadline: language === 'zh' ? '产品与包装展示' : 'Product and packaging overview',
-          cta: language === 'zh' ? '联系获取已核实资料' : 'Message us for verified product details',
+          headline: neutral.headline,
+          subheadline: neutral.subheadline,
+          cta: neutral.cta,
         },
-        caption: language === 'zh'
-          ? `查看 ${selectedProductName} 的产品与包装展示。具体商业信息请以企业确认资料为准。`
-          : `Explore ${selectedProductName} and its packaging. Contact us for verified commercial details.`,
+        caption: `${neutral.caption} (${selectedProductName})`,
         hashtags: [],
         commentCta: '',
         dmOpening: '',
         fieldsToConfirm: [],
         imagePrompt: language === 'zh'
           ? `使用已提供的企业产品图片，为 ${selectedProductName} 制作中性产品展示海报，不添加未经确认的商业声明。`
-          : `Create a neutral product presentation for ${selectedProductName} using the supplied enterprise product images, without unverified commercial claims.`,
+          : `Create a neutral product presentation for ${selectedProductName} using the supplied enterprise product images, without unverified commercial claims. All newly authored visible text must be in ${lang}.`,
       });
     });
   }

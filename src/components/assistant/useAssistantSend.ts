@@ -213,7 +213,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       && !['smartAssets', 'socialInspiration'].includes(page) ? assistantCreationPortal(visibleText) : null);
     if (portal) {
       setMessages(threadAgent, [...nextVisible, { role: 'assistant',
-        content: imagePortal ? '点击「图文爆款复刻」，逐步确认参考图、企业产品、卖点和发布规格。' : '创作需求已带入下方入口。\n\n总体结论：点击「内容创作」，确认产品和数量后继续制作。', creationPortal: portal }]);
+        content: imagePortal ? '先确认参考图和企业产品，其他要求可以补充；确认后我来完成图片和配文。' : '创作需求已带入下方入口。\n\n总体结论：点击「内容创作」，确认产品和数量后继续制作。', creationPortal: portal }]);
       setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;

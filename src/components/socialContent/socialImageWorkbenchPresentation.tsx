@@ -43,12 +43,12 @@ export function posterStyleForType(type: SocialImageContentType) {
   return 'oem-factory';
 }
 
-export function ReviewImage({ src, alt }: { src: string; alt: string }) {
+export function ReviewImage({ src, alt, onAvailability }: { src: string; alt: string; onAvailability?: (ready: boolean) => void }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   return <LsMediaStateFrame state={failed ? 'error' : loaded ? 'ready' : 'loading'}
-    label={failed ? '预览加载失败，可使用下载链接核对原文件' : '正在加载图片'} className="h-full w-full">
-    <LsProgressiveMedia src={src} alt={alt} className="h-full w-full object-contain" preview={false}
-      onLoad={() => setLoaded(true)} onError={() => setFailed(true)} />
+    label={failed ? '图片暂不可用' : '正在加载图片'} className="h-full w-full">
+    <LsProgressiveMedia src={src} alt={alt} width="100%" height="100%" className="h-full w-full object-contain" preview={false}
+      onLoad={() => { setLoaded(true); if (!failed) onAvailability?.(true); }} onError={() => { setFailed(true); onAvailability?.(false); }} />
   </LsMediaStateFrame>;
 }

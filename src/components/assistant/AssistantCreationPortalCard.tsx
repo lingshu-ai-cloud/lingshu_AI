@@ -3,6 +3,7 @@ import { App as AntApp } from 'antd';
 import { ArrowRight, CalendarDays, Clapperboard, Images } from 'lucide-react';
 import { assistantCreationPortalSchema, type AssistantCreationPortal } from '../../../shared/contracts/assistantCreationPortal';
 import { productionNavigationIdentity } from '../../lib/productionNavigation';
+import AssistantImageReplicationScene from './AssistantImageReplicationScene';
 import type { SocialContentCreateRequest } from '../socialContent/SocialContentWorkspace';
 import { assistantTaskPortalSchema, type AssistantTaskPortal } from '../../../shared/contracts/assistantTaskPortal';
 import { assistantSourcePortalSchema, type AssistantSourcePortal } from '../../../shared/contracts/assistantSourcePortal';
@@ -27,6 +28,7 @@ export function creationPortalNavigation(value: AssistantCreationPortal, request
       originLabel: '来自灵小枢对话', referenceContentType: 'image' as const,
       referenceTitle: portal.imageReplication.reference?.name || '',
       referenceMaterialId: portal.imageReplication.reference?.materialId,
+      referenceSourceRecordId: portal.imageReplication.reference?.sourceRecordId,
       aspectRatio: portal.aspectRatio || undefined,
     } } : {}),
   };
@@ -40,6 +42,8 @@ export default function AssistantCreationPortalCard({ portal }: { portal: Assist
     ? { ...portal, selectedProducts: portal.selectedProducts.map(({ id, name }) => ({ id, name })) } : portal);
   if (!valid.success) return null;
   const item = valid.data;
+  if (item.imageReplication) return <AssistantImageReplicationScene portal={item}
+    request={creationPortalNavigation(item).contentCreationRequest}/>;
   if (item.scenario === 'viral_replication') return <AssistantReplicationScene portal={item}/>;
   if (item.scenario === 'weekly_calendar') return <button type="button" aria-label="打开内容创作 - 发布日历" data-assistant-calendar-portal={item.id}
     className="mt-3 flex w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left text-text-primary transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
