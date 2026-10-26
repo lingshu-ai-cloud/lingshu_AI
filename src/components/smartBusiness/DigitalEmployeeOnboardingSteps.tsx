@@ -16,6 +16,7 @@ import type { ProductionPresenterPolicy } from '../../../shared/contracts/produc
 import { Field, inputClass } from './DigitalEmployeeFormField';
 import { onboardingProductName } from './onboardingProductImport';
 import { CATEGORY_OPTIONS } from '../enterprise/enterpriseProfileNormalization';
+import { ONBOARDING_MARKET_OPTIONS, ONBOARDING_BUYER_OPTIONS, onboardingSelections, onboardingSelectionText } from './onboardingMarketOptions';
 
 const applicationGuideSteps = [
   { index: 1, label: '企业与品牌' },
@@ -189,8 +190,8 @@ export function OnboardingMarketStep({ busy, aiBusy, dismissible, guideTitle, on
     primaryLabel="确认市场与内容方向" primaryDisabled={incomplete} onPrimary={onConfirm}>
     <Form className="space-y-5" layout="vertical" aria-label="市场与内容方向">
       <div className="grid gap-4 md:grid-cols-2">
-        <Field label="主要目标市场" required><input className={inputClass} value={targetMarket} onChange={event => onChange('targetMarket', event.target.value)} placeholder="例如：美国与加拿大" /></Field>
-        <Field label="主推买家" required><input className={inputClass} value={targetBuyer} onChange={event => onChange('targetBuyer', event.target.value)} placeholder="例如：当地经销商与采购负责人" /></Field>
+        <Form.Item className="mb-0" label="主要目标市场" required><Select aria-label="主要目标市场" mode="tags" showSearch allowClear disabled={busy} maxTagCount="responsive" optionFilterProp="label" value={onboardingSelections(targetMarket)} options={ONBOARDING_MARKET_OPTIONS} onChange={values => onChange('targetMarket', onboardingSelectionText(values))} placeholder="选择国家或地区（可多选，也可输入）" /></Form.Item>
+        <Form.Item className="mb-0" label="主推买家" required><Select aria-label="主推买家" mode="tags" showSearch allowClear disabled={busy} maxTagCount="responsive" optionFilterProp="label" value={onboardingSelections(targetBuyer)} options={ONBOARDING_BUYER_OPTIONS} onChange={values => onChange('targetBuyer', onboardingSelectionText(values))} placeholder="选择买家类型（可多选，也可输入）" /></Form.Item>
         <Form.Item className="mb-0" label="主平台" required><Select value={primaryPlatform || undefined} options={platformOptions} onChange={value => onChange('primaryPlatform', value)} placeholder="选择主要内容平台" /></Form.Item>
         <Form.Item className="mb-0" label="主要语言" required><Select value={language || undefined} onChange={value => onChange('language', value)} options={[{ value: '英语', label: '英语' }, { value: '中文', label: '中文' }, { value: '西班牙语', label: '西班牙语' }, { value: '法语', label: '法语' }, { value: '德语', label: '德语' }]} /></Form.Item>
       </div>

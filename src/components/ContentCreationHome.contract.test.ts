@@ -75,6 +75,9 @@ assert.doesNotMatch(home, /fetch\('\/api\/overseas\/assistant-threads|createAssi
 assert.match(assistant, /data-home-empty=/);
 assert.match(assistantPanel, /variant=\{inlineHome \? 'home' : 'default'\}/);
 assert.doesNotMatch(assistantComposer, /Agent 模式|ls-assistant-composer__mode/, '首页输入区不得显示 Agent 模式装饰标签');
+assert.match(creatorStyles, /data-home-empty='true'\] \[data-assistant-conversation-controls\] \{ position: absolute;/, '空白会话的管理入口不得占一行挤压输入区');
+assert.match(creatorStyles, /data-home-empty='true'\] \.ls-assistant-composer \{ padding-top: 16px;/, '空白会话输入文字应从顶部开始');
+assert.match(creatorStyles, /data-home-empty='true'\] \.ls-assistant-composer__editing \{ padding-right: 56px;/, '输入文字必须避开右上角会话管理按钮');
 assert.match(creatorStyles, /\.ls-assistant-home-root \.ls-assistant-flow__answer/, '首页助手回复必须使用连续文本流，而不是通用消息气泡');
 assert.match(creatorStyles, /@keyframes ls-assistant-flow-reveal/, '首页助手文本须使用一次性分层进入动效');
 assert.match(layout, /Math\.round\(viewportWidth \* 0\.173\)/, '左侧栏按参考图桌面比例布局');

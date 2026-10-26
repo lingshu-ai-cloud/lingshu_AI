@@ -292,6 +292,9 @@ html[data-lingshu-appearance='dark'] .ls-inspiration-watch-dialog [data-preview-
 .creator-home--employee .creator-home__assistant-anchor:has(> .ls-assistant-home-root[data-home-empty='true']) { height: auto; min-height: 156px; }
 .ls-assistant-home-root[data-home-empty='true'] { position: relative; inset: auto; }
 .ls-assistant-home-root[data-home-empty='true'] > [data-global-assistant='panel'] { position: relative; height: auto !important; min-height: 154px; max-height: none !important; }
+.ls-assistant-home-root[data-home-empty='true'] [data-assistant-conversation-controls] { position: absolute; top: 12px; right: 12px; z-index: 1; padding: 0; }
+.ls-assistant-home-root[data-home-empty='true'] .ls-assistant-composer { padding-top: 16px; }
+.ls-assistant-home-root[data-home-empty='true'] .ls-assistant-composer__editing { padding-right: 56px; }
 .ls-assistant-home-root .ls-assistant-composer { display: flex; height: auto; min-height: 0; padding: 24px 16px 12px; background: transparent; }
 .ls-assistant-home-root .ls-assistant-composer__surface { position: relative; display: flex; width: 100%; min-height: 0; flex-direction: column; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 /* Keep the outer input card; the inner text field has no separate fill or boundary. */
