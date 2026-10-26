@@ -104,9 +104,14 @@ type PhaseCheckpointPayload = {
 
 export function socialAssetSupplyPhaseInputHash(input:{phase:SocialAssetSupplyPhase;plan:SocialAssetSupplyPlan;
   materialAnalysisInputHash:string;baselineVersion:string;voiceOutputSha256?:string|null}) {
-  return socialRequestHash({schemaVersion:'social-asset-supply-phase-input.v1',phase:input.phase,
+  // The reviewed plan already freezes every source/presenter shot contract.
+  // Script-baseline revisions may legitimately advance while the graph persists
+  // grounding metadata between nodes; they do not change the selected source
+  // bytes. Binding phase identity to that mutable revision made the next node
+  // unable to consume the source checkpoint it had just produced.
+  return socialRequestHash({schemaVersion:'social-asset-supply-phase-input.v2',phase:input.phase,
     planHash:socialRequestHash(input.plan),materialAnalysisInputHash:input.materialAnalysisInputHash,
-    baselineVersion:input.baselineVersion,...(input.phase==='presenter_assets'?{voiceOutputSha256:input.voiceOutputSha256??null}:{})});
+    ...(input.phase==='presenter_assets'?{voiceOutputSha256:input.voiceOutputSha256??null}:{})});
 }
 
 export async function recordSocialAssetSupplyPhaseCheckpoint(input:{phase:SocialAssetSupplyPhase;inputHash:string;
@@ -143,7 +148,7 @@ export function restoreV4SourceAssets(input:{enabled:boolean;phase?:string;tenan
     materialAnalysisInputHash:input.materialAnalysisInputHash,baselineVersion:input.baselineVersion});
   const result=input.phase==='source_assets'?null:readSocialAssetSupplyPhaseCheckpoint({phase:'source_assets',inputHash,
     tenantId:input.tenantId,plan:input.plan,availableAssets:input.availableAssets});
-  if(input.phase!=='source_assets'&&!result)throw Error('graph_source_assets_checkpoint_missing');
+  if(input.phase!=='source_assets'&&!result)throw Error(`graph_source_assets_checkpoint_missing:${input.phase||'unknown'}`);
   return{inputHash,result,assets:result?[...input.availableAssets,...result.assets]:input.availableAssets};
 }
 

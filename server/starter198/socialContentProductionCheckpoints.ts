@@ -91,6 +91,24 @@ export function restoreSocialAssetSupplyCheckpointAssets(input: {
     const asset = availableById.get(selected.assetId);
     if (asset && asset.sourceId === selected.sourceId
       && (!selected.contentHash || selected.contentHash === (asset.contentHash ?? null))) return asset;
+    // A reviewed source window is a deterministic view over an owned source,
+    // not a newly generated file. Its scene-owned ID differs from the library
+    // asset, while the source identity and bytes remain the same. Rebind the
+    // frozen window contract to the current transport location after restart.
+    const frozenView = selected.asset;
+    const windowSource = frozenView?.selectedSourceWindow ? input.availableAssets.find(candidate =>
+      frozenView.id.startsWith(`${candidate.id}:window:`)
+      && candidate.sourceId === selected.sourceId
+      && (!selected.contentHash || candidate.contentHash === selected.contentHash)) : null;
+    if (frozenView && windowSource) {
+      const { localPath: _oldLocalPath, objectKey: _oldObjectKey, url: _oldUrl, ...view } = frozenView;
+      return {
+        ...structuredClone(view),
+        url: windowSource.url,
+        ...(windowSource.localPath ? { localPath: windowSource.localPath } : {}),
+        ...(windowSource.objectKey ? { objectKey: windowSource.objectKey } : {}),
+      };
+    }
     const generated = selected.asset;
     return generated
       && generated.id === selected.assetId

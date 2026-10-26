@@ -11,7 +11,7 @@ import { buildMaterialScriptAnalysis } from '../shared/materialScriptAnalysis.js
 import { normalizeSceneVisualContract } from '../shared/sceneVisualContract.js';
 import { paidProductionHash, type PaidStageRequirement } from '../server/starter198/socialContentPaidOperationPlan.js';
 import { parseStoredSocialScriptBaseline } from '../server/starter198/socialContentScriptBaseline.js';
-import { VIDEO_PRODUCTION_GRAPH_V2_PHASES } from '../shared/contracts/videoProductionSupervisor.js';
+import { VIDEO_PRODUCTION_GRAPH_V4_PHASES } from '../shared/contracts/videoProductionSupervisor.js';
 import type { MaterialRecord } from '../server/lib/materialLibrary.js';
 
 test('actual local media production through graph stages retains real QA and canonical human review', { timeout: 180_000, skip: process.platform !== 'darwin' ? 'controlled speech fixture requires macOS /usr/bin/say' : false }, async t => {
@@ -30,7 +30,11 @@ test('actual local media production through graph stages retains real QA and can
   const tenantId = 'langgraph-local-tenant', userId = 'local-human-reviewer', now = new Date();
   await store.create(STARTER_COLLECTIONS.access, { tenant_id: tenantId, product_profile: 'starter_198', profile_version: 'starter_198.v1', entitlement_snapshot_id: 'local-entitlement', feature_entitlements: STARTER_198_CAPABILITIES.map(capability => ({ capability, enabled: true })), resource_limits: (await import('../server/starter198/provisioning.js')).STARTER_198_DEFAULT_LIMITS, status: 'active', cycle_started_at: new Date(now.getTime() - 86_400_000).toISOString(), cycle_ends_at: new Date(now.getTime() + 86_400_000).toISOString(), updated_at: now.toISOString() });
   await store.create('social_programs', { tenant_id: tenantId, program_id: 'langgraph-local-program' });
-  const created = await createSocialContentTask({ repository, tenantId, userId, idempotencyKey: 'langgraph-local-create', value: parseCreateSocialTask({ title: '实际本地视频链路', objective: '验证真实渲染与审核，不调用云供应商', mode: 'weekly', themeId: 'product_value',productRef:'SKU-1',languages:['zh'],platforms:['tiktok'],perItemBudgetCny:10 }) });  const ffmpeg = (await import('ffmpeg-static')).default; assert.ok(ffmpeg);
+  const enterpriseProfile={company:{name:'本地联调企业',industry:'测试',mainMarkets:'全球',founded:'',description:''},products:{categories:'测试产品',priceRange:'',moq:'',certifications:'',highlights:'可核验的本地联调产品',items:[{id:'SKU-1',sku:'SKU-1',name:'本地联调产品'}]}} as any;
+  const {enterpriseFactContentHash}=await import('../server/routes/enterprise.js');
+  enterpriseProfile.factVersion={id:'local-production-facts',revision:1,contentHash:enterpriseFactContentHash(enterpriseProfile),confirmedAt:now.toISOString(),confirmedBy:userId};
+  await store.create('tenant_profiles',{tenant_id:tenantId,profile:enterpriseProfile});
+  const created = await createSocialContentTask({ repository, tenantId, userId, idempotencyKey: 'langgraph-local-create', value: parseCreateSocialTask({ title: '实际本地视频链路', objective: '验证真实渲染与审核，不调用云供应商', mode: 'instant', themeId: 'product_value',productId:'SKU-1',productRef:'SKU-1',callToAction:'联系获取产品资料',aspectRatio:'9:16',languages:['zh'],platforms:['tiktok'],perItemBudgetCny:10 }) });  const ffmpeg = (await import('ffmpeg-static')).default; assert.ok(ffmpeg);
   const stored=(await repository.list(STARTER_COLLECTIONS.socialContentTasks,tenantId,{where:{task_id:created.taskId},perPage:1})).items[0]!;
   const baseline=parseStoredSocialScriptBaseline(stored.script_baseline)!;
   const {MEDIA_ROOT}=await import('../server/starter198/socialContentProductionMaterials.js');
@@ -116,7 +120,7 @@ test('actual local media production through graph stages retains real QA and can
   const waiting = await run(); assert.equal(waiting.status, 'waiting_review');
   const pausedGraphJob = await readContentExecutionJob(store, tenantId, created.taskId, runId); assert.ok(pausedGraphJob);
   assert.equal(pausedGraphJob.id, admitted.id); assert.equal(pausedGraphJob.taskId, created.taskId); assert.equal(pausedGraphJob.runId, runId);
-  const completedProductionStages = VIDEO_PRODUCTION_GRAPH_V2_PHASES.filter(stage => stage !== 'delivery');
+  const completedProductionStages = VIDEO_PRODUCTION_GRAPH_V4_PHASES.filter(stage => !['review','handoff','delivery'].includes(stage));
   const frozenStageEvidence = Object.fromEntries(completedProductionStages.map(stage => {
     const checkpoint = pausedGraphJob.checkpoints[`langgraph.node.${stage}`];
     assert.equal((checkpoint?.payload as { status?: string } | undefined)?.status, 'completed', `${stage} must be durably complete before user intervention`);
@@ -170,6 +174,8 @@ test('actual local media production through graph stages retains real QA and can
   const completedGraphJob = await readContentExecutionJob(store, tenantId, created.taskId, runId); assert.ok(completedGraphJob);
   assert.equal(completedGraphJob.id, admitted.id, 'human intervention must resume the original content job');
   assert.equal(completedGraphJob.taskId, created.taskId); assert.equal(completedGraphJob.runId, runId);
+  assert.equal((completedGraphJob.checkpoints['langgraph.node.handoff']?.payload as { status?: unknown } | undefined)?.status,
+    'completed', 'v4 must bind the approved artifact and scene cache before delivery');
   for (const stage of completedProductionStages) assert.equal(JSON.stringify(completedGraphJob.checkpoints[`langgraph.node.${stage}`]), frozenStageEvidence[stage], `${stage} checkpoint must be reused without a paid rerun`);
   assert.equal(JSON.stringify(completedGraphJob.providerReceipts), frozenProviderReceipts, 'approval and delivery projection must not add or repeat paid provider calls');
   const { completeSocialContentGraphRun } = await import('../server/starter198/socialContentGraphCompletion.js');

@@ -107,7 +107,14 @@ function evidence(value: PhaseEvidence): PhaseEvidence {
   // prompts, credentials and filesystem paths remain in their existing stores.
   const allowedMetadata = new Set(['contentHash','checkpointStage','approvalReceipt','externalPublishPerformed',
     'artifactId','packageId','sceneCount','durationSeconds','qualityPassed','outputSha256','providerReceiptRefs',
-    'reservedCny','actualCostCny']);
+    'reservedCny','actualCostCny',
+    // Compact hashes emitted by the existing domain checkpoints. Keeping
+    // them in graph evidence lets restart validation prove the exact handoff
+    // without copying plans, timelines, captions or provider payloads.
+    'phase','planHash','assetSupplyExecutionHash','selectedAssetsHash','narrationCheckpointInputHash',
+    'timelineHash','directorPlanHash','voiceOutputSha256','manifestHash','effectPlanHash',
+    'subtitleCueHash','trimCheckpointInputHash','renderInputHash','renderCheckpointInputHash',
+    'policyVersion','reportHash','handoffId','handoffVersion','handoffHash','sceneCacheHash']);
   if (value.metadata && Object.entries(value.metadata).some(([key,item]) => !allowedMetadata.has(key)
     || key === 'outputSha256' && (typeof item !== 'string' || !/^[a-f0-9]{64}$/.test(item))
     || ['reservedCny','actualCostCny'].includes(key) && (typeof item !== 'number' || !Number.isFinite(item) || item < 0)
