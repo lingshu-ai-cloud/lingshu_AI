@@ -2,11 +2,13 @@ export type AssistantQueryKind = 'industry' | 'rates' | 'trade';
 export function assistantQueryKind(id: string): AssistantQueryKind | null {
   return id === 'OP-09' ? 'industry' : id === 'OP-RATES' ? 'rates' : id === 'OP-TRADE' ? 'trade' : null;
 }
-export function homeQuickPrompt(kind: AssistantQueryKind, values: { industry?: string; base?: string; quote?: string; country?: string; year?: number; flow?: string; hs?: string } = {}) {
+export function homeQuickPrompt(kind: AssistantQueryKind, values: { industry?: string; market?: string; base?: string; quote?: string; country?: string; year?: number; flow?: string; hs?: string } = {}) {
   if (kind === 'industry') {
     const industry = values.industry?.trim();
     if (!industry || industry.length > 60) throw Error('请填写关注的行业。');
-    return `查询${industry}行业最近30天的外贸资讯，说明对中国出口商的影响，并附信息来源。`;
+    const market = values.market?.trim();
+    if (!market || market.length > 60) throw Error('请填写目标市场。');
+    return `行业资讯：行业：${industry}，目标市场：${market}。查询最近30天与该行业及市场相关的市场变化、技术趋势、供应链和竞争动向；只采用可读取且有发布日期的原始来源，区分事实、推断与建议，不把发布计划当作销量或收益。`;
   }
   if (kind === 'rates') {
     if (!values.base || !values.quote || values.base === values.quote) throw Error('请选择两个不同的币种。');

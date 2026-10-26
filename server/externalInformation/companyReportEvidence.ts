@@ -122,4 +122,3 @@ export function validateCompanyAnalysis(analysis: CompanyAnalysis, evidence: Com
     if (/超预期|不及预期|市场一致预期|consensus|明年必然|保证增长|一定上涨/iu.test(prose + analysis.headline)) throw new ExternalInformationError('company_report_claim_unsupported', '报告包含未接入预期或确定性预测，本次未采用。');
   }
 }
-
