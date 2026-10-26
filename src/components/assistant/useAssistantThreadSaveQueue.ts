@@ -41,6 +41,9 @@ export function useAssistantThreadSaveQueue({
     reason: AssistantPersistenceReason = 'change',
   ) => {
     if (persistencePauseRef?.current) return;
+    if (useAssistantStore.getState().threads[agentId].deletedAt) return;
+    const active = useAssistantStore.getState().threads[agentId];
+    if (!active.version && !active.messages.length && !active.draftInput && !active.creationDraft && !Object.keys(active.taskCards).length && !active.pendingContentTaskBinding) return;
     const fence = persistenceFenceRef.current;
     const fenceIsCurrent = () => fence.active && persistenceFenceRef.current === fence;
     if (!fenceIsCurrent()) return;
@@ -81,7 +84,7 @@ export function useAssistantThreadSaveQueue({
           const requestBody = JSON.stringify({ ...snapshot, expectedVersion });
           const controller = new AbortController();
           queue.abortController = controller;
-          const response = await fetch(`/api/overseas/assistant-threads/${agentId}`, {
+          const response = await fetch(`/api/overseas/assistant-threads/${encodeURIComponent(snapshot.conversationKey || agentId)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', ...scopedAuthHeaders },
             body: requestBody,
@@ -98,6 +101,14 @@ export function useAssistantThreadSaveQueue({
           } & Record<string, unknown>) | null;
           if (queue.abortController === controller) queue.abortController = null;
           if (!fenceIsCurrent()) return;
+          if (response.status === 410) {
+            const remote = persistedAssistantThread(payload?.current, snapshot);
+            if (remote) hydrateThread(agentId, remote);
+            window.dispatchEvent?.(new Event('lingshu:assistant-conversation-reset'));
+            queue.pending = null;
+            clearAssistantThreadJournal(window.localStorage, stablePersistenceScope, agentId);
+            break;
+          }
           if (response.status === 409) {
             const latestLocal = useAssistantStore.getState().threads[agentId];
             const remote = persistedAssistantThread(payload?.current, latestLocal);
@@ -108,6 +119,12 @@ export function useAssistantThreadSaveQueue({
             }
             const merged = mergeAssistantThread(remote, latestLocal);
             hydrateThread(agentId, merged);
+            if ((remote.conversationResetVersion ?? 0) > (latestLocal.conversationResetVersion ?? 0)) {
+              queue.pending = null;
+              clearAssistantThreadJournal(window.localStorage, stablePersistenceScope, agentId);
+              window.dispatchEvent?.(new Event('lingshu:assistant-conversation-reset'));
+              break;
+            }
             queue.pending = cloneAssistantThread(merged);
             writeAssistantThreadJournal(window.localStorage, stablePersistenceScope, agentId, merged);
             conflicts += 1;

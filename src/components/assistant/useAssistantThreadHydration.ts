@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Page } from '../../App';
 import { authHeader } from '../../lib/auth';
+import { readAssistantConversationKey } from '../../lib/assistantConversationIdentity';
 import { readAssistantThreadJournal, type AssistantJournalScope } from '../../lib/assistantThreadJournal';
 import { useAssistantStore, type AgentThreadState, type AssistantTaskCardInput, type OrbitAgentId } from '../../stores/assistantStore';
 import type { AssistantActionRequest, AssistantActionResponse } from '../../../shared/contracts/assistantActions';
@@ -11,7 +12,6 @@ import {
   emptyAssistantThread,
   mergeAssistantThread,
   persistedAssistantThread,
-  withoutPersistedConversation,
 } from './globalAssistantRuntime';
 
 export function hydratedFocusNeedsWorkspaceStatus(focusedTaskId: string | null): boolean {
@@ -32,31 +32,31 @@ export function useAssistantThreadHydration(input: {
   const { page, stablePersistenceScope, persistThread, hydrateThread,
     executeAssistantAction, upsertTaskCard, focusTaskCard, requestId } = input;
   const [assistantThreadHydrated, setAssistantThreadHydrated] = useState(false);
-  const assistantThreadHydrationStartedRef = useRef(false);
   const initialAssistantPageRef = useRef(page);
   const persistRecoveredThread = useCallback(() => {
     persistThread(PRIMARY_ASSISTANT_THREAD, 'retry');
   }, [persistThread]);
 
   useEffect(() => {
-    if (assistantThreadHydrationStartedRef.current) return undefined;
-    assistantThreadHydrationStartedRef.current = true;
     let cancelled = false;
-    const journal = readAssistantThreadJournal(
+    const conversationKey = readAssistantConversationKey(stablePersistenceScope);
+    const storedJournal = readAssistantThreadJournal(
       window.localStorage,
       stablePersistenceScope,
       PRIMARY_ASSISTANT_THREAD,
     );
+    const journal = storedJournal && (storedJournal.conversationKey || 'business') === conversationKey ? storedJournal : null;
     // A keyed component instance starts from an empty scoped thread, then
     // recovers only the matching tenant + user + agent journal. This prevents
     // Zustand state from a prior login/support scope flashing into this one.
     hydrateThread(
       PRIMARY_ASSISTANT_THREAD,
-      journal ? withoutPersistedConversation(journal) : emptyAssistantThread(),
+      journal ? { ...journal, conversationKey } : { ...emptyAssistantThread(), conversationKey },
     );
     const threadBeforeRequest = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
-    fetch('/api/overseas/assistant-threads', { headers: authHeader() })
+    fetch(`/api/overseas/assistant-threads/${encodeURIComponent(conversationKey)}`, { headers: authHeader() })
       .then(resp => resp.ok ? resp.json() : null)
+      .then(item => ({ items: item ? [item] : [] }))
       .then(async data => {
         if (cancelled) return;
         const localChangedWhileLoading = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD] !== threadBeforeRequest;
@@ -66,8 +66,12 @@ export function useAssistantThreadHydration(input: {
           setAssistantThreadHydrated(true);
           return;
         }
-        const item = data.items.find((candidate: ({ agentId?: unknown } & Record<string, unknown>) | null) => candidate?.agentId === PRIMARY_ASSISTANT_THREAD);
+        const item = data.items.find((candidate: ({ agentId?: unknown } & Record<string, unknown>) | null) => candidate?.agentId === conversationKey);
         const persistedRemote = item ? persistedAssistantThread({
+          conversationKey,
+          conversationResetVersion: item.conversationResetVersion,
+          deletedAt: item.deletedAt,
+          title: item.title,
           version: Number.isSafeInteger(Number(item.version)) ? Number(item.version) : 0,
           updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : '',
           messages: Array.isArray(item.messages) ? item.messages : [],
@@ -83,7 +87,7 @@ export function useAssistantThreadHydration(input: {
             ? item.pendingContentTaskBinding
             : null,
         }, emptyAssistantThread()) : null;
-        const remote = persistedRemote ? withoutPersistedConversation(persistedRemote) : null;
+        const remote = persistedRemote;
         const merged = remote
           ? (journal || localChangedWhileLoading ? mergeAssistantThread(remote, latestLocal) : remote)
           : latestLocal;

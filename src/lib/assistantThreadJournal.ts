@@ -234,6 +234,10 @@ export function sanitizeAssistantThreadForJournal(thread: AgentThreadState): Age
     : null;
   return {
     version: Number.isSafeInteger(thread.version) && thread.version >= 0 ? thread.version : 0,
+    conversationKey: thread.conversationKey,
+    conversationResetVersion: thread.conversationResetVersion ?? 0,
+    deletedAt: thread.deletedAt || '',
+    title: thread.title || '',
     updatedAt: typeof thread.updatedAt === 'string' ? thread.updatedAt.slice(0, 100) : '',
     creationDraft: creationSelectionSchema.safeParse(sanitizeValue(thread.creationDraft, 0, 10, 256, 12_000)).success ? creationSelectionSchema.parse(sanitizeValue(thread.creationDraft, 0, 10, 256, 12_000)) : null,
     messages: (thread.messages || []).slice(-JOURNAL_MAX_MESSAGES).map(sanitizeMessage),

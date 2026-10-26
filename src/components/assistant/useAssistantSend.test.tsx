@@ -44,6 +44,7 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
     contentIntake: { active: false, answer: () => false, start: () => {} },
     uiMessage: { warning: () => {} }, modal: {},
     persistenceFenceRef: fence, stablePersistenceScope: { tenantId: 'tenant-a', userId: 'user-a' },
+    assistantAtomicMutationRef: { current: false }, waitForInFlightThreadSave: async () => {},
     pendingMapFileRef: { current: false }, pipelineModalOpenRef: { current: false }, abortRef: abort,
     openAgent: () => {}, presentActionResponse: () => {},
     setMessages: store.setMessages, setDraftInput: store.setDraftInput,
@@ -60,6 +61,14 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
   try {
     renderToStaticMarkup(createElement(() => { send = useAssistantSend(input).send; return null; }));
     assert.ok(send);
+    input.assistantAtomicMutationRef.current = true;
+    await send('切换会话期间不应发送');
+    assert.equal(requests, 0);
+    input.assistantAtomicMutationRef.current = false;
+    store.hydrateThread('business', { deletedAt: '2026-10-27T00:00:00Z' });
+    await send('已删除会话不应发送');
+    assert.equal(requests, 0);
+    store.hydrateThread('business', { deletedAt: '' });
     await send('请说明本周重点');
     assert.equal(requests, 1, JSON.stringify(useAssistantStore.getState().threads.business.messages));
     assert.equal(requestedUrl, '/api/overseas/strategy/chat');

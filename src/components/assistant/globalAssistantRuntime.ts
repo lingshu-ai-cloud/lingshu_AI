@@ -140,6 +140,10 @@ export const ASSISTANT_PERSIST_KEEPALIVE_MAX_BYTES = 60 * 1024;
 
 export function emptyAssistantThread(): AgentThreadState {
   return {
+    conversationKey: undefined,
+    conversationResetVersion: 0,
+    deletedAt: '',
+    title: '',
     creationDraft: null,
     version: 0,
     updatedAt: '',
@@ -221,6 +225,7 @@ export function cloneAssistantThread(thread: AgentThreadState): AgentThreadState
 }
 
 export function mergeAssistantThread(remote: AgentThreadState, local: AgentThreadState): AgentThreadState {
+  if (remote.deletedAt || (remote.conversationResetVersion ?? 0) > (local.conversationResetVersion ?? 0)) return remote;
   const cards = { ...remote.taskCards };
   for (const [taskId, card] of Object.entries(local.taskCards)) {
     const remoteCard = cards[taskId];
@@ -259,6 +264,10 @@ export function persistedAssistantThread(value: unknown, fallback: AgentThreadSt
   if (!Number.isSafeInteger(version) || version < 0) return null;
   return {
     creationDraft: source.creationDraft ?? null,
+    conversationKey: (source as Partial<AgentThreadState> & { agentId?: string }).agentId || source.conversationKey || fallback.conversationKey,
+    conversationResetVersion: source.conversationResetVersion ?? 0,
+    deletedAt: source.deletedAt || '',
+    title: source.title || '',
     version,
     updatedAt: typeof source.updatedAt === 'string' ? source.updatedAt : '',
     messages: Array.isArray(source.messages) ? source.messages : [],

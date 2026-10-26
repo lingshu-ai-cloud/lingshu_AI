@@ -40,7 +40,7 @@ export function assistantContentTaskIdempotencyKey(threadVersion: number, object
 }
 
 export async function createAtomicAssistantContentTask(input: {
-  agentId: OrbitAgentId;
+  agentId: string;
   expectedThreadVersion: number;
   idempotencyKey: string;
   message: string;

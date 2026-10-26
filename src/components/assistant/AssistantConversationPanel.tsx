@@ -28,6 +28,8 @@ import type { useContentTaskIntake } from './useContentTaskIntake';
 
 type StoreActions = ReturnType<typeof useAssistantStore.getState>;
 type Props = {
+  conversationControls?: import('react').ReactNode;
+  conversationLocked?: boolean;
   page: Page;
   inlineHome: boolean;
   inlineHomeBounds: AssistantHomeBounds | null;
@@ -133,6 +135,8 @@ export default function AssistantConversationPanel(props: Props) {
         style={{ height: inlineHomeBounds?.height ?? assistantPanelHeight, width: inlineHomeBounds?.width ?? assistantPanelWidth, maxWidth: inlineHomeBounds ? '100%' : 'calc(100vw - 32px)' }}
       >
         {inlineHome && <div className="sr-only"><h2 id="global-assistant-panel-title">灵小枢创作对话</h2><p id="global-assistant-panel-description">描述创作需求，或添加图片、视频和音频参考。</p></div>}
+        {inlineHome && <div className="flex shrink-0 justify-end px-3 pt-1" data-assistant-conversation-controls>{props.conversationControls}</div>}
+        {activeThread.deletedAt && <p role="status" className="px-4 text-sm text-text-secondary">这条会话已删除，请从会话管理中新建会话。</p>}
         {!inlineHome && <header className="ls-assistant-panel__header flex shrink-0 items-center justify-between border-b border-border bg-surface">
           <div className="ls-assistant-panel__identity">
             <button type="button" onClick={() => {
@@ -152,6 +156,7 @@ export default function AssistantConversationPanel(props: Props) {
             </div>
           </div>
           <div className="flex items-center gap-1">
+            {props.conversationControls}
             <button type="button" onClick={closeAssistant} className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" title="关闭窗口（任务继续）" aria-label="关闭灵枢助手窗口，任务继续运行">
               <X size={15} />
             </button>
@@ -260,7 +265,7 @@ export default function AssistantConversationPanel(props: Props) {
             />}
             <AssistantComposer variant={inlineHome ? 'home' : 'default'} compact={compactHome} ref={assistantInputRef} draft={activeThread.draftInput} files={pendingAttachments}
               suggestion={!loading && !replyStreaming && !fileGenerating && !activeThread.creationDraft && !contentIntake.active ? assistantFollowUpSuggestion(activeThread.messages) : ''}
-              disabled={loading || replyStreaming || fileGenerating || contentIntake.busy || weeklyActionBusy}
+              disabled={props.conversationLocked || Boolean(activeThread.deletedAt) || loading || replyStreaming || fileGenerating || contentIntake.busy || weeklyActionBusy}
               uploading={attachmentUploading} error={attachmentError}
               onDraftChange={value => setDraftInput(activeAgent, value)}
               onFilesChange={files => { setPendingAttachments(files); if (!files.length) setAttachmentError(''); }}
