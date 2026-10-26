@@ -16,7 +16,7 @@
 - `pnpm run build` 与 `pnpm run build:account-hub` 通过，Studio 373288/485000 bytes；保留既有大分包警告。
 - `git diff --check a0d965ae HEAD` 通过。
 
-- `pnpm run quality` 首轮在 four-platform-release 因脚本默认 PB_BIN 路径不存在中断；指定现有 `/Users/julia1/.local/share/lingshu/pocketbase/pocketbase` 后从该阶段续跑，通过外部视频审批隔离测试、共享合同和本地生产运行门禁（真实本地媒体测试1/1）。随后 weekly-golden-journey 的既有 M1 用例因 `controlled M1 forbids external network: api.heygen.com` 失败；此问题已由原基线治理记录列明，未绕过受控网络门禁。后续 quality 阶段未据此宣称通过，未运行 verify。不是单次 quality 全绿。
+- `pnpm run quality` 首轮在 four-platform-release 因脚本默认 PB_BIN 路径不存在中断；指定现有 `/Users/julia1/.local/share/lingshu/pocketbase/pocketbase` 后从该阶段续跑，通过外部视频审批隔离测试、共享合同和本地生产运行门禁（真实本地媒体测试1/1）。随后 weekly-golden-journey 的既有 M1 用例因 `controlled M1 forbids external network: api.heygen.com` 失败；此问题已由原基线治理记录列明，未绕过受控网络门禁。M1 断言失败后测试进程仍驻留，本轮仅终止该隔离测试的子进程树；后续 quality 阶段未执行，未运行 verify。不是单次 quality 全绿。
 
 ## 安全恢复与边界
 
