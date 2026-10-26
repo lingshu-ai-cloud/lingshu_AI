@@ -51,7 +51,7 @@ export default function EnterpriseKnowledgeFields({ view, profile: p, onChange }
   </KnowledgeCard>;
   if (view === 'learning') {
     const hasExperience = Boolean(p.agentLearning?.provenAngles || p.agentLearning?.weakAngles || p.agentLearning?.pendingAssumptions || p.agentLearning?.userCorrections || p.knowledge);
-    return <KnowledgeCard icon={BookOpen} title="经营经验" purpose="使用中积累，保留适用产品、市场、平台及证据；待确认推断不能当成企业事实。" completed={hasExperience}>
+    return <KnowledgeCard icon={BookOpen} title="经营经验" purpose="使用中积累，保留适用产品、市场、平台及证据；待确认推断不能当成企业事实。">
       {!hasExperience && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="目前还没有沉淀记录，无需首次填写。可在实际使用后补充经验与证据。" />}
       <div className="grid gap-x-6 md:grid-cols-2">{field('agentLearning', 'provenAngles', '已验证的内容与销售经验', '注明依据、样本和适用范围。', 3)}{field('agentLearning', 'weakAngles', '效果不佳或不再采用的做法', undefined, 3)}{field('agentLearning', 'pendingAssumptions', '待确认推断', '仅作为待核实记录，不作为已确认事实使用。', 3)}{field('agentLearning', 'userCorrections', '用户纠正与偏好', undefined, 3)}</div>
       <Field label="历史补充记录" hint="保留原有自由填写资料，逐步整理到对应档案。"><Input.TextArea rows={3} value={p.knowledge} onChange={e => onChange('agentLearning', '__knowledge', e.target.value)} /></Field>

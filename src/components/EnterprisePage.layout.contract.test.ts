@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 const source = readFileSync(new URL('./EnterprisePage.tsx', import.meta.url), 'utf8');
 assert.match(source, /items=\{KNOWLEDGE_AREAS\.map/);
-assert.match(source, /<EnterpriseKnowledgeSummary profile=\{profile\}/);
+assert.doesNotMatch(source, /<EnterpriseKnowledgeSummary\b/, '分类内容上方不再展示企业共享资料和待处理概览');
 assert.match(source, /autoSave: false/, '修改资料须明确保存，不能自动覆盖企业事实');
 assert.doesNotMatch(source, /<LsGradientProgress|aria-label="企业资料完整度"/);
 assert.doesNotMatch(source, /<EnterpriseAdditionalSettings|label: '人物与出镜'/);

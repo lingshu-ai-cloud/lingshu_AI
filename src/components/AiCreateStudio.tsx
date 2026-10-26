@@ -143,7 +143,9 @@ import { referenceVoiceProfile } from './studio/studioReferenceVoiceProfile.js';
 import { scriptQualityFailure, announceRejectedStoryboard, qualityFields, qualitySuccessNotice, manualScriptDraft } from './studio/studioScriptQualityPresentation.js';
 export { scriptQualityFailure } from './studio/studioScriptQualityPresentation.js';
 import { withTimeout } from './studio/studioAsyncSupport.js';
-import { formatSelectedProductInfo, selectedProductLabel, productOptionCategory, buildAiProductOptions } from './studio/studioProductSelection.js';
+import { formatSelectedProductInfo, selectedProductLabel, productOptionCategory, buildAiProductOptions, resolveStudioProductIds, resolveStudioProductOption } from './studio/studioProductSelection.js';
+import { useProductMaterialSelection } from './studio/useProductMaterialSelection';
+import { productionNavigationIdentity } from '../lib/productionNavigation';
 import { cloneReferenceAnalysisText, cloneReferenceHighlights, ensureDistinctCloneStoryboard } from './studio/studioCloneReference.js';
 import { buildMaterialInfosForScript } from './studio/studioMaterialScriptEvidence.js';
 import { stableScriptVersion, sanitizeStoryboardScript } from './studio/studioScriptSanitization.js';
@@ -1194,8 +1196,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   }, [productOptions, selectedProductIds.length, socialContentTaskId, socialTaskProductReference]);
 
   useEffect(() => {
-    if (productOptions.length === 0 || selectedProductIds.length === 0) return;
-    const selectedOptions = productOptions.filter(option => selectedProductIds.includes(option.id));
+    if (!productOptions.some(option => option.catalogProductId) || selectedProductIds.length === 0) return;
+    const resolved = resolveStudioProductIds(selectedProductIds, productOptions);
+    if (JSON.stringify(resolved) !== JSON.stringify(selectedProductIds)) { if (cloneProductFingerprintRef.current === `products:${selectedProductIds.join('|')}`) cloneProductFingerprintRef.current = `products:${resolved.join('|')}`; setSelectedProductIds(resolved); return; }
+    const selectedOptions = productOptions.filter(option => resolved.includes(option.id));
     if (selectedOptions.length === 0) return;
     setProductInfo(formatSelectedProductInfo(selectedOptions));
   }, [productOptions, selectedProductIds]);
@@ -2240,12 +2244,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const requestedProducts = identity.products.length
       ? identity.products.map(mapping => ({ id: mapping.productId, name: mapping.productName }))
       : (identity.selectedProductIds || []).map((id, index) => ({ id, name: identity.selectedProductNames?.[index] || '' }));
-    const selected = requestedProducts.map(requested => productOptions.find(option => option.id === requested.id || option.label === requested.name)?.id || '').filter(Boolean);
+    const selected = requestedProducts.map(requested => resolveStudioProductOption(requested, productOptions)?.id || '').filter(Boolean);
     if (selected.length !== requestedProducts.length) return;
     setSelectedProductIds([...new Set(selected)]);
     setReferenceProductAssignments(Object.fromEntries(referenceProducts.map(slot => {
       const mapping = identity.products.find(item => slot.sourceLabel.toLocaleLowerCase().endsWith(item.sourceTerm.toLocaleLowerCase()));
-      return [slot.shotId, productOptions.find(option => option.id === mapping?.productId || option.label === mapping?.productName)?.id || ''];
+      return [slot.shotId, resolveStudioProductOption({ id: mapping?.productId, name: mapping?.productName }, productOptions)?.id || ''];
     })));
     setReferenceProductTerms(Object.fromEntries(referenceProducts.map(slot => [slot.shotId, slot.sourceLabel])));
     setReferenceBrandSourceTerm(identity.brand?.sourceTerm || '');
@@ -2295,7 +2299,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   useStudioReferenceVoicePresence(voicePorts);
   useEffect(() => {
     if (mode !== 'clone' || !videoKickoff?.referenceAnalysis?.details?.length || !activeProductInfo.trim() || !activeProductLabel) return;
-    // Catalog hydration and automatic migration recommendations are not product edits.
     const fingerprint = selectedProductIds.length
       ? `products:${selectedProductIds.join('|')}`
       : `manual:${activeProductInfo}`;
@@ -2305,13 +2308,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     }
     if (cloneProductFingerprintRef.current === fingerprint) return;
     cloneProductFingerprintRef.current = fingerprint;
-    // Product identity is part of the generation version. Audio, material
-    // matches and renders derived from the previous product must not survive.
     setVoiceDrafts({});
     setVoiceoverAudios({});
     setVoiceoverUrl(null);
     setAlignedCuesByLang({});
-    setSelected([]);
     setScriptRecommendedMaterialIds([]);
     setStoryboardAssignments({});
     setStoryboardSourcePlans({});
@@ -2328,6 +2328,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setScriptView('timestamp');
     setModeNotice(`产品已更换为「${activeProductLabel}」：旧脚本、配音、素材匹配和成片结果已失效，请重新调用 AI 生成真实分镜。`);
   }, [activeProductInfo, activeProductLabel, lang, migrationMode, migrationRecommendation.label, mode, selectedProductIds, videoKickoff]);
+  useProductMaterialSelection({
+    productIds: selectedProductOptions.flatMap(option => option.catalogProductId ? [option.catalogProductId] : []),
+    materials, selectedIds: selected, setSelectedIds: setSelected, kickoff: videoKickoff,
+    enabled: contentMode === 'video' && !projectHydrationPendingRef.current && !frozenStudioSpecRef.current && (!socialContentTaskId || socialTaskProjectLookupDone),
+    resetKey: `${productionNavigationIdentity()}:${studioCreateRequest?.requestId || socialContentTaskId || 'new'}:${projectHydrationRevision}`,
+    preserveInitialSelection: projectHydrationRevision > 0 });
   useEffect(() => {
     if (contentMode !== 'poster') return;
     if (platform !== 'facebook' && platform !== 'instagram') {
@@ -2446,13 +2452,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   useEffect(() => {
     if (!assignedOrderedIds.length) return;
     setSelected(current => {
-      const deduped = [...new Set(assignedOrderedIds)];
+      const deduped = [...new Set([...current, ...assignedOrderedIds])];
       return current.length === deduped.length && current.every((id, index) => id === deduped[index]) ? current : deduped;
     });
-    // Several upstream collections are normalized during project hydration and may
-    // receive a new array identity even when the assigned material ids did not
-    // change. Depend on their value signature so this synchronizer cannot enqueue
-    // a state update on every render.
   }, [assignedOrderedIdsKey]);
   const isLast = stepIdx === activeSteps.length - 1;
   const toggleProductSelection = (id: string) => {
@@ -2485,7 +2487,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       if (prev.some(m => m.id === clip.id || (clip.url && m.url === clip.url))) return prev;
       return [clip, ...prev];
     });
-    setSelected([clip.id]);
+    setSelected(current => current.includes(clip.id) ? current : [...current, clip.id]);
     if (videoKickoff.materialRole === 'hook' || videoKickoff.source === 'material_library') {
       setHookMaterialId(clip.id);
       applyInferredMaterialTheme(generated.material || clip);
@@ -2525,7 +2527,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const title = videoKickoff.generatedVideo?.title || videoKickoff.video?.title || '';
     const matched = materials.find(m => (materialUrl && m.url === materialUrl) || (title && m.name.includes(title.slice(0, 40))));
     if (matched) {
-      setSelected([matched.id]);
+      setSelected(current => current.includes(matched.id) ? current : [...current, matched.id]);
       if (videoKickoff.materialRole === 'hook' || videoKickoff.source === 'material_library') {
         setHookMaterialId(matched.id);
         applyInferredMaterialTheme(matched);
@@ -4120,11 +4122,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     onSelect: setSelected, onCaption: setCaption, onNotice: setModeNotice, refreshMaterials,
   });
 
-  /* ── 素材库：只拉取真实素材 ──────────────────────── */
   const refreshMaterials = materialInventory.refreshMaterials;
 
-  const refreshMaterialSource = materialInventory.refreshMaterialSource;
-  useStudioMaterialInventoryLoad(materialInventory);
+  const refreshMaterialSource = materialInventory.refreshMaterialSource; useStudioMaterialInventoryLoad(materialInventory);
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {

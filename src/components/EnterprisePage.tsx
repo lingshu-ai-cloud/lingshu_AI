@@ -1,7 +1,6 @@
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { useState, useEffect } from 'react';
 import { Alert, Button, Tabs } from 'antd';
-import EnterpriseKnowledgeSummary from './enterprise/EnterpriseKnowledgeSummary';
 import EnterpriseKnowledgeFields from './enterprise/EnterpriseKnowledgeFields';
 import { KNOWLEDGE_AREAS, KNOWLEDGE_VIEWS, enterpriseAreaForView, normalizeKnowledgeView, type KnowledgeView, type EnterpriseArea } from './enterprise/enterpriseKnowledgeNavigation';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
@@ -570,7 +569,6 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
 
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1440px] space-y-5 px-4 py-5 sm:px-6">
-          <EnterpriseKnowledgeSummary profile={profile} onOpen={view => { setKnowledgeView(view); setEnterpriseArea(enterpriseAreaForView(view)); }} />
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs text-text-secondary">{KNOWLEDGE_AREAS.find(area => area.key === enterpriseArea)?.description || '保留原有功能与记录，完成后可返回企业知识库。'}</p>
             {enterpriseArea === 'experience' && <Button size="small" onClick={openKnowledgeIntake}>整理已有资料</Button>}

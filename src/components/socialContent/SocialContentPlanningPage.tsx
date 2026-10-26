@@ -174,7 +174,7 @@ export default function SocialContentPlanningPage({
     if (sourceRequest?.assistantEntry && (!entryCount || !Number.isSafeInteger(entryCount) || entryCount < 1 || entryCount > 100)) throw new Error('请先确认本轮要创作的内容数量（1至100条）。');
     const taskSeed = { ...operationSeed, initialScript: request.initialScript, specialRequirements: request.specialRequirements,
       productId: request.productId, productName: request.productName, presenterAssetId: request.presenterAssetId,
-      callToAction: request.callToAction, uploadedMaterialCount: request.uploadedMaterials.length,
+      callToAction: request.callToAction, uploadedMaterialCount: new Set([...request.uploadedMaterials, ...(request.selectedProductMaterials || [])].map(item => item.id)).size,
       platforms: request.platforms || sourceRequest?.prefill?.platforms, themeId: sourceRequest?.themeId || 'product_value' as const };
     const identity = productionNavigationIdentity(), entry = currentRequest.current;
     const isCurrent = () => identity === productionNavigationIdentity() && entry === currentRequest.current;
@@ -189,7 +189,7 @@ export default function SocialContentPlanningPage({
       : batchTask || await socialContentApi.createTask(socialPlanningTaskInput(taskSeed), `${operationKey}:create`);
 
 
-    const visualMaterials = request.uploadedMaterials.filter(material => material.type === 'image' || material.type === 'video');
+    const visualMaterials = [...request.uploadedMaterials, ...(request.selectedProductMaterials || [])].filter(material => material.type === 'image' || material.type === 'video');
     for (const material of visualMaterials.filter((item, index, rows) => rows.findIndex(row => row.id === item.id) === index)) {
       const source = socialPlanningMaterialSource(material);
       if (task.sources.some(item => item.status === 'active' && item.kind === source.kind && item.sourceRef === source.sourceRef)) continue;

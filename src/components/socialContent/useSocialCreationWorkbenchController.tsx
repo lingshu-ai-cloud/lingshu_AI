@@ -12,6 +12,7 @@ import { groupSpeechShots, type SpeechGroup, timeRange } from './speechShotGroup
 import { normalizeFreeCreationState, type FreeCreationState, type FreeCreationShotType } from '../../../shared/contracts/freeCreationProject';
 import { assignReplicationDefaultProduct, parseFreeCreationScript, resolveReplicationProductMappings, serializeFreeCreationLines, type EnterpriseProductOption, type FreeCreationLine } from './socialCreationDraft';
 import { shotStart } from './socialCreationWorkbenchTime';
+import { useSocialProductMaterials } from './useSocialProductMaterials';
 import type { SocialCreationWorkbenchSeed, SocialCreationWorkbenchSubmit } from './SocialCreationWorkbench';
 
 export function useSocialCreationWorkbenchController({
@@ -33,6 +34,8 @@ export function useSocialCreationWorkbenchController({
   const [products, setProducts] = useState<EnterpriseProductOption[]>([]);
   const [productId, setProductId] = useState('');
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [replicationMaterialProductIds, setReplicationMaterialProductIds] = useState<string[]>([]);
+  const productMaterials = useSocialProductMaterials(isReplication ? replicationMaterialProductIds : selectedProductIds, products.length > 0);
   const [productAssignments, setProductAssignments] = useState<Record<string, string>>({});
   const [productSelectionChanged, setProductSelectionChanged] = useState(false);
   const [productSelectorOpen, setProductSelectorOpen] = useState(false);
@@ -201,6 +204,7 @@ export function useSocialCreationWorkbenchController({
         if (existing) {
           studioApi.adoptProjectRevision(existing);
           const restored = normalizeFreeCreationState(existing.spec.freeCreation);
+          productMaterials.restore(existing.spec);
           setSelectedProductIds(restored.brief.productIds); setContentGoal(['种草', '询盘', '品牌认知', '活动推广'].includes(restored.brief.goal) ? restored.brief.goal : '种草'); setTargetAudience(restored.brief.audience || '海外目标客户');
           setPlatform(platformLabel[restored.brief.platform] || restored.brief.platform || 'TikTok'); setContentLanguage(restored.brief.language || 'zh'); setSellingPoints(restored.brief.sellingPoints);
           setDesiredDuration(restored.brief.durationSeconds); setTone(restored.brief.tone || '专业、自然'); setCallToAction(restored.brief.cta);
@@ -229,7 +233,7 @@ export function useSocialCreationWorkbenchController({
   }, [isReplication]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (isReplication) return;
+    if (isReplication || productMaterials.loading || productMaterials.error) return;
     window.clearTimeout(draftSaveTimer.current);
     setDraftTitleStatus('saving');
     draftSaveTimer.current = window.setTimeout(() => {
@@ -241,7 +245,7 @@ export function useSocialCreationWorkbenchController({
         const saved = await studioApi.saveProject({ id, title, status: 'draft', spec: {
           creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true,
           freeCreation: freeCreationState, script: freeScriptText, duration: desiredDuration,
-          selectedProductIds, productId: selectedFreeProducts[0]?.id || '', productInfo: productName,
+          selectedProductIds, productId: selectedFreeProducts[0]?.id || '', productInfo: productName, ...productMaterials.selectionSpec,
           videoKickoff: {
             source: hookMode === 'ai' ? 'ai_generated_hook' : 'material_library', productInfo: productName, script: freeScriptText,
             initialGeneration: freeGeneration || undefined,
@@ -257,7 +261,7 @@ export function useSocialCreationWorkbenchController({
       })().catch(() => setDraftTitleStatus('error'));
     }, 600);
     return () => window.clearTimeout(draftSaveTimer.current);
-  }, [desiredDuration, draftProjectId, draftTitle, freeCreationState, freeGeneration, freeHookMaterial, freeScriptText, isReplication, selectedFreeProducts, selectedProductIds]);
+  }, [desiredDuration, draftProjectId, draftTitle, freeCreationState, freeGeneration, freeHookMaterial, freeScriptText, isReplication, selectedFreeProducts, selectedProductIds, productMaterials.selectionSpec, productMaterials.loading, productMaterials.error]);
   const referenceShots = isReplication ? taskReferenceShots || seed?.referenceShots || [] : [];
   const referenceLines: ReferenceSpeechLine[] = taskSpeechLines.length
     ? groupSpeechShots(taskSpeechLines, referenceShots).map(group => {
@@ -304,6 +308,8 @@ export function useSocialCreationWorkbenchController({
   const primaryProductId = productId || selectedProductIds[0] || '';
   const primaryProduct = products.find(item => item.id === primaryProductId);
   const productMappings = resolveReplicationProductMappings(productSlots, products, primaryProductId, productAssignments);
+  const mappedProductIdsKey = JSON.stringify([...new Set(productMappings.map(item => item.productId).filter(Boolean))]);
+  useEffect(() => { if (isReplication) setReplicationMaterialProductIds(JSON.parse(mappedProductIdsKey)); }, [isReplication, mappedProductIdsKey]);
   const productsReady = productMappings.every(mapping => mapping.productId && mapping.sourceTerm.trim());
   const productSelectionLoading = productsLoading && (!isReplication || productSlots.length > 0);
   const chooseDefaultProduct = (id: string) => {
@@ -547,7 +553,7 @@ export function useSocialCreationWorkbenchController({
             spec: {
               creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true,
               freeCreation: confirmedFreeState, script: freeScriptText, duration: desiredDuration,
-              selectedProductIds, productId: selectedFreeProducts[0]?.id || '', productInfo: productName,
+              selectedProductIds, productId: selectedFreeProducts[0]?.id || '', productInfo: productName, ...productMaterials.selectionSpec,
               videoKickoff: { source: hookMode === 'ai' ? 'ai_generated_hook' : 'material_library', productInfo: productName, script: freeScriptText, initialGeneration: freeGeneration || undefined, generatedVideo: freeHookMaterial ? { id: freeHookMaterial.id, title: freeHookMaterial.name, url: freeHookMaterial.url, poster: freeHookMaterial.poster, duration: freeHookMaterial.duration, material: freeHookMaterial } : undefined, materialRole: freeHookMaterial ? 'hook' : undefined },
             },
           });
@@ -576,6 +582,7 @@ export function useSocialCreationWorkbenchController({
         presenterAssetId,
         files,
         uploadedMaterials,
+        selectedProductMaterials: productMaterials.selectedMaterials,
         referenceLinks: [...new Set([...(seed?.referenceLinks || []), ...uploadedMaterials.map(item => item.url).filter(Boolean)])],
         callToAction: '',
         specialRequirements: isReplication ? '已确认口播文本；分镜匹配时制作数字人口播镜头，成片渲染时生成统一配音。' : `人工自由创作；用户需求：${briefNotes}；钩子来源：${hookMode}；允许无口播分镜；由 Gemini 依据企业产品资料生成逐句口播及后续分镜。`,
@@ -631,7 +638,7 @@ export function useSocialCreationWorkbenchController({
       const saved = await studioApi.saveProject({ id, title: draftTitle.trim() || '自由创作 · 未命名草稿', status: 'draft', spec: {
         creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true,
         freeCreation: { ...freeCreationState, hookSource: 'ai', hookMaterialId: '' }, script: freeScriptText, duration: desiredDuration,
-        selectedProductIds, productId: selectedFreeProducts[0]?.id || '', productInfo: productName,
+        selectedProductIds, productId: selectedFreeProducts[0]?.id || '', productInfo: productName, ...productMaterials.selectionSpec,
       } });
       if (!saved.ok) throw new Error(saved.error || 'AI 钩子草稿保存失败');
       if (!aiHookRequestRef.current) {
@@ -734,6 +741,6 @@ export function useSocialCreationWorkbenchController({
     productSlots, productMentions, primaryProductId, primaryProduct, productMappings, productsReady, productSelectionLoading,
     chooseDefaultProduct, speechGenerated, confirmedSpeech, generateSpeech, highlightSpeech, syncPlaybackCard, previewUrl,
     startGeneration, commitFreeLines, regenerateFreeLine, generateAiHook, adoptAiHook, chooseHookMode, updateDraftTitle,
-    commitDraftTitle, freeReady,
+    commitDraftTitle, freeReady, productMaterials, replicationMaterialProductIds,
   };
 }

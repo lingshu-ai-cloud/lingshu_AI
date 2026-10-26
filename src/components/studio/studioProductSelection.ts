@@ -28,6 +28,41 @@ export function productOptionCategory(option: ProductOption): string {
   return option.info.match(/所属类目[：:]\s*([^\n]+)/)?.[1]?.trim() || '未分类';
 }
 
+/** Matches the identity used by enterprise products and the tenant material library. */
+export function enterpriseProductIdentity(item: Pick<EnterpriseProductItem, 'id' | 'productId' | 'sku'>): string {
+  return [item.id, item.productId, item.sku].map(value => String(value || '').trim()).find(Boolean) || '';
+}
+
+/** Explicit catalog identity wins; only legacy or name-only references may resolve by unique name. */
+export function resolveStudioProductOption(
+  requested: { id?: string; name?: string }, options: ProductOption[],
+): ProductOption | undefined {
+  const id = String(requested.id || '').trim();
+  const exact = id ? options.find(option => option.id === id) : undefined;
+  if (exact) return exact;
+  const legacyName = id.match(/^product-\d+-(.+)$/)?.[1];
+  if (id && !legacyName) return undefined;
+  const name = String(requested.name || legacyName || '').trim();
+  if (!name) return undefined;
+  const matches = options.filter(option => option.label === name);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+/** Restore old index/name draft IDs only when their product name resolves unambiguously. */
+export function resolveStudioProductIds(ids: string[], options: ProductOption[]): string[] {
+  return [...new Set(ids.flatMap(id => {
+    const match = resolveStudioProductOption({ id }, options);
+    return match ? [match.id] : [];
+  }))];
+}
+
+/** During asynchronous profile hydration, retain draft identity until the catalog is available. */
+export function restoreStudioProductIds(ids: string[], options: ProductOption[]): string[] {
+  return options.some(option => option.catalogProductId)
+    ? resolveStudioProductIds(ids, options)
+    : [...ids];
+}
+
 export function buildAiProductOptions(profile: EnterpriseProfileLite): ProductOption[] {
   const categories = compact(profile.products?.categories);
   const fallbackNames = compact(profile.strategy?.focusProducts || categories)
@@ -38,7 +73,7 @@ export function buildAiProductOptions(profile: EnterpriseProfileLite): ProductOp
     ? profile.products.items
     : fallbackNames.map(name => ({ name }));
   return rawItems
-    .map((item, index) => {
+    .map(item => {
       const name = compact(item.name);
       if (!name || /^产品\d+$/.test(name)) return null;
       const category = compact(item.category || categories);
@@ -52,7 +87,8 @@ export function buildAiProductOptions(profile: EnterpriseProfileLite): ProductOp
         .slice(0, 6)
         .join('、');
       return {
-        id: `product-${index}-${name}`,
+        id: enterpriseProductIdentity(item) || `legacy-product:${encodeURIComponent(name)}`,
+        ...(enterpriseProductIdentity(item) ? { catalogProductId: enterpriseProductIdentity(item) } : {}),
         label: name,
         imageUrls: [
           ...(item.images || []),
