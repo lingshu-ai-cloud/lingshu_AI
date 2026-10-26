@@ -2,6 +2,12 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前本机会话基线：本地预览周计划递归修复（2026-10-26）
+
+- 当前工作树 `/Users/jiejie/Documents/lingshu-AI`、分支 `节节1025服务器上传` 在合并基线 `bc432cc2ac8dbc88efbc4fe89c176b318b550ddd` 上追加运行修复 `e69efa9ba1e21107021b5bf99e501df4b454c49b`。本地经营总览读取包含“已确认日期、未确认时间”的历史周计划时，`repairCollapsedWeeklyVideoProduction` 会对无变化的排期结果递归调用自身并导致后端栈溢出；现在仅在排期字段实际变化时继续修复，日期已确认但时间待定的业务语义保持不变。
+- 实际通过 `server/digitalEmployees/weeklyPackage.test.ts`、4 GB Node 堆上限 TypeScript、相对 `bc432cc2` 的架构/ratchet（2,998 个生产 TypeScript 文件）及 `git diff --check`。首次新增回归夹具因没有设置已确认日期而正确触发自动排期，修正为真实现场状态后通过；生产门禁未放宽。
+- 本次修复只为恢复当前本地预览可用性，不涉及迁移、真实供应商、付费、发布或部署。预览进程和登录后页面仍须在该提交启动后单独核验。
+
 ## 当前本机会话基线：助手业务场景与平台改写兼容合并（2026-10-26）
 
 - 当前工作树 `/Users/jiejie/Documents/lingshu-AI`、分支 `节节1025服务器上传` 从干净检查点 `0f1424553666fb03a1a0616dbedecaebcb04a613` 合入远端 `xixi分工前本地合并` / `9b5f5446d858d1ea4aa9db401bc7e77d5e3d1213`，源码合并提交为 `8d23c0ace56a4a136d5e34a2bb4c02c5f12f8a93`。恢复分支 `backup/pre-xixi-local-merge-20261026-0f142455` 保留。
