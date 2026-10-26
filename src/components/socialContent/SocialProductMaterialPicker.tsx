@@ -18,7 +18,7 @@ export function SocialProductMaterialPicker({ selection, products, disabled = fa
             {!materials.length ? <p className="mt-1 text-[10px] text-text-muted">暂无可用产品图片或视频，请到「我的素材」关联此产品。</p>
               : <div className="mt-2 space-y-2">{materials.map(item => <div key={item.id} className="flex items-center gap-2 rounded-lg border border-border p-2">
                 <Checkbox aria-label={`选用素材 ${item.name}`} checked={selection.selectedIds.includes(item.id)} disabled={disabled} onChange={() => selection.toggle(item.id)} />
-                {(item.poster || (item.type === 'image' && item.url)) && <img src={item.poster || item.url} alt="" className="h-10 w-10 rounded object-contain" />}
+                <span className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded bg-surface-2 text-[9px] text-text-muted">{item.type === 'video' ? '视频' : '图片'}{(item.poster || (item.type === 'image' && item.url)) && <img src={item.poster || item.url} alt="" className="absolute inset-0 h-full w-full object-contain" onError={event => { event.currentTarget.style.display = 'none'; }} />}</span>
                 <span className="min-w-0 flex-1 text-[10px] text-text-primary">{item.name}<span className="block text-text-muted">{item.type === 'video' ? '视频' : '图片'}</span></span>
               </div>)}</div>}
           </div>;
