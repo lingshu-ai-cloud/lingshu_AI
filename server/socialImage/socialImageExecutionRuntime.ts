@@ -11,6 +11,7 @@ import { compileEvidenceGuidedSocialImage, socialImageFrozenGraphMatches } from 
 import { compileSocialImageV3PaidPlan } from './socialImageFormalPlan.js';
 import { renderSocialImagePaidWorker } from './socialImagePaidWorkerRender.js';
 import { readSocialImageTask } from './socialImageTask.js';
+import { socialImagePackagingLabelHint } from './socialImagePackagingLabel.js';
 import type { ImageExecutionPorts } from './socialImageExecution.js';
 import type { SocialImageElementInventory } from '../../shared/contracts/socialImageProduction.js';
 export function createImageExecutionPorts(store: DataStore, job: ContentExecutionJob): ImageExecutionPorts {
@@ -46,8 +47,12 @@ export function createImageExecutionPorts(store: DataStore, job: ContentExecutio
                     throw new Error('social_image_planning_outcome_requires_review');
                 let providerCallStarted = false;
                 try {
+                    const selectedProduct = task.contentBrief.productRefs[0]
+                        ? await assets.enterpriseProductAsset(job.tenantId, task.contentBrief.productRefs[0]) : null;
+                    const packagingHint = selectedProduct ? await socialImagePackagingLabelHint(selectedProduct.bytes) : '';
                     await planStudioPoster({ store, tenantId: job.tenantId,
                         body: { imageTaskId: task.id, expectedImageTaskVersion: task.version },
+                        packagingHint,
                         enterpriseCtx: async () => buildEnterpriseContext(await readTenantEnterpriseProfile(job.tenantId)), allowPaidCall,
                         beforeProviderCall: async () => {
                             // Only pre-transport claims are uncertain. Validation and

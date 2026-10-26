@@ -70,6 +70,7 @@ export async function composeFixedSocialLayers(input: {
   width: number;
   height: number;
   recipe?: SocialImageReplicationRecipe;
+  productTreatment?: 'cutout' | 'framed_source';
 }): Promise<Buffer> {
   const { width, height } = input;
   const stage = region(input.recipe, 'product-stage', { x: .08, y: .36, width: .84, height: .50 });
@@ -90,11 +91,14 @@ export async function composeFixedSocialLayers(input: {
     composites.push({ input: referenceMaskSvg(maskWidth, maskHeight, mask), left: Math.round(mask.bounds.x * width), top: Math.round(mask.bounds.y * height), zIndex: mask.zIndex });
   }
   for (let index = 0; index < input.products.length; index += 1) {
-    const transparent = await connectedBorderToAlpha(input.products[index]!);
+    const transparent = input.productTreatment === 'framed_source'
+      ? input.products[index]!
+      : await connectedBorderToAlpha(input.products[index]!);
     const productWidth = Math.round(Math.min(slotWidth * 1.18, stage.width * width * .7));
     const productHeight = Math.round(stage.height * height);
     const rendered = await sharp(transparent).resize(productWidth, productHeight, {
-      fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 },
+      fit: 'contain', background: input.productTreatment === 'framed_source'
+        ? { r: 255, g: 255, b: 255, alpha: 255 } : { r: 0, g: 0, b: 0, alpha: 0 },
     }).png().toBuffer();
     composites.push({
       input: rendered,

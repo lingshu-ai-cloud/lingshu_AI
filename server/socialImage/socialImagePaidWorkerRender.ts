@@ -1,16 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
-import sharp from 'sharp';
 import type { DataStore } from '../storage/datastore.js';
 import { buildEnterpriseContext, readTenantEnterpriseProfile } from '../routes/enterprise.js';
 import { auditCommercialClaims, hasConfirmedEnterpriseFacts, userFacingPosterText } from '../lib/studioGenerationTruthfulness.js';
 import { ImageProviderRejectedError, normalizeImageGenerationQuality, type ReferenceImage } from '../lib/imageGen.js';
 import { readMaterialLibrary } from '../lib/materialLibrary.js';
 import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
-import { buildStudioSocialImagePaidPrompt, socialImageReferenceRoleText } from './socialImagePaidRenderAdmission.js';
+import { buildSocialImagePosterPlatePrompt } from './socialImagePosterPlatePrompt.js';
 import { admitSocialImageV3QueuedJob, claimSocialImagePaidJob, markSocialImagePaidJobNotSubmitted,
   recordSocialImagePaidJobFailure } from './socialImagePaidJob.js';
 import { socialImageFrozenCommercialIssue, socialImageV3PaidPrerequisiteIssue,
-  socialImageV3PaidEvidenceHash, socialImageV3ReferencePermitted, socialImageV3RenderSpecInputHash,
+  socialImageV3PaidEvidenceHash, socialImageV3RenderSpecInputHash,
   socialImageV3ResolvedAssetIssue, socialImageV3SingleRenderInput } from './socialImagePaidPrerequisites.js';
 import { readSocialImageReferenceBytes } from './socialImageReferenceBytes.js';
 import { submitClaimedSocialImageSingleRender } from './socialImagePaidSingleRender.js';
@@ -19,12 +18,6 @@ import type { SocialImageCreationTask } from '../../shared/contracts/socialImage
 import type { SocialImageAspectRatio } from './referenceCanvas.js';
 
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
-async function referenceImage(bytes: Buffer): Promise<ReferenceImage> {
-  const format = (await sharp(bytes).metadata()).format;
-  return { mimeType: format === 'jpeg' ? 'image/jpeg' : format === 'webp' ? 'image/webp' : 'image/png',
-    base64: bytes.toString('base64') };
-}
-
 /** The durable worker uses the same paid provider/material writer as the Studio route. */
 export async function renderSocialImagePaidWorker(input: {
   store: DataStore; tenantId: string; taskId: string; expectedVersion: number;
@@ -49,16 +42,12 @@ export async function renderSocialImagePaidWorker(input: {
   const product = await input.enterpriseProductAsset(tenantId, productId);
   if (!product) throw new Error('social_image_product_asset_unavailable');
   const library = await readMaterialLibrary(tenantId);
-  const materialImages: ReferenceImage[] = [];
   const materialHashes: Record<string, string> = {};
-  const materialRoles: Array<{ role: string; materialId: string }> = [];
   for (const id of task.materialIds) {
     const record = library.items.find(item => item.id === id && item.type === 'image');
     const loaded = record ? await readTenantMaterialBytes(record, tenantId) : null;
     if (!loaded) throw new Error('social_image_required_asset_bytes_changed');
     materialHashes[id] = hash(loaded.bytes);
-    materialImages.push(await referenceImage(loaded.bytes));
-    materialRoles.push({ materialId: id, role: task.enterpriseAssets.find(asset => asset.assetId === id)?.role || 'scene' });
   }
   const referenceUrl = task.referenceSnapshot?.imageUrls[0] || task.referenceUrls[0] || '';
   const reference = referenceUrl ? await (input.ports?.referenceBytes || readSocialImageReferenceBytes)(tenantId, referenceUrl) : null;
@@ -66,9 +55,9 @@ export async function renderSocialImagePaidWorker(input: {
   const assetIssue = socialImageV3ResolvedAssetIssue(task, {
     productHashes: { [productId]: hash(product.bytes) }, materialHashes, referenceHash });
   if (assetIssue) throw new Error(assetIssue);
-  const benchmark = reference && socialImageV3ReferencePermitted(task) ? [await referenceImage(reference.bytes)] : [];
-  const owned = [await referenceImage(product.bytes), ...materialImages].slice(0, benchmark.length ? 2 : 3);
-  const references = [...owned, ...benchmark].slice(0, 3);
+  // For a single poster the provider only paints the background. Sending the
+  // product as an image reference risks a duplicated or relabeled package.
+  const references: ReferenceImage[] = [];
   const enterprise = await (input.ports?.enterpriseContext || (async (id: string) =>
     buildEnterpriseContext(await readTenantEnterpriseProfile(id))))(tenantId);
   if (!hasConfirmedEnterpriseFacts(enterprise)) throw new Error('social_image_enterprise_profile_required');
@@ -96,12 +85,7 @@ export async function renderSocialImagePaidWorker(input: {
   const commercialIssue = socialImageFrozenCommercialIssue({ ...audit,
     headline: frozen.poster.headline, imagePrompt: frozen.imagePrompt });
   if (commercialIssue) throw new Error(commercialIssue);
-  const prompt = buildStudioSocialImagePaidPrompt({ sceneIntent: frozen.imagePrompt, ratio: frozen.ratio,
-    language: task.deliverySpec.language, poster: frozen.poster, deliverableType: frozen.deliverableType,
-    productionStrategy: frozen.productionStrategy,
-    referenceRoleText: socialImageReferenceRoleText({ productIds: [productId], materialReferences: materialRoles,
-      benchmarkCount: benchmark.length, ownedReferenceCount: owned.length }),
-    benchmarkCount: benchmark.length, ownedReferenceCount: owned.length });
+  const prompt = buildSocialImagePosterPlatePrompt({ ratio: frozen.ratio, recipe: task.replicationRecipe });
   const ratio = frozen.ratio as SocialImageAspectRatio;
   const quality = normalizeImageGenerationQuality(frozen.imageQuality);
   const inputHash = createHash('sha256').update(JSON.stringify({ prompt, ratio, quality,
@@ -125,7 +109,8 @@ export async function renderSocialImagePaidWorker(input: {
     providerMayHaveStarted = true;
     return (await (input.ports?.submit || submitClaimedSocialImageSingleRender)({ store, tenantId, task, jobId: job.id, inputHash,
       prompt, ratio, quality, references, idempotencyKey, productId,
-      materialIds: task.materialIds, benchmarkReferenceCount: benchmark.length })).task;
+      materialIds: task.materialIds, benchmarkReferenceCount: 0,
+      composition: { productBytes: product.bytes, poster: frozen.poster, recipe: task.replicationRecipe } })).task;
   } catch (error) {
     if (providerMayHaveStarted) {
       await recordSocialImagePaidJobFailure({ store, tenantId, taskId: task.id, jobId: job.id,

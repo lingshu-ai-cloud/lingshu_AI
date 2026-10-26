@@ -14,6 +14,18 @@ test('fixed GIF compositor preserves exact canvas and produces a visible product
   assert.ok(result.length > background.length);
 });
 
+test('single poster frame preserves the source product label pixels instead of cutting out white packaging', async () => {
+  const background = await sharp({ create: { width: 320, height: 400, channels: 3, background: '#742447' } }).png().toBuffer();
+  const product = await sharp({ create: { width: 80, height: 80, channels: 3, background: '#ffffff' } })
+    .composite([{ input: Buffer.from('<svg width="80" height="80"><text x="8" y="44" font-size="20" fill="#000">LABEL</text></svg>') }]).png().toBuffer();
+  const result = await composeFixedSocialLayers({ background, products: [product], poster: {},
+    width: 320, height: 400, productTreatment: 'framed_source' });
+  const { data, info } = await sharp(result).raw().toBuffer({ resolveWithObject: true });
+  const center = (Math.floor(info.height * .61) * info.width + Math.floor(info.width * .5)) * info.channels;
+  assert.ok(data[center]! > 220 && data[center + 1]! > 220 && data[center + 2]! > 220,
+    'the authoritative white package/card pixels remain visible');
+});
+
 test('fixed compositor applies extracted mask opacity in the extracted layer order', async () => {
   const background = await sharp({ create: { width: 100, height: 100, channels: 3, background: '#0000ff' } }).png().toBuffer();
   const result = await composeFixedSocialLayers({ background, products: [], poster: {}, width: 100, height: 100, recipe: {

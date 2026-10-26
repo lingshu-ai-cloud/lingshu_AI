@@ -271,6 +271,7 @@ export async function preflightImage(input: ImageWorkflowInput) {
                     headline: String(plannedUnit?.poster.headline || task.imageTextContract.headline),
                     supportingText: String(plannedUnit?.poster.subheadline || task.imageTextContract.supportingText),
                     cta: task.imageTextContract.cta, facts: task.imageTextContract.requiredFacts, format: task.deliverySpec.format,
+                    language: task.deliverySpec.language,
                 } }, allowPaidCall: () => allowPaidCall() });
         if (!result)
             return;

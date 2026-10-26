@@ -10,6 +10,7 @@ import type { DataStore } from '../storage/datastore.js';
 import { readSocialImageTask } from '../socialImage/socialImageTask.js';
 import { socialImageV3PaidPrerequisiteIssue } from '../socialImage/socialImagePaidPrerequisites.js';
 import { recordSocialImageV3DirectorBrief, socialImageV3TrustedPlanningRequest, type SocialImageFormalPlannerResult } from '../socialImage/socialImageFormalPlan.js';
+import { socialImageEnglishTitleMatchesPackaging } from './socialImagePackagingLabel.js';
 import { assertSocialImageCurrentContentTask, SocialImageProductionRunError } from '../socialImage/socialImageProductionRun.js';
 export interface PosterPlanningInput {
     imageTaskId?: string;
@@ -44,6 +45,7 @@ export async function planStudioPoster(input: {
     allowPaidCall: () => Promise<boolean>;
     callPlanner?: typeof callLLM;
     beforeProviderCall?: () => Promise<void>;
+    packagingHint?: string;
 }) {
     const { store, tenantId, body, enterpriseCtx, allowPaidCall, callPlanner = callLLM, beforeProviderCall } = input;
     const imageTaskId = String(body?.imageTaskId || '').trim();
@@ -151,6 +153,9 @@ ${productInfo || '(no product selected)'}
 Authenticated enterprise profile and user-confirmed facts for this task (the only allowed commercial fact sources):
 ${commercialEvidence}
 
+Approximate OCR from the bound enterprise product package (identity spelling hint only, not a new commercial claim):
+${boundTask ? input.packagingHint || '(unreadable)' : '(not available)'}
+
 Selected material references:
 ${materialLines || '(none selected yet)'}
 
@@ -162,6 +167,8 @@ Hard rules:
 - If inspiration notes exist, output a module-level deconstruction and local asset matching plan. The final image must be a new composition using our product/materials, not a copy of the reference.
 - Shape the composition for the requested finished image (${deliverableType}); do not silently change it into another asset type.- Poster text should be concise enough for a dense B2B product-information poster.
 - Use exact English text for poster fields when language is English.
+- If the package has a readable English product name, keep its product-type word exactly; do not rename Honey to Mousse, or introduce another variant.
+- Make the visible headline at most 42 characters, supporting text at most 60 characters and CTA at most 42 characters. Put longer explanations in the caption, not the image.
 - Return ONLY valid JSON. No markdown.
 
 Schema:
@@ -221,6 +228,38 @@ Schema:
                     : normalized;
                 if (!safeDraft.poster.headline)
                     safeDraft.poster.headline = neutral.headline;
+                if (!safeDraft.caption)
+                    safeDraft.caption = neutral.caption;
+                if (boundTask) {
+                    if (language === 'en' && !socialImageEnglishTitleMatchesPackaging(safeDraft.poster.headline, input.packagingHint || '')) {
+                        safeDraft = { ...safeDraft, poster: { ...normalizePosterBrief({}),
+                            headline: neutral.headline, subheadline: neutral.subheadline, cta: neutral.cta },
+                            caption: neutral.caption, hashtags: [], commentCta: '', dmOpening: '' };
+                    }
+                    if (safeDraft.poster.headline.length > 42) safeDraft.poster.headline = neutral.headline;
+                    if (safeDraft.poster.subheadline.length > 60) safeDraft.poster.subheadline = neutral.subheadline;
+                    if (safeDraft.poster.cta.length > 42) safeDraft.poster.cta = neutral.cta;
+                    if (language === 'en') {
+                        for (const field of ['headline', 'subheadline', 'cta'] as const) {
+                            const withoutOriginalNames = boundTask.contentBrief.productNames
+                                .reduce((text, name) => text.split(name).join(''), safeDraft.poster[field]);
+                            if (/[\u3400-\u9fff]/u.test(withoutOriginalNames)) safeDraft.poster[field] = neutral[field];
+                        }
+                        const withoutOriginalNames = boundTask.contentBrief.productNames
+                            .reduce((text, name) => text.split(name).join(''), safeDraft.caption);
+                        if (/[\u3400-\u9fff]/u.test(withoutOriginalNames)) safeDraft.caption = neutral.caption;
+                        safeDraft.hashtags = safeDraft.hashtags.filter((tag: string) => !/[\u3400-\u9fff]/u.test(tag));
+                    }
+                    // The fixed compositor renders only three short, verified
+                    // copy zones. Dense model-generated rows cannot become tiny
+                    // labels or unsupported commercial badges in the output.
+                    safeDraft.poster = normalizePosterBrief({ headline: safeDraft.poster.headline,
+                        subheadline: safeDraft.poster.subheadline, cta: safeDraft.poster.cta });
+                    // The model's free-form image prompt may repeat rejected text.
+                    // Layout measurements and the admitted poster contract are enough
+                    // for rendering; never send stale model prose to the image model.
+                    safeDraft.imagePrompt = `Create a visually polished ${ratio} product presentation. Use the selected enterprise product as the only identity source and preserve the measured reference layout. No additional text or commercial assertions. Newly authored text uses ${lang}.`;
+                }
                 const remainingAudit = auditCommercialClaims(userFacingPosterText(safeDraft), commercialEvidence);
                 if (remainingAudit.issues.length || remainingAudit.fieldsToConfirm.length) {
                     // A stubborn model sentence must not block first-draft production.

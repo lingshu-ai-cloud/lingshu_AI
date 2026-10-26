@@ -61,6 +61,11 @@ const COMMERCIAL_CLAIM_RULES: Array<{
     claim: /品质保证|质量保证|严格质检|优质品质|高端品质|准时交付|全程支持|quality\s+(?:guarantee|assurance|control)|premium\s+quality|on[- ]time\s+delivery|dedicated\s+support/i,
     evidence: /品质保证|质量保证|质检|质量控制|准时交付|全程支持|quality\s+(?:guarantee|assurance|control)|on[- ]time\s+delivery|dedicated\s+support/i,
   },
+  {
+    field: '临床或眼科测试',
+    claim: /(?:ophthalmologist|dermatologist|clinically|clinical)\s*[- ]?tested|眼科(?:测试|验证)|皮肤科(?:测试|验证)|临床(?:测试|验证)/i,
+    evidence: /(?:ophthalmologist|dermatologist|clinically|clinical)\s*[- ]?tested[：:=]|(?:眼科|皮肤科|临床)(?:测试|验证)[：:]\s*[^；;\s]/i,
+  },
 ];
 
 const CERTIFICATION_TOKEN_RE = /\b(?:GMP|ISO(?:[\s-]?\d{3,5})?|FDA(?:-ready|\s+(?:approved|registered|compliant))?|CE|RoHS|UKCA|ETL|BSCI|REACH)\b/gi;

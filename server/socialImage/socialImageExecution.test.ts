@@ -67,13 +67,13 @@ class MemoryStore implements DataStore {
   }
 }
 
-async function fixture() {
+async function fixture(language: 'zh' | 'en' = 'zh') {
   const store = new MemoryStore();
   const now = '2026-10-24T02:00:00.000Z';
   await store.create(STARTER_COLLECTIONS.socialContentTasks, {
     id: 'content-row', tenant_id: 'tenant-a', task_id: 'content-a', status: 'plan_review', version: '7',
     brief: defaultBrief({ title: '秋季产品主视觉', objective: '让品牌采购理解产品低敏定位', mode: 'instant',
-      productId: 'product-a', productRef: '产品 A', audience: '品牌采购', platforms: ['instagram'], languages: ['zh'],
+      productId: 'product-a', productRef: '产品 A', audience: '品牌采购', platforms: ['instagram'], languages: [language],
       formats: ['social_image'], aspectRatio: '1:1', creationMode: 'viral_replication' }),
     task_mode: 'instant', theme_selection: '', script_baseline: '', director_plan: '', material_requirements: [],
     package_selection: SOCIAL_WORK_PACKAGE_KINDS.map(kind => ({ kind, packageKey: kind, version: '1', name: kind })),
@@ -175,11 +175,11 @@ async function inventoryFor(bytes: Buffer, focal: 'top_left' | 'bottom_right') {
     ocr: async () => [{ text: 'OLD BRAND', bbox: textBox(focal), confidence: .94 }] });
 }
 
-async function preparedViralTask(imageType: 'product_poster' | 'carousel' = 'product_poster', route: 'local' | 'paid' = 'local') {
+async function preparedViralTask(imageType: 'product_poster' | 'carousel' = 'product_poster', route: 'local' | 'paid' = 'local', language: 'zh' | 'en' = 'zh') {
   const referenceBytes = await referenceImage('top_left', '#123358');
   const inventory = await inventoryFor(referenceBytes, 'top_left');
   const productBytes = await sharp({ create: { width: 180, height: 260, channels: 3, background: '#ffffff' } }).png().toBuffer();
-  const {store}=await fixture(); const {task:created}=await createOrResumeBoundSocialImageRun(store,'tenant-a',{contentTaskId:'content-a',expectedContentTaskVersion:'7',idempotencyKey:'prepared-queue-001',entrySource:'assistant',imageType});
+  const {store}=await fixture(language); const {task:created}=await createOrResumeBoundSocialImageRun(store,'tenant-a',{contentTaskId:'content-a',expectedContentTaskVersion:'7',idempotencyKey:'prepared-queue-001',entrySource:'assistant',imageType});
   assert.equal(created.creationPath, 'viral_replication');
   const setReference = await updateSocialImageTask(store, 'tenant-a', created.id, created.version, {
     referenceSnapshot: { sourceRecordId: 'reference-top_left', imageUrls: ['/tenant-owned/reference.png'],
@@ -281,6 +281,23 @@ test('invented model commercial claims are removed without asking the customer t
   assert.doesNotMatch(JSON.stringify(response?.poster),/OEM|private label|Wholesale|wholesale/i);
 });
 
+test('bound English poster rejects a different package variant and mixed-language clinical copy before image payment',async()=>{
+  const {store,task}=await preparedViralTask('product_poster','paid','en');
+  const response=await planStudioPoster({store,tenantId:'tenant-a',
+    body:{imageTaskId:task.id,expectedImageTaskVersion:task.version},
+    packagingHint:'CLOUD FOAM CLEANSING HONEY',
+    enterpriseCtx:async()=>`公司名称：示例企业\n产品1：${task.contentBrief.productNames[0]}`,
+    allowPaidCall:async()=>true,
+    callPlanner:async()=>JSON.stringify({poster:{headline:'Cloud Foam Cleansing Mousse',
+      subheadline:'Gentle cleansing',cta:'Explore the product'},
+      caption:'Ophthalmologist-tested 卸妆 product.',hashtags:['#卸妆','#Beauty']}),
+  });
+  assert.equal(response?.poster.headline,'Product overview');
+  assert.equal(response?.caption,'Explore this product and its packaging. Contact us for verified commercial details.');
+  assert.deepEqual(response?.fieldsToConfirm,[]);
+  assert.doesNotMatch(JSON.stringify(response),/Mousse|Ophthalmologist|卸妆 product/);
+});
+
 test('a timed-out bound planner keeps the director node unapproved and exposes the provider uncertainty', async () => {
   const {store,task}=await preparedViralTask('product_poster','paid');
   let submissions=0,claims=0;
@@ -321,8 +338,9 @@ test('durable image worker claims one frozen GPT Image 2 unit and never submits 
       referenceBytes:async()=>({bytes:referenceBytes,mimeType:'image/png'}),
       submit:async(request:Parameters<typeof import('./socialImagePaidSingleRender.js').submitClaimedSocialImageSingleRender>[0])=>{
         submitted++;
-        assert.equal(request.references.length,1,'structure-only competitor pixels must not be submitted');
-        assert.match(request.prompt,/Reference layout measurements/);
+        assert.equal(request.references.length,0,'the paid plate must contain neither competitor nor product identity pixels');
+        assert.match(request.prompt,/BACKGROUND ONLY/);
+        assert.ok(request.composition?.productBytes.equals(productBytes));
         assert.equal(request.task.generationJobs.at(-1)?.status,'running');
         const saved=await completeSocialImagePaidJob({store,tenantId:'tenant-a',taskId:request.task.id,
           jobId:request.jobId,inputHash:request.inputHash,provider:'openai',output:{id:'candidate-paid',

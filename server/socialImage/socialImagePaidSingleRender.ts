@@ -6,6 +6,7 @@ import { requestMaterialAnalysis } from '../lib/materialLibraryAnalysis.js';
 import { conformSocialImageToCanvas, socialImageCanvasForAspectRatio, type SocialImageAspectRatio } from './referenceCanvas.js';
 import { completeSocialImagePaidJob, socialImageOwnedMaterialUrl } from './socialImagePaidJob.js';
 import { SOCIAL_IMAGE_HARD_CHECKS, type SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
+import { composeFixedSocialLayers } from './fixedOverlayComposer.js';
 
 /** Shared provider/material/receipt path for the workbench and durable image worker. */
 export async function submitClaimedSocialImageSingleRender(input: {
@@ -13,20 +14,40 @@ export async function submitClaimedSocialImageSingleRender(input: {
   prompt: string; ratio: SocialImageAspectRatio; quality: ImageGenerationQuality;
   references: ReferenceImage[]; idempotencyKey: string; productId: string;
   materialIds: string[]; benchmarkReferenceCount: number;
+  composition?: { productBytes: Buffer; poster: NonNullable<SocialImageCreationTask['renderBrief']>;
+    recipe?: SocialImageCreationTask['replicationRecipe'] };
 }) {
   const generated = await generatePosterImage({ prompt: input.prompt, ratio: input.ratio,
     references: input.references, provider: 'openai', quality: input.quality, idempotencyKey: input.idempotencyKey });
-  const bytes = await conformSocialImageToCanvas(generated.bytes, socialImageCanvasForAspectRatio(input.ratio));
+  const canvas = socialImageCanvasForAspectRatio(input.ratio);
+  const plate = await conformSocialImageToCanvas(generated.bytes, canvas);
+  const plateMaterial = input.composition ? await createGeneratedImageMaterial({
+    title: `图文任务背景底图 · ${input.task.id}`,
+    bytes: plate, mimeType: 'image/png', source: generated.source, tenantId: input.tenantId,
+    sourceType: 'ai_generated_background_plate', stableKey: `${input.jobId}:background-plate`,
+    provenance: { socialImageTaskId: input.task.id, socialImageJobId: input.jobId,
+      socialImageInputHash: input.inputHash, model: generated.model, qualityStatus: 'intermediate',
+      promptSha256: createHash('sha256').update(input.prompt).digest('hex') },
+  }) : null;
+  const bytes = input.composition ? await composeFixedSocialLayers({ background: plate,
+    products: [input.composition.productBytes], poster: input.composition.poster,
+    width: canvas.width, height: canvas.height, recipe: input.composition.recipe,
+    productTreatment: 'framed_source' }) : plate;
   const material = await createGeneratedImageMaterial({
     title: `AI 图文海报 · ${input.task.renderBrief?.headline || 'Product overview'}`.slice(0, 120),
     bytes, mimeType: 'image/png', source: generated.source, tenantId: input.tenantId,
+    ...(input.composition ? { stableKey: `${input.jobId}:composed-poster` } : {}),
     sourceType: 'ai_generated_marketing_image', productId: input.productId,
     provenance: { deliverableType: 'social_poster', productionStrategy: 'reference_generate',
       inputMaterialIds: input.materialIds, inputProductIds: [input.productId],
       benchmarkReferenceCount: input.benchmarkReferenceCount,
       promptSha256: createHash('sha256').update(input.prompt).digest('hex'),
       socialImageTaskId: input.task.id, socialImageJobId: input.jobId,
-      socialImageInputHash: input.inputHash, model: generated.model, qualityStatus: 'needs_review' },
+      socialImageInputHash: input.inputHash, model: generated.model, qualityStatus: 'needs_review',
+      ...(input.composition ? { localComposition: 'fixed-product-and-copy-v1',
+        backgroundMaterialId: plateMaterial?.id,
+        plateSha256: createHash('sha256').update(plate).digest('hex'),
+        productSha256: createHash('sha256').update(input.composition.productBytes).digest('hex') } : {}) },
   });
   const task = await completeSocialImagePaidJob({ store: input.store, tenantId: input.tenantId,
     taskId: input.task.id, jobId: input.jobId, inputHash: input.inputHash, provider: generated.source,
