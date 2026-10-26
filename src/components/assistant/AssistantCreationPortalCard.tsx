@@ -1,6 +1,6 @@
 import { lazy, Suspense, useRef } from 'react';
 import { App as AntApp } from 'antd';
-import { ArrowRight, Clapperboard, Images } from 'lucide-react';
+import { ArrowRight, CalendarDays, Clapperboard, Images } from 'lucide-react';
 import { assistantCreationPortalSchema, type AssistantCreationPortal } from '../../../shared/contracts/assistantCreationPortal';
 import { productionNavigationIdentity } from '../../lib/productionNavigation';
 import type { SocialContentCreateRequest } from '../socialContent/SocialContentWorkspace';
@@ -8,8 +8,13 @@ import { assistantTaskPortalSchema, type AssistantTaskPortal } from '../../../sh
 import { assistantSourcePortalSchema, type AssistantSourcePortal } from '../../../shared/contracts/assistantSourcePortal';
 import AssistantProductionPortal, { productionPortalNavigation } from './AssistantProductionPortal';
 import AssistantReplicationScene from './AssistantReplicationScene';
+const AssistantHookScene = lazy(() => import('./AssistantHookScene'));
+const AssistantCampaignScene = lazy(() => import('./AssistantCampaignScene'));
 const AssistantScenarioPlanner = lazy(() => import('./AssistantScenarioPlanner'));
-const AssistantScheduleScene = lazy(() => import('./AssistantScheduleScene'));
+
+export function calendarPortalNavigation() {
+  return { page: 'socialInspiration', view: 'calendar' as const };
+}
 
 export function creationPortalNavigation(value: AssistantCreationPortal, requestId = Date.now()) {
   const portal = assistantCreationPortalSchema.parse(value);
@@ -36,8 +41,20 @@ export default function AssistantCreationPortalCard({ portal }: { portal: Assist
   if (!valid.success) return null;
   const item = valid.data;
   if (item.scenario === 'viral_replication') return <AssistantReplicationScene portal={item}/>;
-  if (item.scenario === 'weekly_calendar') return <Suspense fallback={<p role="status">正在打开日历…</p>}><AssistantScheduleScene portal={item}/></Suspense>;
-  if (['hook_first','campaign','content_task'].includes(item.scenario || '')) return <Suspense fallback={<p role="status">正在打开场景…</p>}><AssistantScenarioPlanner portal={item}/></Suspense>;
+  if (item.scenario === 'weekly_calendar') return <button type="button" aria-label="打开内容创作 - 发布日历" data-assistant-calendar-portal={item.id}
+    className="mt-3 flex w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left text-text-primary transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+    onClick={() => {
+      if (identity.current !== productionNavigationIdentity()) { void message.warning('登录状态已变化，请重新打开当前会话。'); return; }
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { ...calendarPortalNavigation(), navigationIdentity: identity.current } }));
+    }}>
+    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-surface-2 text-accent" aria-hidden="true"><CalendarDays size={22}/></span>
+    <span className="min-w-0 flex-1"><strong className="block text-sm font-semibold">内容创作 · 发布日历</strong>
+      <span className="mt-0.5 block text-xs text-text-secondary">查看已有排期、任务状态与发布时间</span>
+    </span><ArrowRight size={17} className="shrink-0 text-text-muted" aria-hidden="true"/>
+  </button>;
+  if(item.scenario==='hook_first')return <Suspense fallback={<p role="status">正在打开开场场景…</p>}><AssistantHookScene portal={item}/></Suspense>;
+  if(item.scenario==='campaign')return <Suspense fallback={<p role="status">正在打开活动场景…</p>}><AssistantCampaignScene portal={item}/></Suspense>;
+  if (['content_task'].includes(item.scenario || '')) return <Suspense fallback={<p role="status">正在打开场景…</p>}><AssistantScenarioPlanner portal={item}/></Suspense>;
   return <button type="button" aria-label="打开内容创作" data-assistant-creation-portal={item.id}
     className="mt-3 flex w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left text-text-primary transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     onClick={() => {

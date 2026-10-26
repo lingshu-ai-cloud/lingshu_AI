@@ -119,7 +119,7 @@ function sanitizeValue(value: unknown, depth = 0, maxDepth = 5, maxItems = 30, m
 function sanitizeMessage(value: Message): Message {
   const creation = creationReplySchema.safeParse(sanitizeValue(value.creation, 0, 10, 256, 12_000));
 
-  const portal = assistantCreationPortalSchema.safeParse(sanitizeValue(value.creationPortal, 0, 4, 32, 1200));
+  const portal = assistantCreationPortalSchema.safeParse(sanitizeValue(value.creationPortal, 0, 10, 256, 12_000));
   const taskPortal = assistantTaskPortalSchema.safeParse(sanitizeValue(value.taskPortal, 0, 4, 32, 1200));
   const sourcePortal = assistantSourcePortalSchema.safeParse(sanitizeValue(value.sourcePortal, 0, 4, 32, 2400));
   const media = value.referenceMedia;

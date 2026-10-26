@@ -30,7 +30,7 @@ export default function AssistantHookPicker({ portal, update, current }: {
     <div className="replication-thumbnails" role="group" aria-label="开场候选">
       {items.map(item=><button type="button" key={item.id} aria-pressed={item.id===selected} aria-label={`选择开场：${item.name}`}
         className={`replication-thumbnail overflow-hidden rounded-lg border ${item.id===selected?'border-accent ring-2 ring-accent':'border-border'}`}
-        onClick={()=>{setSelected(item.id);setStart(0);setEnd(Math.min(3,item.duration||3));setUsage('reference_only');}}
+        onClick={()=>{setSelected(item.id);setStart(0);setEnd(Math.min(3,item.duration||3));setUsage(item.usage==='editable'?'editable':'reference_only');}}
         onMouseEnter={()=>setPreview(item.id)} onMouseLeave={()=>setPreview('')} onFocus={()=>setPreview(item.id)} onBlur={()=>setPreview('')}>
         <div className="relative h-24 bg-surface-2">{item.poster ? <AuthenticatedImage src={item.poster} alt={item.name} className="absolute inset-0 h-full w-full object-cover"/> : <span className="absolute inset-0 grid place-items-center text-xs text-text-muted">视频片段</span>}
           {preview===item.id&&item.url&&<AuthenticatedVideo apiUrl={item.url} previewActive controls={false} className="absolute inset-0 h-full w-full object-cover"
@@ -43,7 +43,7 @@ export default function AssistantHookPicker({ portal, update, current }: {
       <Upload accept="video/mp4,video/quicktime,video/webm" showUploadList={false} disabled={uploading} beforeUpload={file=>{
         setUploading(true);setError('');void studioApi.uploadMaterialFile(file,{type:'video',sourceType:'upload'}).then(result=>{
           if(!current())return;if(!result.ok||!result.material)throw Error(result.error||'上传失败');
-          setItems(previous=>[result.material,...previous]);setSelected(result.material.id);setUsage('reference_only');
+          setItems(previous=>[result.material,...previous]);setSelected(result.material.id);setUsage(result.material.usage==='editable'?'editable':'reference_only');
         }).catch(cause=>{if(current())setError(cause instanceof Error?cause.message:'上传失败');}).finally(()=>setUploading(false));return false;
       }}><Button loading={uploading}>上传自己的片段</Button></Upload></div>
     {selectedItem&&<>

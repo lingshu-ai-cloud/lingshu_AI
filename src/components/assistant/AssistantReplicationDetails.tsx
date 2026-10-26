@@ -7,6 +7,7 @@ import { socialContentApi } from '../../lib/socialContentApi';
 import { replicationConfirmationInput, replicationConfirmationKey } from '../../lib/assistantReplicationConfirmation';
 import { productionPortalNavigation } from './AssistantProductionPortal';
 import { productionNavigationIdentity } from '../../lib/productionNavigation';
+import { useDefaultVideoPublishTime } from '../../lib/useDefaultVideoPublishTime';
 
 /** Confirm intake and request the existing server start; only persisted evidence proves admission. */
 export default function AssistantReplicationDetails({ portal, update }: {
@@ -34,6 +35,15 @@ export default function AssistantReplicationDetails({ portal, update }: {
   const [products, setProducts] = useState<Array<{ id: string; name: string }>>([]);
   const [productIds, setProductIds] = useState<string[]>(portal.selectedProducts?.map(product => product.id) || (portal.selectedProductId ? [portal.selectedProductId] : []));
   const [date, setDate] = useState(portal.plannedPublishAt || '');
+  const suggestedTime = useDefaultVideoPublishTime(portal.replicationStep === 'schedule' && portal.plannedPublishAt === undefined);
+  const lastAutoSuggestion = useRef('');
+  useEffect(() => {
+    if (suggestedTime && portal.plannedPublishAt === undefined) setDate(current => {
+      if (current && current !== lastAutoSuggestion.current) return current;
+      lastAutoSuggestion.current = suggestedTime;
+      return suggestedTime;
+    });
+  }, [suggestedTime, portal.plannedPublishAt]);
   const [loading, setLoading] = useState(false), [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
   useEffect(() => {
@@ -75,6 +85,7 @@ export default function AssistantReplicationDetails({ portal, update }: {
         <input aria-label="预计发布时间" type="datetime-local" value={date} onChange={event => { setDate(event.target.value); setError(''); }}
           className="mt-2 block w-full rounded-lg border border-border bg-surface px-3 py-2 text-text-primary"/>
       </label>
+      <p className="text-xs text-text-secondary">默认按 09:00、16:00、18:00 顺序排期，可修改。</p>
       {error && <p role="alert" className="text-xs text-text-secondary">{error}</p>}
       <div className="flex justify-end gap-2"><Button onClick={() => update({ replicationStep: 'product' })}>修改产品</Button>
         <Button type="primary" disabled={!date} onClick={() => {

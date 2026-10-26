@@ -1,9 +1,11 @@
 import { z } from 'zod';
+import { assistantScenePlanSchema } from './assistantScenePlan';
 import { VIDEO_LANGUAGES } from './videoLanguages';
 const id = z.string().trim().min(1).max(200).regex(/^[a-zA-Z0-9:_-]+$/);
 export const guideMaterialType = z.enum(['talking_head', 'factory', 'product', 'consumer_demo', 'general']);
 export const guideNodeSchema = z.object({ id, type: guideMaterialType, sourceShotId: id.optional(), sourceShotIds: z.array(id).max(200).optional() }).strict();
 export const guidedSelectionSchema = z.object({
+  scene: assistantScenePlanSchema.optional(),
   languages: z.array(z.string().refine(value => Object.hasOwn(VIDEO_LANGUAGES, value))).max(10).refine(values => new Set(values).size === values.length).default([]),
   structureId: id.optional(),
   customNodes: z.array(guideNodeSchema).max(24).default([]),
@@ -22,7 +24,7 @@ export const guidedReplySchema = z.object({
   candidates: z.array(z.object({ id, sourceId: id, segmentId: id, title: z.string(), description: z.string(), type: guideMaterialType, start: z.number().nonnegative(), end: z.number().positive(), previewUrl: z.string().max(4096).regex(/^(https?:\/\/|\/(?:api|media|studio-media)\/)/).optional(), productionEligible: z.boolean() })).max(256).default([]),
   structures: z.array(guideStructureSchema).max(3),
   nodes: z.array(guideNodeSchema.extend({ description: z.string(), duration: z.number().positive(), candidates: z.array(id).max(4), selectedCandidateId: id.optional(), status: z.enum(['matched', 'candidate', 'needs_material', 'generate', 'shooting']) })).max(64),
-  narration: z.object({ sourceReferenceId: id, sourceTitle: z.string(), text: z.string(), status: z.enum(['ready', 'needs_evidence']), note: z.string() }),
+  narration: z.object({ sourceReferenceId: id, sourceTitle: z.string(), lines: z.array(z.object({ lineId: id, sourceText: z.string(), text: z.string() })).optional(), text: z.string(), status: z.enum(['ready', 'needs_evidence']), note: z.string() }),
   blockers: z.array(z.object({ code: z.string(), message: z.string(), nodeId: id.optional() })).max(160),
   notices: z.array(z.string()).max(30),
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),

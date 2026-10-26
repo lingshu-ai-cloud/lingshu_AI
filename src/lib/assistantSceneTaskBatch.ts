@@ -8,7 +8,7 @@ export async function resumeSceneTaskBatch(input:{
   groupId:string;rows:Array<{id:string;input:CreateSocialContentTaskInput}>;receipts:Receipt[];
   current:()=>boolean;onReceipt:(receipt:Receipt)=>void;
   create:(value:CreateSocialContentTaskInput,key:string)=>Promise<{taskId:string;brief:{title:string}}>;
-  start?:(taskId:string)=>Promise<unknown>;
+  start?:(taskId:string)=>Promise<{receipt:{queued?:boolean;started?:boolean;blockedReason?:string}}>;
   attach?:(taskId:string)=>Promise<unknown>;
 }) {
   for(const row of input.rows){
@@ -28,8 +28,10 @@ export async function resumeSceneTaskBatch(input:{
     }
     if(input.start&&!receipt.startRequested){
       if(!input.current())return;
-      await input.start(receipt.taskId);
-      if(!input.current())return;input.onReceipt({...receipt,startRequested:true});
+      const {receipt: admission}=await input.start(receipt.taskId);
+      if(!input.current())return;
+      const executionState=admission.started?'running':admission.queued?'queued':admission.blockedReason?'blocked':'saved';
+      input.onReceipt({...receipt,startRequested:executionState==='running'||executionState==='queued',executionState,blockedReason:admission.blockedReason});
     }
   }
 }

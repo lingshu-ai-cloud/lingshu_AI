@@ -1,3 +1,4 @@
+import { socialContentAssistantReceipt } from './socialContentAssistantActions.js';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 import { creationSelectionSchema } from '../../shared/contracts/contentCreationDialogue.js';
@@ -41,14 +42,16 @@ export function createGuidedCreationRouter(input: { repository: Starter198Reposi
     const platform = typeof reference?.platform === 'string' ? reference.platform.trim() : '';
     if (!platform) throw new CreationDialogueError('creation_platform_required', 422, '当前参考尚未记录发布平台，请补齐来源信息。');
     const source = guidedReferenceSource(reference, plan.guided.narration);
-    const value = parseCreateSocialTask({ title: `${products.map(row => row.name).join('、')} · 自由创作`.slice(0, 120), objective: '面向海外B2B买家，使用企业已核验产品、工厂、资质、服务信息与询盘CTA制作视频。', productId: products[0]?.id,
+    const scene = guide.scene;
+    const value = parseCreateSocialTask({ title: `${scene?.campaign?.name || products.map(row => row.name).join('、')} · ${scene?.kind === 'campaign' ? '活动内容' : '自由创作'}`.slice(0, 120), objective: scene?.campaign ? `为${scene.campaign.name}制作视频；优惠政策：${scene.campaign.offer}；卖点：${scene.campaign.sellingPoints}`.slice(0,1000) : scene?.hook?.direction || '面向海外B2B买家，使用企业已核验产品、工厂、资质、服务信息与询盘CTA制作视频。', productId: products[0]?.id,
       productRef: products[0]?.name, platforms: [platform], languages: guide.languages, targetDurationSeconds: Math.round(plan.guided.nodes.reduce((sum, node) => sum + node.duration, 0) * 1000) / 1000, mode: 'instant', themeId: 'supplier_capability',
       creationMode: 'viral_replication', managementMode: guide.productionMode === 'manual' ? 'advanced' : 'one_click_managed',
       productionApproach: digital || guide.assignments.some(row => row.intent === 'generate') ? 'ai_enhanced' : 'material_cut',
       assetAvailability: 'limited', productionMode: 'social_ready', referenceMode: 'multi_source_hybrid',
       ...(presenter ? { requestedPresenterAssetId: presenter.id, presenterAssetId: presenter.id } : {}),
       restrictions: ['不虚构工厂、资质、案例或服务承诺', '参考片仅作结构与口播来源，不冒充企业实拍'],
-      specialRequirements: '用户已确认自由创作结构。字幕默认开启，口播复用对应结构来源并按知识库替换身份。',
+      ...(scene ? { dueAt: scene.deliverBy } : {}),
+      specialRequirements: scene ? JSON.stringify({ source: 'assistant_scene_confirmation', scenario: scene.kind, groupId: scene.groupId, itemId: 'main', plannedPublishAt: scene.plannedPublishAt, products: products.map(row => ({id:row.id,name:row.name})) }) : '用户已确认自由创作结构。字幕默认开启，口播复用对应结构来源并按知识库替换身份。',
     });
     let task = await createSocialContentTask({ repository: input.repository, ...identity, idempotencyKey: `${key}:create`, value: { ...value, creationDialoguePlan: plan }, entry: 'assistant', now: input.now() });
     if (!task.runId) {
@@ -63,7 +66,7 @@ export function createGuidedCreationRouter(input: { repository: Starter198Reposi
       }
       task = await startSocialContentTask({ repository: input.repository, ...identity, taskId: task.taskId, expectedVersion: current.version, idempotencyKey: `${key}:start`, orchestratorQueue: input.orchestratorQueue, now: input.now() });
     }
-    res.status(task.runId ? 202 : 200).json({ taskId: task.taskId, runId: task.runId || null, status: task.status, started: Boolean(task.runId) });
+    res.status(task.runId ? 202 : 200).json({ taskId: task.taskId, runId: task.runId || null, status: task.status, started: socialContentAssistantReceipt(task).started, receipt: { ...socialContentAssistantReceipt(task), queued: task.executionAdmission?.state === 'queued', ...(!task.runId && task.executionAdmission?.state !== 'queued' ? {blockedReason:'social_content_task_waiting_for_input'} : {}) } });
   }));
   return router;
 }

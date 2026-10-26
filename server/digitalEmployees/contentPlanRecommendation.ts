@@ -325,10 +325,14 @@ export function enrichPackageWithContentSignals(input: {
   const unused = (candidate: RankedContentReference) => !used.some(existing =>
     sameReferenceContent(existing.contentIdentity, candidate.contentIdentity));
   const enriched = new Map<number, VideoCreationPlan>();
+  const explicitSchedule = (plan: VideoCreationPlan) => Boolean(plan.plannedPublishDate && plan.plannedPublishDate >= input.goal.startsAt
+    && plan.plannedPublishDate <= input.goal.endsAt && (!plan.plannedPublishAt || Number.isFinite(Date.parse(plan.plannedPublishAt))));
   const publishSlots = balancedWeeklyPublishSlots(
     input.goal.startsAt,
     input.goal.endsAt,
     normalized.map(plan => `${plan.platform}:${plan.matrix?.accountId || 'planned'}`),
+    undefined,
+    normalized.map(plan => explicitSchedule(plan) ? plan.plannedPublishAt || plan.plannedPublishDate : undefined),
   );
   [...groups.entries()].forEach(([familyId, members], familyIndex) => {
     const anchor = members.find(item => item.plan.platform === 'tiktok')
@@ -376,8 +380,8 @@ export function enrichPackageWithContentSignals(input: {
         ...plan,
         contentId: plan.contentId || `weekly-${input.goal.startsAt}-${index + 1}`,
         contentFamilyId: familyId,
-        plannedPublishDate: publishSlots[index]?.date || publishDateForAccountSlot(input.goal.startsAt, input.goal.endsAt, slot - 1, requiredCount),
-        plannedPublishAt: publishSlots[index]?.scheduledAt || '',
+        plannedPublishDate: explicitSchedule(plan) ? plan.plannedPublishDate : publishSlots[index]?.date || publishDateForAccountSlot(input.goal.startsAt, input.goal.endsAt, slot - 1, requiredCount),
+        plannedPublishAt: explicitSchedule(plan) ? plan.plannedPublishAt : publishSlots[index]?.scheduledAt || '',
         buyerProblem: plan.buyerProblem || reference?.hook || matrixTheme,
         evidenceRequirement: plan.evidenceRequirement || reference?.evidenceRequirement || '必须使用企业资料或素材库中的可核验事实与画面',
         theme,

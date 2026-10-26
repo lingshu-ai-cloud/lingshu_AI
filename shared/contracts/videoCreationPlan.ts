@@ -11,7 +11,7 @@ export interface VideoCreationPlan {
   masterContentId?: string;
   adaptationMode?: 'master' | 'platform_light';
   plannedPublishDate?: string;
-  /** Explicit publish instant. The calendar defaults generated plans to 18:00 Asia/Shanghai. */
+  /** Explicit publish instant. Generated plans fill 09:00, 16:00, 18:00 Beijing slots. */
   plannedPublishAt?: string;
   buyerProblem?: string;
   evidenceRequirement?: string;

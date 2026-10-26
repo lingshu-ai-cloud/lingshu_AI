@@ -12,6 +12,7 @@ import { studioApi } from '../../lib/studioApi';
 import CreationTaskCover from './CreationTaskCover';
 import { LsCalendar } from '../ui/LsCalendar';
 import CreationTaskDetailDrawer, { creationLocalTime } from './CreationTaskDetailDrawer';
+import { beijingDay } from '../../lib/assistantScheduleProjection';
 
 const selectedTask = () => readSocialContentNavigationQueryTaskId('socialInspiration',window.location.search)
   || readSocialContentNavigationTaskId('socialInspiration',window.history.state);
@@ -19,6 +20,7 @@ const selectedTask = () => readSocialContentNavigationQueryTaskId('socialInspira
 export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalendar = false }:{data:DigitalEmployeeOverview;onRefresh:()=>void;embeddedCalendar?:boolean}) {
   const [tasks,setTasks]=useState<SocialContentTaskSummary[]>([]),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
   const [view,setView]=useState<'calendar'|'tasks'>(()=>!embeddedCalendar&&(selectedTask()||new URLSearchParams(window.location.search).get('view')==='tasks')?'tasks':'calendar');
+  const [calendarPortalRevision,setCalendarPortalRevision]=useState(0);
   const [filter,setFilter]=useState<CreationTaskCategory|'all'>('all'),[taskId,setTaskId]=useState<string|null>(()=>embeddedCalendar?null:selectedTask()),[rowKey,setRowKey]=useState<string|null>(null);
   const [exact,setExact]=useState<SocialContentTaskSummary|null>(null),[identity,setIdentity]=useState(productionNavigationIdentity);
   const loadedIdentity=useRef(identity);
@@ -28,14 +30,25 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
   const refresh=()=>{setRevision(v=>v+1);onRefresh();};
   useEffect(()=>{
     const navigation=()=>{if(embeddedCalendar)return;const target=selectedTask();setTaskId(target);setRowKey(null);if(target){setView('tasks');setFilter('all');}};
+    const calendarPortal=(event:Event)=>{
+      if(embeddedCalendar)return;
+      const detail=(event as CustomEvent<{page?:string;view?:string;navigationIdentity?:string}>).detail;
+      if(detail?.page!=='socialInspiration'||detail.view!=='calendar'||detail.navigationIdentity&&detail.navigationIdentity!==productionNavigationIdentity())return;
+      setView('calendar');setTaskId(null);setRowKey(null);setFilter('all');setCalendarPortalRevision(value=>value+1);
+    };
     const reset=()=>{setTasks([]);setUnavailable([]);setProducts([]);setExact(null);setTaskId(null);setRowKey(null);setIdentity(productionNavigationIdentity());setRevision(v=>v+1);};
     const changed=()=>setRevision(v=>v+1);
-    window.addEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT,navigation);window.addEventListener('popstate',navigation);
+    window.addEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT,navigation);window.addEventListener('lingshu:navigate',calendarPortal);window.addEventListener('popstate',navigation);
     const timer=setInterval(()=>{if(document.visibilityState==='visible'&&!reading.current)changed();},12000);
     const storage=(event:StorageEvent)=>{if(event.key===null||event.key==='overseas_token')reset();};
     window.addEventListener('storage',storage);window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,reset);window.addEventListener(SOCIAL_CONTENT_TASK_REFRESH_EVENT,changed);
-    return()=>{clearInterval(timer);window.removeEventListener('storage',storage);window.removeEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT,navigation);window.removeEventListener('popstate',navigation);window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,reset);window.removeEventListener(SOCIAL_CONTENT_TASK_REFRESH_EVENT,changed);};
+    return()=>{clearInterval(timer);window.removeEventListener('storage',storage);window.removeEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT,navigation);window.removeEventListener('lingshu:navigate',calendarPortal);window.removeEventListener('popstate',navigation);window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,reset);window.removeEventListener(SOCIAL_CONTENT_TASK_REFRESH_EVENT,changed);};
   },[embeddedCalendar]);
+  useEffect(()=>{
+    if(embeddedCalendar||view!=='calendar'||new URLSearchParams(window.location.search).get('view')!=='calendar')return;
+    const frame=requestAnimationFrame(()=>document.getElementById('content-creation-calendar')?.scrollIntoView({behavior:'smooth',block:'start'}));
+    return()=>cancelAnimationFrame(frame);
+  },[embeddedCalendar,view,calendarPortalRevision]);
   useEffect(()=>{let active=true;void studioApi.materialProducts().then(result=>{if(active&&identity===productionNavigationIdentity())setProducts(result.items);}).catch(()=>{if(active)setError('产品照片暂时未能读取，可点击刷新重试。');});return()=>{active=false;};},[identity,revision]);
   useEffect(()=>{
     let active=true;const generation=++readGeneration.current;reading.current=true;setLoading(true);setError('');
@@ -67,7 +80,7 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
   };
   const open=(row:CreationTaskRow)=>{setTaskId(row.taskId||null);setRowKey(row.key);updateLocation(view,row);};
   const close=()=>{setTaskId(null);setRowKey(null);updateLocation(view);};
-  return <section aria-label="内容创作工作区" className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface">
+  return <section id="content-creation-calendar" aria-label="内容创作工作区" className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
       {embeddedCalendar?<h3 className="text-sm font-semibold">内容发布排期</h3>:<Segmented<'calendar'|'tasks'> aria-label="内容创作视图" value={view} options={[{label:'发布日历',value:'calendar'},{label:'创作任务',value:'tasks'}]} onChange={value=>{setView(value);updateLocation(value,selected||undefined);}}/>}
       <div className="flex items-center gap-3"><Tag>{rows.length} 条任务</Tag><Button loading={loading} onClick={refresh}>刷新</Button></div>
@@ -86,7 +99,7 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
         {title:'创建时间',key:'created',width:180,render:(_,row)=>creationLocalTime(row.createdAt)},
       ]}/>
     </>:<>
-      <LsCalendar label="发布日历" events={events} initialView="timeGridWeek" initialDate={data.goal?.startsAt?.slice(0,10)} timeZone="Asia/Shanghai" showAllEvents fixedHeight="auto" workspaceMode="expanded" onEventClick={event=>{const row=rows.find(item=>item.key===event.id);if(row)open(row);return true;}}/>
+      <LsCalendar key={calendarPortalRevision} label="发布日历" events={events} initialView="timeGridWeek" initialDate={calendarPortalRevision||new URLSearchParams(window.location.search).get('view')==='calendar'?beijingDay():data.goal?.startsAt?.slice(0,10)} timeZone="Asia/Shanghai" showAllEvents showAllHours fixedHeight="auto" workspaceMode="expanded" onEventClick={event=>{const row=rows.find(item=>item.key===event.id);if(row)open(row);return true;}}/>
       {rows.length>events.length&&<p className="px-5 py-3 text-xs text-text-muted">{rows.length-events.length} 条任务尚未安排发布时间，可在创作任务中查看。</p>}
       {!rows.length&&!loading&&<Empty description="暂无创作任务"/>}
     </>}

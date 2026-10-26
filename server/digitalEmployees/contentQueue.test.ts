@@ -33,7 +33,7 @@ try {
     if (collection === 'starter_social_content_tasks') items = [{
       id: 'social-row-1', task_id: 'social-manual-1', tenant_id: 'tenant-1', task_mode: 'instant', status: 'asset_review', version: 'v3',
       created_at: '2026-09-29T09:00:00Z', updated_at: '2026-09-29T09:30:00Z',
-      brief: { title: '手动创建的展会短视频', objective: '为展会获得询盘', productRef: '检测设备', platforms: ['youtube'], languages: ['en'], formats: ['Shorts'], requestedOutputCount: 2, weeklyBudgetCny: 80, dueAt: '2026-10-03' },
+      brief: { title: '手动创建的展会短视频', objective: '为展会获得询盘', productRef: '检测设备', platforms: ['youtube'], languages: ['en'], formats: ['Shorts'], requestedOutputCount: 2, weeklyBudgetCny: 80, dueAt: '2026-10-03', specialRequirements: JSON.stringify({source:'assistant_scene_confirmation',scenario:'campaign',plannedPublishAt:'2026-10-04T08:00:00+08:00'}) },
     }];
     return { items, page: 1, perPage: 500, totalItems: items.length, totalPages: 1 } as any;
   }) as typeof store.list;
@@ -68,6 +68,8 @@ try {
   assert.equal(queue.items[1]?.origin, 'manual');
   assert.equal(queue.items[1]?.socialContentTaskId, 'social-manual-1');
   assert.equal(queue.items[1]?.status, 'waiting_review');
+  assert.equal(queue.items[1]?.contentPlan?.deliverBy, '2026-10-03');
+  assert.equal(queue.items[1]?.contentPlan?.publishAt, '2026-10-04T08:00:00+08:00');
   assert.equal(queue.items[1]?.lineage.objective, '为展会获得询盘');
   assert.equal(queue.items[1]?.lineage.budgetCny, 40);
   assert.deepEqual(queue.items[1]?.projectIds, ['project-manual']);
