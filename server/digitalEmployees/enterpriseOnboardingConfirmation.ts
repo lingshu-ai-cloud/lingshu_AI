@@ -89,7 +89,7 @@ export async function applyEnterpriseOnboardingConfirmation(input: {
       },
       strategy: {
         ...current.strategy,
-        focusProducts: input.confirmation.productsDeferred ? current.strategy.focusProducts : focusProducts.map(product => product.name).join('、'),
+        focusProducts: input.confirmation.productsDeferred ? current.strategy?.focusProducts : focusProducts.map(product => product.name).join('、'),
         focusMarkets: input.confirmation.targetMarket,
       },
       customers: {
