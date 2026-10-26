@@ -60,6 +60,7 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
     assert.equal(requestedUrl, '/api/overseas/strategy/chat');
     assert.match(authorization, /Bearer test-token/);
     assert.equal(requestedBody.userQuestion, '请说明本周重点');
+    assert.equal(requestedBody.responseMode, undefined, 'ordinary conversation keeps the full reply mode');
     assert.deepEqual(useAssistantStore.getState().threads.business.messages.map(message => message.content),
       ['请说明本周重点', '本周先核对计划。']);
     assert.equal(persisted, 1);
@@ -97,6 +98,7 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
     const scene = { sceneId: 'CS-02' as const, from: '2026-10-01', to: '2026-10-26', customerId: 'owned-customer' };
     await send('总结当前会话', 'business', undefined, [], undefined, { businessScene: scene, preserveDraft: true });
     assert.deepEqual(requestedBody.businessScene, scene);
+    assert.equal(requestedBody.responseMode, 'quick_task', 'home business cards request the compact actionable reply contract');
     assert.deepEqual(useAssistantStore.getState().threads.business.messages.at(-1)?.businessScene, scene);
     await send('继续分析这个客户的异议'); assert.deepEqual(requestedBody.businessScene, scene);
     store.hydrateThread('business', emptyAssistantThread());

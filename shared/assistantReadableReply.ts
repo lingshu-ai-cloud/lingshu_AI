@@ -10,6 +10,15 @@ export const ASSISTANT_READABLE_POLICY = `【面向客户的表达规则】
 
 export const ASSISTANT_DETAILS_POLICY = '【网页交互格式】当前网页支持折叠分析。可选详细依据用独立的三反引号details块，结束时使用独立三反引号。块内仅使用自然段或列表，不嵌套代码块；图表与交付文案使用各自的正文专用块。正文须先交代足以判断的结果、理由和风险。无需补充时不要输出空块；普通聊天不使用copy块包装解释。';
 
+export const ASSISTANT_QUICK_TASK_POLICY = `【快捷任务回复 · 必须遵守】
+这是用户从快捷任务卡片发起的工作查询。目标是帮助用户立即判断和处理，不写成长篇报告。
+- 首屏先给一句明确结论；随后只保留最多 4 个关键结果、异常或待办，每项写清“状态/发现 + 建议动作”。
+- 默认可见正文控制在约 360 个中文字符内，段落不超过 2 句；不复述用户问题、企业背景或分析过程。
+- 缺少关键数据时只说明真正阻塞结论的缺口，并给一个可执行的补充动作；不要罗列所有未接入字段。
+- 需要用户选择时一次只问 1 个关键问题；可继续处理的动作使用 next 块，最多 2 个短选项。
+- 统计口径、来源说明、逐项证据和备选方案放入 details 块；费用、失败、风险、审批和授权条件必须留在可见正文。
+- 用户明确要求的可复制话术、脚本或文案可完整放在 copy 块，不计入首屏摘要长度。`;
+
 const TERMS: Record<string, string> = {
   scheduled_source_collection: '平台热点采集', workflow_tasks: '任务',
   plan_review: '等待方案确认', needs_input: '等待补充资料', waiting_human: '等待人工确认',
@@ -75,7 +84,7 @@ export function readableAssistantReply(content: string): string {
 }
 
 /** Optional detail protocol. Never infer hidden text from punctuation or sentence count. */
-export function splitAssistantReply(content: string): { summary: string; details: string[] } {
+export function splitAssistantReply(content: string, options: { compact?: boolean } = {}): { summary: string; details: string[] } {
   const summary: string[] = []; const details: string[] = [];
   let detail: string[] | null = null;
   let otherFence = false;
@@ -98,6 +107,25 @@ export function splitAssistantReply(content: string): { summary: string; details
       while (boundary < paragraphs.length - 1 && paragraphs.slice(0, boundary).join('\n\n').length < 350) boundary++;
       main = paragraphs.slice(0, boundary).join('\n\n');
       details.push(paragraphs.slice(boundary).join('\n\n'));
+    }
+  }
+  if (options.compact && !details.length && main.length > 420 && !/```(?:copy|chart)|<!--assistant-file:|^\s*\|/mu.test(main)) {
+    const units = main.split(/\n\s*\n/u).filter(value => value.trim()).flatMap(paragraph => {
+      if (paragraph.length <= 220) return [paragraph];
+      const sentences = paragraph.match(/[^。！？\n]+[。！？]?/gu)?.map(value => value.trim()).filter(Boolean) ?? [];
+      return sentences.length > 1 ? sentences : [paragraph];
+    });
+    const visible: string[] = [];
+    const hidden: string[] = [];
+    let visibleLength = 0;
+    for (const unit of units) {
+      if (!visible.length || (visible.length < 5 && visibleLength + unit.length <= 440)) {
+        visible.push(unit); visibleLength += unit.length;
+      } else hidden.push(unit);
+    }
+    if (hidden.length) {
+      main = visible.join('\n\n');
+      details.push(hidden.join('\n\n'));
     }
   }
   const essential = details.flatMap(value => value.split('\n')).filter(line => /费用|预算|收费|失败|未完成|风险|审批|批准|授权|等待确认|尚未|不能|不可/u.test(line) && !main.includes(line.trim()));

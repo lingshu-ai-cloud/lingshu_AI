@@ -15,6 +15,7 @@ import type { SocialContentStageId } from '../../lib/socialContentStage';
 import type { ProductionPresenterPolicy } from '../../../shared/contracts/productionOnboarding';
 import { Field, inputClass } from './DigitalEmployeeFormField';
 import { onboardingProductName } from './onboardingProductImport';
+import { CATEGORY_OPTIONS } from '../enterprise/enterpriseProfileNormalization';
 
 const applicationGuideSteps = [
   { index: 1, label: '企业与品牌' },
@@ -26,14 +27,14 @@ const applicationGuideSteps = [
 export const OnboardingGuideTitleContext = createContext('新手引导');
 
 const assistantQuestions = {
-  1: '你好，我是灵小枢。先告诉我，你的企业和品牌叫什么、主要做什么？我会把你确认的回答整理为企业资料。',
+  1: '你好，我是灵小枢。先选择企业所属行业，再告诉我企业和品牌叫什么。我会把你确认的回答整理为企业资料。',
   2: '接下来，你希望我重点了解哪些产品？可以上传已有资料，也可以手动填写，并选出最多三个主推产品。',
   3: '这些产品主要面向哪些市场和买家？请告诉我你计划使用的平台、语言及希望客户采取的行动。',
   4: '我把刚才的回答整理好了。请核对每项内容和来源，确认后我才会写入企业资料。',
 } as const;
 
 function OnboardingGuideFrame({ step, title, guideTitle = '新手引导', headerAction, children, busy = false, dismissible = false,
-  onClose, onBack, primaryLabel, primaryDisabled = false, onPrimary,
+  onClose, onBack, deferLabel, onDefer, primaryLabel, primaryDisabled = false, onPrimary,
 }: {
   step: 1 | 2 | 3 | 4;
   title: string;
@@ -44,6 +45,8 @@ function OnboardingGuideFrame({ step, title, guideTitle = '新手引导', header
   dismissible?: boolean;
   onClose?: () => void;
   onBack?: () => void;
+  deferLabel?: string;
+  onDefer?: () => void;
   primaryLabel: string;
   primaryDisabled?: boolean;
   onPrimary: () => void;
@@ -61,6 +64,7 @@ function OnboardingGuideFrame({ step, title, guideTitle = '新手引导', header
     footer={[
       onBack ? <Button key="back" disabled={busy} onClick={onBack}>返回上一步</Button> : null,
       dismissible ? <Button key="skip" type="text" disabled={busy} onClick={onClose} title="保存当前草稿，稍后继续">跳过</Button> : null,
+      onDefer && deferLabel ? <Button key="defer" disabled={busy} onClick={onDefer}>{deferLabel}</Button> : null,
       <LsBrandAction key="primary" loading={busy} disabled={primaryDisabled} onClick={onPrimary}>{primaryLabel}</LsBrandAction>,
     ].filter(Boolean)}
   >
@@ -80,11 +84,11 @@ function OnboardingGuideFrame({ step, title, guideTitle = '新手引导', header
 }
 
 export function OnboardingEnterpriseStep({ busy, profileLoading, dismissible, onClose, onConfirm, guideTitle,
-  missingFields, companyName, brandName, industry, primaryBusiness, onChange, error,
+  missingFields, companyName, brandName, industry, onChange, error,
 }: {
   busy: boolean; profileLoading: boolean; dismissible: boolean; onClose?: () => void; onConfirm: () => void; guideTitle?: string;
-  missingFields: string[]; companyName: string; brandName: string; industry: string; primaryBusiness: string;
-  onChange: (field: 'companyName' | 'brandName' | 'industry' | 'primaryBusiness', value: string) => void;
+  missingFields: string[]; companyName: string; brandName: string; industry: string;
+  onChange: (field: 'companyName' | 'brandName' | 'industry', value: string) => void;
   error: string;
 }) {
   return <OnboardingGuideFrame step={1} title="先建立企业与品牌身份" guideTitle={guideTitle} busy={busy}
@@ -96,8 +100,7 @@ export function OnboardingEnterpriseStep({ busy, profileLoading, dismissible, on
         : <div id="onboarding-enterprise-profile" className="grid gap-4 md:grid-cols-2">
           <Field label="企业名称" required><input className={inputClass} value={companyName} onChange={event => onChange('companyName', event.target.value)} placeholder="例如：灵枢科技" /></Field>
           <Field label="品牌名称" required><input className={inputClass} value={brandName} onChange={event => onChange('brandName', event.target.value)} placeholder="例如：Aurelia" /></Field>
-          <Field label="行业/主营分类" required><input className={inputClass} value={industry} onChange={event => onChange('industry', event.target.value)} placeholder="例如：工业自动化设备" /></Field>
-          <Field label="主要提供什么" required><input className={inputClass} value={primaryBusiness} onChange={event => onChange('primaryBusiness', event.target.value)} placeholder="例如：面向海外经销商的视觉检测设备" /></Field>
+          <Form.Item className="mb-0 md:col-span-2" label="行业/主营分类" required><Select className="w-full" showSearch allowClear value={industry || undefined} onChange={value => onChange('industry', value || '')} placeholder="选择行业/主营分类" options={CATEGORY_OPTIONS.map(value => ({ value, label: value }))} /></Form.Item>
         </div>}
       {error ? <p role="alert" className="rounded-lg bg-red-50 px-4 py-3 text-xs text-red-700">{error}</p> : null}
       {missingFields.length ? <p role="status" className="text-xs text-amber-700">还需填写：{missingFields.join('、')}</p> : null}
@@ -106,11 +109,11 @@ export function OnboardingEnterpriseStep({ busy, profileLoading, dismissible, on
 }
 
 export function OnboardingProductsStep({ busy, productsLoading, productImporting, dismissible, guideTitle,
-  onClose, onBack, onConfirm, onImport, onAddProduct, products, focusProductIds, onToggleFocus, onProductChange,
+  onClose, onBack, onDefer, onConfirm, onImport, onAddProduct, products, focusProductIds, onToggleFocus, onProductChange,
   importMessage, error,
 }: {
   busy: boolean; productsLoading: boolean; productImporting: boolean; dismissible: boolean; guideTitle?: string;
-  onClose?: () => void; onBack: () => void; onConfirm: () => void; onImport: (file: File) => void; onAddProduct: (name: string) => void;
+  onClose?: () => void; onBack: () => void; onDefer: () => void; onConfirm: () => void; onImport: (file: File) => void; onAddProduct: (name: string) => void;
   products: EnterpriseOnboardingProduct[]; focusProductIds: string[];
   onToggleFocus: (id: string) => void;
   onProductChange: (id: string, patch: Partial<Pick<EnterpriseOnboardingProduct, 'name' | 'category' | 'highlights'>>) => void;
@@ -132,6 +135,7 @@ export function OnboardingProductsStep({ busy, productsLoading, productImporting
       <Button icon={<FileSpreadsheet size={16} />} loading={productImporting} disabled={productsLoading || busy}>上传产品资料</Button>
     </Upload>}
     busy={busy || productImporting} dismissible={dismissible} onClose={onClose} onBack={onBack}
+    deferLabel="稍后设置" onDefer={onDefer}
     primaryLabel="确认主推产品，下一步"
     primaryDisabled={!products.length || !focusProductIds.length || focusProductIds.length > 3 || incompleteFocus}
     onPrimary={onConfirm}>
@@ -232,7 +236,7 @@ export function OnboardingConfirmationStep({ busy, dismissible, guideTitle, onCl
         <div className="py-3"><div className="mb-2 flex items-center justify-between gap-3"><label className="text-xs text-text-muted" htmlFor="onboarding-brand-tone">品牌初始语气（选填）</label><SourceBadge source={source('brandTone')} /></div><Input.TextArea id="onboarding-brand-tone" rows={2} value={draft.brandTone} onChange={event => onProposalChange('brandTone', event.target.value)} /></div>
       </section>
       <section className="rounded-lg border border-border bg-surface px-4" aria-label="主推产品确认">
-        <SummaryRow label="主推产品（最多 3 个）" value={<ul className="space-y-2">{focusProducts.map(product => {
+        <SummaryRow label="主推产品（最多 3 个）" value={draft.productsDeferred ? '已选择稍后设置；进入工作台后可在企业资料中补充。' : <ul className="space-y-2">{focusProducts.map(product => {
           const proposal = draft.proposalSet?.focusProducts.find(item => item.productId === product.id);
           return <li key={product.id}><p>{product.name} · {product.category} · {product.highlights || product.description}</p>{product.description ? <p className="mt-1 text-xs font-normal text-text-secondary">{product.description}</p> : null}{proposal ? <p className="mt-1 text-xs font-normal text-text-muted">建议依据：{proposal.reason} · 置信度 {Math.round(proposal.confidence * 100)}%</p> : null}</li>;
         })}</ul>} source={source('focusProducts')} />

@@ -5,6 +5,7 @@ import {
   ASSISTANT_HOME_PROMPTS,
   ASSISTANT_HOME_QUICK_LAUNCHERS,
   assistantHomePromptById,
+  isAssistantHomeQuickTaskText,
 } from './assistantHomeQuickPrompts';
 import { mergeAssistantHomePrompt, normalizeAssistantHomePromptDetail } from '../components/assistant/useAssistantHomeAnchor';
 
@@ -66,6 +67,14 @@ test('home prompt events remain fill-only and support explicit append or replace
   assert.equal(normalizeAssistantHomePromptDetail({ prompt: '  ' }), null);
   assert.equal(mergeAssistantHomePrompt('原有内容', '新提示词', 'append'), '原有内容\n\n新提示词');
   assert.equal(mergeAssistantHomePrompt('原有内容', '新提示词', 'replace'), '新提示词');
+});
+
+test('quick task presentation recognizes fixed cards and parameterized query dialogs only', () => {
+  assert.equal(isAssistantHomeQuickTaskText(assistantHomePromptById('OP-04')!.prompt), true);
+  assert.equal(isAssistantHomeQuickTaskText(`${assistantHomePromptById('OP-04')!.prompt}\n重点关注异常项。`), true);
+  assert.equal(isAssistantHomeQuickTaskText('查询美元兑人民币的最新参考汇率，并标注数据日期。'), true);
+  assert.equal(isAssistantHomeQuickTaskText('行业资讯：行业：美妆原料，目标市场：欧盟。查询最近30天相关变化。'), true);
+  assert.equal(isAssistantHomeQuickTaskText('我想随便聊聊今天的工作。'), false);
 });
 
 

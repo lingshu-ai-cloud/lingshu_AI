@@ -308,7 +308,6 @@ html[data-lingshu-appearance='dark'] .ls-inspiration-watch-dialog [data-preview-
 .ls-assistant-home-root .ls-assistant-composer__input::placeholder { color: var(--color-text-muted); }
 .ls-assistant-home-root .ls-assistant-composer__surface > .flex:last-child { min-height: 44px; padding: 0 8px 6px; }
 .ls-assistant-home-root .ls-assistant-composer__tools { display: flex; align-items: center; gap: 8px; }
-.ls-assistant-home-root .ls-assistant-composer__mode { display: inline-flex; align-items: center; gap: 6px; color: var(--color-accent); white-space: nowrap; font-size: 14px; }
 .ls-assistant-home-root .ls-assistant-composer__tools button { color: var(--color-text-secondary); font-size: 13px; }
 .ls-assistant-home-root .ls-assistant-composer__surface > .flex:last-child > button { width: 40px; height: 40px; background: var(--ls-action-gradient); color: white; }
 .ls-assistant-home-root .ls-assistant-composer__surface > .flex:last-child > button:disabled { opacity: .4; }
@@ -448,5 +447,5 @@ html[data-lingshu-appearance='light'] .ls-assistant-home-root .ls-assistant-flow
 .business-work__all { margin-top: 10px; }
 @media (max-width: 1050px) { .business-work__grid { grid-template-columns: 1fr; } }
 
-/* Five creation scenarios share one row when space permits; narrow screens retain horizontal scrolling. */
-.creator-home__prompt-grid--creation { grid-auto-columns: minmax(210px, calc((100% - 40px) / 5)); }
+/* Keep all creation capabilities reachable, but never crowd more than four cards into the desktop viewport. */
+.creator-home__prompt-grid--creation { grid-auto-columns: minmax(210px, calc((100% - 30px) / 4)); }

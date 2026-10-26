@@ -23,7 +23,7 @@ const content = fs.readFileSync(new URL('../socialContent/CreationTaskWorkspace.
 assert.match(content, /if\(embeddedCalendar\)return;/, '嵌入的日历不修改内容创作页的导航状态');
 assert.match(source, /onNavigate\?\.\('conversion'\)/);
 assert.doesNotMatch(source, /Math\.random|fetch\(/, '业务速览复用原模块，不构造第二套接口或演示数据');
-assert.match(page, /workspaceView === "today" && <BusinessOverviewTabs data=\{data\} onNavigate=\{onNavigate\}/);
+assert.doesNotMatch(page, /<BusinessOverviewTabs\b/, '经营总览不再挂载发布日历、投流速览和询盘诊断页内视图');
 assert.doesNotMatch(page, /aria-label="智能经营视图"/, '旧的三个页签不应与新业务页签并列');
 assert.match(shell, /<ConfiguredDigitalEmployeeWorkspace/, '经营总览继续挂载基线已拆分的工作区');
 assert.match(source, /bg-surface/, '页签容器使用共享表面，夜间不保留大片白底');

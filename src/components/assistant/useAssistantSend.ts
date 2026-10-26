@@ -25,6 +25,7 @@ import { assistantAttachmentKind } from './AssistantComposer';
 import { buildAssistantChatMessages, type UploadedAssistantAttachment } from './assistantChatPrompt';
 import { assistantProductionIntent, assistantCreationPortal } from './assistantProductionIntake';
 import { assistantImageReplicationPortal } from './assistantImageReplicationIntent';
+import { isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
 import { runAssistantProductionRequest } from './assistantProductionRequest';
 import type { useContentTaskIntake } from './useContentTaskIntake';
 import { agentForOrbit, compactText, contextForOrbit, loadLiveIntegrationFacts,
@@ -161,6 +162,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       ? `\n\n附件（已保存到我的素材）：${uploadedAttachments.map(item => item.name).join('、')}`
       : '';
     const visibleMessage = `${visibleText}${visibleAttachmentSummary}`;
+    const responseMode = options.businessScene || isAssistantHomeQuickTaskText(visibleText) ? 'quick_task' : undefined;
 
     const threadAgent = PRIMARY_ASSISTANT_THREAD;
     const thread = useAssistantStore.getState().threads[threadAgent];
@@ -364,6 +366,7 @@ export function useAssistantSend(input: AssistantSendInput) {
               omittedTurns: conversationContext.omittedTurns,
               retainedUserInstructions: conversationContext.retainedUserInstructions,
             },
+            ...(responseMode ? { responseMode } : {}),
           } : {}),
         },
         controller,

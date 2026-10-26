@@ -58,11 +58,12 @@ export default function HomeGrowthTour({ page, scope, onNavigate }: { page: Page
   const step = steps[index] ?? steps[0];
 
   useEffect(() => {
-    const start = () => {
+    const start = (event: Event) => {
       completedRef.current = false;
       triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       let saved = 0;
-      try { saved = Number(sessionStorage.getItem(progressKey(scope)) || 0); } catch { /* optional storage */ }
+      const restart = event instanceof CustomEvent && event.detail?.restart === true;
+      try { saved = restart ? 0 : Number(sessionStorage.getItem(progressKey(scope)) || 0); } catch { /* optional storage */ }
       const resumed = Number.isInteger(saved) && saved >= 0 && saved < steps.length ? saved : 0;
       const next = resumed === 5 && !document.querySelector('[data-growth-tour="weekly-details"]') ? 4 : resumed;
       setIndex(next);
@@ -178,7 +179,7 @@ export default function HomeGrowthTour({ page, scope, onNavigate }: { page: Page
   const noWeeklyTask = index === 4 && !document.querySelector('[data-growth-tour="weekly-task"]');
   const existingDraft = index === 7 && Boolean(useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].draftInput.trim());
   return <>
-    {rect && <div aria-hidden="true" className="pointer-events-none fixed rounded-lg" style={{ zIndex: 1200, left: rect.left - 5, top: rect.top - 5, width: rect.width + 10, height: rect.height + 10, boxShadow: '0 0 0 9999px rgba(24,24,27,.12), 0 0 0 2px var(--color-accent)' }} />}
+    {rect && <div aria-hidden="true" className="pointer-events-none fixed rounded-lg" style={{ zIndex: 1200, left: rect.left - 5, top: rect.top - 5, width: rect.width + 10, height: rect.height + 10, boxShadow: '0 0 0 9999px rgba(9,9,11,.64), 0 0 0 2px var(--color-accent)' }} />}
     <aside ref={bubbleRef} tabIndex={-1} aria-label="海外增长导览" aria-live="polite" className="fixed w-[min(320px,calc(100vw-24px))] rounded-lg border border-border bg-surface p-4 text-text-primary shadow-lg outline-none" style={{ zIndex: 1201, left: position.left, top: position.top, maxHeight: 'calc(100vh - 24px)', overflowY: 'auto' }}>
       <span className="text-xs font-semibold text-accent">真实页面导览 · {index + 1}/{steps.length}</span>
       <h2 className="mt-2 text-base font-semibold">{step.title}</h2>

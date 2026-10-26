@@ -99,3 +99,12 @@ test('company introduction and initial brand tone may be deferred without weaken
   const missingProduct = { ...draft, products: [], focusProductIds: [] };
   assert.equal(validateEnterpriseOnboardingConfirmation({ ...missingProduct, draftRevision: draft.revision }).confirmation, null);
 });
+
+test('product setup may be explicitly deferred without inventing confirmed product facts', () => {
+  const draft = { ...completeDraft(), productsDeferred: true, products: [], focusProductIds: [] };
+  const parsed = validateEnterpriseOnboardingConfirmation({ ...draft, draftRevision: draft.revision });
+  assert.deepEqual(parsed.missing, []);
+  assert.equal(parsed.confirmation?.productsDeferred, true);
+  assert.deepEqual(parsed.confirmation?.products, []);
+  assert.deepEqual(parsed.confirmation?.focusProductIds, []);
+});

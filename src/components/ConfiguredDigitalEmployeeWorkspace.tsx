@@ -1,5 +1,4 @@
 import BusinessHealthOverview from './smartBusiness/BusinessHealthOverview';
-import BusinessOverviewTabs from './smartBusiness/BusinessOverviewTabs';
 import { labels as sharedTaskLabels } from '../../shared/mobile-domain.mjs';
 import { getScrollBehavior } from '../lib/usePrefersReducedMotion';
 import { PAGE_REGISTRY, type Page } from '../pageRegistry';
@@ -261,9 +260,8 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
       </div>
     ) : undefined;
     const weeklyPlanControls = <>
-      {activeRun && !viewGoalId
-        ? <Button data-growth-tour="weekly-task" onClick={() => setWeeklyPlanDetailsOpen(true)} icon={<CalendarRange size={15}/>}>查看周任务</Button>
-        : <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>}
+      {goal && !viewGoalId && <Button data-growth-tour="weekly-task" onClick={() => setWeeklyPlanDetailsOpen(true)} icon={<CalendarRange size={15}/>}>查看当前周计划</Button>}
+      <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>
       <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={!activeRun && (!goal || canCreateNextGoal) ? <CalendarRange size={15}/> : activeRun && !recoverableProductionTask && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
     </>;
     return (
@@ -316,7 +314,6 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
                 }} />}</Suspense>
             </main>
           </div>
-          {workspaceView === "today" && <BusinessOverviewTabs data={data} onNavigate={onNavigate}/>}
         </div>
       </div>}
       <Modal open={healthDialogOpen} title="账号健康与阶段目标" width={960} footer={null} destroyOnHidden onCancel={() => setHealthDialogOpen(false)}>

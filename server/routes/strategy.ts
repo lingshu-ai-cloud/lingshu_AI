@@ -22,7 +22,7 @@ import { answerExternalData } from '../assistantContext/externalAnswer.js';
 import { ExternalInformationError } from '../externalInformation/http.js';
 import { appendInformationSources } from '../externalInformation/sourceFooter.js';
 import { previewInformationScope } from '../assistantContext/previewInformationScope.js';
-import { ASSISTANT_DETAILS_POLICY } from '../../shared/assistantReadableReply.js';
+import { ASSISTANT_DETAILS_POLICY, ASSISTANT_QUICK_TASK_POLICY } from '../../shared/assistantReadableReply.js';
 import { companyReportIntent, generateCompanyReport, companyReportSummary } from '../externalInformation/companyReport.js';
 import { companyFilingsIntent, companyReportOptions, queryCompanyFilings, renderCompanyFilings, resolveHalfYearReport } from '../externalInformation/companyFilingsDelivery.js';
 import { DecisionMemoryError, recordDecisionMemory, updateDecisionMemory, revokeDecisionMemory, listDecisionMemories, type DecisionMemory } from '../assistantContext/decisionMemory.js';
@@ -410,6 +410,7 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
   const scene = req.body?.businessScene === undefined ? undefined : sceneSelectionSchema.safeParse(req.body.businessScene);
   if (scene && !scene.success) { res.status(400).json({ error: 'scene_input_invalid', message: '请选择有效业务对象及日期范围。' }); return; }
   const businessScene = scene?.success ? scene.data : undefined;
+  const quickTaskReply = req.body?.responseMode === 'quick_task';
   const deepThinking = req.body?.deepThinking === true;
   if (!await consumeDemoQuota(req, res, 'aiChat')) return;
 
@@ -483,8 +484,9 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
     const sourceRule = requireSources ? '\n\n【联网来源硬规则】本轮涉及联网搜索/公开信息核验，必须使用联网检索结果，并通过 sources 事件返回可点击来源；如果无法取得来源，不要给出联网结论，改为说明需要重新检索。'
       : externalPlan.kind === 'offline' ? '\n本轮用户明确禁止联网。只回答已有证据和一般方法，不列未核验的具体认证/监管要求、法律义务、技术极限或行业精确阈值，也不提供未核验的当前汇率、行情、贸易数字或最新政策。需要此类信息时明确另行核验。' : '';
     const generalMethod = externalPlan.kind === 'offline' && !needsGrounding && !creationGrounding;
-    const systemPrompt = generalMethod ? `${GENERAL_METHOD_PROMPT}\n${grounding.text}`
-      : `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${sourceRule}\n\n${grounding.text}\n${creationGrounding}\n${EXTERNAL_SOURCE_RULES}\n${externalEvidence}\n${ASSISTANT_CONTEXT_RULES}`;
+    const replyPolicy = quickTaskReply ? `\n\n${ASSISTANT_QUICK_TASK_POLICY}` : '';
+    const systemPrompt = generalMethod ? `${GENERAL_METHOD_PROMPT}\n${grounding.text}${replyPolicy}`
+      : `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${sourceRule}\n\n${grounding.text}\n${creationGrounding}\n${EXTERNAL_SOURCE_RULES}\n${externalEvidence}\n${ASSISTANT_CONTEXT_RULES}${replyPolicy}`;
     for await (const ev of callLLMChatStream(newsScope ? [...messages.slice(0, -1), { role: 'user', content: question }] : messages, { systemPrompt, deepThinking, requireConclusion: true, searchEvidenceFirst: Boolean(newsScope), validateAnswer: generalMethod ? assertGeneralMethodAnswer : undefined, requireSources, webSearch: requireSources, searchDomains: requireSources ? externalPlan.domains : undefined, searchFreshnessDays: externalPlan.freshnessDays, signal: cancellation.signal })) {
       res.write(`data: ${JSON.stringify(ev)}\n\n`);
     }

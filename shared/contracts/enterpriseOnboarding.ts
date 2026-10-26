@@ -118,6 +118,7 @@ export type EnterpriseOnboardingDraft = {
   brandTone: string;
   products: EnterpriseOnboardingProduct[];
   focusProductIds: string[];
+  productsDeferred?: boolean;
   targetMarket: string;
   targetBuyer: string;
   primaryPlatform: string;
@@ -291,7 +292,7 @@ export function normalizeEnterpriseOnboardingDraft(value: unknown): EnterpriseOn
     companyName: text(input.companyName, 240), brandName: text(input.brandName, 240),
     industry: text(input.industry, 240), primaryBusiness: text(input.primaryBusiness, 1_000),
     companyIntro: text(input.companyIntro, 2_000), brandTone: text(input.brandTone, 1_000),
-    products, focusProductIds,
+    products, focusProductIds, ...(input.productsDeferred === true ? { productsDeferred: true } : {}),
     targetMarket: text(input.targetMarket, 500), targetBuyer: text(input.targetBuyer, 500),
     primaryPlatform: text(input.primaryPlatform, 80), language: text(input.language, 80),
     ...(contentStage ? { contentStage } : {}), primaryCta: text(input.primaryCta, 500),
@@ -319,10 +320,10 @@ export function validateEnterpriseOnboardingConfirmation(value: unknown): {
     !draft.baseFactVersion ? '企业事实版本' : '',
     !draft.companyName ? '企业名称' : '', !draft.brandName ? '品牌名称' : '',
     !draft.industry ? '行业/主营分类' : '', !draft.primaryBusiness ? '主营业务' : '',
-    !draft.products.length ? '至少一个产品' : '',
-    focusProducts.length < 1 || focusProducts.length > 3 ? '1–3 个主推产品' : '',
-    focusProducts.some(product => !text(product.category)) ? '主推产品类目' : '',
-    focusProducts.some(product => !text(product.highlights || product.description)) ? '主推产品卖点' : '',
+    !draft.productsDeferred && !draft.products.length ? '至少一个产品' : '',
+    !draft.productsDeferred && (focusProducts.length < 1 || focusProducts.length > 3) ? '1–3 个主推产品' : '',
+    !draft.productsDeferred && focusProducts.some(product => !text(product.category)) ? '主推产品类目' : '',
+    !draft.productsDeferred && focusProducts.some(product => !text(product.highlights || product.description)) ? '主推产品卖点' : '',
     !draft.targetMarket ? '目标市场' : '', !draft.targetBuyer ? '主推买家' : '',
     !draft.primaryPlatform ? '主平台' : '', !draft.language ? '主要语言' : '',
     !draft.contentStage ? '社媒阶段' : '', !draft.primaryCta ? '唯一 CTA' : '',
@@ -333,12 +334,13 @@ export function validateEnterpriseOnboardingConfirmation(value: unknown): {
       baseFactVersion: draft.baseFactVersion, companyName: draft.companyName, brandName: draft.brandName,
       industry: draft.industry, primaryBusiness: draft.primaryBusiness,
       companyIntro: draft.companyIntro, brandTone: draft.brandTone,
-      products: draft.products, focusProductIds: draft.focusProductIds,
+      products: draft.productsDeferred ? [] : draft.products, focusProductIds: draft.productsDeferred ? [] : draft.focusProductIds,
+      ...(draft.productsDeferred ? { productsDeferred: true } : {}),
       targetMarket: draft.targetMarket, targetBuyer: draft.targetBuyer,
       primaryPlatform: draft.primaryPlatform, language: draft.language,
       ...(draft.contentStage ? { contentStage: draft.contentStage } : {}), primaryCta: draft.primaryCta,
       ...(draft.evidenceRefs ? { evidenceRefs: draft.evidenceRefs } : {}),
-      ...(draft.proposalSet ? { proposalSet: draft.proposalSet } : {}),
+      ...(!draft.productsDeferred && draft.proposalSet ? { proposalSet: draft.proposalSet } : {}),
       sources: draft.sources, draftRevision: draft.revision,
     },
     missing,

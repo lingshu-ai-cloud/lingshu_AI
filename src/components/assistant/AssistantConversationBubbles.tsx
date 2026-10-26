@@ -15,6 +15,7 @@ import { SocialPlatformIcon } from '../SocialPlatformIcon';
 import { ThumbnailImage, VideoThumbnail } from '../inspiration/InspirationMedia';
 import AssistantMascot from './AssistantMascot';
 import CompanyReportCard from './CompanyReportCard';
+import { isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
 
 interface Props {
   inlineHome?: boolean;
@@ -97,6 +98,7 @@ export default function AssistantConversationBubbles(props: Props) {
             <div className={inlineHome ? 'ls-assistant-flow__prompt whitespace-pre-line' : 'ls-messenger-bubble ls-messenger-bubble--outbound whitespace-pre-line'}>{msg.content}</div>
           </div> : <div className={inlineHome ? 'ls-assistant-flow__answer' : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
             {msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction}
+              compact={inlineHome && isAssistantHomeQuickTaskText(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
               detailExpanded={assistantWantsDetailedReply(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
               onSuggest={onSuggest} /> : <span className="opacity-40">...</span>}
             {msg.creationPortal && <AssistantCreationPortalCard key={msg.creationPortal.id} portal={msg.creationPortal} />}
