@@ -20,7 +20,7 @@ import {defaultBrief} from '../starter198/socialContentTaskSupport.js';
 import {STARTER_COLLECTIONS} from '../starter198/repository.js';
 import {createOrResumeBoundSocialImageRun} from './socialImageProductionRun.js';
 import {readSocialImageTask,updateSocialImageTask} from './socialImageTask.js';
-import {enqueueImageExecution,readImageExecutionJob} from './socialImageExecutionQueue.js';
+import {enqueueImageExecution,imageExecutionReceipt,readImageExecutionJob} from './socialImageExecutionQueue.js';
 import {executeImageProduction,type ImageExecutionPorts} from './socialImageExecution.js';
 import {DurableContentExecutionWorker} from '../contentExecution/durableQueue.js';
 import {hydrateSocialContentExecutionSummaries} from '../starter198/socialContentQueueProjection.js';
@@ -103,6 +103,17 @@ test('confirmation persists one receipt; replay after reload does not enqueue or
  assert.equal(first.execution.status,'queued');assert.equal((await readImageExecutionJob(store,'tenant-a',task))?.attempt,0);
  await assert.rejects(enqueueImageExecution({...input,tenantId:'tenant-b'}),/social_image_task_missing/);
  const rows=await store.list('content_execution_jobs');assert.equal(rows.totalItems,1);
+});
+test('legacy timed-out planning receipt identifies the unknown provider outcome without replaying it',async()=>{
+ const {store,input}=await setup();const queued=await enqueueImageExecution(input);
+ const raw=await store.getById<Record_>('content_execution_jobs',queued.execution.jobId);
+ assert.ok(raw);
+ const changed={...raw,status:'blocked',last_error:'user_input_required:social_image_planner_result_requires_review',
+  checkpoints:{...(raw.checkpoints as Record<string,unknown>),'image.planning':{version:'1',inputHash:'a'.repeat(64),updatedAt:now,
+   payload:{state:'started'}}}};
+ await store.update('content_execution_jobs',queued.execution.jobId,changed);
+ const job=await readImageExecutionJob(store,'tenant-a',queued.task);
+ assert.ok(job);assert.equal(imageExecutionReceipt(job).lastError,'social_image_planning_outcome_requires_review');
 });
 test('stale inputs and cancelled canonical task cannot create a dispatch job',async()=>{
  const {store,input}=await setup();await assert.rejects(enqueueImageExecution({...input,expectedVersion:1}),/version_conflict/);
@@ -245,17 +256,27 @@ test('viral image task freezes the existing GPT Image 2 route without sending a 
 
 test('a timed-out bound planner keeps the director node unapproved and exposes the provider uncertainty', async () => {
   const {store,task}=await preparedViralTask('product_poster','paid');
-  let submissions=0;
+  let submissions=0,claims=0;
   await assert.rejects(planStudioPoster({store,tenantId:'tenant-a',
     body:{imageTaskId:task.id,expectedImageTaskVersion:task.version},
     enterpriseCtx:async()=>`公司名称：示例企业\n产品1：${task.contentBrief.productNames[0]}`,
     allowPaidCall:async()=>true,
+    beforeProviderCall:async()=>{claims++;},
     callPlanner:async()=>{submissions++;throw new Error('qwen LLM request timed out after 90s');},
   }),error=>error instanceof PosterPlanningError && error.body.code==='social_image_planning_provider_outcome_unknown');
-  assert.equal(submissions,1);
+  assert.equal(submissions,1);assert.equal(claims,1);
   const persisted=await readSocialImageTask(store,'tenant-a',task.id);
   assert.equal(persisted?.productionRuntime?.nodes.find(node=>node.nodeId==='director_brief')?.status,'waiting');
   assert.equal(persisted?.generationJobs.length,0);
+});
+test('planner input rejection never claims an external request',async()=>{
+  const {store,task}=await preparedViralTask('product_poster','paid');let claims=0,submissions=0;
+  await assert.rejects(planStudioPoster({store,tenantId:'tenant-a',
+    body:{imageTaskId:task.id,expectedImageTaskVersion:task.version},
+    enterpriseCtx:async()=>'',allowPaidCall:async()=>true,
+    beforeProviderCall:async()=>{claims++;},callPlanner:async()=>{submissions++;return '{}';},
+  }),error=>error instanceof PosterPlanningError && error.body.code==='ENTERPRISE_PROFILE_REQUIRED');
+  assert.equal(claims,0);assert.equal(submissions,0);
 });
 
 test('durable image worker claims one frozen GPT Image 2 unit and never submits it twice', async () => {

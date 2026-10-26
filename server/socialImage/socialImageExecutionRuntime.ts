@@ -44,17 +44,23 @@ export function createImageExecutionPorts(store: DataStore, job: ContentExecutio
                 const claim = { stage: 'image.planning', version: '1', inputHash: job.checkpoints['image.confirmed']!.inputHash };
                 if (readCurrentContentExecutionCheckpoint(claim))
                     throw new Error('social_image_planning_outcome_requires_review');
-                // Persist before transport: process interruption cannot replay a potentially paid plan.
-                await recordCurrentContentExecutionCheckpoint({ ...claim, payload: { state: 'started' } });
+                let providerCallStarted = false;
                 try {
                     await planStudioPoster({ store, tenantId: job.tenantId,
                         body: { imageTaskId: task.id, expectedImageTaskVersion: task.version },
-                        enterpriseCtx: async () => buildEnterpriseContext(await readTenantEnterpriseProfile(job.tenantId)), allowPaidCall });
+                        enterpriseCtx: async () => buildEnterpriseContext(await readTenantEnterpriseProfile(job.tenantId)), allowPaidCall,
+                        beforeProviderCall: async () => {
+                            // Only pre-transport claims are uncertain. Validation and
+                            // quota denials must not poison the task as a paid result.
+                            await recordCurrentContentExecutionCheckpoint({ ...claim, payload: { state: 'started' } });
+                            providerCallStarted = true;
+                        } });
                 } catch (error) {
                     const code = error && typeof error === 'object' && 'body' in error
                         ? String((error as { body?: { code?: string } }).body?.code || 'social_image_planning_failed')
                         : 'social_image_planning_failed';
-                    await recordCurrentContentExecutionCheckpoint({ ...claim, payload: { state: 'outcome_unknown', code } });
+                    if (providerCallStarted)
+                        await recordCurrentContentExecutionCheckpoint({ ...claim, payload: { state: 'outcome_unknown', code } });
                     throw new Error(code);
                 }
                 const planned = await readSocialImageTask(store, job.tenantId, task.id);

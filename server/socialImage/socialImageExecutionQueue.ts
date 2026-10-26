@@ -14,10 +14,17 @@ export function imageExecutionInputHash(task: SocialImageCreationTask): string {
         enterpriseAssets: task.enterpriseAssets, materialIds: task.materialIds,
         referenceUrls: task.referenceUrls, referenceSnapshot: task.referenceSnapshot });
 }
-export const imageExecutionReceipt = (job: ContentExecutionJob): SocialImageExecutionReceipt => ({
-    jobId: job.id, status: job.status, attempt: job.attempt, lastError: job.lastError ? (job.lastError.match(/social_image_[a-z0-9_]+|demo_[a-z0-9_]+/)?.[0] || 'social_image_execution_requires_review') : null,
-    createdAt: job.createdAt, updatedAt: job.updatedAt,
-});
+export const imageExecutionReceipt = (job: ContentExecutionJob): SocialImageExecutionReceipt => {
+    const storedCode = job.lastError?.match(/social_image_[a-z0-9_]+|demo_[a-z0-9_]+/)?.[0] || null;
+    const planning = job.checkpoints['image.planning']?.payload as { state?: string; code?: string } | undefined;
+    const lastError = storedCode === 'social_image_planner_result_requires_review' && planning?.state === 'started'
+        ? 'social_image_planning_outcome_requires_review'
+        : storedCode === 'social_image_planning_failed' && planning?.state === 'outcome_unknown'
+            ? planning.code || 'social_image_planning_outcome_requires_review'
+            : storedCode || (job.lastError ? 'social_image_execution_requires_review' : null);
+    return { jobId: job.id, status: job.status, attempt: job.attempt, lastError,
+        createdAt: job.createdAt, updatedAt: job.updatedAt };
+};
 export async function readImageExecutionJob(store: DataStore, tenantId: string, task: SocialImageCreationTask) {
     const contentId = task.productionRuntime?.binding?.contentTaskId;
     if (!contentId)

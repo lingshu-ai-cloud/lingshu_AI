@@ -43,8 +43,9 @@ export async function planStudioPoster(input: {
     enterpriseCtx: () => Promise<string>;
     allowPaidCall: () => Promise<boolean>;
     callPlanner?: typeof callLLM;
+    beforeProviderCall?: () => Promise<void>;
 }) {
-    const { store, tenantId, body, enterpriseCtx, allowPaidCall, callPlanner = callLLM } = input;
+    const { store, tenantId, body, enterpriseCtx, allowPaidCall, callPlanner = callLLM, beforeProviderCall } = input;
     const imageTaskId = String(body?.imageTaskId || '').trim();
     const boundTask = imageTaskId ? await readSocialImageTask(store, tenantId, imageTaskId) : null;
     if (imageTaskId && (!boundTask || boundTask.schemaVersion !== 'social-image-creation.v3'
@@ -195,6 +196,7 @@ Schema:
     const failures: string[] = [];
     for (const backend of backends) {
         try {
+            await beforeProviderCall?.();
             const text = await callPlanner(prompt, { backend, systemPrompt: productEnterprise, timeoutMs: boundTask ? 90_000 : 30_000 });
             const obj = extractJSON<any>(text);
             if (obj?.poster?.headline && obj?.caption) {
