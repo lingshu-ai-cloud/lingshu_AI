@@ -306,7 +306,8 @@ export function socialImageFrozenSourceIssue(input: {
     || createHash('sha256').update(input.productBytes.get(asset.assetId)!).digest('hex') !== asset.contentHash)) {
     return 'social_image_required_asset_bytes_changed';
   }
-  if (!input.referenceBytes || createHash('sha256').update(input.referenceBytes).digest('hex') !== reference.imageAssetRef.contentHash) {
+  if (!input.referenceBytes) return 'social_image_reference_unreadable';
+  if (createHash('sha256').update(input.referenceBytes).digest('hex') !== reference.imageAssetRef.contentHash) {
     return 'social_image_reference_bytes_changed';
   }
   return null;

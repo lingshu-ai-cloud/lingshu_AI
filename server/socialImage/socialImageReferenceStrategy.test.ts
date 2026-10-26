@@ -197,6 +197,8 @@ test('V3 offline reference evidence flows through strategy, frozen plan and per-
   assert.equal((task.productionRuntime?.nodeOutputs.filter(node => node.nodeId === 'render_spec').at(-1)?.value as { inputHash: string }).inputHash,
     socialImageV3RenderSpecInputHash(task));
   assert.equal(socialImageFrozenSourceIssue({ task, productBytes: new Map([['product-a', productBytes]]), referenceBytes }), null);
+  assert.equal(socialImageFrozenSourceIssue({ task, productBytes: new Map([['product-a', productBytes]]), referenceBytes: null }),
+    'social_image_reference_unreadable');
   assert.equal(socialImageFrozenSourceIssue({ task, productBytes: new Map([['product-a', referenceBytes]]), referenceBytes }),
     'social_image_required_asset_bytes_changed');
   assert.equal(socialImageFrozenSourceIssue({ task, productBytes: new Map([['product-a', productBytes]]), referenceBytes: productBytes }),
