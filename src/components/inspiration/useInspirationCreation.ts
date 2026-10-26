@@ -134,7 +134,7 @@ export function useInspirationCreation({ onEnterWorkflow, setMaterialMessage, se
             originLabel: '来自灵感中心',
             referenceTitle: video.title || '已选对标图文',
             referenceThumbnail: video.thumbnail,
-            referenceMediaUrl: video.thumbnail,
+            referenceMediaUrl: video.aiAnalysis?.imageUrls?.[0] || video.thumbnail,
             referenceContentType: 'image', referenceCaption: video.aiAnalysis?.caption || '',
             referenceLayerBlueprints: video.aiAnalysis?.imageEvidence?.layerBlueprints || [],
           },

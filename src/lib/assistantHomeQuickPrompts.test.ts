@@ -9,7 +9,7 @@ import {
 import { mergeAssistantHomePrompt, normalizeAssistantHomePromptDetail } from '../components/assistant/useAssistantHomeAnchor';
 
 test('home prompt catalog exposes every approved capability with stable unique ids', () => {
-  assert.equal(ASSISTANT_HOME_PROMPTS.length, 65);
+  assert.equal(ASSISTANT_HOME_PROMPTS.length, 66);
   assert.equal(new Set(ASSISTANT_HOME_PROMPTS.map(entry => entry.id)).size, ASSISTANT_HOME_PROMPTS.length);
   assert.deepEqual(ASSISTANT_HOME_PROMPT_GROUPS.map(group => group.id), [
     'operations', 'inspiration', 'content', 'publishing', 'ads', 'customer', 'enterprise',
@@ -50,8 +50,14 @@ test('external news opens the overview and four distinct news types', () => {
 test('the remaining launcher labels are concrete tasks rather than abstract domains', () => {
   assert.deepEqual(
     ASSISTANT_HOME_QUICK_LAUNCHERS.slice(4).map(entry => entry.label),
-    ['内容创作', '提炼产品卖点', '查看素材怎么用', '规划发布安排', '跟进重点客户', '优化智能投流'],
+    ['点击开始创作', '提炼产品卖点', '查看素材怎么用', '规划发布安排', '跟进重点客户', '优化智能投流'],
   );
+});
+
+test('creation adds image replication as the fifth scenario while preserving the four original choices', () => {
+  const creation = ASSISTANT_HOME_QUICK_LAUNCHERS.find(entry => entry.id === 'viral-script')!;
+  assert.deepEqual(creation.promptIds, ['CO-REPLICATE', 'CO-HOOK', 'CO-CAMPAIGN', 'CO-07', 'CO-13']);
+  assert.equal(assistantHomePromptById(creation.promptIds[4])?.label, '图文爆款复刻');
 });
 
 test('home prompt events remain fill-only and support explicit append or replace', () => {

@@ -10,6 +10,15 @@
 - 修复排队回执破坏调度冻结版本/输入 hash 的回归；原功能和其余工作树保留。仅本地源码合并，不代表真实供应商或发布就绪。
 - 详见[本轮集成与完整验证记录](HOME-CARDS-INTEGRATION-20261026.md)。未推送或部署。
 
+## 当前本机开发基线：图文爆款复刻与冒烟准备（2026-10-26）
+
+- 权威工作树仍为 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`、分支 `xixi联合功能模块后端改`。用户授权冻结功能、推进基线并准备一次真实冒烟；从 `8c7cc7d304ffd268fcd5f20deeabf68fb5f8b10d` 快进至已验证合并提交 `6cbfd81b8623b685399c652e3cddb9a808be528a`，功能来源 `feature/image-text-viral-creation-20261026` / `31dced92`。本节为推进后的独立治理补记，后续文档提交不改变生产源码。
+- 首页上方创作区保留本分支原四项，追加第五项“图文爆款复刻”；下方入口为“点击开始创作”。最终确认后复用统一内容任务、图文子运行、原素材/参考分析、策划、渲染、预检与人工审核交付，不新增平行业务主链；支持存储响应丢失后的同请求恢复，保留原视频入口。
+- 候选树 `/Users/julia1/.codex/worktrees/frontend-v2-safe-integration-20261025` / `integration/image-text-smoke-20261026` 完成复验：`pnpm run test:image-replication` 13/13；首页定向 8/8；`pnpm run test:social-image-pipeline` 主组 85/85、HTTP 集成 1/1、路由/工作台合同及治理检查通过；`pnpm run test:image-replication-ui` 的灵感入口、对话参考、首页第五卡和授权缺失停止四种情形通过。浏览器 API 使用隔离替身，不能作为真实模型出图证据。
+- `NODE_OPTIONS=--max-old-space-size=4096 pnpm run lint`、相对 `8c7cc7d3` 的 `pnpm run check:architecture`、`pnpm run check:digital-employee-migrations`（203 项仓库文件只读检查）、`pnpm run test:migration-guard`、主站与账号中心构建及 `git diff --check` 通过。没有执行全仓 test/quality/verify，没有执行目标数据库迁移；存储能力仍需在明确测试实例上核验。
+- 用户批准本次真实冒烟总费用最多 5 元，范围一张图片及必要策划/质检，不发布、不自动重试付费请求。只读预检确认全局 Qwen 凭据和本地 OCR 可用，但 OpenAI 图像凭据未配置，本测试运行未绑定持久化存储。抽查现有“云朵泡沫卸妆蜜”主图，商用授权记录存在，但衍生创作与模型输入许可未登记，所选运行环境没有可读取的原图字节。因此真实冒烟在供应商调用前阻塞，实际请求/回执/费用均为 0；不声明生成成功或供应商 Ready。
+- 原基线 `server/index.ts` 未提交内容逐字保留，SHA-256 为 `2e3f45a5e129e57eed2c279d5cd74f79c07bc16c0e63ef5229d5d9874493b08d`，未纳入提交。恢复分支 `backup/pre-image-text-smoke-20261026-8c7cc7d3`。证据位于 `/Users/julia1/.codex/integration-evidence/20261026-image-baseline-smoke/`，只读准入记录 `live-preflight.json`。未推送、部署、发布或重启其他工作树服务；下方均为历史检查点。
+
 ## 当前本机开发基线：灵小枢交互卡片与本地投流（2026-10-25）
 
 - 权威工作树 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`、分支 `xixi联合功能模块后端改`。从 `5f0b47a69cb029d3f7079cc18d8ba756d969972e` 安全集成卡片 `f2ea282c1ec60aedfab46569d1323ad49bbf2e7d` 与本地投流冻结快照 `e130395e0ca45f3cc40f59b1bd2de9ddd8f90267`，验证源码 `9be85a78443ae5dc6043926b33bf8f02b2aa6ab1`；本节为独立治理补记。

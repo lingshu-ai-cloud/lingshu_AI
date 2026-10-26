@@ -80,6 +80,14 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
     await send('打开第1条来源原文');
     assert.equal(requests, 1, 'source portal needs neither model inference nor an external write');
     assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.sourcePortal?.uri, 'https://example.com/original');
+    store.hydrateThread('business', emptyAssistantThread());
+    await send('帮我复刻一张爆款图文海报');
+    assert.equal(requests, 1, 'an image request without an attachment remains a navigation draft');
+    assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.creationPortal?.outputType, 'image', 'image replication must not be intercepted by the video scene');
+    store.hydrateThread('business', emptyAssistantThread());
+    await send('帮我复刻这张图文海报', 'business', undefined, [{ kind: 'image', name: '原图.png', materialId: 'uploaded-reference', size: 100 }]);
+    assert.equal(requests, 1, 'image replication with an attachment opens intake without model calls or task writes');
+    assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.creationPortal?.imageReplication?.reference?.materialId, 'uploaded-reference');
     const creationSelection = { referenceId: 'verified-ref', productIds: ['verified-product'], shotIds: ['verified-shot'], evidenceVersion: 'a'.repeat(64) };
     store.hydrateThread('business', { creationDraft: creationSelection, messages: [...useAssistantStore.getState().threads.business.messages,
       { role: 'assistant', content: '选择已保留', creation: { stage: 'shots', selection: creationSelection, referenceTitle: '参考', products: [], shots: [], narrations: [], gaps: [], presenterIds: [] } }] });

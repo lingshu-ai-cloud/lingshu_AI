@@ -89,6 +89,7 @@ export const ASSISTANT_HOME_PROMPTS: AssistantHomePrompt[] = [
     { id: 'CO-10', label: '策划图片或海报', summary: '为目标平台准备图片或海报创作方案', level: 'plan', prompt: '请基于已确认的产品资料和当前素材，为目标平台策划图片或海报内容。先确认用途、平台、尺寸、语言、数量和视觉方向，再输出构图、文案层级、产品展示、行动号召及素材清单。不要自动生成图片或触发付费调用。' },
     { id: 'CO-11', label: '查看制作进度', summary: '读取真实任务回执并区分失败与未知状态', level: 'query', prompt: '请读取当前内容制作任务及最新真实回执，按任务列出阶段、已完成结果、等待输入、失败或未知状态和下一步。对未知结果保留为待核验，不要建议盲目重试。' },
     { id: 'CO-12', label: '审核内容并提出修改', summary: '审核当前结果并形成可执行修改清单', level: 'plan', prompt: '请审核当前选中的脚本、分镜、图片或视频结果，检查产品事实、品牌口径、平台适配、清晰度、字幕、行动号召和合规风险，并给出可执行的修改清单。未读取到结果时明确说明；未经确认不要接受结果或发起重做。' },
+    { id: 'CO-13', label: '图文爆款复刻', summary: '选择参考图与企业产品，一次生成图片和配文', level: 'navigation', prompt: '请帮我复刻一张图文海报。先选择参考图和企业产品，再确认核心卖点、目标受众、发布平台、画幅、语言与客户行动。使用企业真实素材和已确认事实重新创作，确认后生成图片与帖子配文。' },
   ]),
   ...defineGroup('publishing', [
     { id: 'PU-01', label: '规划本周发布安排', summary: '根据内容、账号和时区准备排期草案', level: 'plan', prompt: '请结合本周内容计划、已完成内容、已授权账号和目标市场时区，提出本周发布安排。列出平台、账号、内容、建议时间、文案准备状态和依赖；先给排期草案，未经确认不要创建或修改发布计划。' },
@@ -136,7 +137,7 @@ export const ASSISTANT_HOME_QUICK_LAUNCHERS: AssistantHomeQuickLauncher[] = [
   { id: 'content-strategy', label: '查看内容策略', description: '查看经营策略、本周内容和下一条创作方向', promptIds: ['OP-03', 'CO-04', 'CO-06', 'PU-01', 'AD-03'] },
   { id: 'external-news', label: '查看外部资讯', description: '查看行业、产品、社媒和政策平台信号', promptIds: ['OP-02', 'OP-09', 'OP-10', 'OP-11', 'OP-12'] },
   { id: 'business-analysis', label: '分析经营数据', description: '分析经营、账号、投放和客户数据', promptIds: ['OP-04', 'OP-06', 'PU-04', 'AD-01', 'CS-05'] },
-  { id: 'viral-script', label: '内容创作', description: '从爆款复刻到脚本与制作', promptIds: ['CO-REPLICATE', 'CO-HOOK', 'CO-CAMPAIGN', 'CO-07'] },
+  { id: 'viral-script', label: '点击开始创作', description: '选择视频创作或图文爆款复刻场景', promptIds: ['CO-REPLICATE', 'CO-HOOK', 'CO-CAMPAIGN', 'CO-07', 'CO-13'] },
   { id: 'selling-points', label: '提炼产品卖点', description: '核对产品事实、卖点和目标客户表达', promptIds: ['CO-03', 'EN-03', 'EN-04', 'CO-08'] },
   { id: 'materials', label: '查看素材怎么用', description: '筛选素材、爆款参考并整理待拍清单', promptIds: ['CO-05', 'IN-03', 'IN-05', 'IN-06', 'AD-05'] },
   { id: 'publish-plan', label: '规划发布安排', description: '规划发布时间、文案、评论和发布回执', promptIds: ['PU-01', 'PU-02', 'PU-03', 'PU-05', 'PU-06'] },

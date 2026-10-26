@@ -7,6 +7,7 @@ import {
   ChevronUp,
   Clapperboard,
   Lightbulb,
+  Images,
   Megaphone,
   MessagesSquare,
   Newspaper,
@@ -25,6 +26,9 @@ import {
 } from '../lib/assistantHomeQuickPrompts';
 import { useAssistantStore } from '../stores/assistantStore';
 import { PRIMARY_ASSISTANT_THREAD } from './assistant/globalAssistantRuntime';
+import { assistantImageReplicationPortal } from './assistant/assistantImageReplicationIntent';
+import { creationPortalNavigation } from './assistant/AssistantCreationPortalCard';
+import { productionNavigationIdentity } from '../lib/productionNavigation';
 import {
   ASSISTANT_HOME_ACTIVITY_EVENT,
   ASSISTANT_HOME_PROMPT_EVENT,
@@ -77,6 +81,13 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
   };
 
   const choosePrompt = (entry: AssistantHomePrompt) => {
+    if (entry.id === 'CO-13') {
+      const portal = assistantImageReplicationPortal(entry.prompt);
+      if (!portal) return;
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { ...creationPortalNavigation(portal), navigationIdentity: productionNavigationIdentity() } }));
+      setActiveLauncherId(null);
+      return;
+    }
     const draft = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].draftInput.trim();
     if (draft && draft !== entry.prompt.trim()) {
       setPendingPrompt(entry);
@@ -98,14 +109,14 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
       <div className={`creator-home__canvas-stage${canvasCollapsed ? ' is-collapsed' : ''}`} inert={canvasCollapsed ? true : undefined} aria-hidden={canvasCollapsed || undefined}>
         <section id="creator-home-operations" className="creator-home__canvas" aria-label={activeLauncher ? `${activeLauncher.label}快捷任务` : '快捷任务'}>
           {activeLauncher ? <div className="creator-home__quick-panel">
-            <div id="creator-home-prompt-cards" className="creator-home__prompt-grid" aria-label={`${activeLauncher.label}：${activeLauncher.description}`}>
+            <div id="creator-home-prompt-cards" className={`creator-home__prompt-grid${activeLauncher.id === 'viral-script' ? ' creator-home__prompt-grid--creation' : ''}`} aria-label={`${activeLauncher.label}：${activeLauncher.description}`}>
               {activePrompts.map((entry, index) => <button
                 type="button"
                 key={entry.id}
                 className={`creator-home__prompt-card${index === 0 ? ' creator-home__prompt-card--primary' : ''}`}
                 onClick={() => choosePrompt(entry)}
               >
-                <span className="creator-home__prompt-card-icon">{launcherIcon(activeLauncher.id, 19)}</span>
+                <span className="creator-home__prompt-card-icon">{entry.id === 'CO-13' ? <Images size={19} aria-hidden="true"/> : launcherIcon(activeLauncher.id, 19)}</span>
                 <span className="creator-home__prompt-card-copy"><strong>{entry.label}</strong><span>{entry.summary}</span></span>
                 <span className={`creator-home__prompt-card-level is-${entry.level}`}>{ASSISTANT_HOME_LEVEL_LABELS[entry.level]}</span>
                 <ArrowRight size={15} aria-hidden="true"/>
