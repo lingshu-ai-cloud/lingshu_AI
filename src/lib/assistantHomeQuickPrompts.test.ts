@@ -54,10 +54,10 @@ test('the remaining launcher labels are concrete tasks rather than abstract doma
   );
 });
 
-test('creation adds image replication as the fifth scenario while preserving the four original choices', () => {
+test('creation retains four scenarios after removing the campaign card', () => {
   const creation = ASSISTANT_HOME_QUICK_LAUNCHERS.find(entry => entry.id === 'viral-script')!;
-  assert.deepEqual(creation.promptIds, ['CO-REPLICATE', 'CO-HOOK', 'CO-CAMPAIGN', 'CO-07', 'CO-13']);
-  assert.equal(assistantHomePromptById(creation.promptIds[4])?.label, '图文爆款复刻');
+  assert.deepEqual(creation.promptIds, ['CO-REPLICATE', 'CO-HOOK', 'CO-07', 'CO-13']);
+  assert.equal(assistantHomePromptById(creation.promptIds[3])?.label, '借鉴一个爆款图文');
 });
 
 test('home prompt events remain fill-only and support explicit append or replace', () => {
@@ -71,7 +71,7 @@ test('home prompt events remain fill-only and support explicit append or replace
 
 test('PRD scenarios live in their intended launcher and keep legacy prompts accessible', () => {
   const create=ASSISTANT_HOME_QUICK_LAUNCHERS.find(item=>item.id==='viral-script')!;
-  assert.deepEqual(create.promptIds.slice(0,3).map(id=>assistantHomePromptById(id)?.label), ['借鉴一条爆款','选定一个开场','为活动准备内容']);
+  assert.deepEqual(create.promptIds.slice(0,3).map(id=>assistantHomePromptById(id)?.label), ['借鉴一个爆款视频','选定一个开场','改写成多平台版本']);
   assert.equal(ASSISTANT_HOME_QUICK_LAUNCHERS.find(item=>item.id==='weekly-plan')!.promptIds[0], 'OP-CALENDAR');
   assert.ok(assistantHomePromptById('CO-01'));
 });

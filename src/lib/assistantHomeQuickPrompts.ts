@@ -76,7 +76,7 @@ export const ASSISTANT_HOME_PROMPTS: AssistantHomePrompt[] = [
   ...defineGroup('content', [
     { id: 'CO-HOOK', label: '选定一个开场', summary: '先选开场片段，再确认产品、内容方向和发布安排', level: 'plan', prompt: '我想先选一个吸引人的开场，再围绕它为产品策划一条视频，安排进周任务包。' },
     { id: 'CO-CAMPAIGN', label: '为活动准备内容', summary: '确认活动信息、产品与内容组合，再逐条安排发布时间', level: 'plan', prompt: '我想为一次活动准备内容，请帮我确认主题、产品和发布节奏，并安排进周任务包。' },
-    { id: 'CO-REPLICATE', label: '借鉴一条爆款', summary: '确认产品、参考和周安排，系统策划并检查制作条件', level: 'plan', prompt: '我想借鉴一条爆款视频，为自己的产品策划内容，并安排进周任务包。' },
+    { id: 'CO-REPLICATE', label: '借鉴一个爆款视频', summary: '确认产品、参考和周安排，系统策划并检查制作条件', level: 'plan', prompt: '我想借鉴一条爆款视频，为自己的产品策划内容，并安排进周任务包。' },
     { id: 'CO-01', label: '写一条爆款视频脚本', summary: '根据产品、受众和平台准备完整短视频脚本', level: 'plan', prompt: '请为我的主推产品策划一条短视频脚本。先读取企业与产品资料，并确认目标平台、目标市场、受众、内容目标、时长和语言；然后输出标题、前三秒钩子、逐镜头口播与画面、字幕要点、行动号召和合规注意事项。资料不足时先提问，不要虚构产品功效。' },
     { id: 'CO-02', label: '帮我制作产品分镜', summary: '把已确认脚本转成可拍摄的镜头方案', level: 'plan', prompt: '请为当前产品和已确认脚本制作可拍摄的分镜方案。先确认平台、画幅、时长、出镜方式和已有素材；按镜号列出时长、画面、景别、动作、口播或字幕、所需素材和转场，并指出仍需补拍的内容。不要直接启动生成或付费制作。' },
     { id: 'CO-04', label: '规划本周内容', summary: '根据经营目标和素材制定一周内容计划', level: 'plan', prompt: '请根据本周经营目标、主推产品、目标平台、已有素材和发布能力，制定一份本周内容计划。包含每天的主题、内容形式、受众、核心卖点、素材需求、负责人建议、发布时间和衡量指标；先给计划摘要，未经确认不要创建任务或排期。' },
@@ -88,7 +88,7 @@ export const ASSISTANT_HOME_PROMPTS: AssistantHomePrompt[] = [
     { id: 'CO-10', label: '策划图片或海报', summary: '为目标平台准备图片或海报创作方案', level: 'plan', prompt: '请基于已确认的产品资料和当前素材，为目标平台策划图片或海报内容。先确认用途、平台、尺寸、语言、数量和视觉方向，再输出构图、文案层级、产品展示、行动号召及素材清单。不要自动生成图片或触发付费调用。' },
     { id: 'CO-11', label: '查看内容创作任务进度', summary: '读取真实任务回执，说明当前阶段和下一步', level: 'query', prompt: '查看我最近的内容创作任务进度，说明当前状态和下一步。请读取真实任务记录与回执；如有多条任务，先列出名称供我选择，不自动启动或修改任务。' },
     { id: 'CO-12', label: '审核内容并提出修改', summary: '审核当前结果并形成可执行修改清单', level: 'plan', prompt: '请审核当前选中的脚本、分镜、图片或视频结果，检查产品事实、品牌口径、平台适配、清晰度、字幕、行动号召和合规风险，并给出可执行的修改清单。未读取到结果时明确说明；未经确认不要接受结果或发起重做。' },
-    { id: 'CO-13', label: '图文爆款复刻', summary: '选择参考图与企业产品，一次生成图片和配文', level: 'navigation', prompt: '请帮我复刻一张图文海报。先选择参考图和企业产品，再确认核心卖点、目标受众、发布平台、画幅、语言与客户行动。使用企业真实素材和已确认事实重新创作，确认后生成图片与帖子配文。' },
+    { id: 'CO-13', label: '借鉴一个爆款图文', summary: '选择参考图与企业产品，一次生成图片和配文', level: 'navigation', prompt: '请帮我复刻一张图文海报。先选择参考图和企业产品，再确认核心卖点、目标受众、发布平台、画幅、语言与客户行动。使用企业真实素材和已确认事实重新创作，确认后生成图片与帖子配文。' },
   ]),
   ...defineGroup('publishing', [
     { id: 'PU-01', label: '规划本周发布安排', summary: '根据内容、账号和时区准备排期草案', level: 'plan', prompt: '请结合本周内容计划、已完成内容、已授权账号和目标市场时区，提出本周发布安排。列出平台、账号、内容、建议时间、文案准备状态和依赖；先给排期草案，未经确认不要创建或修改发布计划。' },
@@ -135,7 +135,7 @@ export const ASSISTANT_HOME_QUICK_LAUNCHERS: AssistantHomeQuickLauncher[] = [
   { id: 'weekly-plan', label: '查看当前周计划', description: '查看本周任务、优先事项、复盘和下一轮动作', promptIds: ['OP-CALENDAR', 'OP-01', 'CO-11', 'OP-05', 'OP-07', 'OP-08'] },
   { id: 'external-news', label: '查看外部资讯', description: '查看行业、社媒和政策平台信号', promptIds: ['OP-02', 'OP-LEADER', 'OP-09', 'OP-11', 'OP-12', 'OP-RATES', 'OP-TRADE'] },
   { id: 'business-analysis', label: '分析经营数据', description: '分析经营、账号、投放和客户数据', promptIds: ['OP-04', 'OP-06', 'PU-04', 'AD-01', 'CS-05'] },
-  { id: 'viral-script', label: '内容创作', description: '选择视频创作或图文爆款复刻场景', promptIds: ['CO-REPLICATE', 'CO-HOOK', 'CO-CAMPAIGN', 'CO-07', 'CO-13'] },
+  { id: 'viral-script', label: '内容创作', description: '选择视频创作或图文爆款复刻场景', promptIds: ['CO-REPLICATE', 'CO-HOOK', 'CO-07', 'CO-13'] },
   { id: 'customer-followup', label: '跟进重点客户', description: '梳理重点客户、会话、回复和跟进计划', promptIds: ['CS-01', 'CS-02', 'CS-03', 'CS-07', 'CS-09'] },
   { id: 'traffic-optimization', label: '优化智能投流', description: '分析投放并准备渠道、预算和执行方案', promptIds: ['AD-01', 'AD-02', 'AD-03', 'AD-04', 'AD-06'] },
 ];
