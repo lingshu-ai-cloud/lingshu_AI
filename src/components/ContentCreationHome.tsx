@@ -1,3 +1,4 @@
+import ProductHighlightDialog from './enterprise/ProductHighlightDialog';
 import { Button, Modal } from 'antd';
 import {
   ArrowRight,
@@ -63,6 +64,7 @@ function resolveLauncherPrompts(launcher: AssistantHomeQuickLauncher | null): As
 export default function ContentCreationHome({ inspirationWorkspace, sessionScope }: { onNavigate?: (page: Page) => void; inspirationWorkspace?: ReactNode; sessionScope: string }) {
   const [activeLauncherId, setActiveLauncherId] = useState<AssistantHomeQuickLauncherId | null>(null);
   const [companyReportOpen, setCompanyReportOpen] = useState(false);
+  const [highlightOpen, setHighlightOpen] = useState(false);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [queryPrompt, setQueryPrompt] = useState<AssistantHomePrompt | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<AssistantHomePrompt | null>(null);
@@ -81,6 +83,7 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
   const showFirstRun = firstRunLoaded && !firstRunError && firstRunProgress.entered && (!overview?.config || !firstRunProgress.growthCompleted);
 
   useEffect(() => {
+    setHighlightOpen(false);
     setFirstRunProgress(readHomeFirstRun(sessionScope));
     setOverview(null);
     setFirstRunLoaded(false);
@@ -138,6 +141,7 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
   };
 
   const choosePrompt = (entry: AssistantHomePrompt) => {
+    if (entry.id === 'CO-SPEECH-HIGHLIGHT') { setHighlightOpen(true); return; }
     if (entry.id === 'OP-LEADER') { setCompanyReportOpen(true); return; }
     setCompanyReportOpen(false);
     if (assistantQueryKind(entry.id)) { setQueryPrompt(entry); return; }
@@ -248,6 +252,7 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
         {inspirationWorkspace}
       </section>
     </div>
+    <ProductHighlightDialog key={sessionScope} open={highlightOpen} onClose={() => setHighlightOpen(false)}/>
     {queryPrompt && assistantQueryKind(queryPrompt.id) && <AssistantQuickPromptDialog key={queryPrompt.id} kind={assistantQueryKind(queryPrompt.id)!}
       onClose={() => setQueryPrompt(null)} onPrompt={prompt => preparePrompt({ ...queryPrompt, prompt })}/>}
     <Modal open={Boolean(pendingPrompt)} title="输入框已有内容" width={480} closable={false} footer={[

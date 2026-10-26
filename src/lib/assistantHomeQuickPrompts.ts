@@ -77,6 +77,7 @@ export const ASSISTANT_HOME_PROMPTS: AssistantHomePrompt[] = [
     { id: 'CO-HOOK', label: '选定一个开场', summary: '先选开场片段，再确认产品、内容方向和发布安排', level: 'plan', prompt: '我想先选一个吸引人的开场，再围绕它为产品策划一条视频，安排进周任务包。' },
     { id: 'CO-CAMPAIGN', label: '为活动准备内容', summary: '确认活动信息、产品与内容组合，再逐条安排发布时间', level: 'plan', prompt: '我想为一次活动准备内容，请帮我确认主题、产品和发布节奏，并安排进周任务包。' },
     { id: 'CO-REPLICATE', label: '借鉴一个爆款视频', summary: '确认产品、参考和周安排，系统策划并检查制作条件', level: 'plan', prompt: '我想借鉴一条爆款视频，为自己的产品策划内容，并安排进周任务包。' },
+    { id: 'CO-SPEECH-HIGHLIGHT', label: '提炼口播核心卖点', summary: '选择产品，提炼并确认回填用于口播的核心卖点', level: 'plan', prompt: '请先让我选择一个企业知识库产品，基于已有产品事实提炼一条便于口播表达的核心卖点，展示原卖点和可编辑候选；由我确认后回填该产品知识库。不要自动改写已确认口播、生成声音或启动视频制作。' },
     { id: 'CO-01', label: '写一条爆款视频脚本', summary: '根据产品、受众和平台准备完整短视频脚本', level: 'plan', prompt: '请为我的主推产品策划一条短视频脚本。先读取企业与产品资料，并确认目标平台、目标市场、受众、内容目标、时长和语言；然后输出标题、前三秒钩子、逐镜头口播与画面、字幕要点、行动号召和合规注意事项。资料不足时先提问，不要虚构产品功效。' },
     { id: 'CO-02', label: '帮我制作产品分镜', summary: '把已确认脚本转成可拍摄的镜头方案', level: 'plan', prompt: '请为当前产品和已确认脚本制作可拍摄的分镜方案。先确认平台、画幅、时长、出镜方式和已有素材；按镜号列出时长、画面、景别、动作、口播或字幕、所需素材和转场，并指出仍需补拍的内容。不要直接启动生成或付费制作。' },
     { id: 'CO-04', label: '规划本周内容', summary: '根据经营目标和素材制定一周内容计划', level: 'plan', prompt: '请根据本周经营目标、主推产品、目标平台、已有素材和发布能力，制定一份本周内容计划。包含每天的主题、内容形式、受众、核心卖点、素材需求、负责人建议、发布时间和衡量指标；先给计划摘要，未经确认不要创建任务或排期。' },
@@ -135,7 +136,7 @@ export const ASSISTANT_HOME_QUICK_LAUNCHERS: AssistantHomeQuickLauncher[] = [
   { id: 'weekly-plan', label: '查看当前周计划', description: '查看本周任务、优先事项、复盘和下一轮动作', promptIds: ['OP-CALENDAR', 'OP-01', 'CO-11', 'OP-05', 'OP-07', 'OP-08'] },
   { id: 'external-news', label: '查看外部资讯', description: '查看行业、社媒和政策平台信号', promptIds: ['OP-02', 'OP-LEADER', 'OP-09', 'OP-11', 'OP-12', 'OP-RATES', 'OP-TRADE'] },
   { id: 'business-analysis', label: '分析经营数据', description: '分析经营、账号、投放和客户数据', promptIds: ['OP-04', 'OP-06', 'PU-04', 'AD-01', 'CS-05'] },
-  { id: 'viral-script', label: '内容创作', description: '选择视频创作或图文爆款复刻场景', promptIds: ['CO-REPLICATE', 'CO-HOOK', 'CO-07', 'CO-13'] },
+  { id: 'viral-script', label: '内容创作', description: '选择视频创作或图文爆款复刻场景', promptIds: ['CO-REPLICATE', 'CO-HOOK', 'CO-07', 'CO-13', 'CO-SPEECH-HIGHLIGHT'] },
   { id: 'customer-followup', label: '跟进重点客户', description: '梳理重点客户、会话、回复和跟进计划', promptIds: ['CS-01', 'CS-02', 'CS-03', 'CS-07', 'CS-09'] },
   { id: 'traffic-optimization', label: '优化智能投流', description: '分析投放并准备渠道、预算和执行方案', promptIds: ['AD-01', 'AD-02', 'AD-03', 'AD-04', 'AD-06'] },
 ];

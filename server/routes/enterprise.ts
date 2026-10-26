@@ -1,3 +1,4 @@
+import { createEnterpriseProductHighlightRouter } from './enterpriseProductHighlight.js';
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import { enterpriseProductIdentity, mergeEnterpriseProductIdentity } from '../lib/enterpriseProductIdentity.js';
@@ -145,6 +146,7 @@ export function updateEnterpriseProfile(patch: Partial<EnterpriseProfile>): Ente
 
 export const enterpriseRouter = Router();
 enterpriseRouter.use(requireAuth);
+enterpriseRouter.use('/knowledge-intake', createEnterpriseProductHighlightRouter());
 enterpriseRouter.use('/onboarding-draft', createEnterpriseOnboardingDraftRouter(store));
 enterpriseRouter.use('/product-footage', createEnterpriseProductFootageImportRouter(store));
 
