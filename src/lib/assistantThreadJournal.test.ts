@@ -113,3 +113,15 @@ clearAssistantThreadJournal(storage, scope, 'business');
 assert.equal(readAssistantThreadJournal(storage, scope, 'business'), null, 'server success clears the recovered journal');
 
 console.log('assistant thread reload journal tests passed');
+
+// Scene identity survives a reload only within the existing tenant/user journal.
+const selectedScene = { sceneId: 'CS-02', from: '2026-10-20', to: '2026-10-26', customerId: 'buyer-a' } as const;
+const malformedScene = { ...selectedScene, tenantId: 'foreign' };
+const scopedThread = sanitizeAssistantThreadForJournal({ ...thread, messages: [
+  { role: 'assistant', content: '当前会话摘要', businessScene: selectedScene },
+  { role: 'user', content: '继续', businessScene: selectedScene },
+  { role: 'assistant', content: '非法场景', businessScene: malformedScene },
+] });
+assert.deepEqual(scopedThread.messages[0].businessScene, selectedScene);
+assert.equal(scopedThread.messages[1].businessScene, undefined);
+assert.equal(scopedThread.messages[2].businessScene, undefined);

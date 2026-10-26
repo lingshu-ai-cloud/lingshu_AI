@@ -1,3 +1,4 @@
+import { readAdRows } from './readPages.js';
 import { withPlatformAdTaskLock } from './taskLock.js';
 import { store } from '../storage/index.js';
 import { decryptSecret, encryptSecret } from '../lib/tenantPlatformApps.js';
@@ -27,8 +28,8 @@ export function publicConnection(record: AdConnection) {
     authorization: publicAuthorization(record.authorization),
   };
 }
-export async function listConnections(tenantId: string) {
-  return (await store.list<AdConnection>(AD_CONNECTIONS, { where: { tenant_id: tenantId }, perPage: 200 })).items.map(publicConnection);
+export async function listConnections(tenantId: string, allPages = false) {
+  return (await readAdRows<AdConnection>(AD_CONNECTIONS, tenantId, undefined, allPages)).map(publicConnection);
 }
 export async function getConnection(tenantId: string, id: string) {
   const connection = await store.getById<AdConnection>(AD_CONNECTIONS, id);

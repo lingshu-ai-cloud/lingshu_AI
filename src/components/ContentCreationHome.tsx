@@ -1,3 +1,5 @@
+import AssistantBusinessSceneDialog from './assistant/AssistantBusinessSceneDialog';
+import { isBusinessScene, type BusinessSceneId } from '../../shared/contracts/assistantBusinessScene';
 import ProductHighlightDialog from './enterprise/ProductHighlightDialog';
 import { Button, Modal } from 'antd';
 import {
@@ -65,6 +67,7 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
   const [activeLauncherId, setActiveLauncherId] = useState<AssistantHomeQuickLauncherId | null>(null);
   const [companyReportOpen, setCompanyReportOpen] = useState(false);
   const [highlightOpen, setHighlightOpen] = useState(false);
+  const [businessSceneId, setBusinessSceneId] = useState<BusinessSceneId | null>(null);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [queryPrompt, setQueryPrompt] = useState<AssistantHomePrompt | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<AssistantHomePrompt | null>(null);
@@ -83,7 +86,7 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
   const showFirstRun = firstRunLoaded && !firstRunError && firstRunProgress.entered && (!overview?.config || !firstRunProgress.growthCompleted);
 
   useEffect(() => {
-    setHighlightOpen(false);
+    setHighlightOpen(false); setBusinessSceneId(null);
     setFirstRunProgress(readHomeFirstRun(sessionScope));
     setOverview(null);
     setFirstRunLoaded(false);
@@ -141,6 +144,7 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
   };
 
   const choosePrompt = (entry: AssistantHomePrompt) => {
+    if (isBusinessScene(entry.id)) { setBusinessSceneId(entry.id); return; }
     if (entry.id === 'CO-SPEECH-HIGHLIGHT') { setHighlightOpen(true); return; }
     if (entry.id === 'OP-LEADER') { setCompanyReportOpen(true); return; }
     setCompanyReportOpen(false);
@@ -252,6 +256,11 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
         {inspirationWorkspace}
       </section>
     </div>
+    {businessSceneId && <AssistantBusinessSceneDialog key={`${sessionScope}:${businessSceneId}`} sceneId={businessSceneId} onClose={() => setBusinessSceneId(null)} onConfirm={selection => {
+      const entry = assistantHomePromptById(selection.sceneId); if (!entry || assistantBusy) return;
+      setBusinessSceneId(null); setActiveLauncherId(null);
+      window.dispatchEvent(new CustomEvent('lingshu-assistant-open', { detail: { text: entry.prompt, preserveDraft: true, businessScene: selection } }));
+    }}/>}
     <ProductHighlightDialog key={sessionScope} open={highlightOpen} onClose={() => setHighlightOpen(false)}/>
     {queryPrompt && assistantQueryKind(queryPrompt.id) && <AssistantQuickPromptDialog key={queryPrompt.id} kind={assistantQueryKind(queryPrompt.id)!}
       onClose={() => setQueryPrompt(null)} onPrompt={prompt => preparePrompt({ ...queryPrompt, prompt })}/>}

@@ -1,3 +1,4 @@
+import { readAdRows } from './readPages.js';
 import { withAdWorkerEvidence } from './workerHealth.js';
 import { store } from '../storage/index.js';
 import { assertAdReleaseAction } from './releasePolicy.js';
@@ -9,8 +10,8 @@ import { getConnectionCredential } from './connections.js';
 export const AD_LAUNCHES = 'platform_ad_launches';
 export type AdLaunchMode = 'create_paused' | 'create_and_activate';
 export type AdLaunch = { id: string; tenant_id: string; taskId: string; taskVersion: number; connectionId: string; launchMode?: AdLaunchMode; meta: MetaVideoInput; status: string; createdAt: string; updatedAt: string; receipt?: unknown; error?: string };
-export async function listAdLaunches(tenantId: string, taskId: string) {
-  return (await store.list<AdLaunch>(AD_LAUNCHES, { where: { tenant_id: tenantId, taskId }, sort: '-createdAt', perPage: 200 })).items;
+export async function listAdLaunches(tenantId: string, taskId: string, allPages = false) {
+  return readAdRows<AdLaunch>(AD_LAUNCHES, tenantId, taskId, allPages, '-createdAt');
 }
 export async function saveAdLaunch(tenantId: string, taskId: string, input: Record<string, unknown>) {
   return withPlatformAdTaskLock(tenantId, taskId, async () => {
