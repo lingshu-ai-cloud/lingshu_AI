@@ -165,7 +165,9 @@ function sceneEffectFilters({ source, output, scene, width, height, target, inte
   // AVTB frames (duration 33333 ticks) makes each output frame last 1111s.
   // Convert both PTS and duration to frame ticks before applying motion.
   const inputTiming = 'fps=30,settb=1/30,setpts=N';
-  const timing = 'settb=AVTB,setpts=N/(30*TB)';
+  // xfade rejects inputs whose frame-rate metadata becomes 1/0 on some Linux
+  // FFmpeg builds. Freeze both cadence and timebase at this node boundary.
+  const timing = 'fps=30,settb=1/30,setpts=N';
   if (!scene || !scene.enabled || intensity <= 0) return [`${source}${inputTiming},${timing}[${output}]`];
   const chain = [inputTiming, colorFilter(scene.color), motionFilter(scene.motion, width, height, target, intensity)];
   const ordered = [...scene.overlays].sort((a, b) => {

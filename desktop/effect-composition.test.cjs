@@ -30,6 +30,7 @@ test('filter builders provide motion, particles, transitions and synthetic sound
   });
   assert.match(sceneFilters.join(';'), /zoompan/);
   assert.match(sceneFilters.join(';'), /drawtext/);
+  assert.match(sceneFilters.join(';'), /fps=30,settb=1\/30,setpts=N\[ve0\]/);
   const portableFilters = sceneEffectFilters({
     source: '[v0]', output: 've0', width: 320, height: 320, target: 1,
     intensity: 3, textOverlaysAvailable: false,
