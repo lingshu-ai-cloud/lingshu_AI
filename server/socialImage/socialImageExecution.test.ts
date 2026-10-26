@@ -22,6 +22,8 @@ import {createOrResumeBoundSocialImageRun} from './socialImageProductionRun.js';
 import {readSocialImageTask,updateSocialImageTask} from './socialImageTask.js';
 import {enqueueImageExecution,imageExecutionReceipt,readImageExecutionJob} from './socialImageExecutionQueue.js';
 import {executeImageProduction,type ImageExecutionPorts} from './socialImageExecution.js';
+import {localCompositeRepairCandidate,repairSocialImageLocalComposite} from './socialImageLocalCompositeRepair.js';
+import {tenantAssetRelativePath} from '../lib/assetAccess.js';
 import {DurableContentExecutionWorker} from '../contentExecution/durableQueue.js';
 import {hydrateSocialContentExecutionSummaries} from '../starter198/socialContentQueueProjection.js';
 import {socialTaskSummary} from '../starter198/socialContentRecords.js';
@@ -135,6 +137,56 @@ test('changes after queue confirmation are fenced before the first production co
  let calls=0;const operation=async()=>{calls++;};
  const worker=new DurableContentExecutionWorker({dataStore:store,allowedJobIds:[queued.execution.jobId],execute:job=>executeImageProduction(store,job,{prepare:operation,plan:operation,render:operation,quality:operation})});
  await worker.drain();const job=await settle(store,task);assert.equal(calls,0);assert.match(job.lastError||'',/confirmed_inputs_changed/);worker.stop();
+});
+test('one local repair reuses the saved plate and frozen product, then cannot repair again',async()=>{
+ const {store,task}=await setup();
+ const product=await sharp({create:{width:80,height:100,channels:3,background:'#f5f5f5'}}).png().toBuffer();
+ const plate=await sharp({create:{width:1200,height:1200,channels:3,background:'#809caa'}}).png().toBuffer();
+ const original=await sharp({create:{width:1200,height:1200,channels:3,background:'#576870'}}).png().toBuffer();
+ const jobId='paid-job-1',inputHash='a'.repeat(64),oldId='output-1';
+ const material=(id:string,bytes:Buffer,sourceType:string,provenance:Record<string,unknown>)=>({
+  id,type:'image',scope:'own',tenantId:'tenant-a',sourceType,contentSha256:digest(bytes),provenance,
+  file:tenantAssetRelativePath('tenant-a',`${id}.png`),
+ });
+ const plateRecord=material('plate',plate,'ai_generated_background_plate',{
+  socialImageTaskId:task.id,socialImageJobId:jobId,socialImageInputHash:inputHash,model:'gpt-image-2'});
+ const originalRecord=material('original',original,'ai_generated_marketing_image',{
+  socialImageTaskId:task.id,socialImageJobId:jobId,socialImageInputHash:inputHash,
+  backgroundMaterialId:'plate',plateSha256:digest(plate),productSha256:digest(product),
+  localComposition:'fixed-product-and-copy-v1',
+ });
+ const changed=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{
+  status:'review_required',step:'review',
+  renderBrief:{headline:'Visible headline',subheadline:'Fresh copy',originBadge:'',trustBadges:[],sellingPoints:[],
+   process:[],categories:[],bottomBar:[],cta:''},
+  replicationRecipe:{contentArchetype:'poster',imageCopyRelation:'image_contextualizes_copy',preserve:[],replace:[],
+   palette:[],layoutRegions:[],protectedSubjects:[],overlayZones:[]},
+  generationJobs:[{id:jobId,idempotencyKey:'one',inputHash,status:'completed',attempt:1,outputNodeIds:[oldId],
+   createdAt:now,updatedAt:now}],
+  outputs:[{id:oldId,role:'single',label:'主视觉',state:'repair_required',version:1,materialId:'original',
+   contentHash:digest(original),qualityChecks:[{key:'label_ocr',verdict:'fail',severity:'hard',note:'clipped'}],
+   qualityPreflight:{inputHash:'b'.repeat(64),status:'completed',claimedAt:now,completedAt:now,visualChecks:[]}}],
+  repairInstructions:[{id:'repair-1',outputNodeId:oldId,failedChecks:['label_ocr'],targetLayer:'typography',
+   instruction:'fix copy',status:'pending',fromVersion:1}],
+ });
+ assert.equal(changed.kind,'updated');if(changed.kind!=='updated')return;
+ assert.equal(localCompositeRepairCandidate(changed.task)?.id,oldId);
+ let writes=0;
+ const repaired=await repairSocialImageLocalComposite({store,tenantId:'tenant-a',taskId:task.id,
+  expectedVersion:changed.task.version,materials:[plateRecord,originalRecord],
+  enterpriseProductAsset:async()=>({name:'Product A',bytes:product}),
+  readBytes:async item=>({bytes:item.id==='plate'?plate:original,mimeType:'image/png'}),
+  writeMaterial:async input=>{writes++;return {...material('repaired',input.bytes,'ai_generated_marketing_image',input.provenance||{}),
+   sourceProvider:'deterministic-compositor'} as any;},
+ });
+ assert.equal(writes,1);assert.equal(repaired.additionalPaidQualityRequired,true);
+ assert.equal(repaired.task.outputs[0]?.state,'superseded');
+ assert.equal(repaired.task.outputs[1]?.state,'quality_checking');
+ assert.equal(repaired.task.repairInstructions[0]?.status,'completed');
+ assert.equal(localCompositeRepairCandidate(repaired.task),null);
+ await assert.rejects(repairSocialImageLocalComposite({store,tenantId:'tenant-a',taskId:task.id,
+  expectedVersion:repaired.task.version,materials:[plateRecord,originalRecord],
+  enterpriseProductAsset:async()=>({name:'Product A',bytes:product})}),/not_eligible/);
 });
 test('canonical list hydration uses image run receipt while leaving video run pointer empty',async()=>{
  const {store,input}=await setup();const queued=await enqueueImageExecution(input);
@@ -368,4 +420,72 @@ test('persisted worker resumes a frozen plan, renders real pixels, and never rep
  const worker=new DurableContentExecutionWorker({dataStore:store,allowedJobIds:[queued.execution.jobId],execute:job=>executeImageProduction(store,job,ports)});await worker.drain();const job=await settle(store,task);const checked=await readSocialImageTask(store,'tenant-a',task.id);assert.equal(job.status,'succeeded',JSON.stringify({error:job.lastError,decision:checked?.directorReviewDecision,qa}));worker.stop();
  const restored=await readSocialImageTask(store,'tenant-a',task.id);assert.equal(restored?.outputs.length,1);assert.equal(restored?.approvedArtifact,undefined);
  const restarted=new DurableContentExecutionWorker({dataStore:store,allowedJobIds:[job.id],execute:j=>executeImageProduction(store,j,ports)});await restarted.drain();restarted.stop();assert.equal(renders,1);assert.equal(qa,1);
+});
+
+test('worker uses one local repair after free OCR failure and only then runs visual QA',async()=>{
+ const {store,task}=await preparedViralTask();
+ const queued=await enqueueImageExecution({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:task.version});
+ let renders=0,qualityCalls=0,repairs=0;
+ const ports:ImageExecutionPorts={prepare:async()=>{throw Error('evidence already ready');},
+  plan:async()=>{throw Error('plan already ready');},
+  render:async current=>{renders++;const saved=await updateSocialImageTask(store,'tenant-a',current.id,current.version,{
+   status:'review_required',step:'review',outputs:[{id:'candidate-1',role:'single',label:'主视觉',state:'quality_checking',
+    version:1,materialId:'old-material',contentHash:'a'.repeat(64),qualityChecks:[]}]});assert.equal(saved.kind,'updated');},
+  quality:async current=>{qualityCalls++;
+   if(qualityCalls===1){const saved=await updateSocialImageTask(store,'tenant-a',current.id,current.version,{
+    outputs:current.outputs.map(output=>({...output,state:'repair_required' as const,
+     qualityChecks:[{key:'label_ocr' as const,verdict:'fail' as const,severity:'hard' as const,note:'clipped'}]})),
+    repairInstructions:[{id:'one-repair',outputNodeId:'candidate-1',failedChecks:['label_ocr'],
+     targetLayer:'typography',instruction:'reflow',status:'pending',fromVersion:1}]});assert.equal(saved.kind,'updated');return;}
+   const checks=current.outputs.map(output=>output.state==='superseded'?output:{...output,
+    qualityChecks:[{key:'reference_structure_similarity' as const,verdict:'uncertain' as const,severity:'soft' as const,
+     note:'needs customer judgment'},...SOCIAL_IMAGE_HARD_CHECKS.map(key=>({key,verdict:'pass' as const,
+     severity:'hard' as const,note:'verified'})),...(current.hookFactorSpec?.factors||[]).map(factor=>({
+     key:`hook_factor:${factor.factorId}` as const,verdict:'pass' as const,severity:'soft' as const,
+     note:'verified',evidence:[`candidate-sha256:${output.contentHash}`,...factor.evidenceRefs.map(ref=>`reference-region-sha256:${ref.contentHash}`)]}))]});
+   const saved=await updateSocialImageTask(store,'tenant-a',current.id,current.version,{outputs:checks});
+   assert.equal(saved.kind,'updated');if(saved.kind==='updated')await runSocialImageDirectorReview({store,
+    tenantId:'tenant-a',taskId:current.id,expectedVersion:saved.task.version,candidateId:'candidate-2',candidateVersion:2});},
+  repair:async current=>{repairs++;const saved=await updateSocialImageTask(store,'tenant-a',current.id,current.version,{
+   outputs:[...current.outputs.map(output=>({...output,state:'superseded' as const})),
+    {id:'candidate-2',role:'single',label:'主视觉',state:'quality_checking',version:2,materialId:'new-material',
+     contentHash:'b'.repeat(64),qualityChecks:[]}],
+   repairInstructions:current.repairInstructions.map(item=>({...item,status:'completed' as const,toVersion:2}))});
+   assert.equal(saved.kind,'updated');return {additionalPaidQualityRequired:false};}};
+ const worker=new DurableContentExecutionWorker({dataStore:store,allowedJobIds:[queued.execution.jobId],
+  execute:job=>executeImageProduction(store,job,ports)});
+ await worker.drain();const job=await settle(store,task);worker.stop();
+ assert.equal(job.status,'succeeded',job.lastError||'');assert.equal(renders,1);assert.equal(repairs,1);
+ assert.equal(qualityCalls,2);assert.equal((await readSocialImageTask(store,'tenant-a',task.id))?.outputs[0]?.state,'superseded');
+});
+test('an already-paid QA cannot silently trigger another paid QA after local repair',async()=>{
+ const {store,task}=await preparedViralTask();
+ const queued=await enqueueImageExecution({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:task.version});
+ const staged=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{status:'review_required',step:'review',
+  outputs:[{id:'old',role:'single',label:'主视觉',state:'repair_required',version:1,materialId:'old-material',
+   contentHash:'a'.repeat(64),qualityChecks:[{key:'label_ocr',verdict:'fail',severity:'hard',note:'clipped'}],
+   qualityPreflight:{inputHash:'b'.repeat(64),status:'completed',claimedAt:now,completedAt:now,visualChecks:[]}}],
+  repairInstructions:[{id:'fix',outputNodeId:'old',failedChecks:['label_ocr'],targetLayer:'typography',
+   instruction:'reflow',status:'pending',fromVersion:1}]});
+ assert.equal(staged.kind,'updated');
+ let qa=0,repair=0;
+ const ports:ImageExecutionPorts={prepare:async()=>{throw Error('unexpected prepare');},
+  plan:async()=>{throw Error('unexpected plan');},render:async()=>{throw Error('unexpected render');},
+  quality:async()=>{qa++;},repair:async current=>{repair++;
+   const saved=await updateSocialImageTask(store,'tenant-a',current.id,current.version,{
+    outputs:[...current.outputs.map(output=>({...output,state:'superseded' as const})),
+     {id:'new',role:'single',label:'主视觉',state:'quality_checking',version:2,materialId:'new-material',
+      contentHash:'c'.repeat(64),qualityChecks:[]}],
+    repairInstructions:current.repairInstructions.map(item=>({...item,status:'completed' as const,toVersion:2}))});
+   assert.equal(saved.kind,'updated');return {additionalPaidQualityRequired:true};}};
+ const worker=new DurableContentExecutionWorker({dataStore:store,allowedJobIds:[queued.execution.jobId],
+  execute:job=>executeImageProduction(store,job,ports)});
+ await worker.drain();const job=await settle(store,task);worker.stop();
+ assert.equal(job.status,'blocked');assert.match(job.lastError||'',/social_image_repair_quality_budget_unverified/);
+ assert.equal(qa,0);assert.equal(repair,1);
+ // A later dispatch must reach the same budget gate before invoking QA.
+ const persisted=await readImageExecutionJob(store,'tenant-a',task);
+ assert.ok(persisted);
+ await assert.rejects(executeImageProduction(store,persisted!,ports),/social_image_repair_quality_budget_unverified/);
+ assert.equal(qa,0);assert.equal(repair,1);
 });

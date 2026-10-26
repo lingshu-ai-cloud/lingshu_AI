@@ -44,7 +44,7 @@ export async function submitClaimedSocialImageSingleRender(input: {
       promptSha256: createHash('sha256').update(input.prompt).digest('hex'),
       socialImageTaskId: input.task.id, socialImageJobId: input.jobId,
       socialImageInputHash: input.inputHash, model: generated.model, qualityStatus: 'needs_review',
-      ...(input.composition ? { localComposition: 'fixed-product-and-copy-v1',
+      ...(input.composition ? { localComposition: 'fixed-product-and-copy-v2',
         backgroundMaterialId: plateMaterial?.id,
         plateSha256: createHash('sha256').update(plate).digest('hex'),
         productSha256: createHash('sha256').update(input.composition.productBytes).digest('hex') } : {}) },

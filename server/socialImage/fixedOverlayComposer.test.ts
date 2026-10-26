@@ -41,6 +41,22 @@ test('reference-left poster wraps a long headline and keeps the original square 
   assert.ok(brightCopyPixels > 500, 'headline stays visible in the reference top-left region');
 });
 
+test('one local typography repair adds contrast without changing the product source pixels', async () => {
+  const background = await sharp({ create: { width: 600, height: 600, channels: 3, background: '#f4f4f4' } }).png().toBuffer();
+  const product = await sharp({ create: { width: 120, height: 120, channels: 3, background: '#ffffff' } }).png().toBuffer();
+  const base = { background, products: [product], width: 600, height: 600,
+    poster: { headline: 'Visible headline', subheadline: 'Support', cta: 'Contact' },
+    productTreatment: 'framed_source' as const, referenceTextRegion: 'top_left' as const };
+  const first = await composeFixedSocialLayers(base);
+  const repaired = await composeFixedSocialLayers({ ...base, repairContrast: true });
+  const firstRaw = await sharp(first).raw().toBuffer({ resolveWithObject: true });
+  const nextRaw = await sharp(repaired).raw().toBuffer({ resolveWithObject: true });
+  const pixel = (data: Buffer, channels: number, x: number, y: number) => [...data.subarray((y * 600 + x) * channels, (y * 600 + x) * channels + 3)];
+  assert.ok(pixel(firstRaw.data, firstRaw.info.channels, 265, 20)[0]! > 220);
+  assert.ok(pixel(nextRaw.data, nextRaw.info.channels, 265, 20)[0]! < 70);
+  assert.deepEqual(pixel(nextRaw.data, nextRaw.info.channels, 410, 365), pixel(firstRaw.data, firstRaw.info.channels, 410, 365));
+});
+
 test('fixed compositor applies extracted mask opacity in the extracted layer order', async () => {
   const background = await sharp({ create: { width: 100, height: 100, channels: 3, background: '#0000ff' } }).png().toBuffer();
   const result = await composeFixedSocialLayers({ background, products: [], poster: {}, width: 100, height: 100, recipe: {

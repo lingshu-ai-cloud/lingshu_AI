@@ -46,7 +46,7 @@ function wrapCopy(value: string, maxCharacters: number): string[] {
 }
 
 function copyOverlaySvg(width: number, height: number, poster: PosterCopy, recipe?: SocialImageReplicationRecipe,
-  referenceTextRegion?: ReferenceTextRegion): Buffer {
+  referenceTextRegion?: ReferenceTextRegion, highContrast = false): Buffer {
   const headlineZone = referenceTextRegion === 'top_left'
     ? { x: .045, y: .045, width: .39, height: .30 }
     : region(recipe, 'headline-zone', { x: .06, y: .055, width: .88, height: .27 });
@@ -79,6 +79,7 @@ function copyOverlaySvg(width: number, height: number, poster: PosterCopy, recip
   const cta = escapeXml(poster.cta || '');
   return Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
     <defs><filter id="shadow"><feDropShadow dx="0" dy="2" stdDeviation="4" flood-opacity=".32"/></filter></defs>
+    ${highContrast ? `<rect x="${x - 14}" y="${y - 12}" width="${headlineZone.width * width + 28}" height="${Math.min(headlineZone.height * height + 24, copyHeight + 34)}" rx="16" fill="#07121f" fill-opacity=".90"/>` : ''}
     ${originBadge ? `<rect x="${badge.x * width}" y="${badge.y * height}" width="${badge.width * width}" height="${badge.height * height}" rx="${badge.height * height * .25}" fill="rgba(5,20,35,.74)"/><text x="${(badge.x + .018) * width}" y="${(badge.y + badge.height * .66) * height}" font-family="Arial, PingFang SC, sans-serif" font-size="${badgeSize}" font-weight="700" fill="#fff">${originBadge}</text>` : ''}
     ${headline}
     ${referenceTextRegion === 'top_left' && subheadlineLines.length ? `<rect x="${x - 10}" y="${subTop - 4}" width="${headlineZone.width * width + 20}" height="${subheadlineLines.length * subLineHeight + 14}" rx="10" fill="rgba(3,16,23,.76)"/>` : ''}
@@ -117,6 +118,7 @@ export async function composeFixedSocialLayers(input: {
   recipe?: SocialImageReplicationRecipe;
   productTreatment?: 'cutout' | 'framed_source';
   referenceTextRegion?: ReferenceTextRegion;
+  repairContrast?: boolean;
 }): Promise<Buffer> {
   const { width, height } = input;
   const stage = input.referenceTextRegion === 'top_left'
@@ -156,7 +158,7 @@ export async function composeFixedSocialLayers(input: {
       zIndex: zFor('product', 30),
     });
   }
-  composites.push({ input: copyOverlaySvg(width, height, input.poster, input.recipe, input.referenceTextRegion), left: 0, top: 0, zIndex: zFor('text', 40) });
+  composites.push({ input: copyOverlaySvg(width, height, input.poster, input.recipe, input.referenceTextRegion, input.repairContrast), left: 0, top: 0, zIndex: zFor('text', 40) });
   return sharp(input.background).rotate().resize(width, height, { fit: 'cover', position: 'attention' })
     .composite(composites.sort((a, b) => a.zIndex - b.zIndex).map(({ zIndex: _zIndex, ...item }) => item)).png({ compressionLevel: 9 }).toBuffer();
 }

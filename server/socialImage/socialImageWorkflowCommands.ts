@@ -259,6 +259,8 @@ export async function preflightImage(input: ImageWorkflowInput) {
     const reference = (await Promise.all([...(task.referenceSnapshot?.imageUrls || []), ...task.referenceUrls]
         .slice(0, 4).map(url => readSocialImageReferenceBytes(tenantId, url)))).find(Boolean) || undefined;
     const visualByOutput = new Map<string, SocialImageQualityCheck[]>();
+    const localByOutput = new Map<string, { generated: Awaited<ReturnType<ImageWorkflowInput['outputImageBytes']>>;
+        pixelChecks: SocialImageQualityCheck[]; ocrCheck: SocialImageQualityCheck }>();
     for (const output of task.outputs) {
         if (output.state === 'superseded' || (task.imageType === 'gif_poster' && output.role === 'gif_plate'))
             continue;
@@ -266,6 +268,17 @@ export async function preflightImage(input: ImageWorkflowInput) {
         if (!generated)
             continue;
         const plannedUnit = task.renderPlan?.units.find(unit => (unit.role === output.role || output.role === 'gif_frame') && unit.label === output.label);
+        // Free pixel/OCR checks run before any paid visual QA. A clipped title
+        // can then be recomposed from the saved plate without buying a QA call
+        // for a candidate that already fails a hard local gate.
+        const pixelChecks = await socialImageCandidatePixelChecks({ bytes: generated.bytes, aspectRatio: task.deliverySpec.aspectRatio });
+        const ocrCheck = await socialImageCandidateOcrCheck({ bytes: generated.bytes, mimeType: generated.mimeType,
+            expectedTexts: [String(plannedUnit?.poster.headline || task.imageTextContract.headline),
+                String(plannedUnit?.poster.subheadline || task.imageTextContract.supportingText || ''), task.imageTextContract.cta || ''],
+            recognize: recognizeProductImageLocally });
+        localByOutput.set(output.id, { generated, pixelChecks, ocrCheck });
+        if ([...pixelChecks, ocrCheck].some(check => check.severity === 'hard'
+            && !['pass', 'not_applicable'].includes(check.verdict))) continue;
         const result = await runSocialImageVisualPreflight({ store, tenantId, taskId: task.id, outputId: output.id,
             visualInput: { generated, products, reference, expected: {
                     headline: String(plannedUnit?.poster.headline || task.imageTextContract.headline),
@@ -286,21 +299,22 @@ export async function preflightImage(input: ImageWorkflowInput) {
         if (task.imageType === 'gif_poster' && output.role === 'gif_plate')
             return output;
         const plannedUnit = task.renderPlan?.units.find(unit => (unit.role === output.role || output.role === 'gif_frame') && unit.label === output.label);
-        const generated = await outputImageBytes(tenantId, output);
+        const local = localByOutput.get(output.id);
+        const generated = local?.generated || await outputImageBytes(tenantId, output);
         if (!generated) {
             const pixelChecks = await socialImageCandidatePixelChecks({ bytes: Buffer.alloc(0), aspectRatio: task.deliverySpec.aspectRatio });
             const localChecks = new Map(pixelChecks.map(check => [check.key, check]));
             return { ...output, state: 'repair_required' as const,
                 qualityChecks: deterministic.map(check => localChecks.get(check.key) || check) };
         }
-        const pixelChecks = await socialImageCandidatePixelChecks({ bytes: generated.bytes, aspectRatio: task.deliverySpec.aspectRatio });
+        const pixelChecks = local?.pixelChecks || await socialImageCandidatePixelChecks({ bytes: generated.bytes, aspectRatio: task.deliverySpec.aspectRatio });
         const expectedFrameBytes = output.role === 'gif_output' ? await Promise.all((task.gifDelivery?.frameOutputIds || [])
             .map(async (id) => (await outputImageBytes(tenantId, task.outputs.find(candidate => candidate.id === id) || {}))?.bytes || null)) : [];
         const animationCheck = output.role === 'gif_output'
             ? [await socialImageGifAnimationCheck({ bytes: generated.bytes, aspectRatio: task.deliverySpec.aspectRatio,
                     expectedFrames: task.renderPlan?.units.length || 0,
                     expectedFrameBytes: expectedFrameBytes.every(Boolean) ? expectedFrameBytes as Buffer[] : [] })] : [];
-        const ocrCheck = await socialImageCandidateOcrCheck({ bytes: generated.bytes, mimeType: generated.mimeType,
+        const ocrCheck = local?.ocrCheck || await socialImageCandidateOcrCheck({ bytes: generated.bytes, mimeType: generated.mimeType,
             expectedTexts: [String(plannedUnit?.poster.headline || task.imageTextContract.headline),
                 String(plannedUnit?.poster.subheadline || task.imageTextContract.supportingText || ''), task.imageTextContract.cta || ''],
             recognize: recognizeProductImageLocally });

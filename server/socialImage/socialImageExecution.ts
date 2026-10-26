@@ -6,12 +6,22 @@ import { assertSocialImageCurrentContentTask } from './socialImageProductionRun.
 import { IMAGE_EXECUTION_TYPE, imageExecutionInputHash } from './socialImageExecutionQueue.js';
 import { socialImageV3PaidPrerequisiteIssue } from './socialImagePaidPrerequisites.js';
 import { socialImageFrozenGraphMatches } from './socialImageReferenceStrategy.js';
+import { localCompositeRepairCandidate } from './socialImageLocalCompositeRepair.js';
 import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
 export interface ImageExecutionPorts {
     prepare(task: SocialImageCreationTask): Promise<void>;
     plan(task: SocialImageCreationTask): Promise<void>;
     render(task: SocialImageCreationTask): Promise<void>;
     quality(task: SocialImageCreationTask): Promise<void>;
+    repair?(task: SocialImageCreationTask): Promise<{ additionalPaidQualityRequired: boolean }>;
+}
+function repairedCandidateNeedsVerifiedQualityBudget(task: SocialImageCreationTask): boolean {
+    const current = task.outputs.find(output => output.state !== 'superseded');
+    if (!current || current.state !== 'quality_checking' || current.qualityPreflight) return false;
+    return task.repairInstructions.some(instruction => instruction.status === 'completed'
+        && instruction.toVersion === current.version
+        && task.outputs.some(output => output.id === instruction.outputNodeId
+            && output.state === 'superseded' && output.qualityPreflight?.status === 'completed'));
 }
 /** One executor on the existing durable worker. Every boundary rereads persisted facts. */
 export async function executeImageProduction(store: DataStore, job: ContentExecutionJob, ports: ImageExecutionPorts) {
@@ -38,7 +48,11 @@ export async function executeImageProduction(store: DataStore, job: ContentExecu
             if (!task.productionRuntime?.nodes.some(node => node.nodeId === 'adaptation' && node.status === 'completed'))
                 throw new Error('social_image_evidence_incomplete');
         }
-        if (socialImageV3PaidPrerequisiteIssue(task, 'execute') && !socialImageFrozenGraphMatches(task)) {
+        // A saved candidate is already past paid admission. Its QA repair
+        // instruction can make the old render spec stale without authorizing a
+        // new planner or image request.
+        if (!task.outputs.some(output => output.state !== 'superseded')
+            && socialImageV3PaidPrerequisiteIssue(task, 'execute') && !socialImageFrozenGraphMatches(task)) {
             await ports.plan(task);
             task = await read();
             if (socialImageV3PaidPrerequisiteIssue(task, 'execute') && !socialImageFrozenGraphMatches(task))
@@ -50,7 +64,29 @@ export async function executeImageProduction(store: DataStore, job: ContentExecu
             if (!task.outputs.some(output => output.state !== 'superseded'))
                 throw new Error('social_image_candidate_missing');
         }
+        if (task.productionRuntime?.nodes.find(node => node.nodeId === 'quality_check')?.status !== 'completed'
+            && localCompositeRepairCandidate(task) && ports.repair) {
+            const repaired = await ports.repair(task);
+            task = await read();
+            // An already-paid visual QA needs a separately verified budget for
+            // another provider call. Local recomposition itself costs nothing.
+            if (repaired.additionalPaidQualityRequired)
+                throw new Error('social_image_repair_quality_budget_unverified');
+        }
         if (task.productionRuntime?.nodes.find(node => node.nodeId === 'quality_check')?.status !== 'completed') {
+            // The decision survives worker restarts; never call visual QA on a
+            // repaired candidate whose predecessor already consumed QA.
+            if (repairedCandidateNeedsVerifiedQualityBudget(task))
+                throw new Error('social_image_repair_quality_budget_unverified');
+            await ports.quality(task);
+            task = await read();
+        }
+        if (task.productionRuntime?.nodes.find(node => node.nodeId === 'quality_check')?.status !== 'completed'
+            && localCompositeRepairCandidate(task) && ports.repair) {
+            const repaired = await ports.repair(task);
+            task = await read();
+            if (repaired.additionalPaidQualityRequired || repairedCandidateNeedsVerifiedQualityBudget(task))
+                throw new Error('social_image_repair_quality_budget_unverified');
             await ports.quality(task);
             task = await read();
         }

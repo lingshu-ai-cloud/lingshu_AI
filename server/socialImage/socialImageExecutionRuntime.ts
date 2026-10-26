@@ -12,6 +12,7 @@ import { compileSocialImageV3PaidPlan } from './socialImageFormalPlan.js';
 import { renderSocialImagePaidWorker } from './socialImagePaidWorkerRender.js';
 import { readSocialImageTask } from './socialImageTask.js';
 import { socialImagePackagingLabelHint } from './socialImagePackagingLabel.js';
+import { repairSocialImageLocalComposite } from './socialImageLocalCompositeRepair.js';
 import type { ImageExecutionPorts } from './socialImageExecution.js';
 import type { SocialImageElementInventory } from '../../shared/contracts/socialImageProduction.js';
 export function createImageExecutionPorts(store: DataStore, job: ContentExecutionJob): ImageExecutionPorts {
@@ -82,5 +83,7 @@ export function createImageExecutionPorts(store: DataStore, job: ContentExecutio
         render: async (task) => { if (socialImageFrozenGraphMatches(task)) await renderImageLayers(command(task));
             else await renderSocialImagePaidWorker(command(task)); },
         quality: async (task) => { await preflightImage(command(task)); },
+        repair: async (task) => repairSocialImageLocalComposite({ store, tenantId: job.tenantId,
+            taskId: task.id, expectedVersion: task.version, enterpriseProductAsset: assets.enterpriseProductAsset }),
     };
 }
