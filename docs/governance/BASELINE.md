@@ -2,6 +2,14 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前统一开发基线：对标文案归因修复（2026-10-26）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`，分支 `baseline/unified-20261026`；从 `3ca75fdc17ac25ce6b885353d614a03b2074db61` 合入隔离提交 `3a327a48132f7dcace8b2d548f376083fb53fa9c`，源码 HEAD `ae5d3bb8df4e0debc26a037298c2c589f03cd4b8`。
+- 爆款参考帖的竞品标题和文案不再作为本企业商业声明或用户确认要求传给 Qwen；只传已测量版式及企业产品主张。模型自行编造的商业主张在策划草稿中被剔除，不能转化为用户待确认字段。收到策划结果但需复核时，持久检查点明确记录已返回且需复核，不再保留“请求已开始”的含混状态。
+- 隔离源码通过图文执行定向 14/14、`pnpm run test:social-image-pipeline`（全部阶段退出 0）、`pnpm run lint`、`pnpm run check:architecture` 及 `git diff --check`；合入基线定向 14/14、`pnpm run lint`、`pnpm run check:architecture`（2999 个生产 TS 文件，相对 `3ca75fdc` 棘轮）、`pnpm run check:digital-employee-migrations`（204 项只读）及 `git diff --check` 通过。未运行全仓 quality/verify。
+- 第一条 5 元上限新任务 `socialtask_63198b5515ec1182318b1b6e` / `imge732b0a76b4a` / job `3a80233b6ee3a14` 在旧版策划逻辑下取得 Qwen 草稿后因竞品 OEM/私标字样被误判为待确认而阻塞；图片供应商未提交，无出图回执。其已付策划结果不重提。另一条准备失误任务 `socialtask_ceb2ced4328be670f49f7ada` / `img157568998db6` / job `c231da3431ba335` 未领取、无供应商请求，已显式暂停。下一步仅在同版本 Web/受限 worker/本地对象存储和剩余预算核对后，创建全新冻结任务验收一张真实图片。
+- 权威树原有未提交 `server/videos/videoVisibilityMaintenance.ts` 补丁仍未纳入。没有推送、部署、发布或目标库迁移。
+
 ## 当前统一开发基线：图文策划请求边界修复（2026-10-26）
 
 - 权威工作树仍为 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`，分支 `baseline/unified-20261026`；在下方 `23505d4ce58d46043e831214a66c6d8f7691e943` 之后，经治理提交 `74b22ab05ee44d7919d30270f0caf5d13ca0e73e` 合入修复提交 `2136b5e8c7fe7d53d972638ddbe529eca329517b`。隔离来源提交为 `7ca41d3f2b9bf96db151d45628abaf7a322e9955`。
