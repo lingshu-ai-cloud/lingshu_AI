@@ -2,6 +2,13 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前统一开发基线：图文视觉统一生产链（2026-10-27）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`，分支 `baseline/unified-20261026`；开发起点 `b5c1c329414edef645cdbb758c0491df98bd24f7`。仅更新单张图文爆款复刻的生成、合成、质检及展示；原未提交的 `server/videos/videoVisibilityMaintenance.ts` 未纳入。
+- GPT Image 2 现在按顺序接收已核验企业产品图与对标图，使用简短提示生成包含产品的完整场景；对标图仅指导布局。固定合成器只叠加事实审查后的文案，不再把整张产品照柔边贴到另一张背景。正式质量门新增 `visual_cohesion` 硬检查，贴图方框、光晕、悬浮或光影透视不一致均不能自动交付。旧任务、回执及未知供应商结果不重试。
+- 离线调度与生成夹具 29/29、图文管线 89/89、TypeScript、架构扫描（3003 个生产 TS）、204 项迁移清单只读检查、主站构建及 `git diff --check` 通过。未对新提示词执行真实供应商出图或付费质检，故不宣称成片质量通过；正式任务仍需独立预算和准确账单可核回执。未推送、部署、发布或运行目标库迁移。
+- 跨阶段决策见 [图文视觉统一 ADR](../architecture/adr/2026-10-27-social-image-visual-cohesion.md)。
+
 ## 当前统一开发基线：小程序登录页微调（2026-10-27）
 
 - 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`，分支 `baseline/unified-20261026`；从 `c904f603` 提交登录页源码 `76f81effc8926ad94717b184c1c875a88c102c11`。补齐与网页 `public/brand-logo.png` 字节一致的图标，删除“随时掌握工作的进展”，仅为登录按钮设置 `margin-top:48rpx`；账号字段、登录行为及其他 UI 不变。

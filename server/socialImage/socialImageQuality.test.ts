@@ -16,6 +16,7 @@ test('deterministic preflight passes only evidence it can prove', () => {
   assert.equal(checks.find(item => item.key === 'fact_consistency')?.verdict, 'uncertain');
   assert.equal(checks.find(item => item.key === 'packaging_visibility')?.verdict, 'uncertain');
   assert.equal(checks.find(item => item.key === 'subject_visibility')?.verdict, 'uncertain');
+  assert.equal(checks.find(item => item.key === 'visual_cohesion')?.verdict, 'uncertain');
 });
 
 test('candidate pixel and OCR gates inspect actual bytes and exact target dimensions', async () => {

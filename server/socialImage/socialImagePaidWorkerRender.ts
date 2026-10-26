@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import sharp from 'sharp';
 import type { DataStore } from '../storage/datastore.js';
 import { buildEnterpriseContext, readTenantEnterpriseProfile } from '../routes/enterprise.js';
 import { auditCommercialClaims, hasConfirmedEnterpriseFacts, userFacingPosterText } from '../lib/studioGenerationTruthfulness.js';
@@ -55,9 +56,14 @@ export async function renderSocialImagePaidWorker(input: {
   const assetIssue = socialImageV3ResolvedAssetIssue(task, {
     productHashes: { [productId]: hash(product.bytes) }, materialHashes, referenceHash });
   if (assetIssue) throw new Error(assetIssue);
-  // For a single poster the provider only paints the background. Sending the
-  // product as an image reference risks a duplicated or relabeled package.
-  const references: ReferenceImage[] = [];
+  // The model sees the authoritative product first and the benchmark second.
+  // Package fidelity and scene cohesion are both checked on the final pixels.
+  const productFormat = (await sharp(product.bytes).metadata()).format;
+  if (!['png', 'jpeg', 'webp'].includes(productFormat || '')) throw new Error('social_image_product_image_format_unsupported');
+  const references: ReferenceImage[] = [{ mimeType: productFormat === 'jpeg' ? 'image/jpeg' : `image/${productFormat}`,
+    base64: product.bytes.toString('base64') }];
+  if (reference?.bytes.length) references.push({ mimeType: reference.mimeType,
+    base64: reference.bytes.toString('base64') });
   const enterprise = await (input.ports?.enterpriseContext || (async (id: string) =>
     buildEnterpriseContext(await readTenantEnterpriseProfile(id))))(tenantId);
   if (!hasConfirmedEnterpriseFacts(enterprise)) throw new Error('social_image_enterprise_profile_required');
@@ -109,7 +115,7 @@ export async function renderSocialImagePaidWorker(input: {
     providerMayHaveStarted = true;
     return (await (input.ports?.submit || submitClaimedSocialImageSingleRender)({ store, tenantId, task, jobId: job.id, inputHash,
       prompt, ratio, quality, references, idempotencyKey, productId,
-      materialIds: task.materialIds, benchmarkReferenceCount: 0,
+      materialIds: task.materialIds, benchmarkReferenceCount: reference?.bytes.length ? 1 : 0,
       composition: { productBytes: product.bytes, poster: frozen.poster, recipe: task.replicationRecipe,
         referenceTextRegion: task.hookFactorSpec?.factors.some(factor => factor.factorId === 'reference-text-hierarchy'
           && factor.validator.observableTarget === 'top_left') ? 'top_left' : undefined } })).task;

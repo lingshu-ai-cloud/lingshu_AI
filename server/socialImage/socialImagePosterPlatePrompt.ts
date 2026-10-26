@@ -1,17 +1,13 @@
 import type { SocialImageReplicationRecipe } from '../../shared/contracts/socialImageCreation.js';
 
-/** The paid call makes a visual plate; exact product pixels and copy are composited locally. */
+/** Give the image model room to unify the product and scene; typography stays deterministic. */
 export function buildSocialImagePosterPlatePrompt(input: {
   ratio: string;
   recipe?: SocialImageReplicationRecipe;
 }): string {
-  const regions = (input.recipe?.layoutRegions || []).slice(0, 12)
-    .map(region => `${region.role}: x=${region.x}, y=${region.y}, width=${region.width}, height=${region.height}`)
-    .join('; ');
   return [
-    `Create one polished social product-advertising BACKGROUND PLATE with aspect ratio ${input.ratio}.`,
-    'Use a refined dark-to-mid-tone color field, soft depth, restrained highlights and a quiet product stage. The upper headline area and bottom call-to-action area must be dark and uncluttered so white text remains legible.',
-    'BACKGROUND ONLY. Do not draw any product, packaging, bottle, jar, person, logo, brand mark, headline, letter, number, badge, price, claim, CTA, watermark or interface element. The exact tenant-owned product and text are added after this plate is saved.',
-    regions ? `Use these measured reference layout zones as generic geometry only: ${regions}. Do not copy benchmark identity, wording or product.` : '',
+    `Create one polished ${input.ratio} social poster scene. Image 1 is our real product; keep its package shape, color, logo and label faithful. Make the product, lighting and surroundings feel like one photograph.`,
+    'If image 2 is provided, borrow its overall layout and visual rhythm, but create an original scene for our product. Do not copy its brand or claims.',
+    'Leave readable space for a headline near the top and a call to action near the bottom. Do not add new text outside the product packaging; our compositor adds the copy later.',
   ].filter(Boolean).join('\n\n');
 }

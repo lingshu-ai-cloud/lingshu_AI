@@ -30,6 +30,15 @@ test('mock facts and failed hard gates cannot publish', () => {
   assert.equal(socialImageTaskCanPublish({ ...value, publishable: false }), false);
 });
 
+test('a pasted-looking product cannot pass the visual cohesion delivery gate', () => {
+  const value = task();
+  const check = value.outputs[0]!.qualityChecks.find(item => item.key === 'visual_cohesion')!;
+  check.verdict = 'fail';
+  assert.equal(socialImageTaskCanPublish(value), false);
+  value.outputs[0]!.qualityChecks = value.outputs[0]!.qualityChecks.filter(item => item.key !== 'visual_cohesion');
+  assert.equal(socialImageTaskCanPublish(value), false);
+});
+
 test('gif requires motion delivery spec', () => {
   const value = task();
   value.imageType = 'gif_poster';

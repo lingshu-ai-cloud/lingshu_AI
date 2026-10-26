@@ -338,7 +338,7 @@ export async function preflightImage(input: ImageWorkflowInput) {
             continue;
         repairInstructions.push({
             id: randomUUID(), outputNodeId: output.id, failedChecks: failed.map(check => check.key),
-            targetLayer: failed.some(check => ['product_identity', 'packaging_visibility', 'subject_visibility', 'safe_zone'].includes(check.key)) ? 'product' : 'typography',
+            targetLayer: failed.some(check => ['product_identity', 'packaging_visibility', 'subject_visibility', 'safe_zone', 'visual_cohesion'].includes(check.key)) ? 'product' : 'typography',
             instruction: failed.map(check => check.repairSuggestion || check.note).join('；').slice(0, 1000),
             status: 'pending', fromVersion: output.version,
         });

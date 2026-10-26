@@ -129,11 +129,17 @@ export async function composeFixedSocialLayers(input: {
   width: number;
   height: number;
   recipe?: SocialImageReplicationRecipe;
-  productTreatment?: 'cutout' | 'framed_source';
+  productTreatment?: 'cutout' | 'framed_source' | 'integrated_scene';
   referenceTextRegion?: ReferenceTextRegion;
   repairContrast?: boolean;
 }): Promise<Buffer> {
   const { width, height } = input;
+  if (input.productTreatment === 'integrated_scene') {
+    return sharp(input.background).rotate().resize(width, height, { fit: 'cover', position: 'attention' })
+      .composite([{ input: copyOverlaySvg(width, height, input.poster, input.recipe,
+        input.referenceTextRegion, input.repairContrast), left: 0, top: 0 }])
+      .png({ compressionLevel: 9 }).toBuffer();
+  }
   const stage = input.referenceTextRegion === 'top_left'
     ? { x: .46, y: .32, width: .50, height: .54 }
     : region(input.recipe, 'product-stage', { x: .08, y: .36, width: .84, height: .50 });

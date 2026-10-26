@@ -14,6 +14,15 @@ test('fixed GIF compositor preserves exact canvas and produces a visible product
   assert.ok(result.length > background.length);
 });
 
+test('integrated scene receives copy without pasting a second product photo', async () => {
+  const scene = await sharp({ create: { width: 320, height: 320, channels: 3, background: '#416db7' } }).png().toBuffer();
+  const unrelatedProduct = await sharp({ create: { width: 80, height: 80, channels: 3, background: '#ff0000' } }).png().toBuffer();
+  const result = await composeFixedSocialLayers({ background: scene, products: [unrelatedProduct],
+    poster: { headline: 'CREAM' }, width: 320, height: 320, productTreatment: 'integrated_scene' });
+  const rgb = await sharp(result).extract({ left: 160, top: 190, width: 1, height: 1 }).raw().toBuffer();
+  assert.deepEqual([...rgb.subarray(0, 3)], [65, 109, 183], 'scene pixels remain intact; no rectangular source overlay');
+});
+
 test('single poster frame preserves the source product label pixels instead of cutting out white packaging', async () => {
   const background = await sharp({ create: { width: 320, height: 400, channels: 3, background: '#742447' } }).png().toBuffer();
   const product = await sharp({ create: { width: 80, height: 80, channels: 3, background: '#ffffff' } })

@@ -21,7 +21,8 @@ export const CHECK_LABELS: Record<SocialImageQualityCheckKey, string> = {
   file_decode: '文件可以解码', pixel_dimensions: '实际像素尺寸正确',
   product_identity: '产品身份正确', packaging_visibility: '包装关键部位可见', subject_visibility: '主体未被内容模块遮挡',
   label_ocr: '图片文字正确', fact_consistency: '图片与已确认事实一致', copy_visual_consistency: '图片与帖子配文一致',
-  brand_consistency: '品牌与配色一致', text_overflow: '文字没有溢出或裁切', safe_zone: '主体位于安全区',
+  brand_consistency: '品牌与配色一致', visual_cohesion: '产品与场景视觉统一',
+  text_overflow: '文字没有溢出或裁切', safe_zone: '主体位于安全区',
   reference_structure_similarity: '参考结构还原度', motion_mechanism_similarity: '动效机制还原度',
 };
 

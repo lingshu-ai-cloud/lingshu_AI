@@ -43,6 +43,7 @@ export function socialImageDeterministicChecks(task: SocialImageCreationTask): S
     packaging_visibility: '需要检测包装、瓶盖和标签像素可见性', subject_visibility: '需要检测主体与内容模块碰撞',
     label_ocr: '需要 OCR 比对企业资产标签', copy_visual_consistency: '需要多模态判断图文一致性',
     brand_consistency: '需要比对企业品牌资产与成片', safe_zone: '需要检测主体框与安全区',
+    visual_cohesion: '需要检查产品与场景的光线、阴影、透视和边缘是否统一',
     motion_mechanism_similarity: '静态预检不判断动效机制',
   };
   return [...new Set([...SOCIAL_IMAGE_HARD_CHECKS, 'reference_structure_similarity' as const, ...(task.deliverySpec.format === 'gif' ? ['motion_mechanism_similarity' as const] : [])])]
