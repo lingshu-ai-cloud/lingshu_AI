@@ -1,6 +1,15 @@
 # 工程基线（阶段二集成）
 
-更新时间：2026-10-25（Asia/Shanghai）
+更新时间：2026-10-26（Asia/Shanghai）
+
+## 当前远端共享集成基线：数字员工内容生产 v4（2026-10-26）
+
+- 远端集成分支 `xixi联合功能模块后端改` 已通过 [PR #20](https://github.com/lingshu-ai-cloud/lingshu_AI/pull/20) 从 `8c7cc7d304ffd268fcd5f20deeabf68fb5f8b10d` 推进到合并提交 `52121fd2070f9b1e34b1cf42fd1805311fb67658`。功能分支最终提交为 `6f7876190fa2670800a7da27e2ff992a4a3ba2bd`；本次只更新共享远端源码基线，不覆盖权威本机工作树中既有未提交的 `server/index.ts`。
+- 该基线把普通新内容任务默认接入原有持久队列和 `content-production.v4` 图，阶段所有权为 `source_assets → voice → presenter_assets → trim → effects → render → technical_quality → creative_quality → review → handoff → delivery`。每个阶段读取直接上游领域证据，持久化阶段输出 SHA、供应商回执与费用归属；旧 v1–v3 在途任务保留原图版本和恢复语义。
+- 有对标与无对标任务共用现有任务、预算、素材、handoff、逐镜 cache 和预览工作区。原创路线保存显式场景合同，不制造参考分析身份；归档成片可在原任务上恢复为可预览工作区。已受理供应商请求使用原回执查询恢复，不因 worker 重启重复提交。
+- GitHub Actions `Build release images` 的 PR 校验运行 `40260524133` 在最终功能提交上退出 0：TypeScript、完整 `pnpm test`、架构与迁移治理、社媒图片管线、翻译适配、视频来源边界、数字员工导航抽取和生产构建均通过。PR 校验未发布镜像。两条基线内过时的前端源码扫描断言只更新测试期望，未修改前端组件或交互。
+- 当前证据支持“v4 后端产品链已合并并通过远端 CI”，不支持“真实供应商 E2E 已通过”或“已上线”。下一出口是在该精确合并提交上分别执行一条有对标任务和一条无对标任务的真实创建到预览，记录 task/run/job、预算账本、供应商回执、阶段产物哈希、成片 SHA 与至少一次原任务中断恢复；通过后才进入正式 SSH 部署与 readiness 验收。
+- 本次没有执行目标数据库迁移、真实图片/HeyGen 付费请求、运行任务改写、生产部署或社媒发布。源码基线、运行数据和供应商 Ready 状态继续分别管理；部署完成仍必须报告部署提交、`docker compose` 服务状态和精确 `/api/overseas/ready` 结果。
 
 ## 当前本机开发基线：灵小枢交互卡片与本地投流（2026-10-25）
 
