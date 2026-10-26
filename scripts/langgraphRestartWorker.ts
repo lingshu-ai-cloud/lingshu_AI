@@ -16,7 +16,7 @@ try {
   const result = await runWithContentExecutionContext({ dataStore: store, jobId: identity.jobId, checkpoints: job.checkpoints, providerReceipts: job.provider_receipts,
     action: () => runLangGraphProduction({ identity, dataStore: store, assertActive: assertCurrentContentExecutionActive,
       phases: {
-        assets: async () => {
+        source_assets: async () => {
           const receipt = currentContentProviderReceipt({ provider: 'controlled-local', requestId: 'shot-a' });
           if (!receipt) {
             appendFileSync(log!, 'provider-submit\n');
@@ -24,14 +24,16 @@ try {
             if (mode === 'crash') process.exit(73);
           }
           await recordCurrentContentProviderReceipt({ provider: 'controlled-local', requestId: 'shot-a', state: 'completed', providerTaskId: 'provider-task-a', metadata: { materialId: 'material-a' } });
-          appendFileSync(log!, 'assets\n'); return { artifactRefs: ['material:material-a'], inputHash: identity.inputHash };
+          appendFileSync(log!, 'source_assets\n'); return { artifactRefs: ['material:material-a'], inputHash: identity.inputHash };
         },
         voice: async () => { appendFileSync(log!, 'voice\n'); return { artifactRefs: ['voice:audio-a'], inputHash: identity.inputHash }; },
+        presenter_assets: async () => { appendFileSync(log!, 'presenter_assets\n'); return { artifactRefs: ['presenter:video-a'], inputHash: identity.inputHash }; },
         trim: async () => { appendFileSync(log!, 'trim\n'); return { artifactRefs: ['trim:timeline-a'], inputHash: identity.inputHash }; },
         effects: async () => { appendFileSync(log!, 'effects\n'); return { artifactRefs: ['effects:plan-a'], inputHash: identity.inputHash }; },
         render: async () => { appendFileSync(log!, 'render\n'); return { artifactRefs: ['render:video-a'], inputHash: identity.inputHash }; },
         technical_quality: async () => { appendFileSync(log!, 'technical_quality\n'); return { artifactRefs: ['quality:technical-a'], inputHash: identity.inputHash }; },
         creative_quality: async () => { appendFileSync(log!, 'creative_quality\n'); return { artifactRefs: ['artifact:artifact-a'], inputHash: identity.inputHash }; },
+        handoff: async () => { appendFileSync(log!, 'handoff\n'); return { artifactRefs: ['handoff:artifact-a'], inputHash: identity.inputHash }; },
         delivery: async () => { appendFileSync(log!, 'delivery\n'); return { artifactRefs: ['delivery:package-a'], inputHash: identity.inputHash }; },
       },
       review: {
