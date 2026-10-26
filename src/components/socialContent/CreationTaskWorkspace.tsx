@@ -99,7 +99,7 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
         {title:'创建时间',key:'created',width:180,render:(_,row)=>creationLocalTime(row.createdAt)},
       ]}/>
     </>:<>
-      <LsCalendar key={calendarPortalRevision} label="发布日历" events={events} initialView="timeGridWeek" initialDate={calendarPortalRevision||new URLSearchParams(window.location.search).get('view')==='calendar'?beijingDay():data.goal?.startsAt?.slice(0,10)} timeZone="Asia/Shanghai" showAllEvents fixedHeight="auto" workspaceMode="expanded" onEventClick={event=>{const row=rows.find(item=>item.key===event.id);if(row)open(row);return true;}}/>
+      <LsCalendar key={calendarPortalRevision} label="发布日历" events={events} initialView="timeGridWeek" initialDate={calendarPortalRevision||new URLSearchParams(window.location.search).get('view')==='calendar'?beijingDay():data.goal?.startsAt?.slice(0,10)} timeZone="Asia/Shanghai" showAllEvents showAllHours fixedHeight="auto" workspaceMode="expanded" onEventClick={event=>{const row=rows.find(item=>item.key===event.id);if(row)open(row);return true;}}/>
       {rows.length>events.length&&<p className="px-5 py-3 text-xs text-text-muted">{rows.length-events.length} 条任务尚未安排发布时间，可在创作任务中查看。</p>}
       {!rows.length&&!loading&&<Empty description="暂无创作任务"/>}
     </>}
