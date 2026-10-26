@@ -1,6 +1,13 @@
 # 工程基线（阶段二集成）
 
-更新时间：2026-10-26（Asia/Shanghai）
+更新时间：2026-10-27（Asia/Shanghai）
+
+## 当前统一开发基线：图文会话预算准入与本地锁恢复（2026-10-27）
+
+- 权威分支 `baseline/unified-20261026` 在 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026` 从 `f8939eba` 快进至 `0d7439bf`；隔离来源为 `codex/image-budget-gate-20261027`。原未提交的 `server/videos/videoVisibilityMaintenance.ts` 保留且未纳入。
+- 图文复刻会话可填单条费用上限并随草稿恢复；未填时仍可入队，但图文任务不继承短视频 15 元默认上限，付费策划、出图、质检前由 worker 返回 `social_image_budget_required`。这只建立明确的预算准入，不构成跨节点累计费用强制账本；供应商真实费用和余额仍须独立核对。
+- 本地丰富预览的数据目录出现 10 月 20 日遗留的 `durable_operation_leases.json.lock`，使创建任务返回 `social_content_mutation_unavailable`。停止对应 web 服务后使用仓库锁恢复服务按文件哈希核验、隔离遗留锁并保留审计记录；业务 JSON 哈希未变化。重启后会话可将面霜任务持久入队。两个带旧默认 15 元上限的诊断任务 `socialtask_d739f15322f971c924f9a117`、`socialtask_5109d415a248f684e7355462` 均已取消，队列未领取、无付费请求。正式 5 元任务尚未创建。
+- 隔离分支通过图文语言/会话 25/25、图文管线 88/88、HTTP/合同/治理、预算定向 6/6、图文 UI 六场景、`pnpm run lint`、`pnpm run check:architecture`（3003 个生产 TypeScript 文件）、`pnpm run check:digital-employee-migrations`（204 项只读）、`pnpm run build`、`git diff --check`。尚未对新源码做同版本真实供应商 E2E；未推送、部署、发布、采用成品或运行目标库迁移。
 
 ## 当前统一开发基线：图文完整调度恢复与一次本地修复（2026-10-26）
 
