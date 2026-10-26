@@ -2,6 +2,14 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前统一开发基线：图文任务正式出图路径（2026-10-26 本地快进）
+
+- 本节覆盖下方历史“当前”声明。默认分支为 `baseline/unified-20261026`，权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`；从 `9b5f5446d858d1ea4aa9db401bc7e77d5e3d1213` 快进到源码提交 `23505d4ce58d46043e831214a66c6d8f7691e943`。隔离实现分支 `codex/image-task-provider-path-20261026` 保留为恢复点。
+- V3 图文爆款复刻单图任务在参考图证据和企业素材预检后，编译正式出图方案；持久 worker 与手动工作区共用 GPT Image 2 的图片提交、素材落库和原子回执。仅获准作为模型输入的参考图会传递原图；其他参考只传已测量的版式结构。旧版已冻结本地图层任务仍可按原合同恢复。付费策划超时保留结果不明状态，不自动重复请求。
+- 隔离源码与合入后基线均通过图文执行定向测试 10/10、`pnpm run test:social-image-pipeline`（85/85 主用例及 HTTP/合同/治理）、`pnpm run lint`、`pnpm run check:architecture`（2999 个生产 TS 文件，相对 `9b5f5446` 棘轮）、`pnpm run check:digital-employee-migrations`（204 项只读）、`pnpm run build`、`git diff --check`；隔离源码另通过 `pnpm run test:image-replication`（24/24）与 `pnpm run test:image-replication-ui`（6 场景）。未运行全仓 `quality`/`verify`。
+- 这仅证明源码与本地无付费回归。原任务 `socialtask_0ac6dfaacc2900a069b28f02` / `img80093c5e51d9` 已有结果不明的 Qwen 策划检查点，不自动迁移或重试；真实供应商回执、累计费用与 5 元上限尚待核对，未执行本轮付费出图。下一步是在稳定基线、同版本 web/worker/store 和预算核对后创建新任务做一次真实验收。没有推送、部署、发布或目标库迁移。
+- 权威树原有未提交 `server/videos/videoVisibilityMaintenance.ts` 补丁 SHA-256 仍为 `ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`，未纳入本次源码提交。设计取舍见 [图文正式出图 ADR](../architecture/adr/2026-10-26-social-image-durable-provider-route.md)。
+
 ## 当前统一开发基线：助手业务场景与多平台改写（2026-10-26 最终本地合并）
 
 - 本节覆盖下方历史“当前”声明。默认分支仍为 `baseline/unified-20261026`，权威树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`；本地版本分支 `差图文创作加联调` 同步保留最终结果。起点 `072c343baabc99da9a6ad975d438503740f33799`，来源 `feature/assistant-scene-backend-closure-20261026` / `ca40301f0fb8364d2a39b49ee6532603febb29d2`，双亲源码合并 `58e103131019be049345b25c6f9afb3ad7ec00d8`；后续提交只补记治理证据。
