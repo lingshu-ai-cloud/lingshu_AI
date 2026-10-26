@@ -109,12 +109,19 @@ function referenceLayout(inventory: SocialImageElementInventory, ratio: SocialIm
     throw new SocialImageProductionRunError('social_image_reference_ratio_unsupported', 422);
   }
   const ranked = [...inventory.regions].sort((a, b) => Number(b.toolScores.saliency || 0) - Number(a.toolScores.saliency || 0));
-  const focal = ranked[0], weakest = ranked.at(-1);
-  const text = inventory.ocrBlocks.filter(block => unitBox(block.bbox) && block.confidence >= .75)
-    .sort((a, b) => b.confidence - a.confidence)[0];
+  const weakest = ranked.at(-1);
+  const text = inventory.ocrBlocks.filter(block => unitBox(block.bbox) && block.confidence >= .75
+    && (block.text.match(/[\p{L}\p{N}]/gu)?.length || 0) >= 3)
+    .sort((a, b) => b.bbox.width * b.bbox.height * b.confidence
+      - a.bbox.width * a.bbox.height * a.confidence)[0];
   const textRegion = text && regionForBox(inventory, text.bbox);
+  // Large headlines can have the strongest edge score. Place the product in
+  // the strongest independently observed column instead of covering that copy.
+  const textColumn = textRegion?.layerRole.split('_')[1];
+  const focal = ranked.find(region => region.regionId !== textRegion?.regionId
+    && region.layerRole.split('_')[1] !== textColumn);
   if (!focal || !weakest || Number(focal.toolScores.saliency || 0) - Number(weakest.toolScores.saliency || 0) < .045
-    || !text || !textRegion || textRegion.regionId === focal.regionId) {
+    || !text || !textRegion) {
     throw new SocialImageProductionRunError('social_image_reference_structure_unsupported', 422);
   }
   const centered = (box: SocialImageNormalizedRect, width: number, height: number): SocialImageNormalizedRect => ({

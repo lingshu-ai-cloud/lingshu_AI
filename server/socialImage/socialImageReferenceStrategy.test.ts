@@ -99,6 +99,24 @@ test('two visibly different references drive distinct focal, copy and palette la
   /social_image_reference_structure_unsupported/);
 });
 
+test('large reference headline stays in the copy zone while the opposite visual region holds the product', async () => {
+  const bytes = await referenceImage('top_left', '#dfb5c5');
+  const inventory = await inventoryFor(bytes, 'top_left');
+  const topLeft = inventory.regions.find(region => region.layerRole === 'top_left')!;
+  const topRight = inventory.regions.find(region => region.layerRole === 'top_right')!;
+  topRight.toolScores.saliency = Number(topLeft.toolScores.saliency) - .07;
+  inventory.ocrBlocks = [
+    { text: '|', confidence: .99, bbox: { x: .8, y: .5, width: .01, height: .05 } },
+    { text: 'FACE', confidence: .95, bbox: { x: .05, y: .16, width: .12, height: .06 } },
+    { text: 'PEPTIDE', confidence: .91, bbox: { x: .05, y: .05, width: .27, height: .08 } },
+  ];
+  const task = { deliverySpec: { aspectRatio: '1:1' } } as SocialImageCreationTask;
+  const graph = compileEvidenceGuidedSocialImage({ task, inventory,
+    productId: 'product-a', headline: 'Cloud Foam Cleansing Honey', now });
+  assert.ok(graph.layers.find(layer => layer.id === 'headline')!.rect.x < .3);
+  assert.ok(graph.layers.find(layer => layer.id === 'product-hero')!.rect.x > .5);
+});
+
 async function boundViralTask(imageType: 'product_poster' | 'carousel' = 'product_poster') {
   const store = new MemoryStore();
   await store.create(STARTER_COLLECTIONS.socialContentTasks, {
