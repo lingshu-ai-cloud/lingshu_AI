@@ -31,9 +31,9 @@ assert.match(inspiration, /label: `对标账号 ·/);
 assert.match(inspiration, /label: `待拍 ·/);
 assert.doesNotMatch(home, /Segmented|自由创作|useCreationModeControl/, '轻量首页不得再保留自由创作模式切换');
 assert.match(home, /className="creator-home creator-home--employee/, '首页须固定使用数字员工入口逻辑');
-assert.match(promptCatalog, /id: 'weekly-plan', label: '查看当前周计划'[\s\S]{0,500}id: 'content-strategy', label: '查看内容策略'[\s\S]{0,500}id: 'external-news', label: '查看外部资讯'[\s\S]{0,500}id: 'business-analysis', label: '分析经营数据'/, '底部快捷按钮必须优先展示具体高频动作');
-assert.match(promptCatalog, /id: 'external-news'[\s\S]{0,300}promptIds: \['OP-02', 'OP-09', 'OP-10', 'OP-11', 'OP-12'\]/, '外部资讯按钮必须展开不同资讯类型');
-for (const newsType of ['行业资讯', '产品资讯', '社交媒体资讯', '政策与平台资讯']) {
+assert.match(promptCatalog, /id: 'weekly-plan', label: '查看当前周计划'[\s\S]{0,500}id: 'external-news', label: '查看外部资讯'[\s\S]{0,500}id: 'business-analysis', label: '分析经营数据'/, '底部快捷按钮必须优先展示具体高频动作');
+assert.match(promptCatalog, /id: 'external-news'[\s\S]{0,300}promptIds: \['OP-02', 'OP-LEADER', 'OP-09', 'OP-11', 'OP-12'\]/, '外部资讯按钮必须展开不同资讯类型');
+for (const newsType of ['行业资讯', '社交媒体资讯', '政策与平台资讯']) {
   assert.match(promptCatalog, new RegExp(`label: '${newsType}'`), `今日资讯必须提供${newsType}卡片`);
 }
 assert.match(home, /useState<AssistantHomeQuickLauncherId \| null>\(null\)/, '首页默认不得展示任何大卡片');
@@ -42,7 +42,7 @@ assert.doesNotMatch(home, /全部快捷任务/, '首页不应增加额外的全�
 assert.doesNotMatch(home, /onClick=\{\(\) => onNavigate\?\.\('digitalEmployees'\)\}/, '首页业务卡不得直接跳转经营总览');
 assert.match(home, /className="creator-home__suggestions"/, '自由创作的提示输入须保留在数字员工输入框下方');
 assert.match(home, /ASSISTANT_HOME_QUICK_LAUNCHERS\.map\(launcher =>/, '底部须渲染全部小按钮入口');
-assert.match(creatorStyles, /\.creator-home__suggestions \{[^}]*justify-content: flex-start[^}]*overflow-x: auto/, '高频按钮溢出时必须从最左侧开始并可向右翻阅');
+assert.match(creatorStyles, /\.creator-home__suggestions \{[^}]*flex-wrap: nowrap[^}]*justify-content: flex-start[^}]*overflow-x: auto/, '高频按钮须保持单行，空间不足时左右滑动');
 assert.match(promptCatalog, /id: 'viral-script'[\s\S]{0,1800}id: 'traffic-optimization'/, '其余快捷按钮须覆盖内容、素材、发布、客户和投流高频动作');
 assert.match(home, /ASSISTANT_HOME_PROMPT_EVENT[\s\S]{0,220}detail: \{ prompt: entry\.prompt, mode \}/, '能力卡点击只能把固定提示词写入输入框');
 assert.match(home, /追加到现有内容[\s\S]{0,300}替换现有内容/, '输入框已有内容时必须明确提供追加与替换选择');

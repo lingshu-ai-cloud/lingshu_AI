@@ -63,3 +63,17 @@ test('an old article publication field cannot be replaced by a newer sidebar dat
   assert.deepEqual(article.published, ['2025-01-01']);
   assert.deepEqual(extractSourceArticle('<div>发布时间：2026-10-20</div>').published, []);
 });
+
+test('article JSON-LD supplies a named publication date but modified dates and unrelated widgets cannot substitute it',()=>{
+ const structured='<script type="application/ld+json">'+JSON.stringify({'@type':'NewsArticle',datePublished:'2026-10-21T08:00:00+02:00',dateModified:'2026-10-26'})+'</script>';
+ assert.deepEqual(extractSourceArticle(structured).published,['2026-10-21']);
+ assert.deepEqual(extractSourceArticle('<script type="application/ld+json">'+JSON.stringify({'@type':'Organization',datePublished:'2026-10-26'})+'</script>').published,[]);
+ assert.deepEqual(extractSourceArticle('<meta name="PubDate" content="2025-01-01">'+structured).published,['2025-01-01']);
+});
+
+
+test('numeric proof preserves spaces and list punctuation rather than merging adjacent figures',()=>{
+ const article={text:'在2026年展会上发布，日期为10月21日。防晒配方SPF 50，另列21项。'+quote,published:['2026-10-21']};
+ assert.doesNotThrow(()=>assertSourceSupport('2026，2026年发布，SPF 50。“'+quote+'”',[article]));
+ assert.throws(()=>assertSourceSupport('数字20262026，SPF 500。“'+quote+'”',[article]));
+});

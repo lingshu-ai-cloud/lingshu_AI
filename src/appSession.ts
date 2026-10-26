@@ -15,7 +15,7 @@ export interface AssistantReferenceMedia {
   sourceUrl?: string;
   duration?: number;
 }
-export interface Message { role: 'user' | 'assistant'; content: string; sources?: Source[]; creation?: CreationReply; referenceMedia?: AssistantReferenceMedia; creationPortal?: AssistantCreationPortal; taskPortal?: import('../shared/contracts/assistantTaskPortal').AssistantTaskPortal; sourcePortal?: import('../shared/contracts/assistantSourcePortal').AssistantSourcePortal }
+export interface Message { role: 'user' | 'assistant'; content: string; sources?: Source[]; creation?: CreationReply; referenceMedia?: AssistantReferenceMedia; creationPortal?: AssistantCreationPortal; taskPortal?: import('../shared/contracts/assistantTaskPortal').AssistantTaskPortal; sourcePortal?: import('../shared/contracts/assistantSourcePortal').AssistantSourcePortal; companyReport?: import('../shared/contracts/companyReport').CompanyReport }
 export interface ConversationContext { agent: AgentType; messages?: Message[] }
 export interface Conversation { id: string; agent: AgentType; title: string; messages: Message[]; updatedAt: number }
 export interface RestoreSignal { agent: AgentType; messages: Message[]; key: string }

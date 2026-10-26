@@ -64,21 +64,26 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
       ['请说明本周重点', '本周先核对计划。']);
     assert.equal(persisted, 1);
     assert.equal(abort.current, null);
+    store.setDraftInput('business', '保留这份尚未发送的草稿');
+    await send('请解读科思股份2026年半年度报告。', 'business', undefined, [], undefined, { companyReport: true, preserveDraft: true });
+    assert.equal(requests, 2, 'confirmed report uses the existing chat stream exactly once');
+    assert.equal(useAssistantStore.getState().threads.business.draftInput, '保留这份尚未发送的草稿');
+
     await send('我想借鉴一条爆款视频，为自己的产品策划内容，并安排进周任务包。');
-    assert.equal(requests, 1, 'the scene prepares the original task without invoking a model or production');
+    assert.equal(requests, 2, 'the scene prepares the original task without invoking a model or production');
     assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.creationPortal?.scenario, 'viral_replication');
     const taskPortal = { kind: 'content_task' as const, taskId: 'socialtask_verified', title: '待确认的视频方案', action: 'review_plan' as const, phase: 'offered' as const };
     store.hydrateThread('business', { messages: [{ role: 'assistant', content: '是否前往内容创作页确认方案？', taskPortal }] });
     await send('是');
-    assert.equal(requests, 1, 'confirmation reveals a portal without any model or task mutation');
+    assert.equal(requests, 2, 'confirmation reveals a portal without any model or task mutation');
     assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.taskPortal?.phase, 'ready');
     assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.taskPortal?.taskId, 'socialtask_verified');
     store.hydrateThread('business', { messages: [{ role: 'assistant', content: '已核验的资讯回答。', sources: [{ title: '已核验来源', uri: 'https://example.com/original' }] }] });
     await send('查看本次回答的信息来源');
-    assert.equal(requests, 1, 'source lookup reuses this answer, without searching again');
+    assert.equal(requests, 2, 'source lookup reuses this answer, without searching again');
     assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.sourcePortal, undefined);
     await send('打开第1条来源原文');
-    assert.equal(requests, 1, 'source portal needs neither model inference nor an external write');
+    assert.equal(requests, 2, 'source portal needs neither model inference nor an external write');
     assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.sourcePortal?.uri, 'https://example.com/original');
     store.hydrateThread('business', emptyAssistantThread());
     await send('帮我复刻一张爆款图文海报');
@@ -94,9 +99,13 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
     await send('请写一条视频脚本');
     assert.equal(requestedUrl, '/api/overseas/strategy/chat', 'free-creation follow-up must not launch production');
     assert.deepEqual(requestedBody.creationSelection, creationSelection, 'reference/product/shot identities reach the server validation boundary');
+    await send('请解读科思股份2026年半年度报告。', 'business', undefined, [], undefined, { companyReport: true, preserveDraft: true });
+    assert.equal(requests, 4);
+    assert.equal(requestedBody.creationSelection, undefined, 'a confirmed public report must not be routed into an existing creation draft');
+    assert.deepEqual(useAssistantStore.getState().threads.business.creationDraft, creationSelection);
     fence.current.active = false;
     await send('身份已切换后的旧请求');
-    assert.equal(requests, 2, '旧实例失效后不得再向模型发送请求');
+    assert.equal(requests, 4, '旧实例失效后不得再向模型发送请求');
   } finally {
     globalThis.fetch = originalFetch;
     Object.assign(globalThis, { window: originalWindow, localStorage: originalStorage });

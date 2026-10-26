@@ -25,6 +25,19 @@ export function extractSourceArticle(html: string): { text: string; published: s
     const attributes = Object.fromEntries([...tag.matchAll(/([\w:-]+)\s*=\s*["']([^"']*)["']/gu)].map(match => [match[1].toLowerCase(), match[2]]));
     if (/^(?:article:published_time|datePublished|publishdate|pubdate|publication_date|DC.date.issued)$/iu.test(attributes.property ?? attributes.name ?? attributes.itemprop ?? '')) publicationFields.push(attributes.content ?? '');
   }
+  // Explicit article JSON-LD is publication evidence; dateModified and unrelated widgets are not.
+  if (!publicationFields.flatMap(dates).length) {
+    for (const match of html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([^]*?)<\/script>/giu)) {
+      try {
+        const root = JSON.parse(match[1]);
+        const nodes = Array.isArray(root) ? root : [root, ...(Array.isArray(root?.['@graph']) ? root['@graph'] : [])];
+        for (const node of nodes) {
+          const types = Array.isArray(node?.['@type']) ? node['@type'] : [node?.['@type']];
+          if (types.some((type: unknown) => typeof type === 'string' && /^(?:NewsArticle|Article|BlogPosting)$/u.test(type)) && typeof node.datePublished === 'string') publicationFields.push(node.datePublished);
+        }
+      } catch { /* Invalid structured data is not publication evidence. */ }
+    }
+  }
   const text = plain(html);
   // Named publication fields only: a dated URL, copyright or query time is not a publication date.
   if (!publicationFields.flatMap(dates).length) {
@@ -39,9 +52,10 @@ export function assertSourceSupport(answer: string, articles: Array<{ text: stri
   const quotes = [...body.matchAll(/“([^”\n]{12,160})”/gu)].map(match => compact(match[1]));
   const texts = articles.map(article => compact(article.text + ' ' + article.published.join(' ')));
   if (!quotes.length || quotes.some(quote => !texts.some(text => text.includes(quote)))) throw Error('source_quote_mismatch');
-  const originalNumbers = new Set([...texts.join(' ').matchAll(/\d+(?:\.\d+)?%?/gu)].map(match => match[0]));
+  const numericText=(value:string)=>value.normalize('NFKC').replace(/(?<![\d.])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?!\d)/gu,number=>number.replaceAll(',',''));
+  const originalNumbers = new Set([...numericText(articles.map(article=>article.text+' '+article.published.join(' ')).join(' ')).matchAll(/\d+(?:\.\d+)?%?/gu)].map(match => match[0]));
   // Exact lexical guard, not a semantic proof: never release changed or invented figures.
-  const numbers = [...compact(body).matchAll(/\d+(?:\.\d+)?%?/gu)].map(match => match[0]);
+  const numbers = [...numericText(body).matchAll(/\d+(?:\.\d+)?%?/gu)].map(match => match[0]);
   if (numbers.some(number => !originalNumbers.has(number))) throw Error('source_number_mismatch');
   const originalDates = articles.flatMap(article => [...article.published, ...dates(article.text)]);
   if (dates(body).some(date => !originalDates.includes(date))) throw Error('source_date_mismatch');

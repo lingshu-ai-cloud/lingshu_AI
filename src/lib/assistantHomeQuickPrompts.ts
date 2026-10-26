@@ -18,13 +18,9 @@ export interface AssistantHomePrompt {
 
 export type AssistantHomeQuickLauncherId =
   | 'weekly-plan'
-  | 'content-strategy'
   | 'external-news'
   | 'business-analysis'
   | 'viral-script'
-  | 'selling-points'
-  | 'materials'
-  | 'publish-plan'
   | 'customer-followup'
   | 'traffic-optimization';
 
@@ -53,17 +49,17 @@ export const ASSISTANT_HOME_PROMPTS: AssistantHomePrompt[] = [
   ...defineGroup('operations', [
     { id: 'OP-CALENDAR', label: '查看本周发布日历', summary: '只读查看本周已有发布安排与发布时间待定的内容', level: 'query', prompt: '帮我查看本周发布日历，看看哪些内容已发布、哪些待发布，以及哪些事项需要我处理。' },
     { id: 'OP-01', label: '周经营任务', summary: '查看本周进度、阻塞和今天最优先动作', level: 'query', prompt: '请读取当前企业本周目标、周计划、真实任务、依赖关系和最新运行回执，按“当前状态、已完成、待处理、阻塞项、今天最优先动作”总结本周经营任务。缺少数据时请明确指出；不要自动创建、启动或修改任务。如建议执行，请先给出可确认的计划摘要。' },
-    { id: 'OP-02', label: '今日资讯', summary: '解读与企业和目标市场有关的真实信号', level: 'query', prompt: '请结合当前企业资料、主推产品、目标市场，以及系统内已有且可追溯的行业与社媒信号，整理今天最值得关注的资讯。每条说明来源、与本企业的关系、机会或风险及建议动作；没有可靠来源时明确说明，不要编造资讯。' },
+    { id: 'OP-02', label: '今日资讯', summary: '解读与企业和目标市场有关的真实信号', level: 'query', prompt: '请结合当前企业资料、主推产品、目标市场，并检索核验行业与平台公开原文，整理今天最值得关注的资讯。每条说明来源、与本企业的关系、机会或风险及建议动作；没有可靠来源时明确说明，不要编造资讯。' },
     { id: 'OP-03', label: '经营策略', summary: '判断经营重点并给出有依据的行动建议', level: 'plan', prompt: '请基于当前企业资料、主推产品、目标市场、本周任务、内容表现、询盘和投放数据，判断目前最重要的经营问题，并给出按优先级排列的策略建议。区分事实、推断和建议，说明依据、预期结果、风险与下一步；不要自动执行。' },
     { id: 'OP-04', label: '数据分析', summary: '分析内容、客户和投放数据中的变化与异常', level: 'query', prompt: '请读取当前账号可访问的真实经营数据，按内容、账号、发布、询盘、客户和投放维度分析关键变化、异常、可能原因和可行动建议。注明统计口径与时间范围；数据不足时明确缺口。对话中先给摘要，完整图表引导到对应分析页面。' },
     { id: 'OP-05', label: '今天优先做什么', summary: '从目标、任务和阻塞中选出三件要事', level: 'plan', prompt: '请结合本周目标、当前任务状态、阻塞项和最近回执，为我列出今天最值得完成的 3 项工作。每项说明优先级原因、所需输入、预计产出和依赖；不要自动启动任务。' },
     { id: 'OP-06', label: '检查经营健康度', summary: '检查账号、内容、询盘、客户和投放状态', level: 'query', prompt: '请检查当前企业的账号连接、内容供给、发布节奏、询盘处理、客户跟进和投放状态，按“正常、需关注、阻塞”分类，并给出最小修复动作。只引用真实状态，不把缺失数据当作正常。' },
     { id: 'OP-07', label: '复盘本周经营', summary: '复盘本周结果并识别有效与无效动作', level: 'query', prompt: '请基于本周真实任务、内容发布、互动、询盘、客户和投放结果做复盘，说明完成情况、有效动作、无效动作、未决风险和下周应保留或调整的策略。没有回执的任务单独列为待核验。' },
     { id: 'OP-08', label: '规划下一轮动作', summary: '形成下一轮最小可验证经营方案', level: 'plan', prompt: '请根据当前经营数据和本周复盘，提出下一轮最小可验证行动方案，包含目标、对象、步骤、负责人建议、衡量指标、依赖和停止条件。先输出计划摘要，等待我确认后再进入具体任务。' },
-    { id: 'OP-09', label: '行业资讯', summary: '筛选目标行业的市场、技术和供应链信号', level: 'query', prompt: '请结合当前企业所属行业、主推产品和目标市场，从系统内已有且可追溯的信息中整理今天最值得关注的行业资讯，包括市场变化、技术趋势、供应链动态和主要竞争动向。每条注明来源与时间、与本企业的关系、机会或风险和建议动作；没有可靠来源时明确说明，不要编造资讯。' },
-    { id: 'OP-10', label: '产品资讯', summary: '追踪相关品类、竞品和产品创新信号', level: 'query', prompt: '请结合当前企业的主推产品、目标客户和目标市场，从系统内已有且可追溯的信息中整理今天最值得关注的产品资讯，包括相关品类创新、竞品动作、原料或功能趋势、包装与价格变化。每条注明来源与时间、对我方产品的影响和建议动作；资料不足时明确缺口，不要补造产品事实。' },
-    { id: 'OP-11', label: '社交媒体资讯', summary: '分析目标平台上的内容趋势和用户信号', level: 'query', prompt: '请结合当前企业、主推产品、目标市场和目标平台，从系统内已有且可追溯的社交媒体信号中整理今天值得关注的内容趋势、热门话题、用户需求和对标账号变化。每条注明平台、来源与时间、适配原因、可尝试的内容方向和风险；不要把未核验热度写成事实。' },
-    { id: 'OP-12', label: '政策与平台资讯', summary: '识别影响出海经营的政策和平台规则变化', level: 'query', prompt: '请结合当前企业的目标市场、销售渠道和已连接平台，从系统内已有且可追溯的信息中整理今天可能影响经营的政策、合规、贸易和平台规则变化。逐条注明来源与生效时间、影响范围、需核验事项和建议动作；无法确认最新状态时明确标记待核验，不要给出无依据的合规结论。' },
+    { id: 'OP-09', label: '行业资讯', summary: '筛选目标行业的市场、技术和供应链信号', level: 'query', prompt: '请结合当前企业所属行业、主推产品和目标市场，检索并核验公开原文，整理今天最值得关注的行业资讯，包括市场变化、技术趋势、供应链动态和主要竞争动向。每条注明来源与时间、与本企业的关系、机会或风险和建议动作；没有可靠来源时明确说明，不要编造资讯。' },
+    { id: 'OP-11', label: '社交媒体资讯', summary: '分析目标平台上的内容趋势和用户信号', level: 'query', prompt: '请结合当前企业、主推产品、目标市场和目标平台，检索并核验平台官方动态与公开内容，整理今天值得关注的内容趋势、热门话题、用户需求和对标账号变化。每条注明平台、来源与时间、适配原因、可尝试的内容方向和风险；不要把未核验热度写成事实。' },
+    { id: 'OP-LEADER', label: '重点企业解读', summary: '从财报原文拆解龙头经营变化与后续观察点', level: 'query', prompt: '请解读华熙生物2026年半年度报告，拆解整体经营、原料与终端业务、技术产品和海外布局，区分公司披露与分析推断，说明对美妆原料企业的含义，并列出后续验证点。财务数字引用原表，未取得的季度数据和市场预期不要补造。' },
+    { id: 'OP-12', label: '政策与平台资讯', summary: '识别影响出海经营的政策和平台规则变化', level: 'query', prompt: '请结合当前企业的目标市场、销售渠道和已连接平台，检索并核验公开原文，整理今天可能影响经营的政策、合规、贸易和平台规则变化。逐条注明来源与生效时间、影响范围、需核验事项和建议动作；无法确认最新状态时明确标记待核验，不要给出无依据的合规结论。' },
   ]),
   ...defineGroup('inspiration', [
     { id: 'IN-01', label: '最近哪些趋势可用', summary: '筛选适合产品和目标市场的可追溯趋势', level: 'query', prompt: '请读取系统内现有且可追溯的行业、平台和社媒趋势，结合我的企业、主推产品与目标市场，筛选最值得使用的趋势。逐条说明来源、适配原因、内容切入点、风险和有效期；不要把未经核验的信息写成事实。' },
@@ -134,13 +130,9 @@ export const ASSISTANT_HOME_PROMPTS: AssistantHomePrompt[] = [
 
 export const ASSISTANT_HOME_QUICK_LAUNCHERS: AssistantHomeQuickLauncher[] = [
   { id: 'weekly-plan', label: '查看当前周计划', description: '查看本周任务、优先事项、复盘和下一轮动作', promptIds: ['OP-CALENDAR', 'OP-01', 'OP-05', 'OP-07', 'OP-08'] },
-  { id: 'content-strategy', label: '查看内容策略', description: '查看经营策略、本周内容和下一条创作方向', promptIds: ['OP-03', 'CO-04', 'CO-06', 'PU-01', 'AD-03'] },
-  { id: 'external-news', label: '查看外部资讯', description: '查看行业、产品、社媒和政策平台信号', promptIds: ['OP-02', 'OP-09', 'OP-10', 'OP-11', 'OP-12'] },
+  { id: 'external-news', label: '查看外部资讯', description: '查看行业、社媒和政策平台信号', promptIds: ['OP-02', 'OP-LEADER', 'OP-09', 'OP-11', 'OP-12'] },
   { id: 'business-analysis', label: '分析经营数据', description: '分析经营、账号、投放和客户数据', promptIds: ['OP-04', 'OP-06', 'PU-04', 'AD-01', 'CS-05'] },
-  { id: 'viral-script', label: '点击开始创作', description: '选择视频创作或图文爆款复刻场景', promptIds: ['CO-REPLICATE', 'CO-HOOK', 'CO-CAMPAIGN', 'CO-07', 'CO-13'] },
-  { id: 'selling-points', label: '提炼产品卖点', description: '核对产品事实、卖点和目标客户表达', promptIds: ['CO-03', 'EN-03', 'EN-04', 'CO-08'] },
-  { id: 'materials', label: '查看素材怎么用', description: '筛选素材、爆款参考并整理待拍清单', promptIds: ['CO-05', 'IN-03', 'IN-05', 'IN-06', 'AD-05'] },
-  { id: 'publish-plan', label: '规划发布安排', description: '规划发布时间、文案、评论和发布回执', promptIds: ['PU-01', 'PU-02', 'PU-03', 'PU-05', 'PU-06'] },
+  { id: 'viral-script', label: '内容创作', description: '选择视频创作或图文爆款复刻场景', promptIds: ['CO-REPLICATE', 'CO-HOOK', 'CO-CAMPAIGN', 'CO-07', 'CO-13'] },
   { id: 'customer-followup', label: '跟进重点客户', description: '梳理重点客户、会话、回复和跟进计划', promptIds: ['CS-01', 'CS-02', 'CS-03', 'CS-07', 'CS-09'] },
   { id: 'traffic-optimization', label: '优化智能投流', description: '分析投放并准备渠道、预算和执行方案', promptIds: ['AD-01', 'AD-02', 'AD-03', 'AD-04', 'AD-06'] },
 ];

@@ -149,3 +149,76 @@ test('required final conclusion is checked before ordinary chat releases text, w
     if (previousKey === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = previousKey;
   }
 });
+
+
+test('the configured Qianwen MaaS default resolves source-capable search on the same provider origin', async () => {
+  const savedEndpoint=process.env.QWEN_SEARCH_ENDPOINT, savedBase=process.env.DASHSCOPE_BASE_URL, savedKey=process.env.DASHSCOPE_API_KEY;
+  const original=globalThis.fetch; delete process.env.QWEN_SEARCH_ENDPOINT; delete process.env.DASHSCOPE_BASE_URL; process.env.DASHSCOPE_API_KEY='fixture-only';
+  let called=''; globalThis.fetch=async(input)=>{called=String(input);return Response.json({code:'fixture_stop'});};
+  try {
+    await assert.rejects(async()=>{for await(const event of callLLMChatStream([{role:'user',content:'最新资讯'}],{backend:'qwen',requireSources:true})) void event;},/未完成请求/);
+    assert.equal(called,'https://maas.qianwenaiapi.com/api/v1/services/aigc/text-generation/generation');
+  } finally {
+    globalThis.fetch=original;
+    for(const [key,value] of [['QWEN_SEARCH_ENDPOINT',savedEndpoint],['DASHSCOPE_BASE_URL',savedBase],['DASHSCOPE_API_KEY',savedKey]]) {if(value===undefined)delete process.env[key!];else process.env[key!]=value;}
+  }
+});
+
+test('news retrieval reads originals before one JSON synthesis and never treats the discovery narrative as evidence',async()=>{
+ const previous=process.env.DASHSCOPE_API_KEY, originalFetch=globalThis.fetch, previousEndpoint=process.env.QWEN_SEARCH_ENDPOINT;
+ process.env.DASHSCOPE_API_KEY='fixture-only';process.env.QWEN_SEARCH_ENDPOINT='https://fixture.invalid/api/v1/services/aigc/text-generation/generation';
+ let modelCalls=0, originalReads=0, blockOriginal=false;
+ const quote='The platform announced a new tool for professional content creators.';
+ globalThis.fetch=async(input,init)=>{
+  if(String(input).includes('www.tiktok.com')) { originalReads++; if(blockOriginal)return new Response('blocked',{status:403}); return new Response(`<article><h1>Platform creator announcement</h1><p>${quote}${' Original public text.'.repeat(15)}</p></article>`); }
+  const body=JSON.parse(String(init?.body));modelCalls++;
+  if(body.parameters.enable_search)return Response.json({output:{choices:[{message:{content:'Discovery narrative contains INVENTED_9999; never reuse it.'},finish_reason:'stop'}],search_info:{search_results:[{index:9,title:'Platform creator announcement',url:'https://www.tiktok.com/creator-announcement'}]}}});
+  assert.equal(body.parameters.enable_search,false);assert.equal(body.parameters.response_format.type,'json_object');assert.ok(!body.input.messages[1].content.includes('INVENTED_9999'));
+  return Response.json({output:{choices:[{finish_reason:'stop',message:{content:JSON.stringify({items:[{sourceId:'S1',fact:'平台发布了面向专业内容创作者的新工具。',quoteIds:['S1-Q1'],meaning:'可能为内容生产提供新的工具，效果仍需验证。',action:'建议先核对目标账号的功能开放状态，再做小样本测试。'}],conclusion:'本轮可以确认官方发布的工具信息，无法据此判断账号实际热度或销量。'})}}]}});
+ };
+ try{
+  let answer='';for await(const event of callLLMChatStream([{role:'user',content:'社交媒体资讯，TikTok创作者工具'}],{backend:'qwen',requireSources:true,searchEvidenceFirst:true,searchDomains:['tiktok.com']}))if('text'in event)answer+=event.text;
+  assert.equal(modelCalls,2);assert.match(answer,/总体结论/);assert.match(answer,/原文摘录/);assert.ok(!answer.includes('INVENTED_9999'));
+  let reused='';for await(const event of callLLMChatStream([{role:'user',content:'社交媒体资讯，TikTok创作者工具'}],{backend:'qwen',requireSources:true,searchEvidenceFirst:true,searchDomains:['tiktok.com']}))if('text'in event)reused+=event.text;
+  assert.equal(modelCalls,2,'unchanged originals need no additional model/search requests');
+  assert.equal(originalReads,2,'reused response still re-reads the original');
+  assert.match(reused,/重新读取全部引用原文/);
+  blockOriginal=true;
+  await assert.rejects(async()=>{for await(const event of callLLMChatStream([{role:'user',content:'社交媒体资讯，TikTok创作者工具'}],{backend:'qwen',requireSources:true,searchEvidenceFirst:true,searchDomains:['tiktok.com']}))void event;},/未取得可读取/);
+  assert.equal(modelCalls,2,'an inaccessible original cannot trigger hidden paid retries or stale delivery');
+ }finally{globalThis.fetch=originalFetch;if(previous===undefined)delete process.env.DASHSCOPE_API_KEY;else process.env.DASHSCOPE_API_KEY=previous;if(previousEndpoint===undefined)delete process.env.QWEN_SEARCH_ENDPOINT;else process.env.QWEN_SEARCH_ENDPOINT=previousEndpoint;}
+});
+
+test('BASF news discovers real directory links before synthesis without relying on unstable search metadata', async () => {
+  const originalFetch = globalThis.fetch, previousKey = process.env.DASHSCOPE_API_KEY;
+  process.env.DASHSCOPE_API_KEY = 'fixture-only';
+  let modelCalls = 0, articleReads = 0;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname === '/tw/zh/media/news-releases') return new Response('<a href="/tw/zh/media/news-releases/asia-pacific/2026/10/fixture">More</a>');
+    if (url.hostname === 'www.basf.com') {
+      articleReads++;
+      return new Response('<h1>BASF personal care innovation</h1><p>BASF plans to present a new personal care ingredient. ' + 'Original technical announcement. '.repeat(12) + '</p>');
+    }
+    modelCalls++;
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.parameters.enable_search, false, 'directory discovery does not spend a search request');
+    return Response.json({ output: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      items: [{ sourceId: 'S1', fact: '巴斯夫计划展示个人护理原料，具体应用仍需核对技术资料。', quoteIds: ['S1-Q1'],
+        meaning: '可能为研发选题提供线索，不能据此确认销量。', action: '建议先核对原料技术说明和目标市场适用要求。' }],
+      conclusion: '本轮只支持官方展示计划，不能证明已销售或适用于本企业。',
+    }) } }] } });
+  };
+  try {
+    const query = [{ role: 'user' as const, content: '行业资讯：全球美妆原料，BASF个人护理创新（目录测试）' }];
+    const options = { backend: 'qwen' as const, requireSources: true, searchEvidenceFirst: true, searchDomains: ['basf.com'] };
+    let answer = '';
+    for await (const event of callLLMChatStream(query, options)) if ('text' in event) answer += event.text;
+    assert.match(answer, /官方新闻目录/); assert.match(answer, /原文摘录/);
+    for await (const event of callLLMChatStream(query, options)) void event;
+    assert.equal(modelCalls, 1); assert.equal(articleReads, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousKey === undefined) delete process.env.DASHSCOPE_API_KEY; else process.env.DASHSCOPE_API_KEY = previousKey;
+  }
+});
