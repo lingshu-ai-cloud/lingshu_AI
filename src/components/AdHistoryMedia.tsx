@@ -12,7 +12,7 @@ export function historyQuery(source: AdSourceEntry) {
     ...(source.origin === 'studio' ? { projectId: source.projectId || '' } : { sourceTaskId: source.sourceTaskId || '', artifactId: source.artifactId || '' }) }).toString();
 }
 /** Identity-keyed by the parent. No thumbnail or metrics are reused across source records. */
-export default function AdHistoryMedia({ source, refresh, onSelect, blockedReason, mediaOnly = false }: { source: AdSourceEntry; refresh: number; onSelect?: (selection: AdMaterialSelection) => void; blockedReason?: string; mediaOnly?: boolean }) {
+export default function AdHistoryMedia({ source, refresh, onSelect, blockedReason, mediaOnly = false, thumbnailOnly = false, selectLabel = '选择素材' }: { source: AdSourceEntry; refresh: number; onSelect?: (selection: AdMaterialSelection) => void; blockedReason?: string; mediaOnly?: boolean; thumbnailOnly?: boolean; selectLabel?: string }) {
   const [selection, setSelection] = useState<AdMaterialSelection | null>(null), [selectionError, setSelectionError] = useState('');
   const [data, setData] = useState<AdSourceLifecycle | null>(null), [failed, setFailed] = useState(false);
   const [url, setUrl] = useState(''), [cover, setCover] = useState(''), [previewError, setPreviewError] = useState(false), [retry, setRetry] = useState(0);
@@ -61,12 +61,12 @@ export default function AdHistoryMedia({ source, refresh, onSelect, blockedReaso
         }} onError={() => setPreviewError(true)}/>}
       </LsMediaStateFrame>
     </div>
-    <Space direction="vertical" size={4}><Tag color={missing ? 'warning' : undefined}>{missing ? '文件缺失' : cover ? '文件可用 · 可预览' : selection ? `文件可用 · ${previewError ? '封面暂不可用' : '封面加载中'}` : previewError ? '封面暂不可用' : data ? '文件待核对' : '核对中'}</Tag>
+    {!thumbnailOnly && <Space direction="vertical" size={4}><Tag color={missing ? 'warning' : undefined}>{missing ? '文件缺失' : cover ? '文件可用 · 可预览' : selection ? `文件可用 · ${previewError ? '封面暂不可用' : '封面加载中'}` : previewError ? '封面暂不可用' : data ? '文件待核对' : '核对中'}</Tag>
       <Tag>内部内容：{adContentStatusLabel(selection?.contentStatus || source.sourceMediaStatus)}</Tag>
       <Tag>使用范围：{source.sourceTenantName || '当前企业'}{source.sourceId ? ' · 只读' : ''}</Tag>
       {!mediaOnly && <><Tag>{adLabel}</Tag>{metaLabel && <Tag>Meta 广告：{metaLabel}</Tag>}</>}
       {previewError && <Button size="small" onClick={() => setRetry(n => n + 1)}>重试封面</Button>}
-      {onSelect && <><Button size="small" type="primary" disabled={!!blockedReason || !selection} onClick={() => { if (selection && !blockedReason) onSelect(selection); }}>选择素材</Button><span className="ads-library-meta">{blockedReason || (missing ? '请先找回原文件' : source.sourceId ? '外部企业只读素材，未开放跨企业投放复用' : selection ? '文件已核验 · 仅保存选择，不上传' : selectionError || (!source.verifiedSource ? '尚无可用成片，不能选择' : '核对文件与使用权限后可选'))}</span></>}
-    </Space>
+      {onSelect && <><Button size="small" type="primary" disabled={!!blockedReason || !selection} onClick={() => { if (selection && !blockedReason) onSelect(selection); }}>{selectLabel}</Button><span className="ads-library-meta">{blockedReason || (missing ? '请先找回原文件' : source.sourceId ? '外部企业只读素材，未开放跨企业投放复用' : selection ? '文件已核验 · 仅保存选择，不上传' : selectionError || (!source.verifiedSource ? '尚无可用成片，不能选择' : '核对文件与使用权限后可选'))}</span></>}
+    </Space>}
   </div>;
 }

@@ -7,7 +7,10 @@ import type { ContentQueueStatus, DigitalEmployeeOverview } from '../lib/digital
 import { loadConnectedSocialPerformance, type ConnectedSocialPerformance } from '../lib/socialPerformance';
 import { PAGE_REGISTRY } from '../pageRegistry';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
-import { WeeklyPublishingCalendar } from './SmartBusinessDashboard';
+import CreationTaskWorkspace from './socialContent/CreationTaskWorkspace';
+import CreateContentPlanModal from './socialContent/CreateContentPlanModal';
+import { productionPortalNavigation } from './assistant/AssistantProductionPortal';
+import { productionNavigationIdentity } from '../lib/productionNavigation';
 
 const statusLabel: Partial<Record<string, { text: string; color: string }>> = {
   running: { text: '执行中', color: 'processing' },
@@ -23,7 +26,7 @@ function countStatuses(data: DigitalEmployeeOverview, statuses: ContentQueueStat
   return (data.contentQueue?.items || []).filter(item => statuses.includes(item.status)).length;
 }
 
-function CreationPlan({ data }: { data: DigitalEmployeeOverview }) {
+function CreationPlan({ data, onCreate }: { data: DigitalEmployeeOverview; onCreate:()=>void }) {
   const queue = data.contentQueue?.items || [];
   const displayStatus = statusLabel[data.run?.status || data.goal?.status || ''] || { text: data.goal ? '待启动' : '待创建', color: data.goal ? 'warning' : 'default' };
   const metrics = [
@@ -34,21 +37,7 @@ function CreationPlan({ data }: { data: DigitalEmployeeOverview }) {
     { label: '已完成成片', value: `${countStatuses(data, ['completed'])} 条` },
     { label: '已排期发布', value: `${queue.filter(item => Boolean(item.plannedPublishDate)).length} 条` },
   ];
-  const createPlan = () => window.dispatchEvent(new CustomEvent('lingshu-assistant-open', {
-    detail: {
-      text: '帮我创建一条新的创作计划',
-      context: {
-        agent: 'traffic',
-        label: '内容创作',
-        summary: '当前正在创建内容计划；先通过对话明确目标、内容数量、平台和排期，再进入生产。',
-        sourcePage: 'socialInspiration',
-        workflowStage: data.goal ? 'planned' : 'unplanned',
-        goalId: data.goal?.id,
-        planId: data.plan?.id,
-        runId: data.run?.id,
-      },
-    },
-  }));
+
 
   return <section aria-labelledby="creation-plan-title" className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface">
     <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-6 pb-4 pt-5">
@@ -58,9 +47,9 @@ function CreationPlan({ data }: { data: DigitalEmployeeOverview }) {
           <Tag color={displayStatus.color}>{displayStatus.text}</Tag>
           {data.goal && <Tag>{data.goal.startsAt.slice(5)} — {data.goal.endsAt.slice(5)}</Tag>}
         </div>
-        <p className="mt-2 text-sm text-text-secondary">{data.plan?.strategy || data.goal?.objective || '通过灵小枢先确认创作目标、平台、数量与发布时间。'}</p>
+        <p className="mt-2 text-sm text-text-secondary">{data.plan?.strategy || data.goal?.objective || '点击“创建一条新计划”，填写本条内容的产品、创作方向与预计发布时间。'}</p>
       </div>
-      <Button type="primary" icon={<CalendarPlus size={16}/>} onClick={createPlan}>创造一条新计划</Button>
+      <Button type="primary" icon={<CalendarPlus size={16}/>} onClick={onCreate}>创建一条新计划</Button>
     </header>
     <div className="grid gap-x-6 gap-y-4 px-6 py-5 sm:grid-cols-3">
       {metrics.map(metric => <div key={metric.label} className="min-w-0 rounded-lg px-1 py-3">
@@ -106,6 +95,7 @@ export default function ContentCreationOverviewPage() {
   const [overviewError, setOverviewError] = useState('');
   const [performanceError, setPerformanceError] = useState('');
   const [revision, setRevision] = useState(0);
+  const [createOpen,setCreateOpen]=useState(false);
 
   useEffect(() => {
     const reset = () => { setOverview(null); setPerformance(null); setRevision(value => value + 1); };
@@ -138,11 +128,15 @@ export default function ContentCreationOverviewPage() {
       {overviewError && <Alert type="warning" showIcon title={overviewError}/>}
       {loading && !overview ? <section className="rounded-lg border border-border bg-surface p-6"><Skeleton active paragraph={{ rows: 8 }}/></section> : overview ? <>
         <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-          <CreationPlan data={overview}/>
+          <CreationPlan data={overview} onCreate={()=>setCreateOpen(true)}/>
           <TopPublishedVideos performance={performance} loading={loading} error={performanceError}/>
         </div>
-        <WeeklyPublishingCalendar data={overview} onRefresh={() => setRevision(value => value + 1)}/>
+        <CreationTaskWorkspace data={overview} onRefresh={() => setRevision(value => value + 1)}/>
       </> : null}
     </div>
+    <CreateContentPlanModal open={createOpen} onCancel={()=>setCreateOpen(false)} onCreated={taskId=>{
+      setCreateOpen(false);setRevision(value=>value+1);
+      window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{...productionPortalNavigation(taskId),navigationIdentity:productionNavigationIdentity()}}));
+    }}/>
   </main>;
 }

@@ -1,3 +1,4 @@
+import { createSingleContentCreationRouter } from './singleContentCreationRouter.js';
 import { createGuidedCreationRouter } from './guidedCreationRouter.js';
 import {createWeeklyOwnedProductIdentityRouter} from './weeklyOwnedProductIdentityRouter.js';
 import {createSocialContentOrderOperationsRouter} from './socialContentOrderOperationsRouter.js';
@@ -194,6 +195,7 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
       handler(req, res).catch(error => sendFailure(res, error));
     };
   }
+  router.use(createSingleContentCreationRouter({ repository, sourceOptions, authorize, asyncRoute, now, orchestratorQueue: dependencies.orchestratorQueue }));
   router.use(createGuidedCreationRouter({ repository, authorize, asyncRoute, now, orchestratorQueue: dependencies.orchestratorQueue }));
   router.use(createSocialContentReplicationScriptRouter({ repository, authorize, asyncRoute, now }));
   router.use(createSocialContentAssistantActionsRouter({ repository,
@@ -264,7 +266,8 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
 
   router.get('/', asyncRoute(async (req, res) => {
     const identity = await authorize(req, res, 'read');
-    res.json(await readSocialContentWorkspace({ repository, tenantId: identity.tenantId, now: now() }));
+    const taskId = req.query.taskId === undefined ? undefined : requireSocialId(req.query.taskId, 'social_task_id_invalid');
+    res.json(await readSocialContentWorkspace({ repository, tenantId: identity.tenantId, now: now(), taskId }));
   }));
 
   router.get('/catalog', asyncRoute(async (req, res) => {

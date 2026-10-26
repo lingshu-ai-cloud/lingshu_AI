@@ -25,8 +25,9 @@ import { CreationModeContext, type CreationMode } from '../lib/creationMode';
 import { accountProductNavigation, primaryProductNavigation, type PrimaryProductPage } from '../productNavigation';
 
 const PRODUCT_NAV_ICONS: Record<PrimaryProductPage, ReactNode> = {
-  strategy: <DuotoneGlyph kind="create" />,
-  socialInspiration: <DuotoneGlyph kind="inspiration" />,
+  strategy: <DuotoneGlyph kind="conversation" />,
+  socialInspiration: <DuotoneGlyph kind="create" />,
+  inspirationMarket: <DuotoneGlyph kind="inspiration" />,
   digitalEmployees: <DuotoneGlyph kind="home" />,
   adsOverview: <DuotoneGlyph kind="ads" />,
   conversion: <DuotoneGlyph kind="customers" />,
@@ -117,7 +118,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   ));
   const [mobileSidebarExpanded, setMobileSidebarExpanded] = useState(false);
   const homeSurface = page === 'strategy';
-  const creatorSurface = page === 'strategy' || page === 'socialInspiration' || page === 'digitalEmployees' || PLATFORM_ADS_PAGE_IDS.includes(page) || page === 'conversion';
+  const creatorSurface = page === 'strategy' || page === 'socialInspiration' || page === 'inspirationMarket' || page === 'digitalEmployees' || PLATFORM_ADS_PAGE_IDS.includes(page) || page === 'conversion';
   const sidebarCollapsed = mobileViewport ? !mobileSidebarExpanded : creatorSurface ? creatorSidebarCollapsed : desktopSidebarCollapsed;
   const sidebarWidth = sidebarCollapsed ? (mobileViewport ? 56 : 60) : creatorSurface ? Math.min(354, Math.max(246, Math.round(viewportWidth * 0.173))) : 176;
   const activeSession = session;
@@ -303,7 +304,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
                   <div className="min-w-0"><p className="truncate text-sm font-bold text-text-primary">{accountDisplayName}</p><p className="truncate ls-type-body-small text-text-muted">{activeSession?.user?.email}</p></div>
                 </div>
                 <div className="pt-2">
-                  {!starterMode && <button onClick={openQuota} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Star size={17} className="text-amber-500" fill="currentColor"/><span className="flex-1 text-left">积分管理</span><ChevronRight size={14} className="text-text-muted" /></button>}
+                  <button onClick={openQuota} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Star size={17} className="text-amber-500" fill="currentColor"/><span className="flex-1 text-left">积分管理</span><ChevronRight size={14} className="text-text-muted" /></button>
                   <button onClick={openDigitalEmployeeGuide} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Sparkles size={17} /><span className="flex-1 text-left">新手引导</span><ChevronRight size={14} className="text-text-muted" /></button>
                   <button onClick={() => { setAccountMenuOpen(false); setMobileRightPanelOpen(false); setAccountSettingsOpen(true); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Settings size={17} /><span className="flex-1 text-left">账号设置</span><ChevronRight size={14} className="text-text-muted" /></button>
                   {accountPages.map(accountPage => <button key={accountPage} onClick={() => { setAccountMenuOpen(false); navigateFromSidebar(accountPage); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><ShieldCheck size={17}/><span className="flex-1 text-left">{PAGE_REGISTRY[accountPage].navLabel}</span><ChevronRight size={14} className="text-text-muted"/></button>)}
@@ -349,12 +350,6 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
 
       {/* ── Main content ─────────────────────────────── */}
       <main className="app-main relative flex min-w-0 flex-1 basis-0 flex-col overflow-clip">
-        {creatorSurface && <div className="creator-topbar" aria-label="账号与积分">
-          <button type="button" className="creator-topbar__points" onClick={openQuota}><Star size={17} aria-hidden="true" />积分管理</button>
-          <button type="button" className="creator-topbar__account" onClick={() => setAccountSettingsOpen(true)} aria-label="打开账号设置">
-            <span className="creator-topbar__avatar">{initial}</span><span className="creator-topbar__name">{tenantName}</span>
-          </button>
-        </div>}
         {supportAccess && (
           <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-border bg-white px-4 text-xs">
             <div className="flex min-w-0 items-center gap-2 text-text-primary">

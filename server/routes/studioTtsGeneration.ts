@@ -1,3 +1,5 @@
+import { synthesizeNativeHeyGenVoice } from '../lib/studioNativeHeyGenVoice.js';
+import { parseBoundHeyGenLogicalVoice } from '../lib/heygenVoiceCapabilities.js';
 import fs from 'fs';
 import path from 'path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -36,6 +38,7 @@ const inFlightTts = new Map<string,Promise<CachedTtsResult>>();
 function studioNativeTtsCacheKey(tenantId:string,spoken:string,voice:string,language:string,style:TtsStyleOptions) {
   const providerPolicy = [process.env.TTS_PROVIDER_POLICY_VERSION || 'minimax-subtitle-time-v3-english-boundaries', process.env.TTS_PREFER_EXPRESSIVE_PROVIDER !== 'false', process.env.TTS_REQUIRE_MINIMAX === 'true',
     dashscopeCredentialConfigured(), Boolean((process.env.MINIMAX_API_KEY || process.env.MINIMAX_API_TOKEN || '').trim())];
+  if (studioVoicePaidContext()?.primaryModel === 'avatar_iv') providerPolicy.push('heygen-native-video');
   return createHash('sha256').update(JSON.stringify([tenantId,spoken,voice,language,normalizeTtsStyle(style),providerPolicy,process.env.QWEN_TTS_MODEL || 'qwen3-tts-flash',process.env.MINIMAX_TTS_MODEL || 'speech-2.8-hd',process.env[`QWEN_TTS_VOICE_${voice.toUpperCase()}`],minimaxVoiceFor(voice,language)])).digest('hex');
 
 }
@@ -78,7 +81,10 @@ async function generateTtsAudio(spoken: string, voice: string, language = 'zh', 
 async function generateTtsAudioUncached(spoken: string, voice: string, language = 'zh', style: TtsStyleOptions = {}, requireNatural = false): Promise<{ ok: boolean; source: string; url?: string; duration?: number; error?: string; customVoiceStatus?: 'activated'; cues?: AlignedCue[]; alignmentSource?: 'minimax_native' }> {
   if (voice.startsWith('heygen:')) {
     const output = path.join(scopedTtsDir(), randomUUID() + '.wav');
-    const result = await synthesizeBoundHeyGenVoice({ text: spoken, voiceId: voice.split(':')[1] || '', language, output });
+    const bound = parseBoundHeyGenLogicalVoice(voice);
+    const result = studioVoicePaidContext()?.primaryModel === 'avatar_iv'
+      ? await synthesizeNativeHeyGenVoice({ text: spoken, voiceId: bound.voiceId, output })
+      : await synthesizeBoundHeyGenVoice({ text: spoken, ...bound, language, output });
     return { ok: true, source: 'heygen', url: ttsUrl(path.basename(output)), duration: result.duration };
   }
   if (spoken.length > 5000) return { ok: false, source: 'text_too_long', error: '口播超过 5000 字符，请拆分视频；配音不会截断正文。' };

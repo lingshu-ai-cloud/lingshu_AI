@@ -140,7 +140,8 @@ export async function inspectOpeningHookMotionWithQwen(opts: {
     model: QWEN_EXACT_VL_MODEL(),
     messages: [{ role: 'user', content: [
       { type: 'text', text: `以下图片按时间排列，时间为 ${selected.map(frame => frame.timeLabel).join(', ')}。仅分析 ${opts.start.toFixed(2)}-${opts.end.toFixed(2)} 秒这个完整镜头。只输出 JSON {"observations":[{"time":0,"visibleState":"","confidence":0}],"transitions":[{"from":0,"to":0,"action":"","evidence":"","confidence":0}],"uncertainties":[]}。每张图分别写实际可见的人物位置、手部姿态、面向和构图。transitions 只记录至少两张图可互相证明的状态变化（例如手向镜头伸出、人物后退、双臂张开）；单张图不能证明运动方向。没有足够证据就留空并写入 uncertainties。不得推断声音、口播、目的、身份或画外动作。` },
-      ...selected.map(frame => ({ type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } })),
+      { type: 'text', text: '每张图片前的 SOURCE_TIME_SECONDS 是原片时间，不是图片序号。observations 必须逐帧记录所有提供的时间；静止也记录静止，不得用图片序号代替时间。跨剪辑切点不推断连续动作。' },
+      ...selected.flatMap(frame => [{ type: 'text', text: `SOURCE_TIME_SECONDS=${Number.parseFloat(frame.timeLabel)}` }, { type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}` } }]),
     ] as any }],
     response_format: { type: 'json_object' },
     max_tokens: 2400,
@@ -148,13 +149,14 @@ export async function inspectOpeningHookMotionWithQwen(opts: {
   const parsed = parseJson<Record<string, unknown>>(completion.choices[0]?.message?.content || '', {});
   const finite = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : NaN;
   const clamp = (value: unknown) => Number.isFinite(finite(value)) ? Math.max(0, Math.min(1, finite(value))) : 0;
+  const sampledTime = (time: number) => selected.some(frame => Math.abs(Number.parseFloat(frame.timeLabel) - time) < 0.00001);
   const observations = Array.isArray(parsed.observations) ? parsed.observations.map(row => ({
     time: finite(row?.time), visibleState: String(row?.visibleState || '').trim(), confidence: clamp(row?.confidence),
-  })).filter(row => Number.isFinite(row.time) && row.time >= opts.start - 0.1 && row.time <= opts.end + 0.1 && row.visibleState) : [];
+  })).filter(row => Number.isFinite(row.time) && sampledTime(row.time) && row.visibleState) : [];
   const transitions = Array.isArray(parsed.transitions) ? parsed.transitions.map(row => ({
     from: finite(row?.from), to: finite(row?.to), action: String(row?.action || '').trim(),
     evidence: String(row?.evidence || '').trim(), confidence: clamp(row?.confidence),
-  })).filter(row => Number.isFinite(row.from) && Number.isFinite(row.to) && row.to > row.from && row.from >= opts.start - 0.1 && row.to <= opts.end + 0.1 && row.action && row.evidence) : [];
+  })).filter(row => Number.isFinite(row.from) && Number.isFinite(row.to) && row.to > row.from && sampledTime(row.from) && sampledTime(row.to) && row.action && row.evidence) : [];
   return { observations, transitions, uncertainties: Array.isArray(parsed.uncertainties) ? parsed.uncertainties.map(String).filter(Boolean) : [] };
 }
 
@@ -239,6 +241,7 @@ export async function qualityCheckStoryboardFramesWithQwen(opts: {
 export async function inspectStoryboardAigcFramesWithQwen(opts: {
   model?: string;
   boundedPaidQa?: boolean;
+  personRemovalRequired?:boolean;personAbsenceRequired?:boolean;naturalCompositeRequired?:boolean;
   paidSubmission?: (request: Record<string, unknown>) => Promise<void>;
   onReceipt?: (receipt: unknown) => void;
   onProvider?: (provider: 'qwen' | 'gemini', model: string) => void;
@@ -265,14 +268,14 @@ export async function inspectStoryboardAigcFramesWithQwen(opts: {
   const candidateLabels = selectedFrames.map(item => item.timeLabel);
   const exampleLabel = candidateLabels[0] || opts.frames[0]!.timeLabel;
   const expected = opts.phase === 'first_frame'
-    ? 'product_identity, packaging_visibility, subject_visibility, person_identity, environment_fidelity, layout, contact, start_state, visual_integrity'
+    ? `product_identity, packaging_visibility, subject_visibility, person_identity, environment_fidelity, layout, contact, start_state, visual_integrity${(opts.personRemovalRequired||opts.personAbsenceRequired)?', person_absence':''}${opts.naturalCompositeRequired?', lighting_perspective':''}`
     : `product_identity, packaging_visibility, subject_visibility, person_identity, environment_fidelity, layout_continuity, contact_continuity, ${opts.previousTerminalFrame ? 'seam_continuity, ' : ''}action_order, end_state, visual_integrity`;
   const request = {
     model: opts.model || QWEN_VL_MODEL(),
     ...(opts.boundedPaidQa ? { enable_thinking: false } : {}),
     messages: [{ role: 'user', content: [
       { type: 'text', text: 'subject_visibility 是独立硬门禁：标题、搜索框、渐变遮罩、字幕、按钮和品牌角标等内容包装模块必须位于预留安全区，不得遮住人物脸部、关键动作、核心产品或新闻事件主体；只轻微压到非关键信息背景可判 pass，关键主体被遮挡判 fail，无法确认主体或遮挡关系判 uncertain。' },
-      { type: 'text', text: `你是逐镜视觉质检员。产品身份必须以标注为企业产品参考的图片中实际可见的品牌、包装正面图案（包括包装印刷的人像）、颜色、轮廓和文字布局为依据。企业参考图已经存在的品牌应保留，不能把企业品牌误当原片竞品品牌；不能只凭产品名称臆造无品牌版本。只有明确提供原片品牌证据时才判定原片品牌残留。即使品牌正确，包装印刷图案缺失、人物图案被删除或排版变化仍需独立判定产品身份失败，不能以“无人物脸”的场景要求删除包装上的印刷人像。packaging_visibility 是独立硬门禁：逐个检查候选画面中出现的产品，允许 UI、人物或其他产品轻微叠压，但瓶盖、泵头、喷嘴等封口结构不得被完整遮住；同款多件产品中至少一件必须同时完整呈现封口结构、品牌名、主标签和可识别包装外轮廓。任一可见产品的完整瓶盖/泵头被遮掉，或所有同款产品都没有完整身份锚点时判 fail；能直接确认满足时判 pass；角度或抽帧不足以确认时判 uncertain。产品和指定人物参考图只用于身份；环境参考图只用于直接可见的设备外观、工位布局与产线方向，不证明工厂归属、产能或资质。候选图才是质检对象。若有环境参考图，environment_fidelity 必须对照可见空间与设备；没有环境参考图则标 uncertain。${opts.previousTerminalFrame ? '上一段合格末帧仅用于与当前候选第一帧比较交界处；seam_continuity 必须同时引用「上一段合格末帧」和当前候选起始帧，检查产品、接触关系、人物、背景和机位是否连续，突变则 fail，无法判断则 uncertain。' : ''}不得根据参考图推定候选中已完成动作。对于静态首帧，只判断起始状态，不声称动作完成；对于视频帧，按时间顺序判断动作顺序与终点。看不到或证据不足时写 uncertain，不得猜测通过。无法通过稀疏抽帧确认的闪烁、短暂变形、隐藏标签和精确接触写 uncertain。\n镜头类型：${opts.sceneType}；质检阶段：${opts.phase}\n分镜要求：${opts.storyboard.slice(0, 1800)}\n企业产品资料：${opts.productInfo.slice(0, 1200)}\n动作起点：${String(opts.startState || '').slice(0, 500)}\n动作步骤：${(opts.beats || []).slice(0, 8).join(' → ').slice(0, 800)}\n动作终点：${String(opts.endState || '').slice(0, 500)}\n图像时间与角色：${images.map(item => item.timeLabel).join('、')}\n候选质检画面标签：${candidateLabels.join('、')}。pass/fail 必须至少引用一个候选质检画面的准确标签，不能只引用参考图。\n逐项输出 ${expected}。没有相关人物身份或接触时仍可标 uncertain，由调用方决定是否必检。每项 verdict 只能为 pass/fail/uncertain，evidenceFrames 只能引用上列标签，action 只能为 retry_first_frame/retry_video/needs_assets/manual_review。产品身份失败若因参考角度或图片不足，选 needs_assets；包装被画面图层遮挡应选择对应重做。只输出 JSON：${JSON.stringify({ observations: [{ key: 'product_identity', verdict: 'uncertain', evidenceFrames: [exampleLabel], note: '可见证据', action: 'manual_review' }] })}。` },
+      { type: 'text', text: `你是逐镜视觉质检员。产品身份必须以标注为企业产品参考的图片中实际可见的品牌、包装正面图案（包括包装印刷的人像）、颜色、轮廓和文字布局为依据。企业参考图已经存在的品牌应保留，不能把企业品牌误当原片竞品品牌；不能只凭产品名称臆造无品牌版本。只有明确提供原片品牌证据时才判定原片品牌残留。即使品牌正确，包装印刷图案缺失、人物图案被删除或排版变化仍需独立判定产品身份失败，不能以“无人物脸”的场景要求删除包装上的印刷人像。packaging_visibility 是独立硬门禁：逐个检查候选画面中出现的产品，允许 UI、人物或其他产品轻微叠压，但瓶盖、泵头、喷嘴等封口结构不得被完整遮住；同款多件产品中至少一件必须同时完整呈现封口结构、品牌名、主标签和可识别包装外轮廓。任一可见产品的完整瓶盖/泵头被遮掉，或所有同款产品都没有完整身份锚点时判 fail；能直接确认满足时判 pass；角度或抽帧不足以确认时判 uncertain。产品和指定人物参考图只用于身份；环境参考图只用于直接可见的设备外观、工位布局与产线方向，不证明工厂归属、产能或资质。候选图才是质检对象。若有环境参考图，environment_fidelity 必须对照可见空间与设备；没有环境参考图则标 uncertain。${opts.previousTerminalFrame ? '上一段合格末帧仅用于与当前候选第一帧比较交界处；seam_continuity 必须同时引用「上一段合格末帧」和当前候选起始帧，检查产品、接触关系、人物、背景和机位是否连续，突变则 fail，无法判断则 uncertain。' : ''}不得根据参考图推定候选中已完成动作。对于静态首帧，只判断起始状态，不声称动作完成；对于视频帧，按时间顺序判断动作顺序与终点。看不到或证据不足时写 uncertain，不得猜测通过。无法通过稀疏抽帧确认的闪烁、短暂变形、隐藏标签和精确接触写 uncertain。${opts.personAbsenceRequired?'person_absence 必须检查候选场景无人、无身体残片或人物倒影；没有原图，不判断去人效果或参考场景还原。包装印刷人像不等于真实出镜人物。看不到或证据不足时标 uncertain。':''}${opts.personRemovalRequired?'person_absence 必须检查候选背景中无原人物、身体残片或人物倒影，且补洞自然；不得以参考原帧有人为理由判候选通过。包装或背景原有印刷人像不等于真实出镜人物。':''}${opts.naturalCompositeRequired?'lighting_perspective 必须检查候选中人物与场景的光照方向、色温、透视、脚下或接触面关系自然，不能把贴图边缘、悬浮或透明抠像叠加判为通过。':''}\n镜头类型：${opts.sceneType}；质检阶段：${opts.phase}\n分镜要求：${opts.storyboard.slice(0, 1800)}\n企业产品资料：${opts.productInfo.slice(0, 1200)}\n动作起点：${String(opts.startState || '').slice(0, 500)}\n动作步骤：${(opts.beats || []).slice(0, 8).join(' → ').slice(0, 800)}\n动作终点：${String(opts.endState || '').slice(0, 500)}\n图像时间与角色：${images.map(item => item.timeLabel).join('、')}\n候选质检画面标签：${candidateLabels.join('、')}。pass/fail 必须至少引用一个候选质检画面的准确标签，不能只引用参考图。\n逐项输出 ${expected}。没有相关人物身份或接触时仍可标 uncertain，由调用方决定是否必检。每项 verdict 只能为 pass/fail/uncertain，evidenceFrames 只能引用上列标签，action 只能为 retry_first_frame/retry_video/needs_assets/manual_review。产品身份失败若因参考角度或图片不足，选 needs_assets；包装被画面图层遮挡应选择对应重做。只输出 JSON：${JSON.stringify({ observations: [{ key: 'product_identity', verdict: 'uncertain', evidenceFrames: [exampleLabel], note: '可见证据', action: 'manual_review' }] })}。` },
       ...images.flatMap(frame => [
         { type: 'text', text: `下一张图片的准确标签：${frame.timeLabel}；角色：${candidateLabels.includes(frame.timeLabel) ? '候选质检对象' : '对照参考，不是候选'}。` },
         { type: 'image_url', image_url: { url: `data:${frame.mimeType};base64,${frame.base64}`, ...(opts.boundedPaidQa ? { max_pixels: 1280 * 720 } : {}) } },
@@ -293,7 +296,7 @@ export async function inspectStoryboardAigcFramesWithQwen(opts: {
     if (opts.boundedPaidQa || !storyboardQaProviderFallbackEligible(error)) throw error;
     const geminiModel = (process.env.GEMINI_STORYBOARD_QA_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
     const instruction = ((request.messages[0]?.content as any[]) || []).filter(part => part?.type === 'text').map(part => String(part.text || '')).join('\n');
-    const allowedCheckKeys = ['product_identity', 'packaging_visibility', 'subject_visibility', 'person_identity', 'environment_fidelity', 'layout', 'contact',
+    const allowedCheckKeys = ['person_absence','lighting_perspective','product_identity', 'packaging_visibility', 'subject_visibility', 'person_identity', 'environment_fidelity', 'layout', 'contact',
       'start_state', 'visual_integrity', 'layout_continuity', 'contact_continuity', 'seam_continuity', 'action_order', 'end_state'];
     const parts: any[] = [{ text: instruction }];
     for (const frame of images) {
@@ -343,6 +346,7 @@ export async function analyzeVideoFramesWithQwen(opts: {
   tags?: string[];
   transcript?: { text: string; segments: QwenAsrSegment[] };
   analysisMode?: 'strategy' | 'exact';
+  exactModel?: boolean;
   signal?: AbortSignal;
 }): Promise<VideoAiAnalysis> {
   if (opts.frames.length === 0) throw new Error('Qwen frame analysis requires at least one frame');
@@ -406,7 +410,7 @@ ${BENCHMARK_ANALYSIS_CONTRACT}
   // operation, including the coarse presenter-classification pass that is
   // intentionally shaped like strategy analysis. Never escape the frozen
   // model binding merely because that child pass has analysisMode=strategy.
-  const analysisModel = exactQwenScope() || opts.analysisMode === 'exact'
+  const analysisModel = exactQwenScope() || opts.exactModel || opts.analysisMode === 'exact'
     ? QWEN_EXACT_VL_MODEL()
     : QWEN_VL_MODEL();
   const completion = await client().chat.completions.create({

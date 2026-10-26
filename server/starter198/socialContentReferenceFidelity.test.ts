@@ -77,3 +77,15 @@ test('missing and unready reference evidence fail closed', () => {
   assert.ok(socialReferenceFidelityFailures(input).includes('reference_fidelity:reference_not_ready'));
   assert.ok(socialReferenceFidelityFailures(input).includes('reference_fidelity:missing_reference_duration'));
 });
+
+test('measured coverage permits an excluded opening cover flash, never an unverified gap', () => {
+  const input = fixture();
+  input.referenceAnalysis.shots[0]!.startSeconds = .1;
+  input.replicationScript.shots[0]!.startSeconds = .1;
+  assert.ok(socialReferenceFidelityFailures(input).some(code => code.endsWith('gap_or_overlap:0')));
+  input.referenceAnalysis.coverage = { fullDurationSeconds: 38, precisionIntervals: [], gaps: [], overallConfidence: 1, fullTimelineCovered: true };
+  assert.deepEqual(socialReferenceFidelityFailures(input), []);
+  input.referenceAnalysis.shots[0]!.startSeconds = .3;
+  input.replicationScript.shots[0]!.startSeconds = .3;
+  assert.ok(socialReferenceFidelityFailures(input).some(code => code.endsWith('gap_or_overlap:0')));
+});

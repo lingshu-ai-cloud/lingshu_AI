@@ -69,3 +69,11 @@ test('frozen Wan silent 3s binds actual account and per-second envelope, not Ark
 test('new frozen product QA selects documented Plus route even if legacy environment QA model differs',async()=>{
  const reader=createProductionBudgetRouteReaders({readQwenBinding:()=>binding,readQwenVisionCatalog:catalog,env:()=>({QWEN_VL_MODEL:'qwen-vl-max'}),readCanonicalProductBounds:async()=>({qaModel:'qwen3-vl-plus',videoProvider:'wan',videoModel:'wan2.6-i2v-flash',firstFrameMaximumFrames:2,videoMaximumFrames:5,productSha256s:['a'.repeat(64)],providerDurationSeconds:3,evidenceRef:'frozen-current-KB'})});const route=await reader.resolveBoundRoute({...req('video_qa',5),shotId:'S04'});assert.ok(route);assert.equal(route.model,'qwen3-vl-plus');await reader.assertProviderBinding({...route,stage:'video_qa'});
 });
+
+
+test('presenter product reference reserves three Seedream inputs and four QA images',async()=>{
+ const reader=createProductionBudgetRouteReaders({env:()=>({SEEDREAM_API_KEY:'fixture',QWEN_VL_MODEL:'qwen3-vl-plus'}),readQwenBinding:()=>binding,readQwenVisionCatalog:catalog,readCanonicalProductBounds:async()=>({firstFrameMaximumFrames:4,videoMaximumFrames:3,productSha256s:['3'.repeat(64)],providerDurationSeconds:4,evidenceRef:'presenter-product-reference-bounds'})});
+ const frame=await reader.resolveBoundRoute({...req('first_frame'),shotId:'presenter-mother-1'});assert.deepEqual(frame?.maximumUnits,{outputImages:1,inputImages:3});
+ assert.ok(await reader.resolveBoundRoute({...req('first_frame_qa',4),shotId:'presenter-mother-1'}));
+ assert.equal(await reader.resolveBoundRoute({...req('first_frame_qa',3),shotId:'presenter-mother-1'}),null,'old three-image QA bound must not be accepted for four actual inputs');
+});

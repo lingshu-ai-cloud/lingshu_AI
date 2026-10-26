@@ -24,11 +24,11 @@ Component({
   },
   lifetimes: {
     attached() { if (this.properties.autoOpenDaily) this.ensureDailyOpen() },
-    detached() { this.invalidateVoice(); this.controller?.dispose() }
+    detached() { this.resetConversation() }
   },
   pageLifetimes: {
     show() { if (this.data.visible) { this.controller?.poll(); this.loadNotices() } },
-    hide() { this.invalidateVoice(); this.controller?.pause() }
+    hide() { this.resetConversation() }
   },
   methods: {
     autoOpenChanged(value) { if (value) this.ensureDailyOpen() },
@@ -56,40 +56,42 @@ Component({
     },
     async bootstrap() {
       if (this.controller || this.data.booting) return
+      const version = this.conversationVersion || 0
       this.setData({ booting: true, error: '' })
       try {
         const scope = await this.ensureProfile()
-        if (!scope) return
-        this.controller = assistant.createAssistantController({
+        if (!scope || version !== (this.conversationVersion || 0)) return
+        const controller = assistant.createAssistantController({
           request: (path, method, body) => api.request(path, method, body),
-          contextMode: 'operator',
+          contextMode: 'operator', freshSession: true,
           storage: { get: key => wx.getStorageSync(key), set: (key, value) => wx.setStorageSync(key, value) },
           onChange: state => {
+            if (version !== (this.conversationVersion || 0)) return
             const messages = (state.messages || []).map(message => ({ ...message, content: message.text || message.content || '' }))
-            const welcomeKey = state.sessionId ? feed.welcomeStorageKey(scope, state.sessionId) : ''
-            const welcomeRecorded = Boolean(welcomeKey) && wx.getStorageSync(welcomeKey) === true
-            const showWelcome = Boolean(welcomeKey) && (welcomeRecorded || !messages.length)
-            if (showWelcome && !welcomeRecorded) wx.setStorageSync(welcomeKey, true)
+            const showWelcome = !messages.length
             this.setData({
               messages, showWelcome,
               suggestions: (state.suggestions || []).map(item => typeof item === 'string' ? item : item.label),
               loading: Boolean(state.loading), sending: Boolean(state.sending), confirming: Boolean(state.confirming),
               input: this.capabilitySending ? this.capabilityDraft : state.input || '', actions: state.actions || [], preview: state.preview || null, receipts: state.receipts || [],
               anchor: messages.length ? messages[messages.length - 1].id : '',
-              ...(state.error ? { error: state.error } : {})
+              error: state.error || ''
             })
           }
         })
-        await this.controller.restore(scope)
-      } finally { this.setData({ booting: false }) }
+        this.controller = controller
+        await controller.restore(scope)
+      } finally { if (version === (this.conversationVersion || 0)) this.setData({ booting: false }) }
     },
     async loadNotices() {
       if (!api.token()) return
+      const version = this.conversationVersion || 0
       try {
         const [overview, queue] = await Promise.all([
           api.request('mobile-workbench/overview?weekStart=' + encodeURIComponent(workbench.week().start)),
           api.request('mobile-workbench/queue').catch(() => ({}))
         ])
+        if (version !== (this.conversationVersion || 0)) return
         const projectedQueue = this.properties.queue
           ? {
               ...queue,
@@ -102,18 +104,30 @@ Component({
           : queue
         this.setData({ briefing: feed.projectBriefing(overview, projectedQueue), briefingLoaded: true, error: '' })
       } catch (error) {
-        this.setData({ briefingLoaded: false, error: error.message || '工作通知暂未同步' })
+        if (version === (this.conversationVersion || 0)) this.setData({ briefingLoaded: false, error: error.message || '工作通知暂未同步' })
       }
     },
     async open() {
       if (!api.token()) { wx.redirectTo({ url: '/pages/workbench/index' }); return }
+      const version = this.conversationVersion || 0
       this.setData({ visible: true, showCapabilities: false, composerMode: 'text' })
       try {
         await Promise.all([this.bootstrap(), this.loadNotices()])
-        this.controller?.poll()
-      } catch (error) { this.setData({ error: error.message || '助手会话暂时无法恢复' }) }
+        if (version === (this.conversationVersion || 0)) this.controller?.poll()
+      } catch (error) { if (version === (this.conversationVersion || 0)) this.setData({ error: error.message || '助手会话暂时无法恢复' }) }
     },
-    close() { this.invalidateVoice(); this.setData({ visible: false, showCapabilities: false, composerMode: 'text' }); this.controller?.pause(); this.triggerEvent('close') },
+    resetConversation() {
+      this.conversationVersion = (this.conversationVersion || 0) + 1
+      this.invalidateVoice()
+      this.controller?.dispose()
+      this.controller = null
+      this.capabilitySending = false
+      this.capabilityDraft = ''
+      this.setData({ visible: false, booting: false, loading: false, sending: false, confirming: false,
+        messages: [], input: '', error: '', suggestions: [], actions: [], preview: null, receipts: [], anchor: '',
+        showWelcome: false, showCapabilities: false, composerMode: 'text' })
+    },
+    close() { this.resetConversation(); this.triggerEvent('close') },
     stop() {},
     toggleCapabilities() { this.setData({ showCapabilities: !this.data.showCapabilities }) },
     async selectCapability(event) {
@@ -139,7 +153,8 @@ Component({
       const input = this.data.input.trim()
       if (!input || this.data.sending || this.capabilitySending) return
       this.setData({ showCapabilities: false })
-      try { await this.controller?.send(input) } catch (error) { this.setData({ error: error.message, input }) }
+      const controller = this.controller
+      try { await controller?.send(input) } catch (error) { if (this.controller === controller) this.setData({ error: error.message, input }) }
     },
     switchToVoice() { this.setData({ composerMode: 'voice', showCapabilities: false, error: '' }) },
     switchToText() { if (this.data.recording) this.cancelRecording(); this.setData({ composerMode: 'text' }) },

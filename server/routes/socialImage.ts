@@ -20,8 +20,8 @@ import { compileLuxuryProductHero } from '../socialImage/templates/luxuryProduct
 import { assertSocialImageLayerGraph } from '../socialImage/layerGraphValidation.js';
 import { renderSocialImageLayerGraph } from '../socialImage/layerRenderer.js';
 import { readTenantEnterpriseProfile } from './enterprise.js';
-import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/enterpriseAssets.js';
-import { objectStorageDownload, objectStorageEnabled } from '../storage/objectStorage.js';
+import { enterpriseAssetTenantKey } from '../storage/enterpriseAssets.js';
+import { readTenantProductImageBytes } from '../lib/enterpriseProductImageBytes.js';
 import {
   createOrResumeBoundSocialImageRun,
   createSocialImageDeliveryPackage,
@@ -60,18 +60,8 @@ async function enterpriseProductAsset(tenantId: string, productId: string): Prom
   const product = index >= 0 ? products[index] : undefined;
   if (!product) return null;
   const url = String(product.images?.[0]?.url || product.imageUrl || '');
-  let route = '';
-  try { route = new URL(url, 'http://local.invalid').pathname; } catch { return null; }
-  const match = route.match(/^\/api\/overseas\/enterprise\/assets\/([\w.-]+)$/);
-  if (!match) return null;
-  const filename = path.basename(match[1]!);
-  const local = path.resolve(process.cwd(), 'data', 'enterprise-assets', enterpriseAssetTenantKey(tenantId), filename);
-  if (local.startsWith(path.resolve(process.cwd(), 'data', 'enterprise-assets')) && fs.existsSync(local)) return { name: String(product.name || productId), bytes: fs.readFileSync(local) };
-  if (objectStorageEnabled()) {
-    const stored = await objectStorageDownload(enterpriseAssetObjectKey(tenantId, filename));
-    if (stored?.buf?.length) return { name: String(product.name || productId), bytes: stored.buf };
-  }
-  return null;
+  const bytes = await readTenantProductImageBytes(tenantId, url);
+  return bytes ? { name: String(product.name || productId), bytes } : null;
 }
 
 async function outputImageBytes(tenantId: string, output: { mediaUrl?: string; materialId?: string }): Promise<{ bytes: Buffer; mimeType: string } | null> {

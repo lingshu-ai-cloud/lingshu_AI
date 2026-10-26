@@ -1,4 +1,5 @@
 import { requestCreationReply } from './contentCreationRequest';
+import { assistantScenarioIntake } from '../../lib/assistantScenarioIntake';
 import type { CreationTurn } from '../../../shared/contracts/contentCreationDialogue';
 import { useCreationMode } from '../../lib/creationMode';
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
@@ -22,6 +23,7 @@ import { focusedNaturalLanguageActionId, focusedNaturalLanguageActionInput,
 import { assistantAttachmentKind } from './AssistantComposer';
 import { buildAssistantChatMessages, type UploadedAssistantAttachment } from './assistantChatPrompt';
 import { assistantProductionIntent, assistantCreationPortal } from './assistantProductionIntake';
+import { assistantImageReplicationPortal } from './assistantImageReplicationIntent';
 import { runAssistantProductionRequest } from './assistantProductionRequest';
 import type { useContentTaskIntake } from './useContentTaskIntake';
 import { agentForOrbit, compactText, contextForOrbit, loadLiveIntegrationFacts,
@@ -98,12 +100,13 @@ export function useAssistantSend(input: AssistantSendInput) {
     forcedContext?: AssistantContext,
     uploadedAttachments: UploadedAssistantAttachment[] = [],
     creationActionOrReference?: CreationTurn['action'] | AssistantReferenceMedia,
+    options: { preserveDraft?: boolean; companyReport?: boolean } = {},
   ) => {
     const creationAction = typeof creationActionOrReference === 'string' ? creationActionOrReference : undefined;
     const referenceMedia = typeof creationActionOrReference === 'object' ? creationActionOrReference : undefined;
     const userText = text.trim();
     if ((!userText && !uploadedAttachments.length) || loading || fileGenerating || replyStreaming) return;
-    const creationDraft = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].creationDraft;
+    const creationDraft = options.companyReport ? null : useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].creationDraft;
     if (page === 'strategy' && creationMode === 'free' && creationDraft && !uploadedAttachments.length && (creationAction || !creationDraft.evidenceVersion || !useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages.some(message => message.creation?.selection.referenceId === creationDraft.referenceId))) {
       const requestFence = persistenceFenceRef.current;
       const token = getToken();
@@ -131,7 +134,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       }
       return;
     }
-    if (contentIntake.active) {
+    if (contentIntake.active && !options.companyReport) {
       if (uploadedAttachments.length) { void uiMessage.warning('请先完成或取消当前任务问答，再发送附件。'); return; }
       contentIntake.answer(userText);
       setDraftInput(PRIMARY_ASSISTANT_THREAD, '');
@@ -173,6 +176,25 @@ export function useAssistantSend(input: AssistantSendInput) {
     const clarifiedDiagram = pendingMapFileRef.current && /(?:业务|路线图|思维导图|流程图|战略)/u.test(visibleText);
     const fileIntent = assistantFileIntent(visibleText) || (clarifiedDiagram ? { format: 'jpg' as const, diagram: true, needsMapScope: false } : null);
     const lastMessage = thread.messages.at(-1);
+    const imagePortal = !fileIntent && !creationAction ? assistantImageReplicationPortal(visibleText, uploadedAttachments) : null;
+    const scene = !imagePortal && ['strategy','socialInspiration'].includes(page) && !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? assistantScenarioIntake(visibleText) : null;
+    if (scene) {
+      setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: scene.scenario === 'weekly_calendar' ? '发布日历在内容创作中，点击下方卡片即可打开。' : scene.scenario === 'hook_first' ? '先选一个开场片段，再确认产品和内容方向。' : scene.scenario === 'content_task' ? '先确认产品、内容方向和预计发布时间。' : '先确定活动信息，再安排要准备的内容。', creationPortal: scene }]);
+      setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
+      openAgent(routeAgent, 'chat'); persistThread(threadAgent);
+      return;
+    }
+    if (!imagePortal && page === 'strategy' && !creationDraft && !uploadedAttachments.length && !fileIntent
+      && /(?:借鉴|复刻).{0,12}爆款|爆款复刻/u.test(visibleText)
+      && !/(?:取消|不要|先别|如何|怎么)/u.test(visibleText)) {
+      setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: '先选一条想借鉴的对标视频，再确定产品和周发布安排。',
+        creationPortal: { kind: 'content_creation', id: `replication-${requestId()}`, scenario: 'viral_replication',
+          title: '爆款复刻', objective: visibleText.slice(0, 1000), requestedOutputCount: 1,
+          outputType: 'video', platforms: [], aspectRatio: null, targetDurationSeconds: null } }]);
+      setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
+      openAgent(routeAgent, 'chat'); persistThread(threadAgent);
+      return;
+    }
     const sourceReply = !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? assistantSourceFollowUp(visibleText, lastMessage) : null;
     if (sourceReply) {
       setMessages(threadAgent, [...nextVisible, sourceReply]);
@@ -188,11 +210,11 @@ export function useAssistantSend(input: AssistantSendInput) {
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;
     }
-    const portal = !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction
-      && !['smartAssets', 'socialInspiration'].includes(page) ? assistantCreationPortal(visibleText) : null;
+    const portal = imagePortal || (!creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction
+      && !['smartAssets', 'socialInspiration'].includes(page) ? assistantCreationPortal(visibleText) : null);
     if (portal) {
       setMessages(threadAgent, [...nextVisible, { role: 'assistant',
-        content: '创作需求已带入下方入口。\n\n总体结论：点击「内容创作」，确认产品和数量后继续制作。', creationPortal: portal }]);
+        content: imagePortal ? '先确认参考图和企业产品，其他要求可以补充；确认后我来完成图片和配文。' : '创作需求已带入下方入口。\n\n总体结论：点击「内容创作」，确认产品和数量后继续制作。', creationPortal: portal }]);
       setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;
@@ -219,7 +241,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       return;
     }
     setMessages(threadAgent, nextVisible);
-    setDraftInput(threadAgent, '');
+    if (!options.preserveDraft) setDraftInput(threadAgent, '');
     setFollowingLatest(threadAgent, true);
     setLoading(true);
     openAgent(routeAgent, 'chat');
@@ -348,6 +370,8 @@ export function useAssistantSend(input: AssistantSendInput) {
         onStart: ensureAssistant,
         onText: text => patchAssistant(msg => ({ ...msg, content: msg.content + text })),
         onSources: sources => patchAssistant(msg => ({ ...msg, sources })),
+        onCompanyReport: (report, text) => patchAssistant(msg => ({ ...msg, content: text, companyReport: report })),
+        onCompanyReportProgress: phase => patchAssistant(msg => ({ ...msg, content: `正在${phase}…` })),
         onTaskPortal: taskPortal => patchAssistant(msg => ({ ...msg, taskPortal })),
         onFileReady: content => patchAssistant(msg => ({ ...msg, content })),
         onTimeout: () => { chatTimedOut = true; },

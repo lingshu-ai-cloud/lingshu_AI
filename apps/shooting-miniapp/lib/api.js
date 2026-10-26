@@ -1,4 +1,4 @@
-const { apiBase } = require('../config')
+const { apiBase, localPreviewOrigin } = require('../config')
 const { httpFailure } = require('./request-policy')
 const TOKEN_KEY = 'overseas_token'
 
@@ -9,6 +9,11 @@ function base() {
   const privateLan = /^http:\/\/(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?::\d+)?$/.test(value)
   if (!secure && !loopback && !privateLan) throw new Error('请配置 HTTPS 服务地址；本地联调仅允许回环或私有局域网地址')
   return value
+}
+
+// The existing preview service still validates origin, loopback, local identity and mock scope.
+function previewHeaders() {
+  return /^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/.test(base()) && /^http:\/\/(?:127\.0\.0\.1|localhost):\d+$/.test(localPreviewOrigin || '') ? { Origin: localPreviewOrigin } : {}
 }
 
 function token() { return wx.getStorageSync(TOKEN_KEY) || '' }
@@ -26,7 +31,7 @@ function request(path, method = 'GET', data, authorized = true, extraHeaders = {
       url: base() + '/api/overseas/' + path,
       method,
       data,
-      header: { 'Content-Type': 'application/json', ...(requestToken ? { Authorization: 'Bearer ' + requestToken } : {}), ...extraHeaders },
+      header: { 'Content-Type': 'application/json', ...(requestToken ? { Authorization: 'Bearer ' + requestToken } : {}), ...previewHeaders(), ...extraHeaders },
       success(res) {
         if (res.statusCode === 401 && requestToken && token() === requestToken) clearToken()
         if (res.statusCode < 200 || res.statusCode >= 300) { const failure = httpFailure(res.statusCode, res.data); const message = failure.stale ? '这项待办已更新，请刷新最新内容' : failure.message; const error = new Error(message + '（HTTP ' + failure.status + '）'); Object.assign(error, failure, { message: error.message }); return reject(error) }
@@ -40,7 +45,7 @@ function request(path, method = 'GET', data, authorized = true, extraHeaders = {
 
 function privateDownloadUrl(path) {
   const value = String(path || '')
-  if (value.startsWith('/api/overseas/') && !value.includes('..') && !value.includes('\\')) return base() + value
+  if (/^\/(?:api\/overseas|media|studio-media|cloud-files)\//.test(value) && !value.includes('..') && !value.includes('\\')) return base() + value
   if (!value.startsWith('/') && !/^https?:/i.test(value) && !value.includes('..') && !value.includes('\\')) {
     return base() + '/api/overseas/' + value
   }
@@ -88,7 +93,7 @@ async function login(email, password) {
   return request('auth/me')
 }
 
-function uploadMaterial(file, onProgress) {
+function uploadMaterial(file, onProgress = () => {}) {
   const materialType = file.fileType === 'image' || /^image\//.test(String(file.mimeType || '')) ? 'image' : 'video'
   const fallbackName = materialType === 'image' ? 'mobile-material.jpg' : 'mobile-shoot.mp4'
   const fallbackMime = materialType === 'image' ? 'image/jpeg' : 'video/mp4'
@@ -187,8 +192,8 @@ module.exports.confirmCustomerQuote = (id, expectedRevision) => request('quote-s
 module.exports.customerQuoteReply = id => request('quote-skill/drafts/' + encodeURIComponent(id) + '/reply', 'POST')
 module.exports.customerQuoteCard = id => download('quote-skill/drafts/' + encodeURIComponent(id) + '/card', 'quote-' + id + '.png')
 module.exports.sendCustomerQuoteCard = id => request('quote-skill/drafts/' + encodeURIComponent(id) + '/send-card', 'POST')
-module.exports.translateText = (text, source, target) => request('plugins/translate/run', 'POST', { text, source, target })
-module.exports.translateCustomerReply = (text, target) => module.exports.translateText(text, '简体中文', target)
+module.exports.translateText = (text, source, target, customerId) => request('plugins/translate/run', 'POST', { text, source, target, ...(/^mock-[a-zA-Z0-9_-]+$/.test(customerId || '') ? { customerId, manualRequest: true } : {}) })
+module.exports.translateCustomerReply = (text, target, customerId) => module.exports.translateText(text, '简体中文', target, customerId)
 module.exports.recommendCustomerReply = (customer, instruction) => request('agents/conversion/draft', 'POST', {
   customerId: customer.id,
   language: customer.language || 'English',
@@ -199,3 +204,11 @@ module.exports.recommendCustomerReply = (customer, instruction) => request('agen
   instruction: instruction || '',
   manualRequest: true
 })
+
+// Native images do not carry the Bearer header; download owned media with authentication first.
+module.exports.cacheImage = value => {
+  const url = String(value || ''), ownBase = base()
+  const relative = url.startsWith(ownBase + '/') ? url.slice(ownBase.length) : url
+  if (/^\/(?:media|studio-media|cloud-files|api\/overseas)\//.test(relative)) return downloadPrivate(relative)
+  return Promise.resolve(url)
+}

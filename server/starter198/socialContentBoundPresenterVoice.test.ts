@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readBoundPresenterVoice, readWeeklyProductionVoice, assertBoundPresenterAudio } from './socialContentBoundPresenterVoice';
+import { readBoundPresenterVoice as readBound, readWeeklyProductionVoice as readWeekly, assertBoundPresenterAudio } from './socialContentBoundPresenterVoice';
 import { resolveStudioVoiceExecutionPlan } from '../routes/studio';
+
+const readVoice = async (voice_id: string) => ({voice_id,available_engines:['starfish'],default_engine:'starfish'});
+const readBoundPresenterVoice: typeof readBound = (store,tenant,ids,ports={}) => readBound(store,tenant,ids,{readVoice,...ports});
+const readWeeklyProductionVoice: typeof readWeekly = (store,tenant,ids,ports={}) => readWeekly(store,tenant,ids,{readVoice,...ports});
 
 test('selected presenter binds the physical voice and version into cache and budget identity', async () => {
  const person = { id:'sales', authorized:true, avatarId:'look', voiceId:'bound-voice', assetVersion:4, toolMappings:{heygen:{avatarId:'look',voiceId:'bound-voice'}} };
@@ -83,4 +87,32 @@ test('weekly bound clone needs the retained provider-confirmed binding source', 
 test('manual production may still omit a bound presenter voice', async () => {
  const store:any = { list:async()=>{throw Error('manual route must not read defaults');} };
  assert.equal(await readBoundPresenterVoice(store,'tenant',[]),null);
+});
+
+test('catalogue following resolves provider default without writing the enterprise snapshot or switching the avatar',async()=>{
+ const person:any={id:'stock',authorized:true,assetVersion:2,avatarId:'look',voiceId:'snapshot',presenterSource:'heygen_catalog',voiceSelectionMode:'follow_avatar',rightsEvidence:{authorizationRef:'license://heygen/public-catalog/look'}};
+ const store:any={list:async()=>({items:[{tenant_id:'tenant',payload:{presenters:[person]}}]})};
+ const readLook=async()=>({id:'look',name:'Stock',status:'completed',voiceId:'original',orientation:'unknown' as const});
+ const voice=await readBoundPresenterVoice(store,'tenant',['stock'],{readLook});
+ assert.equal(voice!.voiceId,'original');assert.equal(voice!.presenters[0].avatarId,'look');assert.equal(person.voiceId,'snapshot');
+ const changed=await readBoundPresenterVoice(store,'tenant',['stock'],{readLook:async()=>({...await readLook(),voiceId:'new-provider-default'})});
+ assert.notEqual(voice!.fingerprint,changed!.fingerprint,'changed provider default requires a fresh financial/input decision');
+});
+
+test('weekly catalogue licence does not require a private-subject consent record',async()=>{
+ const person:any={id:'stock',authorized:true,assetVersion:1,avatarId:'look',voiceId:'original',rightsEvidence:{authorizationRef:'license://heygen/public-catalog/look',consentRef:'license://heygen/public-catalog/look',grantedAt:'2026-01-01T00:00:00Z',subjectAdultConfirmed:false,permittedProviders:['heygen'],permittedUses:['digital_presenter','voice_synthesis']}};
+ const store:any={list:async()=>({totalItems:1,items:[{tenant_id:'tenant',payload:{presenters:[person],defaultPresenterId:'stock'}}]}),getById:async()=>{throw Error('public licence must not request private consent');}};
+ assert.equal((await readWeeklyProductionVoice(store,'tenant',[])).voiceId,'original');
+});
+
+test('resolved provider engine is frozen into both financial identity and physical execution route',async()=>{
+ const person={id:'person',authorized:true,assetVersion:1,avatarId:'look',voiceId:'original'};
+ const store:any={list:async()=>({items:[{tenant_id:'tenant',payload:{presenters:[person]}}]})};
+ const orca=await readBoundPresenterVoice(store,'tenant',['person'],{readVoice:async voice_id=>({voice_id,available_engines:['orca'],default_engine:'orca'})});
+ assert.equal(orca!.engine,'orca');assert.match(orca!.logicalVoice,/:orca$/);
+ const plan=resolveStudioVoiceExecutionPlan({tenantId:'tenant',text:'Hello.',voice:orca!.logicalVoice,env:{HEYGEN_API_KEY:'test'}});
+ assert.equal(plan.primary?.model,'orca');assert.equal(plan.primary?.voiceId,'original');
+ const starfish=await readBoundPresenterVoice(store,'tenant',['person']);
+ assert.notEqual(orca!.fingerprint,starfish!.fingerprint);
+ await assert.rejects(readBoundPresenterVoice(store,'tenant',['person'],{readVoice:async voice_id=>({voice_id,available_engines:['elevenlabs'],default_engine:'elevenlabs'})}),/capability_unavailable/);
 });

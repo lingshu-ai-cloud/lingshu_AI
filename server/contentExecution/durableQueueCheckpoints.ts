@@ -3,6 +3,7 @@ import type { DataStore } from '../storage/datastore.js';
 import { acquireDurableOperationLease, releaseDurableOperationLease } from '../runtime/durableLease.js';
 import { CONTENT_EXECUTION_JOB_COLLECTION, type ContentExecutionCheckpoints } from './context.js';
 import { jobFromRow, requiredIdentity, type ContentExecutionJob, type JobRow } from './durableQueueRecords.js';
+import { PRODUCTION_GRAPH_BRIDGE_CHECKPOINT, createProductionGraphBridgeCheckpoint, productionGraphIdentityFromJob } from './productionGraphBridge.js';
 
 export async function bindPristineContentExecutionCheckpoint(input: {
   dataStore: DataStore;
@@ -110,12 +111,25 @@ export async function refreshUnspentContentExecutionCheckpoint(input: {
     if (!row) throw new Error('content_execution_job_not_found');
     const current = jobFromRow(row);
     if (current.tenantId !== tenantId || current.runId !== runId) throw new Error('content_execution_job_not_found');
-    const removable = removablePreProviderGraphKeys(current.checkpoints, checkpointKey);
+    const bridge = current.checkpoints[PRODUCTION_GRAPH_BRIDGE_CHECKPOINT];
+    const inspected = { ...current.checkpoints };
+    if (bridge && checkpointKey === 'social.executor') {
+      const original = productionGraphIdentityFromJob(current);
+      if (original.inputHash !== current.checkpoints[checkpointKey]?.inputHash)
+        throw Error('content_execution_unspent_bridge_binding_invalid');
+      delete inspected[PRODUCTION_GRAPH_BRIDGE_CHECKPOINT];
+    }
+    const removable = removablePreProviderGraphKeys(inspected, checkpointKey);
     if (current.status !== 'blocked' || current.providerState !== 'none' || current.providerReceipts.length || current.completedAt
       || removable === null)
       throw new Error('content_execution_unspent_binding_refresh_not_allowed');
     const checkpoints = Object.fromEntries(Object.entries(current.checkpoints).filter(([key]) => !removable.has(key)));
     checkpoints[checkpointKey] = input.checkpoint;
+    if (bridge && checkpointKey === 'social.executor') {
+      const binding = input.checkpoint.payload as { executor?: string; planVersion?: string } | undefined;
+      if (binding?.executor !== 'langgraph' || !binding.planVersion) throw Error('content_execution_unspent_bridge_binding_invalid');
+      checkpoints[PRODUCTION_GRAPH_BRIDGE_CHECKPOINT] = createProductionGraphBridgeCheckpoint({ planVersion: binding.planVersion, inputHash: input.checkpoint.inputHash });
+    }
     if (!await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, { checkpoints, updated_at: new Date().toISOString() }))
       throw new Error('content_execution_unspent_binding_refresh_failed');
     const saved = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, current.id);

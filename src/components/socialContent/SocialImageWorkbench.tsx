@@ -6,6 +6,9 @@ import { LsMediaStateFrame } from '../ui/LsExperiencePrimitives';
 import { CHECK_LABELS, IMAGE_TYPES, STEP_ITEMS, passedQualityKeys, posterStyleForType, resolvedQuality,
   ReviewImage, topicForType } from './socialImageWorkbenchPresentation';
 import { SocialImageReviewActions } from './SocialImageReviewActions';
+import { useImageReplicationAutoStart } from './useImageReplicationAutoStart';
+import ImageReplicationRunSummary from './ImageReplicationRunSummary';
+import { IMAGE_LANGUAGE_OPTIONS, imageLanguageSchema, normalizeImageLanguage } from '../../../shared/contracts/imageLanguages';
 import { authHeader } from '../../lib/auth';
 import { socialImageApi } from '../../lib/socialImageApi';
 import { socialContentApi } from '../../lib/socialContentApi';
@@ -42,6 +45,8 @@ function hasUnresolvedPaidImageJob(task: SocialImageCreationTask | null): boolea
 }
 
 interface SocialImageWorkbenchProps {
+  autoStart?: boolean;
+  compact?: boolean;
   creationPath: SocialImageCreationPath;
   contentTaskId?: string;
   entrySource?: 'assistant' | 'workspace' | 'weekly_package';
@@ -66,7 +71,7 @@ export default function SocialImageWorkbench(props: SocialImageWorkbenchProps) {
 
 function SocialImageWorkbenchSession({
   creationPath, contentTaskId, entrySource = 'workspace', referenceTitle, referenceThumbnail, referenceMediaUrl, referenceCaption,
-  referenceLayerBlueprints, initialTask, onShowCreations,
+  referenceLayerBlueprints, initialTask, autoStart = false, compact = false, onShowCreations,
 }: SocialImageWorkbenchProps) {
   const carouselPending = (initialTask?.imageType === 'carousel' || initialTask?.imageType === 'gif_poster') && initialTask.renderPlan?.units.some(unit =>
     !initialTask.generationJobs.find(job => job.id === unit.jobId)?.outputNodeIds.length);
@@ -84,7 +89,7 @@ function SocialImageWorkbenchSession({
   const [ratio, setRatio] = useState<'1:1' | '4:5' | '9:16' | '16:9'>(
     initialTask && ['1:1', '4:5', '9:16', '16:9'].includes(initialTask.deliverySpec.aspectRatio)
       ? initialTask.deliverySpec.aspectRatio : '4:5');
-  const [language, setLanguage] = useState<'en' | 'zh'>(initialTask?.deliverySpec.language === 'zh' ? 'zh' : 'en');
+  const [language, setLanguage] = useState(normalizeImageLanguage(initialTask?.deliverySpec.language || 'en'));
   const [imageQuality, setImageQuality] = useState<'low' | 'medium' | 'high'>(initialTask?.deliverySpec.imageGeneration?.quality || 'low');
   const [factuality, setFactuality] = useState<'verified' | 'user_supplied' | 'mock'>(initialTask?.contentBrief.factuality || 'verified');
   const [task, setTask] = useState<SocialImageCreationTask | null>(initialTask || null);
@@ -100,6 +105,7 @@ function SocialImageWorkbenchSession({
   ));
   const [qualityPasses, setQualityPasses] = useState<SocialImageQualityCheckKey[]>(initialTask ? passedQualityKeys(initialTask.outputs) : []);
   const [busy, setBusy] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [reconciling, setReconciling] = useState(false);
   const [contentTaskHydrating, setContentTaskHydrating] = useState(Boolean(contentTaskId && !initialTask));
   const [contentTaskReady, setContentTaskReady] = useState(Boolean(!contentTaskId || initialTask));
@@ -155,7 +161,7 @@ function SocialImageWorkbenchSession({
         || content.brief.aspectRatio === '9:16' || content.brief.aspectRatio === '16:9') {
         setRatio(content.brief.aspectRatio);
       }
-      setLanguage(content.brief.languages[0] === 'zh' ? 'zh' : 'en');
+      setLanguage(normalizeImageLanguage(content.brief.languages[0] || 'en'));
       formDirtyRef.current = false;
       setContentTaskReady(true);
     }).catch(reason => {
@@ -281,7 +287,7 @@ function SocialImageWorkbenchSession({
         title: title.trim() || '图片内容制作', objective: resolvedCoreClaim,
         productId: productIds[0] || null, productRef: selectedProducts[0]?.name || null, audience,
         platforms: [platform], languages: [language], formats: ['social_image'], aspectRatio: ratio,
-        requestedOutputCount: 1, callToAction: '联系销售或申请样品', creationMode: creationPath,
+        requestedOutputCount: 1, callToAction: existingContent.brief.callToAction || '联系销售或申请样品', creationMode: creationPath,
         assetAvailability: selectedMaterials.length ? 'ready' as const : 'none' as const,
       };
       const changed = Object.entries(changes).some(([key, value]) => JSON.stringify(existingContent.brief[key as keyof typeof existingContent.brief]) !== JSON.stringify(value));
@@ -322,6 +328,7 @@ function SocialImageWorkbenchSession({
   };
 
   const saveInputs = async () => {
+    if (!imageLanguageSchema.safeParse(language).success) { setError('请选择支持的图文语言。'); return; }
     if (contentTaskHydrating) { setError('正在读取统一内容任务，请稍候。'); return; }
     if (contentTaskId && !initialTask && !contentTaskReady) { setError('统一内容任务尚未成功读取，不能使用默认值继续生产。'); return; }
     if (productIds.length !== 1 || selectedProducts.length !== 1) {
@@ -349,6 +356,7 @@ function SocialImageWorkbenchSession({
     finally { setBusy(false); }
   };
 
+  useImageReplicationAutoStart({ enabled: autoStart, ready: !busy && selectedProducts.length === 1 && contentTaskReady, task: initialTask, start: saveInputs });
   async function requestPlan(activeTask: SocialImageCreationTask, confirmedFacts: Record<string, string>): Promise<PlannedRun | null> {
     const result = await studioApi.fbPoster({
       imageTaskId: activeTask.id, expectedImageTaskVersion: activeTask.version,
@@ -698,6 +706,8 @@ function SocialImageWorkbenchSession({
     return <div className="space-y-2 p-3"><p className="text-sm font-semibold">交付物</p><div className="rounded-lg border border-border bg-white p-3 text-xs">{imageType === 'carousel' ? `轮播图 · ${carouselPages.filter(page => page.output?.mediaUrl).length}/${carouselPages.length || 4} 张` : imageType === 'gif_poster' ? `GIF 动态海报 · ${task?.gifDelivery ? '成片已保存' : '待合成'}` : '主视觉'} <Tag color={task?.publishable ? 'success' : 'warning'}>{task?.publishable ? '可发布' : '待审核'}</Tag></div><div className="rounded-lg border border-border bg-white p-3 text-xs">帖子配文 <Tag color={caption ? 'success' : 'default'}>{caption ? '已生成' : '待生成'}</Tag></div></div>;
   };
 
+  if (compact && !detailsOpen) return <ImageReplicationRunSummary task={task} busy={busy} error={error} notice={notice}
+    imageUrl={imageUrl} caption={caption} onDetails={() => setDetailsOpen(true)} onShowCreations={onShowCreations}/>;
   return <div className="flex h-full min-h-0 flex-col bg-white">
     <LsPageHeader title="图片内容制作工作台" extra={<Button onClick={onShowCreations}>我的创作</Button>}>
       <Steps size="small" current={currentStepIndex} items={STEP_ITEMS.map(item => ({ title: item.title }))} className="px-4 pb-3" />
@@ -718,7 +728,7 @@ function SocialImageWorkbenchSession({
       </main>
       <aside className="flex min-h-0 flex-col border-t border-border bg-white md:border-l md:border-t-0">
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-          {step === 'type' && <><p className="text-sm font-semibold">交付规格</p><label className="block text-xs font-medium">平台<Select className="mt-1 w-full" value={platform} onChange={value => { formDirtyRef.current = true; setPlatform(value); }} options={[{value:'facebook',label:'Facebook'},{value:'instagram',label:'Instagram'},{value:'linkedin',label:'LinkedIn'}]} /></label><label className="block text-xs font-medium">比例<Select className="mt-1 w-full" value={ratio} onChange={value => { formDirtyRef.current = true; setRatio(value); }} options={['1:1','4:5','9:16','16:9'].map(value => ({value,label:value}))} /></label><label className="block text-xs font-medium">语言<Select className="mt-1 w-full" value={language} onChange={value => { formDirtyRef.current = true; setLanguage(value); }} options={[{value:'en',label:'English'},{value:'zh',label:'中文'}]} /></label></>}
+          {step === 'type' && <><p className="text-sm font-semibold">交付规格</p><label className="block text-xs font-medium">平台<Select className="mt-1 w-full" value={platform} onChange={value => { formDirtyRef.current = true; setPlatform(value); }} options={[{value:'facebook',label:'Facebook'},{value:'instagram',label:'Instagram'},{value:'linkedin',label:'LinkedIn'}]} /></label><label className="block text-xs font-medium">比例<Select className="mt-1 w-full" value={ratio} onChange={value => { formDirtyRef.current = true; setRatio(value); }} options={['1:1','4:5','9:16','16:9'].map(value => ({value,label:value}))} /></label><label className="block text-xs font-medium">语言<Select className="mt-1 w-full" value={language} onChange={value => { formDirtyRef.current = true; setLanguage(value); }} showSearch optionFilterProp="label" options={IMAGE_LANGUAGE_OPTIONS} /></label></>}
           {step === 'inputs' && <>
             <p className="text-sm font-semibold">内容与资产</p>
             {contentTaskHydrating && <Alert type="info" showIcon message="正在读取统一内容任务" />}

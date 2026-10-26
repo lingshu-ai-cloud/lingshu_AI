@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { tenantPrivateObjectKey } from '../storage/materialAssets.js';
 import { signAssetUrl, signPathAssetUrl, sharedAssetRelativePath, tenantAssetRelativePath } from '../lib/assetAccess.js';
 import { productIdentity } from '../digitalEmployees/contentProductionPlanning.js';
 import { enterpriseAssetStableId } from '../digitalEmployees/contentBatchPlan.js';
@@ -99,15 +100,18 @@ export async function materialResponse(material: Material, tenantId: string): Pr
       : tenantAssetRelativePath(tenantId, material.file)}`
     : '';
   const sourceUrl = material.url || storedFileUrl;
+  const objectUrl = (key: string, kind: 'media' | 'poster') => key === tenantPrivateObjectKey('materials', tenantId, path.basename(key))
+    ? privateStudioAssetUrl('materials', tenantId, path.basename(key))
+    : signAssetUrl(`/api/overseas/studio/private-assets/material-records/${encodeURIComponent(material.id)}.${kind}`, tenantId);
   const url = material.objectKey
-    ? privateStudioAssetUrl('materials', tenantId, path.basename(material.objectKey))
+    ? objectUrl(material.objectKey, 'media')
     : /^\/(?:cloud-files|studio-media)\//.test(sourceUrl)
       // Studio workflows often span script, material, music and render steps.
       // Keep the protected playback URL valid for the whole editing session.
       ? signPathAssetUrl(sourceUrl, tenantId, 24 * 60 * 60 * 1000)
       : /^\/(?:media|api\/overseas\/studio\/materials\/pb)\//.test(sourceUrl) ? signAssetUrl(sourceUrl, tenantId) : sourceUrl;
   const poster = material.posterObjectKey
-    ? privateStudioAssetUrl('materials', tenantId, path.basename(material.posterObjectKey))
+    ? objectUrl(material.posterObjectKey, 'poster')
     : material.poster && /^\/(?:cloud-files|studio-media)\//.test(material.poster)
       ? signPathAssetUrl(material.poster, tenantId, 24 * 60 * 60 * 1000)
       : material.poster && /^\/(?:media|api\/overseas\/studio\/materials\/pb)\//.test(material.poster)

@@ -74,3 +74,19 @@ test('missing official face detector weights fail the paid mother video prefligh
    'swapped weight bytes must not become authorized merely because expected filenames still exist');
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('AAC delay between the old 10 ms grid points aligns sample-exactly without weakening waveform QA',async()=>{
+ const root=await mkdtemp(path.join(os.tmpdir(),'mother-aac-delay-'));
+ try{
+  const wav=path.join(root,'synthetic-utterance.wav'),mp4=path.join(root,'aac-delayed.mp4');
+  // Deterministic varying-frequency synthetic signal, not a user voice or a
+  // periodic tone that could accidentally align at a different pitch period.
+  await run(String(ffmpegStatic||'ffmpeg'),['-hide_banner','-loglevel','error','-f','lavfi','-i','aevalsrc=0.2*(sin(2*PI*(180*t+350*t*t))+0.4*sin(2*PI*941*t)):s=24000:d=1.2','-ac','1','-c:a','pcm_s16le',wav]);
+  await run(String(ffmpegStatic||'ffmpeg'),['-hide_banner','-loglevel','error','-f','lavfi','-i','color=c=black:s=160x160:r=25:d=1.3','-i',wav,'-af','adelay=23','-shortest','-c:v','libx264','-c:a','aac',mp4]);
+  const result=await inspectPresenterMotherSpeechQa({segmentHash:'c'.repeat(64),outputPath:mp4,outputSha256:sha(await readFile(mp4)),frozenAudioPath:wav,frozenAudioSha256:sha(await readFile(wav)),workDir:path.join(root,'qa'),reviewPolicy:'heygen_native_human_review'});
+  const report=JSON.parse(await readFile(result.audioTrackReceiptRef,'utf8'));
+  assert.equal(result.audioTrackMatchesFrozen,true);assert.equal(result.requiresHumanReview,true);
+  assert.ok(report.comparison.correlation>=.9);assert.ok(Math.abs(report.comparison.offsetMs-23)<=.5);
+  assert.ok(report.comparison.durationDriftMs<=120);
+ }finally{await rm(root,{recursive:true,force:true});}
+});

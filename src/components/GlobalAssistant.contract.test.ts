@@ -224,7 +224,8 @@ for (const [key, sourcePage] of [['legacy-traffic', 'traffic'], ['smart-assets-'
   assert.match(appPageSlotSource, new RegExp(`key=[^\\n]*${key}[\\s\\S]{0,160}sourcePage=["']${sourcePage}["']`), `${key} 必须标记准确的助手上下文来源`);
 }
 assert.match(appPageSlotSource, /page === 'socialInspiration'[\s\S]{0,300}<ContentCreationOverviewPage/, '内容创作页必须使用独立经营式工作区');
-assert.match(contentCreationOverviewSource, /sourcePage: 'socialInspiration'/, '内容创作计划进入灵小枢时必须标记准确页面来源');
+assert.match(contentCreationOverviewSource, /<CreationPlan[^\n]*onCreate=\{\(\)=>setCreateOpen\(true\)\}/, '内容创作计划入口必须打开创建表单');
+assert.match(contentCreationOverviewSource, /<CreateContentPlanModal open=\{createOpen\}[\s\S]{0,350}productionPortalNavigation\(taskId\)/, '创建表单完成后必须导航到真实任务门户');
 for (const reference of ['goalId', 'planId', 'runId', 'taskId', 'contentId', 'viewKey']) {
   assert.match(liveContextSource, new RegExp(`${reference}: contextIdentifier\\(detail\\.${reference}`), `页面上下文必须安全绑定 ${reference}`);
 }
@@ -437,7 +438,7 @@ const pageConversationResetSource = sourceSection(
   '跨页面会话重置',
 );
 assert.match(pageConversationResetSource, /if \(restore \|\| kickoff\) return/, '主动恢复的会话或任务跳转不得被页面切换清空');
-assert.match(pageConversationResetSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\.creationDraft\) return/, '带创作草稿的证据补齐与工作台导航不得清空方案对话');
+assert.match(pageConversationResetSource, /const thread = useAssistantStore\.getState\(\)\.threads\[PRIMARY_ASSISTANT_THREAD\];[\s\S]{0,300}if \(thread\.creationDraft \|\| thread\.messages\.some\([\s\S]{0,220}\)\) return/, '带创作草稿的证据补齐与工作台导航不得清空方案对话');
 assert.match(pageConversationResetSource, /resetTransientConversation\(\)/, '切换到其他页面时必须清空临时会话');
 assert.match(pageConversationResetSource, /focusTaskCard\(PRIMARY_ASSISTANT_THREAD, null\)/, '切换页面时不得把上一页待决定任务卡带到新页面');
 

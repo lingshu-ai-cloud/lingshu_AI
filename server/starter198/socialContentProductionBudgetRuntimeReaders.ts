@@ -21,6 +21,8 @@ export function createProductionBudgetRuntimeReaders(input: {
     readPresenterVoice?: () => Promise<BoundPresenterVoice | null>;
     requiresMeasuredAlignment?: boolean;
     frozenTrackSeconds?: number;
+    /** Explicit trusted plan selection; never inferred from environment or provider failure. */
+    heygenSpeechMode?: 'native_video';
     formula?: InternalSocialContentFormula | null;
     env?: NodeJS.ProcessEnv;
     localExecutionReader?: ProductionBudgetReadPorts['readVerifiedLocalExecution'];
@@ -38,7 +40,7 @@ export function createProductionBudgetRuntimeReaders(input: {
                 const p=voicePlan?.primary;if(!p)return null;
                 const index=Number(requirement.key.match(/^voice:(\d+):tts$/)?.[1]);
                 if(!Number.isSafeInteger(index)||voicePlan?.texts[index]!==requirement.text||!p.texts[index])return null;
-                return {provider:p.provider,model:p.model,accountRef:productionBillingAccountRef(p.provider,p.endpoint,p.accountKeyHash),routeEvidenceRef:'studio-native:'+paidProductionHash(p),usageBoundRef:'actual-native-prepared-text:'+paidProductionHash({text:p.texts[index],voiceId:p.voiceId}),maximumAttempts:1,maximumUnits:p.provider==='heygen'?{audioSeconds:frozenTrackSeconds*2}:{characters:nativeVoiceBillableCharacters(p.texts[index])}} satisfies BoundPaidRoute;
+                return {provider:p.provider,model:p.model,accountRef:productionBillingAccountRef(p.provider,p.endpoint,p.accountKeyHash),routeEvidenceRef:'studio-native:'+paidProductionHash(p),usageBoundRef:'actual-native-prepared-text:'+paidProductionHash({text:p.texts[index],voiceId:p.voiceId}),maximumAttempts:1,maximumUnits:p.provider==='heygen'?(p.model==='avatar_iv'?{providerSeconds:frozenTrackSeconds*2}:{audioSeconds:frozenTrackSeconds*2}):{characters:nativeVoiceBillableCharacters(p.texts[index])}} satisfies BoundPaidRoute;
             }
             if(requirement.stage==='voice_alignment'&&voicePlan?.asrConfigured) {
                 let b:ReturnType<typeof getQwenProviderBinding>;try{b=getQwenProviderBinding(env);}catch{return null;}
@@ -55,14 +57,14 @@ export function createProductionBudgetRuntimeReaders(input: {
             }
             return baseReaders.resolveBoundRoute(requirement);
         },
-        async readVoicePlan(baseline) {
+        async readVoicePlan(baseline, options?: {heygenSpeechMode?:'native_video'}) {
             const ref = baseline.formulaReference;
             if (ref && (!input.formula || input.formula.formulaId !== ref.formulaId || input.formula.version !== ref.version))
                 return null;
             const direction = socialDirectorFrozenDirection({ baseline, formula: input.formula, duration: 0 });
             const text = socialDirectorSpokenNarration(baseline.scenes.map(scene => ({ voiceover: scene.voiceover || scene.narration })), baseline.language);
             if(!input.tenantId)return null;
-            voicePlan=resolveStudioVoiceExecutionPlan({tenantId:input.tenantId,text,voice:(await input.readPresenterVoice?.())?.logicalVoice || direction.voiceover.voice,language:baseline.language,style:{preset:direction.voiceover.preset,speed:direction.voiceover.speed,pauseStyle:direction.voiceover.pauseStyle},env});
+            voicePlan=resolveStudioVoiceExecutionPlan({tenantId:input.tenantId,text,heygenSpeechMode:options?.heygenSpeechMode || input.heygenSpeechMode,voice:(await input.readPresenterVoice?.())?.logicalVoice || direction.voiceover.voice,language:baseline.language,style:{preset:direction.voiceover.preset,speed:direction.voiceover.speed,pauseStyle:direction.voiceover.pauseStyle},env});
             // Select a supported native CNY route while creating a new paid plan;
             // freeze this choice in canonical routes. Existing execution never
             // changes provider implicitly after an accepted request.

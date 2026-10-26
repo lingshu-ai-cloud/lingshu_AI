@@ -20,6 +20,7 @@ for (const page of PAGE_IDS) {
 for (const [page, title] of Object.entries({
   strategy: 'hi，灵小枢',
   socialInspiration: '内容创作',
+  inspirationMarket: '灵感集市',
   digitalEmployees: '经营总览',
   adsOverview: '智能投流',
   conversion: '智能客服',
@@ -65,7 +66,7 @@ assert.equal(PAGE_REGISTRY.channels.navParent, 'plugins');
 assert.equal(PAGE_REGISTRY.accountManagement.navParent, 'socialMonitoring');
 assert.equal(PLATFORM_ADS_SURFACE_ENABLED, true, 'the 投流 product entry must be visible');
 assert.deepEqual(PLATFORM_ADS_PAGE_IDS, ['adsOverview', 'adsPlans', 'adsCreatives', 'adsManaged']);
-assert.deepEqual(['adsOverview', 'adsPlans', 'adsCreatives'].map(page => PAGE_REGISTRY[page as 'adsPlans' | 'adsOverview' | 'adsCreatives'].navLabel), ['智能投流', '计划创编', '素材管理']);
+assert.deepEqual(['adsOverview', 'adsPlans', 'adsCreatives'].map(page => PAGE_REGISTRY[page as 'adsPlans' | 'adsOverview' | 'adsCreatives'].navLabel), ['智能投流', '计划管理', '素材投放表现']);
 assert.equal(PAGE_REGISTRY.adsPlans.navParent, 'adsOverview');
 assert.equal(PAGE_REGISTRY.adsCreatives.navParent, 'adsOverview');
 assert.equal(PAGE_REGISTRY.adsManaged.navParent, 'adsPlans', 'legacy AI managed links must resolve under the plan workspace');

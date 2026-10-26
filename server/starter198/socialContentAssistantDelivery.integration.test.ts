@@ -22,7 +22,7 @@ import {issueLocalIdentityTokenForTest} from '../auth/localIdentity.js';
 import type {SocialContentAccessResolver} from './socialContentAccess.js';
 import {projectSocialContentTaskCalendar} from '../../src/components/smartBusiness/socialContentTaskCalendar.js';
 
-test('assistant start admits one real orchestrator job and calendar recovers only persisted outputs',async()=>{
+test('assistant create automatically starts and admits one real orchestrator job and calendar recovers only persisted outputs',async()=>{
   process.env.NODE_ENV='test';process.env.DISABLE_LOCAL_AUTH_FALLBACK='false';
   const root=await mkdtemp(path.join(tmpdir(),'assistant-delivery-'));
   const store=new LangGraphTestStore(path.join(root,'store.json'));
@@ -34,7 +34,9 @@ test('assistant start admits one real orchestrator job and calendar recovers onl
   await store.create('social_programs',{id:'assistant-program',tenant_id:tenantId,program_id:'assistant-program'});
   let server:Server|undefined;
   try{
-    const task=await createSocialContentTask({repository,tenantId,userId:'operator',idempotencyKey:'create',now,value:parseCreateSocialTask({title:'单条产品内容',objective:'制作完整产品内容',mode:'weekly',themeId:'product_value',creationMode:'material_processing',productRef:'SKU-1',languages:['zh'],platforms:['tiktok'],dueAt:'2026-10-16T10:00:00+08:00',perItemBudgetCny:10})});
+    const createBody={title:'单条产品内容',objective:'制作完整产品内容',mode:'weekly',themeId:'product_value',creationMode:'material_processing',productRef:'SKU-1',languages:['zh'],platforms:['tiktok'],dueAt:'2026-10-16T10:00:00+08:00',perItemBudgetCny:10};
+    const createInput=parseCreateSocialTask(createBody);
+    const task=await createSocialContentTask({repository,tenantId,userId:'operator',idempotencyKey:'assistant-create-confirmation',entry:'assistant',now,value:createInput});
     const row=(await repository.list(STARTER_COLLECTIONS.socialContentTasks,tenantId,{where:{task_id:task.taskId},perPage:2})).items[0];
     assert.ok(row);
     const baseline=parseStoredSocialScriptBaseline(row.script_baseline)!;
@@ -61,13 +63,14 @@ test('assistant start admits one real orchestrator job and calendar recovers onl
       const result=await fetch(`http://127.0.0.1:${address.port}/content${suffix}`,{method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${issueLocalIdentityTokenForTest({userId:'operator',tenantId})}`,'Content-Type':'application/json','Idempotency-Key':key},...(body===undefined?{}:{body:JSON.stringify(body)})});
       return{status:result.status,body:await result.json()};
     };
-    const started=await request(`/assistant-actions/${task.taskId}/start`,{expectedVersion:ready!.version});
+    const started=await request('/assistant-actions/create',createBody,'assistant-create-confirmation');
     assert.equal(started.status,202,JSON.stringify(started.body));
+    assert.equal(started.body.receipt.queued,true);assert.equal(started.body.task.executionAdmission.state,'queued');
     assert.equal(started.body.task.status,'producing');assert.ok(started.body.task.runId);
     assert.equal(dispatched.length,1,'real scheduler must hand the admitted job to its production runner');
     assert.equal(dispatched[0]!.taskId,task.taskId);
     assert.equal(dispatched[0]!.runId,started.body.task.runId);
-    const duplicate=await request(`/assistant-actions/${task.taskId}/start`,{expectedVersion:ready!.version},'second-click');
+    const duplicate=await request('/assistant-actions/create',createBody,'assistant-create-confirmation');
     assert.equal(duplicate.body.task.runId,started.body.task.runId);
     assert.equal(dispatched.length,1,'stale second click must not dispatch a second production job');
     const runs=await repository.list(STARTER_COLLECTIONS.runs,tenantId,{perPage:100});assert.equal(runs.totalItems,1);

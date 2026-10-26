@@ -4,11 +4,25 @@ import { readMaterialLibrary } from '../lib/materialLibrary.js';
 import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
 import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/enterpriseAssets.js';
 import { objectStorageDownload, objectStorageEnabled } from '../storage/objectStorage.js';
+import { store } from '../storage/index.js';
+import { fetchFile } from '../storage/files.js';
+import { readStoredImagePostReference } from './socialImageStoredReference.js';
 
 /** Read the original tenant-scoped reference bytes used by both evidence and paid admission. */
 export async function readSocialImageReferenceBytes(tenantId: string, raw: string): Promise<{ bytes: Buffer; mimeType: string } | null> {
   let route = '';
   try { route = new URL(raw, 'http://local.invalid').pathname; } catch { return null; }
+  if (route.startsWith('/api/overseas/videos/')) return readStoredImagePostReference(tenantId, route, {
+    readRecord: id => store.getById<Record<string, unknown>>('trend_videos', id),
+    download: async key => {
+      const object = await objectStorageDownload(key);
+      return object?.buf?.length ? { bytes: object.buf, mimeType: object.contentType || 'image/jpeg' } : null;
+    },
+    readFile: async (id, filename) => {
+      const file = await fetchFile('trend_videos', id, filename);
+      return file ? { bytes: file.buf, mimeType: file.contentType } : null;
+    },
+  });
   const rendered = route.match(/^\/api\/overseas\/social-images\/renders\/([a-zA-Z0-9._-]+\.png)$/);
   if (rendered) {
     const file = path.resolve(process.cwd(), 'data', 'social-image-renders', enterpriseAssetTenantKey(tenantId), path.basename(rendered[1]!));

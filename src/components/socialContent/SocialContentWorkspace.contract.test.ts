@@ -60,7 +60,7 @@ assert.match(workspace, /contentCreationRequest:/,
   'new task entry must navigate straight to the content workbench');
 assert.match(workspace, /const taskId = explicitTaskId \|\| task\?\.taskId/,
   'a newly-created task must open Studio with its returned id instead of a stale render closure');
-assert.match(workspace, /hasMoreTasks=\{state\.workspace\.taskList\.page < state\.workspace\.taskList\.totalPages\}/);
+assert.match(workspace, /hasMoreTasks=\{!taskDetailOnly && state\.workspace\.taskList\.page < state\.workspace\.taskList\.totalPages\}/);
 assert.match(workspace, /查看编导待修改项/);
 assert.match(workspace, /补充企业与产品事实/);
 assert.match(workspace, /onNavigate\('enterprise'\)/,

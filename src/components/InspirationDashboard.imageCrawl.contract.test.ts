@@ -25,6 +25,6 @@ test('viral library prioritizes benchmark accounts and keeps keyword image posts
 });
 
 test('pending production gaps are presented as shooting tasks without the assistant routing shortcut', () => {
-  assert.match(source, /待拍任务 · \$\{shootingNeeds\.length \+ pendingShootingTaskCount\(scriptGapTasks\)\}/);
+  assert.match(source, /待拍 · \$\{shootingNeeds\.length \+ pendingShootingTaskCount\(scriptGapTasks\)\}/);
   assert.doesNotMatch(source, /让灵小枢选路|生产缺口/);
 });

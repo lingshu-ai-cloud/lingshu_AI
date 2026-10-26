@@ -31,3 +31,9 @@ test('local input made during hydration survives a later remote snapshot', () =>
   assert.deepEqual(merged.messages, local.messages);
   assert.equal(merged.draftInput, 'new draft');
 });
+
+test('a company report artifact retains its scoped dialogue on refresh while ordinary conversations remain transient', () => {
+  const thread = emptyAssistantThread();
+  thread.messages = [{ role: 'assistant', content: '研究草稿', companyReport: { id: 'cr_test' } as NonNullable<import('../../appSession').Message['companyReport']> }];
+  assert.deepEqual(withoutPersistedConversation(thread).messages, thread.messages);
+});

@@ -83,11 +83,11 @@ test('我的素材只渲染一个产品集合卡，详情从右侧展开完整�
   assert.match(dashboardSource, /visibleProductGroupsForPage\.map\(product/);
   assert.match(dashboardSource, /id: `product-\$\{product\.id\}`/);
   assert.match(dashboardSource, /pagedUngroupedFilteredMaterials/);
-  assert.match(inventoryHookSource, /excludeProductAssociated: true/, '主墙接口必须在分页前排除已归组产品素材');
+  assert.match(inventoryHookSource, /for \(let next = 2; next <= pageCount; next \+= 1\)/, '主墙必须读取完整分页后再由共用投影排除已归组产品素材');
   assert.match(dashboardSource, /useInspirationMaterialInventory\(\{ innerView, materialSource, materialTheme, materialProducts \}\)/, '页面必须调用迁出的库存生命周期');
-  assert.match(inventoryHookSource, /import \{ MATERIAL_LIBRARY_FETCH_PAGE_SIZE, fetchCompleteProductMaterialInventory, fetchProductMaterialSummaries/, '库存生命周期必须复用完整库存读取');
+  assert.match(inventoryHookSource, /import \{ MATERIAL_LIBRARY_FETCH_PAGE_SIZE, fetchCompleteProductMaterialInventory/, '库存生命周期必须复用完整库存读取');
   assert.match(inventorySource, /fetchCompleteProductMaterialInventory[\s\S]*?productId: product\.id[\s\S]*?pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE/, '产品摘要与侧边详情必须按稳定产品 ID 精确读取完整素材');
-  assert.match(inventoryHookSource, /fetchProductMaterialSummaries\(materialProducts\)/, '主墙产品摘要必须批量读取，不得按产品 N\+1 请求');
+  assert.match(inventoryHookSource, /Object\.fromEntries\(materialProducts\.map[\s\S]*?localMaterials\.filter\(material => materialMatchesProduct\(material, product\)\)/, '主墙产品摘要必须从已完整读取的库存批量投影，不得按产品 N+1 请求');
   assert.match(inventorySource, /for \(let page = 2; page <= pageCount; page \+= 1\)/, '批量摘要应受控地逐页读取，避免并发风暴');
   assert.match(gallerySource, /summary\.materials\.some\(material => materialMatchesLibraryFilters\(material, productFilters\)\)/, '产品卡必须使用真实详情素材响应筛选');
   assert.match(componentSource, /<Drawer[\s\S]*?placement="right"/);

@@ -130,13 +130,13 @@ export function createSocialContentLocalSupplyBudgetProofReader(input: {
       || paidProductionHash(asset.scriptAnalysis) !== paidProductionHash(canonical.scriptAnalysis)) return null;
     const segment = canonical.scriptAnalysis.shots.find(item => item.segmentId === selected.segmentId);
     if (!segment || segment.needsReview || !Number.isFinite(selected.startSeconds) || !Number.isFinite(selected.endSeconds)
-      || selected.startSeconds < segment.startSeconds || selected.endSeconds > segment.endSeconds
+      || selected.startSeconds + 1e-9 < segment.startSeconds || selected.endSeconds - 1e-9 > segment.endSeconds
       // Container time bases can report 3.9999967 for an exact four-second
       // source. Permit only sub-millisecond measurement quantization; this
       // must not authorize a genuinely shorter source or padded scene.
       || selected.endSeconds <= selected.startSeconds || selected.endSeconds - asset.duration > 0.001
       || requirement.durationSeconds === null || requirement.durationSeconds <= 0
-      || selected.endSeconds - selected.startSeconds < requirement.durationSeconds) return null;
+      || selected.endSeconds - selected.startSeconds + 1e-9 < requirement.durationSeconds) return null;
     const sha = createHash('sha256').update(await readFile(canonical.localPath)).digest('hex');
     if (sha !== canonical.contentSha256) throw new Error('local_supply_source_bytes_changed');
     const adapter = existingAssetSupplyAdapters().find(item => item.adapterId === LOCAL_SUPPLY_EXECUTOR);
@@ -146,7 +146,8 @@ export function createSocialContentLocalSupplyBudgetProofReader(input: {
       availableAssets: [{ ...asset, localPath: canonical.localPath, scriptAnalysis: canonical.scriptAnalysis }] });
     if (!result || result.synthetic || result.providerId !== LOCAL_SUPPLY_EXECUTOR
       || result.sourceStrategy !== 'customer_real_asset' || result.sourceRef !== selected.sourceRef
-      || result.asset.id !== canonical.materialId || result.asset.type !== 'video'
+      || result.asset.sourceId !== asset.sourceId || result.asset.contentHash !== canonical.contentSha256 || result.asset.type !== 'video'
+      || paidProductionHash(result.asset.selectedSourceWindow) !== paidProductionHash({startSeconds:selected.startSeconds,endSeconds:selected.endSeconds})
       || result.asset.scriptAnalysis?.shots.length !== 1
       || result.asset.scriptAnalysis.shots[0].segmentId !== selected.segmentId) return null;
     await input.assertCurrent(frozen.scope);

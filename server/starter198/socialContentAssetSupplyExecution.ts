@@ -6,6 +6,7 @@ import type {
   SocialShotTruthBoundary,
 } from '../../shared/contracts/socialContentWorkflow.js';
 import { createSocialAssetSupplyPlan } from '../../shared/socialContentAssetSupply.js';
+import { isContactGraphicScene, enterpriseScenePurpose } from '../../shared/socialMaterialScenePurpose.js';
 import { hasVerifiedSameClassSocialLocalMatch } from '../../shared/socialContentMaterialRouting.js';
 import type { SocialProductionAsset } from './socialContentProductionPlan.js';
 import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
@@ -359,6 +360,20 @@ function materialStrategyOrder(shot: SocialAssetSupplyShotPlan,policyVersion?:So
   const local = routing.localMatch;
   const matched = local.state === 'matched' && local.sourceRefs.length > 0
     && typeof local.evidenceRef === 'string' && local.evidenceRef.trim().length > 0;
+  if (routing.policy === 'illustrative_video') {
+    if (routing.materialType!=='general' || !routing.illustrativeVideo || routing.generation || shot.sourceStrategy!=='non_evidentiary_ai_visual'
+      || shot.sourceRefs.length || shot.fallbackSourceStrategy!==null || shot.truthBoundary.subject!=='none'
+      || !shot.truthBoundary.syntheticVisualAllowed || shot.truthBoundary.customerEvidenceRequired
+      || !shot.visualContract || enterpriseScenePurpose(shot.visualContract,shot.requestedDescription??'')!==routing.illustrativeVideo?.purpose
+      || routing.illustrativeVideo?.provider!=='seedance' || !Number.isSafeInteger(routing.illustrativeVideo.durationSeconds)
+      || routing.illustrativeVideo.durationSeconds<4 || routing.illustrativeVideo.durationSeconds>15) fail('illustrative_video_contract');
+    return ['non_evidentiary_ai_visual'];
+  }
+  if (routing.materialType === 'general' && routing.policy === 'local_only' && !routing.generation
+    && shot.sourceStrategy === 'motion_graphics' && shot.fallbackSourceStrategy === null && !shot.sourceRefs.length
+    && shot.truthBoundary.subject === 'none' && !shot.truthBoundary.customerEvidenceRequired
+    && shot.truthBoundary.syntheticVisualAllowed && shot.visualContract
+    && isContactGraphicScene(shot.visualContract, shot.requestedDescription ?? '')) return ['motion_graphics'];
   // A server-reviewed local clip may replace a reference talking-head image
   // while narration remains a separately measured whole-film track. It does
   // not authorize a new presenter generation or require a presenter lock.
@@ -490,6 +505,9 @@ export async function executeSocialAssetSupplyPlan(input: {
   baseline: StoredSocialScriptBaseline;
   availableAssets: SocialProductionAsset[];
   adapters: SocialAssetSupplyProviderAdapter[];
+  /** Server-owned phase selection over the already reviewed full plan. The
+   * full plan is still aligned and validated before this subset executes. */
+  selectedShotIds?: readonly string[];
   now?: Date;
 }): Promise<SocialAssetSupplyExecutionResult> {
   const plan = alignSocialAssetSupplyPlanToBaseline({ plan: input.plan, baseline: input.baseline });
@@ -498,8 +516,14 @@ export async function executeSocialAssetSupplyPlan(input: {
   }
   const assets: SocialProductionAsset[] = [];
   const shots: SocialAssetSupplyShotExecution[] = [];
+  const selectedShotIds = input.selectedShotIds === undefined ? null : new Set(input.selectedShotIds);
+  if (selectedShotIds && (selectedShotIds.size !== input.selectedShotIds!.length
+    || [...selectedShotIds].some(shotId => !plan.shots.some(shot => shot.shotId === shotId)))) {
+    throw new Error('asset_supply_selected_shot_identity_invalid');
+  }
   if(input.baseline.accountPlaybookConstraints)assertSocialAccountProductionConstraints(input.baseline.accountPlaybookConstraints);
   for (const shot of plan.shots) {
+    if (selectedShotIds && !selectedShotIds.has(shot.shotId)) continue;
     const scene = input.baseline.scenes.find(scene=>scene.sceneId===shot.shotId);
     if (!scene) throw new Error(`asset_supply_baseline_scene_missing:${shot.shotId}`);
     const attempts: SocialAssetSupplyExecutionAttempt[] = [];
@@ -537,10 +561,17 @@ export async function executeSocialAssetSupplyPlan(input: {
             continue;
           }
           const materialRouting = shot.materialRouting;
+          const originalAsset = input.availableAssets.find(asset => asset.id === candidate.sourceRef || asset.sourceId === candidate.sourceRef);
+          const selectedWindow = shot.selectedMaterialSegment, outputWindow = candidate.asset.selectedSourceWindow;
+          const verifiedWindowAlias = Boolean(originalAsset && selectedWindow && outputWindow
+            && selectedWindow.sourceRef === candidate.sourceRef && originalAsset.sourceId === candidate.asset.sourceId
+            && originalAsset.contentHash && originalAsset.contentHash === candidate.asset.contentHash
+            && originalAsset.localPath && originalAsset.localPath === candidate.asset.localPath
+            && selectedWindow.startSeconds === outputWindow.startSeconds && selectedWindow.endSeconds === outputWindow.endSeconds);
           if (materialRouting?.localMatch.state === 'matched' && strategy === 'customer_real_asset'
             && (candidate.asset.type !== 'video' || candidate.synthetic
               || !candidate.sourceRef || !materialRouting.localMatch.sourceRefs.includes(candidate.sourceRef)
-              || ![candidate.asset.sourceId, candidate.asset.id].includes(candidate.sourceRef))) {
+              || ![candidate.asset.sourceId, candidate.asset.id].includes(candidate.sourceRef) && !verifiedWindowAlias)) {
             attempts.push({ sourceStrategy: strategy, adapterId: adapter.adapterId, status: 'rejected_by_truth_boundary', reason: 'material_route_requires_verified_local_video' });
             continue;
           }

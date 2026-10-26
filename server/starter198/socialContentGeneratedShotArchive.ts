@@ -120,5 +120,9 @@ export async function archiveSocialGeneratedShots(input: {
       generationExecutionId,
       adoptedAt,
     };
+    // Phase checkpoints outlive the render worker's temporary directory. Keep
+    // the content-addressed tenant object as their durable recovery source.
+    asset.objectKey = archived.objectKey;
+    asset.contentHash = contentSha256;
   }
 }

@@ -19,7 +19,8 @@ test('historic jobs without a binding stay legacy; selected graph bindings fail 
   assert.equal(socialProductionExecutor({ checkpoints: { 'social.executor': binding } } as any), 'langgraph');
   assert.throws(() => socialProductionExecutor({ checkpoints: { 'social.executor': { ...binding, inputHash: 'tampered' } } } as any), /binding_invalid/);
   assert.equal(createSocialProductionExecutorCheckpoint({ ...detail(), mode: 'weekly' }, {}).payload.executor, 'langgraph');
-  assert.equal(createSocialProductionExecutorCheckpoint({ ...detail(), mode: 'instant' }, {}).payload.executor, 'legacy');
+  assert.equal(createSocialProductionExecutorCheckpoint({ ...detail(), mode: 'instant' }, {}).payload.executor, 'langgraph');
+  assert.equal(createSocialProductionExecutorCheckpoint({ ...detail(), mode: 'instant' }, { SOCIAL_CONTENT_EXECUTOR: 'legacy' }).payload.executor, 'legacy');
 });
 
 test('task projection versions may advance; approved words, routes and review cannot drift', () => {

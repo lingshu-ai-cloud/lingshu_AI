@@ -1,3 +1,4 @@
+import { upgradeSocialArtifactTechnicalPolicy } from './socialContentTechnicalPolicyUpgrade.js';
 import { assertSocialPresenterRouteAvailable } from './socialContentPresenterRouteAdmission.js';
 import { completeSocialCacheFinalization } from './socialContentCacheFinalization.js';
 import type { runSocialContentAutoProduction } from './socialContentProductionExecution.js';
@@ -7,7 +8,7 @@ import { readWeeklyReplicationAuthority } from './socialWeeklyReplicationAuthori
 import { readWeeklySchedulerMaterialPlan } from './socialWeeklySchedulerMaterialPlan.js';
 import { assertWeeklyProductionMaterialAdmission } from './socialWeeklyProductionMaterialGate.js';
 import { bindCanonicalTypeAwareRouting } from './socialContentExecutionPlan.js';
-import { replicationExecutionGaps, selectPresenterExecutions, verifyNamedPresenterLock } from './socialContentPresenterExecutionPolicy.js';
+import { assertTaskPresenterPolicy, replicationExecutionGaps, selectPresenterExecutions, verifyNamedPresenterLock } from './socialContentPresenterExecutionPolicy.js';
 import { createEnvironmentSocialHeyGenBridge } from './socialContentHeyGenBridge.js';
 import { socialContentReviewAdmissionAllowed } from './socialContentTestBypass.js';
 import { AUTO_SCHEMA } from './socialContentProductionMaterials.js';
@@ -84,7 +85,7 @@ export async function admitSocialContentProduction(input: Input) {
   let revisionParent = productionApproach === 'shooting_plan' ? undefined
     : [...detail.artifacts].reverse().find(artifact => artifact.kind === 'short_video'
       && artifact.status === 'changes_requested');
-  const existing = detail.artifacts.find(artifact => artifact.origin === 'agent'
+  let existing = detail.artifacts.find(artifact => artifact.origin === 'agent'
     && artifact.kind === targetArtifactKind
     && socialText(artifact.content?.workflowSchema) === targetWorkflowSchema
     && !['superseded', 'changes_requested'].includes(artifact.status)
@@ -96,6 +97,7 @@ export async function admitSocialContentProduction(input: Input) {
       && socialObject(artifact.content?.productionWorkspaceSource)?.runId === input.runId);
   }
   if (!revisionParent && existing) {
+    existing = await upgradeSocialArtifactTechnicalPolicy(input, existing, Boolean(admissionAuthority) || detail.mode === 'weekly');
     if (admissionAuthority && existing.content?.initialSceneCacheInput && detail.referenceVideoAnalysis) {
       await completeSocialCacheFinalization({ repository: input.repository, tenantId: input.tenantId,
         taskId: input.taskId, runId: input.runId, artifactId: existing.artifactId });
@@ -119,8 +121,7 @@ export async function admitSocialContentProduction(input: Input) {
       || '内容执行方案尚未通过编导逐镜审核';
     throw new Error(`user_input_required:${required}`);
   }
-  if (productionApproach !== 'shooting_plan' && detail.assetSupplyPlan) assertSocialPresenterRouteAvailable({
-    ...detail.assetSupplyPlan, shots: detail.assetSupplyPlan.shots.filter(shot => shot.digitalHumanPlan?.method !== 'reenact') });
+  assertTaskPresenterPolicy(detail.brief, detail.assetSupplyPlan);
   let presenterExecutions: ReturnType<typeof selectPresenterExecutions> = [];
   if (detail.brief.creationMode === 'viral_replication') {
     if (agentWorkflow.directorBrief.scenes.some(scene => scene.productionRouting?.needsPreciseLipSync
@@ -138,6 +139,8 @@ export async function admitSocialContentProduction(input: Input) {
         throw new Error(`user_input_required:presenter_identity_blocked:${namedPresenter.reason}`);
       }
     }
+  }
+  if (productionApproach !== 'shooting_plan') {
     const heygenBridge = input.repository.dataStore
       ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore, input.tenantId) : null;
     const wholeFilmPresenterConfigured = ['type-aware.v1', 'type-aware.v2']
@@ -157,11 +160,14 @@ export async function admitSocialContentProduction(input: Input) {
             && Boolean(process.env.SEEDANCE_API_KEY?.trim()) && objectStorageEnabled()),
     });
     if (presenterExecutions.length) {
+      const original = detail.brief.creationMode === 'material_processing';
       await writeExecutionStage({ ...input, stage: 'presenter_stack_selection',
         message: presenterExecutions.every(item => item.executionStatus === 'ready')
-          ? '内容 Agent 已依据逐镜测量证据锁定人物技术栈。'
+          ? original
+            ? '内容 Agent 已按冻结的原创策划和企业首选人物锁定人物技术栈。'
+            : '内容 Agent 已依据逐镜测量证据锁定人物技术栈。'
           : '逐镜人物技术栈缺少可执行证据或能力，已停止自动付费调用。',
-        extra: { policyVersion: '1', presenterExecutions } });
+        extra: { policyVersion: '1', selectionSource: original ? 'original_frozen_plan' : 'reference_measurements', presenterExecutions } });
       if (presenterExecutions.some(item => item.executionStatus === 'blocked')) {
         throw new Error(`user_input_required:presenter_stack_blocked:${presenterExecutions
           .filter(item => item.executionStatus === 'blocked')
@@ -171,7 +177,8 @@ export async function admitSocialContentProduction(input: Input) {
   }
   if (productionApproach !== 'shooting_plan') assertSocialPresenterRouteAvailable(detail.assetSupplyPlan,
     new Set(presenterExecutions.filter(item => item.executionStatus === 'ready' && item.providerId === 'seedance'
-      && item.decision.measurements.lipSyncRequired === false).map(item => item.sceneId)));
+      && item.decision.measurements.lipSyncRequired === false).map(item => item.sceneId)),
+    { policy: detail.brief.presenterSpeechReviewPolicy, heyGenShotIds: new Set(presenterExecutions.filter(item => item.executionStatus === 'ready' && item.providerId === 'heygen').map(item => item.sceneId)) });
   await writeExecutionStage({ ...input, stage: 'execution_plan_approved',
     message: '内容 Agent 已提交逐镜执行方案，编导 Agent 自动审核通过，开始锁定并执行。',
     extra: { agentWorkflowSchema: agentWorkflow.schemaVersion,

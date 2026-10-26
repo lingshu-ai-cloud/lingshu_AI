@@ -4,6 +4,7 @@ import { type AuthLocals } from '../middleware/auth.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
 import { objectStorageEnabled, objectStorageGetObject, objectStorageUpload } from '../storage/objectStorage.js';
 import { materialAssetContentType, tenantPrivateObjectKey } from '../storage/materialAssets.js';
+import { readMaterialLibrary } from '../lib/materialLibrary.js';
 
 import type { StudioApplicationPorts } from '../studio/applicationPorts.js';
 
@@ -27,8 +28,19 @@ export function createStudioPrivateAssetRoutes(deps: Pick<StudioApplicationPorts
     studioRouter.get('/private-assets/:namespace/:file', async (req, res) => {
       const { tenantId } = res.locals as AuthLocals;
       const namespace = String(req.params.namespace || '');
-      if (!['tts', 'voice-samples', 'covers', 'exports', 'materials'].includes(namespace)) { res.status(404).end(); return; }
-      const object = await objectStorageGetObject(tenantPrivateObjectKey(namespace, tenantId, req.params.file), req.headers.range);
+      if (!['tts', 'voice-samples', 'covers', 'exports', 'materials', 'material-records'].includes(namespace)) { res.status(404).end(); return; }
+      let key = tenantPrivateObjectKey(namespace, tenantId, req.params.file);
+      if (namespace === 'material-records') {
+        const match = String(req.params.file).match(/^(.+)\.(media|poster)$/);
+        if (!match) { res.status(404).end(); return; }
+        // Resolve the original key from the authorized inventory, never from a
+        // client-supplied path or a basename guess across storage namespaces.
+        const inventory = await readMaterialLibrary(tenantId);
+        const records = inventory.items.filter(item => item.id === match[1]);
+        key = records.length === 1 ? String(records[0]![match[2] === 'poster' ? 'posterObjectKey' : 'objectKey'] || '') : '';
+        if (!key) { res.status(404).end(); return; }
+      }
+      const object = await objectStorageGetObject(key, req.headers.range);
       if (!object) { res.status(404).end(); return; }
       res.setHeader('Content-Type', object.contentType);
       res.setHeader('Cache-Control', 'private, max-age=300');

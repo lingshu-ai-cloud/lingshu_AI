@@ -1,23 +1,36 @@
 import assert from 'node:assert/strict';
 import { adPlanningSystemPrompt, parseAdProposal } from './planning.js';
-const context = { currency: 'CNY' as const, channels: ['Facebook'] };
-const sample = { rationale: '500 CNY 总预算、10 CNY 日预算用于暂停创编验收。', audienceStrategy: '美国软件开发者方向，具体定向可用性待核验。', creativeStrategy: '使用联调素材。', risks: ['没有曝光样本，不能评估商业效果。'], assumptions: ['后续需核验同币种账户。'] };
-const prompt = adPlanningSystemPrompt(context);
-assert.match(prompt, /在美国定向不要求美元账户/);
-assert.match(prompt, /禁止汇率换算/);
-assert.match(prompt, /暂停创编\/软件联调是功能验收/);
-const proposal = parseAdProposal(JSON.stringify(sample), context);
-assert.match(proposal.rationale, /500 CNY/);
-assert.ok(proposal.risks.some(text => text.includes('人工审核')));
-assert.doesNotThrow(() => parseAdProposal(JSON.stringify({ ...sample, rationale: 'CNY币种符合产品当前支持能力，在美国定向无需更换币种。' }), context));
-for (const rationale of [
+const context = { currency: 'CNY' as const, channels: ['Facebook'], budget: 10 };
+const sample = { rationale: '面向美国采购商测试产品视频。', audienceStrategy: '采购商方向，具体定向待核验。', creativeStrategy: '展示产品细节。', risks: ['尚无曝光样本。'], assumptions: ['需核验主页。'] };
+assert.match(adPlanningSystemPrompt(context), /财务说明由系统/);
+const noisy = [
   '500 CNY（约70 USD），每天10 CNY（约1.4 USD）',
-  '500 CNY约合49美元，按汇率估算',
   'Facebook不支持人民币预算，需要更换币种',
   '美国与CNY组合会导致支付链路异常或结算失败',
-  'Facebook广告账户默认要求本地币种充值',
+  '平台默认要求本地币种充值',
   '建议使用$20每日预算',
-]) assert.throws(() => parseAdProposal(JSON.stringify({ ...sample, rationale }), context), /未保存/);
-assert.throws(() => parseAdProposal(JSON.stringify({ ...sample, risks: ['约70美元'] }), context), /未保存/, 'all proposal sections are validated');
-assert.throws(() => parseAdProposal(JSON.stringify(sample), { currency: 'USD', channels: ['Facebook'] }), /未保存/, 'USD proposals cannot silently introduce CNY');
-console.log('AI planning currency grounding tests passed (no network or task writes)');
+  '最低预算需要5000元',
+  '不涉及汇率换算，但500 CNY约合70美元。',
+  '美国定向不要求美元账户，无需更换账户币种。',
+  '请增加预算至10000 CNY。',
+];
+for (const currency of ['CNY', 'USD'] as const) {
+  for (const claim of noisy) {
+    for (const field of ['rationale', 'audienceStrategy', 'creativeStrategy', 'risks', 'assumptions'] as const) {
+      const input = { ...sample, [field]: Array.isArray(sample[field]) ? [claim] : claim };
+      const p = parseAdProposal(JSON.stringify(input), { ...context, currency });
+      assert.ok(!JSON.stringify(p).includes(claim), `${currency}/${field}: ungrounded claim must not survive`);
+      assert.ok(p.assumptions.some(text => text.includes(`总预算上限为 ${currency} 10`)));
+      assert.ok(p.risks.some(text => text.includes('已移除')));
+      assert.ok(p.rationale && p.audienceStrategy && p.creativeStrategy);
+    }
+  }
+}
+const clean = parseAdProposal(JSON.stringify(sample), context);
+assert.equal(clean.rationale, sample.rationale);
+assert.ok(!clean.risks.some(text => text.includes('已移除')));
+const mixed = parseAdProposal(JSON.stringify({ ...sample, rationale: '展示产品细节。约合70美元。突出工艺。' }), context);
+assert.equal(mixed.rationale, '展示产品细节。突出工艺。');
+assert.throws(() => parseAdProposal('not json', context));
+assert.throws(() => parseAdProposal(JSON.stringify({ ...sample, rationale: '' }), context));
+console.log('AI prose normalized; user CNY/USD amounts preserved; valid drafts no longer rejected by currency prose.');

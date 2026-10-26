@@ -191,7 +191,7 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
       const actualQueue = createStarter198OrchestratorQueue({repository, dataStore: store, now: () => now});
       await assert.rejects(startSocialContentTask({repository, tenantId, userId: 'operator', taskId: created.taskId,
         expectedVersion: currentVersion, idempotencyKey: 'typed-start-blocked-reference', now, orchestratorQueue: actualQueue}),
-        /social_content_execution_director_review_required/);
+        /social_replication_system_review_blocked:product_identity_unresolved,expression_failed,scene_review_incomplete/);
       assert.equal(store.rows.get(STARTER_COLLECTIONS.runs)!.length, 0);
       return;
     }
@@ -205,6 +205,9 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
     assert.equal(admitted.status, 'producing');
     assert.equal(admitted.contentOrder?.contentId,created.taskId);
     assert.equal(admitted.contentOrder?.budgetTaskId,created.taskId);
+    const admittedJobs=store.rows.get('content_execution_jobs')??[];
+    assert.equal(admittedJobs.filter(job=>job.tenant_id===tenantId&&job.task_id===created.taskId&&job.run_id===admitted.runId).length,1,
+      'an injected durable repository must create the production job before reporting the task as producing');
     const quotaRows=store.rows.get('social_content_creation_quotas')??[];
     assert.equal(quotaRows.length,1,'actual start persists the shared weekly allowance before queue admission');
     const quotaPayload=quotaRows[0]!.payload as any;
@@ -214,7 +217,7 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
     if(recoverOutbox){
       const frozen=(row.content_order as any).dispatch;
       assert.ok(frozen?.commandId&&frozen.queueRequest,'actual start froze exact dispatch before quota reservation');
-      const originalRun=String(row.run_id),originalQueue=String(row.orchestrator_item_id);
+      const originalRun=String(row.run_id),originalQueue=String(row.orchestrator_item_id),scheduledVersion=String(row.version);
       await admitContentExecutionJob({dataStore:store,tenantId,userId:'operator',taskId:created.taskId,runId:originalRun,
         taskType:'social_content_instant',now});
       const originalJobs=store.rows.get('content_execution_jobs')??[];
@@ -260,6 +263,7 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
       const first=await runWithDataAuthority('local',()=>runSocialContentOrderOutboxScan({dataStore:store,authority:'local',recover}));
       assert.equal(first.recovered,1,JSON.stringify({first,errors}));assert.equal(first.blocked,0);
       assert.equal(row.run_id,originalRun);assert.equal(row.orchestrator_item_id,originalQueue);
+      assert.equal(String(row.version),scheduledVersion,'outbox receipt must preserve the scheduler version');
       assert.equal(store.rows.get(STARTER_COLLECTIONS.runs)!.length,1);
       assert.equal((store.rows.get('content_execution_jobs')??[]).length,originalJobs.length);
       // A worker has advanced and an external outcome is unknown. Recovery
@@ -293,7 +297,7 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
     assert.deepEqual(row.script_baseline, baseline, 'normal create baseline is preserved verbatim');
     assert.ok(admitted.assetSupplyPlan.shots.every(shot => shot.selectedMaterialSegment
       && shot.selectedMaterialSegment.endSeconds > shot.selectedMaterialSegment.startSeconds));
-    assert.equal(admitted.brief.perItemBudgetCny, 15);
+    assert.equal(admitted.brief.perItemBudgetCny, 10, 'dispatch must retain the narrower explicit grant, not expand it to the default ceiling');
     assert.equal(admitted.agentWorkflow?.executionPlan.estimatedTotalCostCny, 0);
     assert.equal(store.rows.get(STARTER_COLLECTIONS.runs)!.length, 1);
   } finally {fs.rmSync(root, {recursive: true, force: true});}

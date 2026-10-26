@@ -9,6 +9,8 @@ export interface PresenterMotherSlotInput {
   materialType: string;
   frontFacing: boolean;
   lipSyncRequired: boolean;
+  /** Frozen visual evidence; absent only on legacy temporal-only plans. */
+  visualCompatibilityHash?: string;
 }
 
 export interface FrozenPresenterMotherMember {
@@ -29,10 +31,11 @@ export interface FrozenPresenterMotherSegment {
   members: FrozenPresenterMotherMember[];
   mergedSpokenText: string;
   contentHash: string;
+  visualCompatibilityHash?: string;
 }
 
 export interface FrozenPresenterMotherSegments {
-  schemaVersion: 'presenter-mother-segments.v1';
+  schemaVersion: 'presenter-mother-segments.v1' | 'presenter-mother-segments.v2';
   taskId: string;
   referenceAnalysisHash: string;
   sourceSlotCount: number;
@@ -66,6 +69,10 @@ function validSlot(slot: PresenterMotherSlotInput): void {
  * segment. A person appearing in B-roll is excluded unless the shot is both
  * front-facing and explicitly requires lip sync.
  */
+export function normalizePresenterMotherSpokenText(parts: readonly string[]): string {
+  return parts.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+}
+
 export function freezePresenterMotherSegments(input: {
   taskId: string;
   referenceAnalysisHash: string;
@@ -86,10 +93,12 @@ export function freezePresenterMotherSegments(input: {
 
   const selected = ordered.filter(slot => slot.materialType === 'talking_head' && slot.frontFacing && slot.lipSyncRequired);
   if (!selected.length) throw new Error('presenter_mother_presenter_slots_missing');
+  const visualVersion=selected.some(slot=>slot.visualCompatibilityHash!==undefined);
+  if(visualVersion&&selected.some(slot=>!HASH.test(slot.visualCompatibilityHash??'')))throw Error('presenter_mother_visual_compatibility_missing');
   const grouped: PresenterMotherSlotInput[][] = [];
   for (const slot of selected) {
     const current = grouped.at(-1);
-    if (current && Math.abs(current.at(-1)!.endSeconds - slot.startSeconds) <= EPSILON_SECONDS) current.push(slot);
+    if (current && Math.abs(current.at(-1)!.endSeconds - slot.startSeconds) <= EPSILON_SECONDS&&current.at(-1)!.visualCompatibilityHash===slot.visualCompatibilityHash) current.push(slot);
     else grouped.push([slot]);
   }
 
@@ -109,12 +118,13 @@ export function freezePresenterMotherSegments(input: {
       durationSeconds: frozenMembers.at(-1)!.endSeconds - frozenMembers[0]!.startSeconds,
       memberSlotIds: frozenMembers.map(member => member.slotId),
       members: frozenMembers,
-      mergedSpokenText: frozenMembers.map(member => member.spokenText).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(),
+      mergedSpokenText: normalizePresenterMotherSpokenText(frozenMembers.map(member => member.spokenText)),
+      ...(visualVersion?{visualCompatibilityHash:members[0]!.visualCompatibilityHash}:{}),
     };
     return { ...body, contentHash: digest(body) };
   });
   const body = {
-    schemaVersion: 'presenter-mother-segments.v1' as const,
+    schemaVersion: visualVersion?'presenter-mother-segments.v2' as const:'presenter-mother-segments.v1' as const,
     taskId,
     referenceAnalysisHash: input.referenceAnalysisHash,
     sourceSlotCount: ordered.length,
@@ -124,17 +134,17 @@ export function freezePresenterMotherSegments(input: {
 }
 
 export function verifyFrozenPresenterMotherSegments(value: FrozenPresenterMotherSegments): boolean {
-  if (value.schemaVersion !== 'presenter-mother-segments.v1' || !value.taskId || !HASH.test(value.referenceAnalysisHash) || !HASH.test(value.recordHash)) return false;
+  if (!['presenter-mother-segments.v1','presenter-mother-segments.v2'].includes(value.schemaVersion) || !value.taskId || !HASH.test(value.referenceAnalysisHash) || !HASH.test(value.recordHash)) return false;
   if (!Number.isSafeInteger(value.sourceSlotCount) || value.sourceSlotCount < 1 || !value.groups.length) return false;
-  if (value.groups.some((group, index) => group.order !== index + 1
+  if (value.groups.some((group, index) => (value.schemaVersion==='presenter-mother-segments.v2'?!HASH.test(group.visualCompatibilityHash??''):group.visualCompatibilityHash!==undefined)||group.order !== index + 1
     || group.segmentId !== `presenter-mother-${index + 1}`
     || group.memberSlotIds.length !== group.members.length
     || group.memberSlotIds.some((slotId, memberIndex) => slotId !== group.members[memberIndex]?.slotId)
     || group.startSeconds !== group.members[0]?.startSeconds
     || group.endSeconds !== group.members.at(-1)?.endSeconds
     || group.durationSeconds !== group.endSeconds - group.startSeconds
-    || group.mergedSpokenText !== group.members.map(member => member.spokenText).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
-    || group.contentHash !== digest({ segmentId: group.segmentId, order: group.order, startSeconds: group.startSeconds, endSeconds: group.endSeconds, durationSeconds: group.durationSeconds, memberSlotIds: group.memberSlotIds, members: group.members, mergedSpokenText: group.mergedSpokenText }))) return false;
+    || group.mergedSpokenText !== normalizePresenterMotherSpokenText(group.members.map(member => member.spokenText))
+    || group.contentHash !== digest({ segmentId: group.segmentId, order: group.order, startSeconds: group.startSeconds, endSeconds: group.endSeconds, durationSeconds: group.durationSeconds, memberSlotIds: group.memberSlotIds, members: group.members, mergedSpokenText: group.mergedSpokenText,...(group.visualCompatibilityHash!==undefined?{visualCompatibilityHash:group.visualCompatibilityHash}:{}) }))) return false;
   const { recordHash, ...body } = value;
   return recordHash === digest(body);
 }

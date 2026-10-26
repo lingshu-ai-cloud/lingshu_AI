@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { withPaidOperationLock } from './paidOperationLock.js';
-import {productionBudgetLimitCny,productionBudgetDecisionError} from '../../shared/contracts/productionBudgetPolicy.js';
+import {validProductionBudgetMaximum,productionBudgetLimitCny,productionBudgetDecisionError} from '../../shared/contracts/productionBudgetPolicy.js';
 export interface SocialTaskBudgetScope {
     tenantId: string;
     taskId: string;
@@ -143,7 +143,7 @@ export class SocialContentTaskBudget {
         if (l.schemaVersion !== 1 || l.tenantId !== s.tenantId || l.taskId !== (s.budgetTaskId??s.taskId) || !Number.isSafeInteger(l.limitMicros) || l.limitMicros <= 0 || !Array.isArray(l.authorizationRefs) || !l.authorizationRefs.every(text) || !l.entries || typeof l.entries !== 'object' || Array.isArray(l.entries))
             fail('ledger_corrupt');
         if(l.productionDurationSeconds!==undefined&&(!Number.isFinite(l.productionDurationSeconds)||l.productionDurationSeconds<=0))fail('ledger_corrupt');
-        if(!l.correctionAuthorization&&l.limitMicros>productionBudgetLimitCny(l.productionDurationSeconds)*1e6)fail('ledger_corrupt');
+        if(!validProductionBudgetMaximum(l.limitMicros/1e6))fail('ledger_corrupt');
         if (l.correctionAuthorization) {
             const grant = l.correctionAuthorization;
             if (!grant) fail('ledger_corrupt');
@@ -221,7 +221,7 @@ export class SocialContentTaskBudget {
         scopeCheck(scope); const l=this.read(scope); if(!l)return null;
         const retainedMicros=used(l),correction=l.correctionAuthorization;
         const correctionMatches=correction?.runId===scope.runId&&correction.planHash===scope.planHash;
-        const limitMicros=Math.min(l.limitMicros,productionBudgetLimitCny(l.productionDurationSeconds)*1e6,
+        const limitMicros=Math.min(l.limitMicros,correction?productionBudgetLimitCny(l.productionDurationSeconds)*1e6:Infinity,
             correction&&!correctionMatches?correction.previousMaximumCny*1e6:Infinity);
         const acquisitionCny=Object.values(l.entries).filter(e=>e.preproductionBinding).reduce((sum,e)=>sum+e.reservedMicros,0)/1e6;
         return {limitCny:limitMicros/1e6,authorizedLimitCny:l.limitMicros/1e6,
@@ -311,7 +311,8 @@ export class SocialContentTaskBudget {
             const a = await this.ports.authorization(scope);
             if (!text(a.authorizationRef))
                 fail('authorization_missing');
-            const baseCap = Math.min(productionBudgetLimitCny(a.productionDurationSeconds)*1e6, micros(a.maximumCny));
+            if(!validProductionBudgetMaximum(a.maximumCny))fail('authorization_invalid');
+            const baseCap = micros(a.maximumCny);
             const l = this.read(scope) || { schemaVersion: 1 as const, tenantId: scope.tenantId, taskId: scope.budgetTaskId??scope.taskId, limitMicros: baseCap, productionDurationSeconds:a.productionDurationSeconds, authorizationRefs: [], entries: {} };
             if(a.maximumExecutionCny!==undefined){
               if(!Number.isFinite(a.maximumExecutionCny)||a.maximumExecutionCny<0)return fail('execution_allowance_invalid');
@@ -322,7 +323,7 @@ export class SocialContentTaskBudget {
             const correction = l.correctionAuthorization;
             const correctionMatches = correction?.tenantId === scope.tenantId && correction.taskId === scope.taskId
                 && correction.runId === scope.runId && correction.planHash === scope.planHash;
-            const cap = Math.min(l.limitMicros,correctionMatches?l.limitMicros:baseCap,productionBudgetLimitCny(l.productionDurationSeconds)*1e6);
+            const cap = Math.min(l.limitMicros,correctionMatches?l.limitMicros:baseCap,correction?productionBudgetLimitCny(l.productionDurationSeconds)*1e6:Infinity);
             if (!correctionMatches) l.limitMicros = Math.min(l.limitMicros, baseCap);
             if (!l.authorizationRefs.includes(a.authorizationRef))
                 l.authorizationRefs.push(a.authorizationRef);
@@ -367,7 +368,7 @@ export class SocialContentTaskBudget {
         return withPaidOperationLock(path.join(this.root, '.locks'), JSON.stringify([scope.tenantId, scope.taskId]), async () => {
             await this.ports.assertCurrent(scope);
             const authorization=await this.ports.authorization(scope);
-            if(!text(authorization.authorizationRef)||micros(authorization.maximumCny)>productionBudgetLimitCny(authorization.productionDurationSeconds)*1e6)fail('preproduction_authorization_invalid');
+            if(!text(authorization.authorizationRef)||!validProductionBudgetMaximum(authorization.maximumCny))fail('preproduction_authorization_invalid');
             if(!await verify(scope,operation,binding))fail('preproduction_evidence_invalid');
             const ledger=this.read(scope)||{schemaVersion:1 as const,tenantId:scope.tenantId,taskId:scope.taskId,limitMicros:micros(authorization.maximumCny),productionDurationSeconds:authorization.productionDurationSeconds,authorizationRefs:[],entries:{}};
             if(ledger.taskId!==scope.taskId||ledger.limitMicros>micros(authorization.maximumCny)||ledger.correctionAuthorization)fail('preproduction_original_budget_required');

@@ -1,3 +1,6 @@
+import {presenterFirstFrameApprovalHash,type OriginalScenePresenterFirstFrameApprovalContract} from './socialContentPresenterFirstFrameApproval.js';
+import {isPresenterOriginalSceneFirstEvidence} from '../../shared/contracts/presenterBackgroundFirst.js';
+import {isOriginalScenePresenterAssetProvenance} from './socialContentPresenterFirstFrameAssetProvenance.js';
 import type {WholeTrackPresenterSpeech} from './socialContentWholeTrackPresenterAudio.js';
 import {assertSocialAccountProductionConstraints,type SocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import { createHash } from 'node:crypto';
@@ -41,9 +44,30 @@ export interface ApprovedPresenterFirstFrame {
   url: string;
   localPath: string;
   sha256: string;
+  /** Frozen output geometry from the approved static-image contract. Legacy
+   * v1 catalogue records omit this and retain the historical 9:16 default. */
+  targetAspectRatio?: '9:16' | '16:9' | '1:1';
   /** Immutable source ledger for a provider that accepts only one composite
    * image. These are identities, not extra provider inputs. */
   assetProvenance?: PresenterFirstFrameAssetProvenance;
+  /** Supplied only after readCurrentConfirmedPresenterFirstFrame verifies current evidence. */
+  originalSceneApproval?: OriginalScenePresenterFirstFrameApprovalContract;
+}
+
+export function hasApprovedOriginalPresenterScene(frame:ApprovedPresenterFirstFrame|undefined,tenantId:string,taskId:string):boolean{
+ const approval=frame?.originalSceneApproval;
+ return Boolean(frame&&approval&&approval.schemaVersion==='social-presenter-first-frame-approval.v3'&&approval.sourceMode==='original_scene'
+  &&approval.tenantId===tenantId&&approval.taskId===taskId&&approval.recordHash===presenterFirstFrameApprovalHash(approval)
+  &&approval.recordHash===frame.approvalRecordHash&&approval.presenterGroupContractHash===frame.presenterGroupContractHash
+  &&approval.compositeFirstFrameSha256===frame.sha256&&approval.compositeFirstFrameUrl===frame.url&&approval.targetAspectRatio===frame.targetAspectRatio
+  &&isPresenterOriginalSceneFirstEvidence(approval.originalScene)&&isOriginalScenePresenterAssetProvenance(approval.originalSceneProvenance)
+  &&approval.originalScene.source.sceneContractHash===approval.originalSceneProvenance.source.sceneContractHash
+  &&approval.originalScene.source.promptHash===approval.originalSceneProvenance.source.promptHash
+  &&approval.originalScene.composite.sha256===frame.sha256&&approval.originalScene.composite.artifactRef===frame.url
+  &&approval.originalScene.composite.presenterAssetId===approval.presenter.assetId&&approval.originalScene.composite.presenterAssetVersion===approval.presenter.assetVersion
+  &&approval.originalSceneProvenance.presenter.assetId===approval.presenter.assetId&&approval.originalSceneProvenance.presenter.assetVersion===approval.presenter.assetVersion
+  &&approval.qa.passed&&approval.qa.receiptRef===approval.originalScene.composite.qa.receiptRef&&approval.qa.reportHash===approval.originalScene.composite.qa.reportHash
+  &&approval.personRemovalEvidence===undefined&&approval.assetProvenance===undefined);
 }
 
 export function assertPresenterSpeechAudio(request: Pick<DigitalPresenterExecutionRequest, 'tenantId' | 'taskId' | 'shotId' | 'script' | 'presenter'>, audio: VerifiedPresenterSpeechAudio): void {
@@ -72,7 +96,7 @@ export interface DigitalPresenterExecutionRequest {
   /** Server-only recovery gate: never submit a new provider job. */
   recoveryOnly?: true;
   speechAudio?: VerifiedPresenterSpeechAudio;
-  aspectRatio: '9:16';
+  aspectRatio: '9:16' | '16:9' | '1:1';
   outputDirectory: string;
   maximumCostCny: number;
   visualControl: DigitalPresenterVisualControl;
@@ -184,6 +208,7 @@ function stableKey(input: {
   shotId: string;
   presenter: AuthorizedDigitalPresenter;
   approvedFirstFrame: ApprovedPresenterFirstFrame;
+  aspectRatio: DigitalPresenterExecutionRequest['aspectRatio'];
   script: string;
   visualControl: DigitalPresenterVisualControl;
   speechAudio?: VerifiedPresenterSpeechAudio;
@@ -203,7 +228,7 @@ function stableKey(input: {
     approvedFirstFrame: input.approvedFirstFrame,
     script: input.script,
     visualControl: input.visualControl,
-    aspectRatio: '9:16',
+    aspectRatio: input.aspectRatio,
     ...(input.speechAudio ? { speechAudio: { tenantId: input.speechAudio.tenantId, taskId: input.speechAudio.taskId,
       taskVersion: input.speechAudio.taskVersion, shotId: input.speechAudio.shotId, presenterAssetId: input.speechAudio.presenterAssetId,
       presenterAssetVersion: input.speechAudio.presenterAssetVersion, providerAvatarId: input.speechAudio.providerAvatarId, voiceId: input.speechAudio.voiceId,
@@ -257,6 +282,12 @@ function visualControl(context: Parameters<SocialAssetSupplyProviderAdapter['exe
   // their visual scenes and must not be falsely submitted as HeyGen controls.
   const talkingReplication = context.shot.digitalHumanPlan?.workflow === 'viral_replication'
     && context.shot.digitalHumanPlan.method === 'talking';
+  const approvedOriginal=context.shot.digitalHumanPlan?.workflow==='material_processing'&&context.shot.digitalHumanPlan.method==='talking'
+    &&hasApprovedOriginalPresenterScene((context.shot as typeof context.shot&{approvedFirstFrame?:ApprovedPresenterFirstFrame}).approvedFirstFrame,context.tenantId,context.taskId);
+  const speechOnlyAction=!contract.action.path||/^(?:口播|口播说明|自然口播|说话|静止|无动作|talking|speaking|speak|static|none)$/i.test(contract.action.path.trim());
+  const dynamicAction=!speechOnlyAction||contract.interaction.kind==='person_factory_interaction'
+    ||/走|跑|转身|伸手|触碰|操作|移动|拿起|放下|walk|run|turn|reach|touch|operate|move|pick|put down/i.test([contract.action.startState,contract.action.path,contract.action.peakState,contract.action.endState].join(' '));
+  const staticCamera=!contract.camera.movement||/^(?:static|fixed|locked|none|固定|静止|固定机位|无运镜)$/i.test(contract.camera.movement.trim());
   const interaction: DigitalPresenterVisualControl['interaction'] = talkingReplication ? 'talking' : inferredInteraction;
   const productGroups = context.shot.productSceneReplication?.productIdentity.groups ?? [];
   const productLock = context.shot.enterpriseProductAssetLock;
@@ -266,12 +297,14 @@ function visualControl(context: Parameters<SocialAssetSupplyProviderAdapter['exe
     && (context.shot.digitalHumanPlan as typeof context.shot.digitalHumanPlan & { silentMotion?: boolean }).silentMotion === true;
   const controls = new Set<DigitalPresenterControlCapability>(silentMotion ? ['timing_control'] : ['scripted_speech', 'timing_control']);
   if (context.shot.digitalHumanPlan?.method !== 'talking') controls.add('reference_motion');
-  if (!talkingReplication && interaction !== 'talking') controls.add('guided_action');
+  if (!talkingReplication && interaction !== 'talking'&&!(approvedOriginal&&interaction==='person_in_environment'&&!dynamicAction)) controls.add('guided_action');
   if (!talkingReplication && ['person_holds_product', 'person_uses_product', 'product_applied_to_face'].includes(interaction)) controls.add('product_interaction');
-  if (!talkingReplication && (interaction === 'person_in_environment' || contract.environment.kind !== 'unknown'
+  if (!talkingReplication && !approvedOriginal && (interaction === 'person_in_environment' || contract.environment.kind !== 'unknown'
     || environment !== '与导演镜头要求一致的稳定环境')) controls.add('environment_control');
-  if (!talkingReplication && (contract.camera.shotSize || contract.camera.angle || contract.camera.movement || contract.camera.composition
+  if (!talkingReplication && !(approvedOriginal&&staticCamera&&!reference?.cameraMovement) && (contract.camera.shotSize || contract.camera.angle || contract.camera.movement || contract.camera.composition
     || (reference?.cameraMovement && reference.cameraMovement !== '通用运镜'))) controls.add('camera_control');
+  if(approvedOriginal&&dynamicAction)controls.add('guided_action');
+  if(approvedOriginal&&reference?.cameraMovement)controls.add('reference_motion');
   return {
     precision: contract.precision === 'hook_high' || startSeconds < 3 ? 'hook_high' : 'standard',
     interaction,
@@ -409,6 +442,9 @@ export function createSocialDigitalPresenterAdapter(
       if (!presenter || presenter.authorized !== true || !presenter.authorizationRef || !presenter.consentRef
         ||presenter.presenterAssetId!==presenterAssetId||!Number.isSafeInteger(presenter.assetVersion)||presenter.assetVersion<1
         ||(!assetOnlyMotion&&(!presenter.providerPresenterId || !presenter.providerVoiceId))) return null;
+      const originalApproval=(context.shot as typeof context.shot&{approvedFirstFrame?:ApprovedPresenterFirstFrame}).approvedFirstFrame?.originalSceneApproval;
+      if(originalApproval&&(originalApproval.presenter.assetId!==presenter.presenterAssetId||originalApproval.presenter.assetVersion!==presenter.assetVersion
+        ||originalApproval.presenter.providerPresenterId!==presenter.providerPresenterId||originalApproval.presenter.providerVoiceId!==presenter.providerVoiceId))throw Error('original_presenter_approved_identity_changed');
       if (plan.method === 'reenact') {
         const manifest = approvedFirstFrameSourceManifest(context.shot as typeof context.shot & { approvedFirstFrame?: ApprovedPresenterFirstFrame });
         if (!manifest) throw new Error('dynamic_presenter_composite_source_manifest_required');
@@ -450,10 +486,11 @@ export function createSocialDigitalPresenterAdapter(
       if(!approvedFirstFrame||!approvedFirstFrame.approvalRecordId||!/^[a-f0-9]{64}$/.test(approvedFirstFrame.approvalRecordHash)
         ||!/^[a-f0-9]{64}$/.test(approvedFirstFrame.presenterGroupContractHash)||!/^[a-f0-9]{64}$/.test(approvedFirstFrame.sha256)
         ||!approvedFirstFrame.url||!approvedFirstFrame.localPath)throw new Error('digital_presenter_approved_first_frame_required');
+      const aspectRatio=approvedFirstFrame.targetAspectRatio??'9:16';
       let idempotencyKey = stableKey({ tenantId: context.tenantId, taskId: context.taskId,
-        operationId: context.operationId,accountConstraintHash:context.accountPlaybookConstraints?.constraintHash, shotId: context.shot.shotId, presenter, approvedFirstFrame,script: requestScript, visualControl: control });
+        operationId: context.operationId,accountConstraintHash:context.accountPlaybookConstraints?.constraintHash, shotId: context.shot.shotId, presenter, approvedFirstFrame,aspectRatio,script: requestScript, visualControl: control });
       const request: DigitalPresenterExecutionRequest = { tenantId: context.tenantId, taskId: context.taskId,
-        shotId: context.shot.shotId, idempotencyKey, presenter, approvedFirstFrame,script: requestScript, aspectRatio: '9:16',
+        shotId: context.shot.shotId, idempotencyKey, presenter, approvedFirstFrame,script: requestScript, aspectRatio,
         outputDirectory: context.outputDirectory, maximumCostCny, visualControl: control,
         ...(context.accountPlaybookConstraints ? { accountPlaybookConstraints: structuredClone(context.accountPlaybookConstraints) } : {}) };
       let reservationRef: string | undefined;
@@ -474,7 +511,7 @@ export function createSocialDigitalPresenterAdapter(
             request.speechAudio = audio;
             idempotencyKey = stableKey({ tenantId: request.tenantId, taskId: request.taskId, operationId: context.operationId,
               accountConstraintHash: context.accountPlaybookConstraints?.constraintHash, shotId: request.shotId, presenter,approvedFirstFrame,
-              script, visualControl: control, speechAudio: audio });
+              aspectRatio,script, visualControl: control, speechAudio: audio });
             request.idempotencyKey = idempotencyKey;
           }
         const budget = await ports.authorizeBudget({ tenantId: context.tenantId, taskId: context.taskId,

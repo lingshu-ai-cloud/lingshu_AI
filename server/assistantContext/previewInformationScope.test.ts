@@ -22,6 +22,9 @@ test('preview information scope is opt-in, bounded, read-only and closes after t
       assert.equal(customerPreviewAiRequestAllowed('https://comtradeapi.un.org/public/v1/preview/C/A/HS?maxRecords=500'), true);
       assert.equal(customerPreviewAiRequestAllowed('https://comtradeapi.un.org/public/v1/preview/C/A/HS?maxRecords=10000'), false);
       assert.equal(customerPreviewAiRequestAllowed(process.env.QWEN_SEARCH_ENDPOINT!, { method: 'POST' }), true);
+      delete process.env.QWEN_SEARCH_ENDPOINT;
+      assert.equal(customerPreviewAiRequestAllowed('https://maas.qianwenaiapi.com/api/v1/services/aigc/text-generation/generation', { method: 'POST' }), true);
+      assert.equal(customerPreviewAiRequestAllowed('https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation', { method: 'POST' }), false);
       for (const url of ['https://graph.facebook.com/messages', 'https://evil.example', 'https://open.er-api.com.evil.example/v6/latest/USD', 'http://open.er-api.com/v6/latest/USD']) assert.equal(customerPreviewAiRequestAllowed(url), false);
       await auditedCustomerPreviewAiFetch(async () => {
         assert.equal(customerPreviewAiTransportAllowed('open.er-api.com', 443), true);

@@ -11,6 +11,12 @@ export function applyGuidedCreationStructure(source: ResolvedSocialTaskReference
   if (!guided || !choice || plan.stage !== 'guided_review' || guided.blockers.length || !guided.nodes.length || guided.narration.sourceReferenceId !== source.referenceVideoAnalysis.referenceRecordId) throw new SocialContentWorkflowError('guided_creation_plan_unavailable', 409);
   const output = structuredClone(source);
   const original = output.replicationScript;
+  if (choice.scene) {
+    if (!choice.scene.narrationConfirmed || !guided.narration.lines?.length) throw new SocialContentWorkflowError('creation_narration_confirmation_required', 409);
+    const edits = guided.narration.lines;
+    if (edits.length !== original.narrationLines?.length || original.narrationLines.some(line => !edits.some(edit => edit.lineId === line.lineId && edit.sourceText === line.referenceText))) throw new SocialContentWorkflowError('creation_narration_stale', 409);
+    original.narrationLines = original.narrationLines.map(line => ({ ...line, draftText: edits.find(edit => edit.lineId === line.lineId)!.text }));
+  }
   const duration = source.referenceVideoAnalysis.durationSeconds;
   if (!duration || duration <= 0 || !original.narrationLines?.length) throw new SocialContentWorkflowError('guided_creation_source_timeline_missing', 409);
   const total = guided.nodes.reduce((sum, node) => sum + node.duration, 0);
@@ -23,8 +29,9 @@ export function applyGuidedCreationStructure(source: ResolvedSocialTaskReference
     cursor = endSeconds;
     const shotId = `guided-${node.id}`;
     const picked = guided.candidates.find(shot => shot.id === node.selectedCandidateId);
-    const sourceType = node.type === 'talking_head' && choice.presenterMode === 'none' ? picked?.type || 'product' : node.type;
-    const digital = sourceType === 'talking_head' && choice.presenterMode === 'digital';
+    const ownedHook = index === 0 && choice.scene?.hook?.usage === 'editable';
+    const sourceType = node.type === 'talking_head' && choice.presenterMode === 'none' && !ownedHook ? picked?.type || 'product' : node.type;
+    const digital = sourceType === 'talking_head' && choice.presenterMode === 'digital' && !ownedHook;
     const productId = plan.selection.productIds[index % plan.selection.productIds.length];
     const productRef = plan.products.find(product => product.id === productId)?.name || null;
     const visualContract = normalizeSceneVisualContract({ subjects: sourceType === 'factory' ? ['factory'] : sourceType === 'product' ? ['product'] : sourceType === 'general' ? ['environment'] : ['person', ...(sourceType === 'consumer_demo' ? ['product'] : [])],
@@ -39,7 +46,7 @@ export function applyGuidedCreationStructure(source: ResolvedSocialTaskReference
     const lines = original.narrationLines!.filter(line => line.sourceStartSeconds < endSeconds && line.sourceEndSeconds > startSeconds);
     const purpose = index === 0 ? 'hook' as const : index === guided.nodes.length - 1 ? 'call_to_action' as const : sourceShot?.purpose || (sourceType === 'factory' ? 'proof' as const : 'value' as const);
     return { ...template, purpose, shotId, referenceShotId: sourceShot?.shotId || null, startSeconds, endSeconds,
-      visualInstruction: `${MATERIAL_TYPE_LABELS[sourceType]}：${node.description}。${node.type === 'talking_head' && choice.presenterMode === 'none' ? '用产品或工厂实拍承接画外音，不生成出镜人物。' : ''}`,
+      visualInstruction: `${MATERIAL_TYPE_LABELS[sourceType]}：${node.description}。${node.type === 'talking_head' && choice.presenterMode === 'none' && !ownedHook ? '用产品或工厂实拍承接画外音，不生成出镜人物。' : ''}`,
       materialPlan: { ...template.materialPlan, shotId, sourceRefs: refs, visualContract, productSceneReplication: undefined, digitalHumanPlan: undefined,
         sourceStrategy: digital ? 'authorized_digital_presenter' as const : generate && sourceType === 'product' ? 'aigc_product_scene_replication' as const : 'customer_real_asset' as const,
         fallbackSourceStrategy: null, truthBoundary: boundary,

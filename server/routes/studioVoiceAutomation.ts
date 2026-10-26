@@ -1,3 +1,4 @@
+import { parseBoundHeyGenLogicalVoice } from '../lib/heygenVoiceCapabilities.js';
 import fs from 'fs';
 import path from 'path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -56,7 +57,7 @@ async function persistTtsResult<T extends { url?: string }>(result: T, tenantId:
  */
 /** Read-only view of the exact native selection policy used below. Physical
  * voices and prepared paid text are resolved before supplier pricing. */
-function resolveStudioVoiceExecutionPlan(input:{tenantId:string;text:string;voice?:string;language?:string;style?:TtsStyleOptions;sentenceLines?:string[];measuredSentenceTiming?:boolean;env?:NodeJS.ProcessEnv;nativeProvider?:'qwen'|'minimax'|'heygen'}) {
+function resolveStudioVoiceExecutionPlan(input:{tenantId:string;text:string;voice?:string;language?:string;style?:TtsStyleOptions;sentenceLines?:string[];measuredSentenceTiming?:boolean;env?:NodeJS.ProcessEnv;nativeProvider?:'qwen'|'minimax'|'heygen';heygenSpeechMode?:'native_video'}) {
  return runTenant(input.tenantId,()=>{
   const env=input.env||process.env;
   const spoken=String(input.text||'').trim(),voice=input.voice||'v1',language=input.language||'en';
@@ -72,11 +73,11 @@ function resolveStudioVoiceExecutionPlan(input:{tenantId:string;text:string;voic
   const account=(provider:'minimax'|'qwen')=>createHash('sha256').update(provider==='minimax'?env.MINIMAX_API_KEY||env.MINIMAX_API_TOKEN||'':env.DASHSCOPE_API_KEY||'').digest('hex');
   const native=(provider:'minimax'|'qwen')=>({provider,model:provider==='minimax'?env.MINIMAX_TTS_MODEL||'speech-2.8-hd':env.QWEN_TTS_MODEL||'qwen3-tts-flash',accountKeyHash:account(provider),endpoint:provider==='minimax'?minimaxEndpoint('/v1/t2a_v2',env):env.DASHSCOPE_TTS_ENDPOINT||'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',voiceId:provider==='minimax'?minimaxVoiceFor(voice,language,env):env[`QWEN_TTS_VOICE_${voice.toUpperCase()}`]||QWEN_TTS_VOICE_MAP[voice]||'Cherry',texts:texts.map(text=>provider==='minimax'?minimaxSpeechText(text,style).slice(0,5000):text.slice(0,5000))});
   if (voice.startsWith('heygen:')) {
-   const voiceId = voice.split(':')[1];
+   const { voiceId, engine } = parseBoundHeyGenLogicalVoice(voice);
    if (!voiceId || !env.HEYGEN_API_KEY?.trim()) throw Error('selected_presenter_heygen_voice_unavailable');
    if (spoken.length > 5000) throw Error('selected_presenter_voice_text_exceeds_provider_limit');
    if (input.nativeProvider && input.nativeProvider !== 'heygen') throw Error('selected_presenter_frozen_voice_provider_mismatch');
-   return {mode:!spoken?'none' as const:'continuous' as const,lines,texts:[speechSafeStructuredIdentifiers(spoken,language)],logicalVoice:voice,language,custom:null,primary:{provider:'heygen' as const,model:'starfish',accountKeyHash:createHash('sha256').update(env.HEYGEN_API_KEY.trim()).digest('hex'),endpoint:'https://api.heygen.com/v3/voices/speech',voiceId,texts:[speechSafeStructuredIdentifiers(spoken,language)]},fallback:null,cacheCandidates:[],asrConfigured:env.TTS_ASR_QA_ENABLED!=='false'&&dashscopeCredentialConfigured(env)};
+   return {mode:!spoken?'none' as const:'continuous' as const,lines,texts:[speechSafeStructuredIdentifiers(spoken,language)],logicalVoice:voice,language,custom:null,primary:{provider:'heygen' as const,model:input.heygenSpeechMode==='native_video'?'avatar_iv':engine,accountKeyHash:createHash('sha256').update(env.HEYGEN_API_KEY.trim()).digest('hex'),endpoint:input.heygenSpeechMode==='native_video'?'https://api.heygen.com/v3/videos':'https://api.heygen.com/v3/voices/speech',voiceId,texts:[speechSafeStructuredIdentifiers(spoken,language)]},fallback:null,cacheCandidates:[],asrConfigured:env.TTS_ASR_QA_ENABLED!=='false'&&dashscopeCredentialConfigured(env)};
   }
   if(voice.startsWith('custom:')) {
    const sample=voiceSamplePathFromId(voice);const key=sample?minimaxVoiceCacheKey(voice,sample):null;

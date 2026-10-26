@@ -24,6 +24,8 @@ export interface LLMCallOptions {
   /** Server-selected public domains. Never taken directly from client options. */
   searchDomains?: string[];
   searchFreshnessDays?: number;
+  /** News scenes read original pages before a separate closed-book synthesis. */
+  searchEvidenceFirst?: boolean;
   /** Explicitly disable web tools for internal questions and supplied data evidence. */
   webSearch?: boolean;
   /** Cancels the upstream provider request when the HTTP caller disconnects. */

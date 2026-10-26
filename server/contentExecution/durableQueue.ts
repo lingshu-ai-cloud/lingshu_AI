@@ -12,6 +12,7 @@ import {
   CONTENT_EXECUTION_JOB_COLLECTION,
   runWithContentExecutionContext,
 } from './context.js';
+import { atomicContentExecutionJobUpdate } from './durableQueueAtomic.js';
 import { classifyContentExecutionFailure, type ContentExecutionRetryDecision } from './retryPolicy.js';
 import {
   ACTIVE_STATUSES,
@@ -145,15 +146,24 @@ async function recoverAbandonedJobs(dataStore: DataStore, jobs: ContentExecution
     }
     if (Date.parse(job.leaseExpiresAt) > now.getTime() && localOwnerAlive) continue;
     const reconcile = hasProviderWork(job);
-    await dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+    const latestRow = await dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, job.id);
+    const latest = latestRow ? jobFromRow(latestRow) : null;
+    if (!latest || latest.status !== 'running' || latest.workerId !== job.workerId
+      || latest.attempt !== job.attempt || latest.leaseExpiresAt !== job.leaseExpiresAt) continue;
+    const recovered = await atomicContentExecutionJobUpdate(dataStore, job.id, {
+      status: 'running',
+      attempt: job.attempt,
+      worker_id: job.workerId ?? '',
+      lease_expires_at: latestRow!.lease_expires_at,
+    }, {
       status: reconcile ? 'reconciling' : 'retry_wait',
       retry_class: reconcile ? 'provider_reconciliation' : 'system_fault',
       next_attempt_at: now.toISOString(),
       worker_id: '', lease_expires_at: '',
       last_error: reconcile ? 'worker_interrupted_after_provider_handoff' : 'worker_interrupted_before_provider_handoff',
       updated_at: now.toISOString(),
-    });
-    if (!localOwnerAlive) {
+    }, 'content_execution_recovery_atomic_fence_required');
+    if (recovered && !localOwnerAlive) {
       const leases = await dataStore.list<Record<string, unknown>>('durable_operation_leases', {
         where: { tenant_id: job.tenantId, lease_scope: 'content_execution_job', subject_id: job.id }, perPage: 2,
       });
@@ -224,15 +234,20 @@ async function claimNextJob(input: {
       });
       if (!lease) continue;
       const leaseExpiresAt = new Date(input.now.getTime() + defaults.leaseDurationMs).toISOString();
-      const claimed = await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, candidate.id, {
+      const claimed = await atomicContentExecutionJobUpdate(input.dataStore, candidate.id, {
+        status: candidate.status,
+        attempt: candidate.attempt,
+        worker_id: candidate.workerId ?? '',
+        lease_expires_at: candidate.leaseExpiresAt ?? '',
+      }, {
         status: 'running', attempt: candidate.attempt + 1,
         reconciliation_attempt: candidate.status === 'reconciling' ? candidate.reconciliationAttempt + 1 : candidate.reconciliationAttempt,
         worker_id: input.workerId, lease_expires_at: leaseExpiresAt,
         last_started_at: input.now.toISOString(), updated_at: input.now.toISOString(),
-      });
+      }, 'content_execution_claim_atomic_fence_required');
       if (!claimed) {
         await releaseDurableOperationLease({ dataStore: input.dataStore, lease }).catch(() => undefined);
-        throw new Error('content_execution_job_claim_failed');
+        continue;
       }
       const row = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, candidate.id);
       if (!row) throw new Error('content_execution_job_claim_readback_failed');
@@ -246,6 +261,19 @@ async function claimNextJob(input: {
 
 function sameClaim(current: ContentExecutionJob, claimed: ContentExecutionJob): boolean {
   return current.workerId === claimed.workerId && current.attempt === claimed.attempt;
+}
+
+async function settleClaimedJob(
+  dataStore: DataStore,
+  job: ContentExecutionJob,
+  expectedStatus: ContentExecutionJobStatus,
+  patch: Record<string, unknown>,
+): Promise<boolean> {
+  return atomicContentExecutionJobUpdate(dataStore, job.id, {
+    worker_id: job.workerId ?? '',
+    attempt: job.attempt,
+    status: expectedStatus,
+  }, patch, 'content_execution_settlement_atomic_fence_required');
 }
 
 async function withSettlementControl<T>(dataStore: DataStore, job: ContentExecutionJob, action: () => Promise<T>): Promise<T> {
@@ -264,15 +292,15 @@ async function finishSucceededUnderControl(dataStore: DataStore, job: ContentExe
   const current = currentRow ? jobFromRow(currentRow) : job;
   if (!sameClaim(current, job)) return false;
   if (current.status === 'paused' || current.status === 'cancelled' || await contentOrderCancelled(dataStore, current)) {
-    if (!await dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+    if (!await settleClaimedJob(dataStore, job, current.status, {
       worker_id: '', lease_expires_at: '', updated_at: now.toISOString(),
     })) throw new Error('content_execution_job_control_settlement_failed');
     return false;
   }
-  if (!await dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+  if (!await settleClaimedJob(dataStore, job, current.status, {
     status: 'succeeded', next_attempt_at: '', worker_id: '', lease_expires_at: '', retry_class: '', last_error: '',
     completed_at: now.toISOString(), updated_at: now.toISOString(),
-  })) throw new Error('content_execution_job_completion_failed');
+  })) return false;
   return true;
 }
 
@@ -301,7 +329,7 @@ async function finishFailedUnderControl(input: {
     };
   }
   if (current.status === 'paused' || current.status === 'cancelled' || await contentOrderCancelled(input.dataStore, current)) {
-    await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, {
+    await settleClaimedJob(input.dataStore, input.job, current.status, {
       worker_id: '', lease_expires_at: '', updated_at: input.now.toISOString(),
     });
     return { settled: false, decision: {
@@ -319,11 +347,11 @@ async function finishFailedUnderControl(input: {
     ? 'retry_wait' : decision.disposition === 'reconcile' ? 'reconciling' : 'blocked';
   const nextAttemptAt = decision.retryDelayMs === null ? '' : new Date(input.now.getTime() + decision.retryDelayMs).toISOString();
   const errorText = String(input.error instanceof Error ? input.error.message : input.error || 'content_execution_failed').slice(0, 2000);
-  if (!await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, {
+  if (!await settleClaimedJob(input.dataStore, input.job, current.status, {
     status, retry_class: decision.failureClass, next_attempt_at: nextAttemptAt,
     reconciliation_attempt: providerPending ? reconcileAttempt : current.reconciliationAttempt,
     worker_id: '', lease_expires_at: '', last_error: errorText, updated_at: input.now.toISOString(),
-  })) throw new Error('content_execution_job_failure_persist_failed');
+  })) return { decision, settled: false };
   return { decision, settled: true };
 }
 
@@ -412,15 +440,21 @@ export class DurableContentExecutionWorker {
     const defaults = contentExecutionDefaults(this.env);
     let lease = initialLease;
     let leaseOwned = true;
+    let jobLeaseExpiresAt = job.leaseExpiresAt ?? '';
     const renewEveryMs = Math.max(30_000, Math.floor(defaults.leaseDurationMs / 3));
     const renewal = setInterval(() => {
       void renewDurableOperationLease({
         dataStore: this.options.dataStore, lease, leaseDurationMs: defaults.leaseDurationMs,
       }).then(async renewed => {
         lease = renewed;
-        if (!await this.options.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+        const updated = await atomicContentExecutionJobUpdate(this.options.dataStore, job.id, {
+          status: 'running', worker_id: job.workerId ?? '', attempt: job.attempt,
+          lease_expires_at: jobLeaseExpiresAt,
+        }, {
           lease_expires_at: renewed.expiresAt, updated_at: new Date().toISOString(),
-        })) throw new Error('content_execution_job_lease_update_failed');
+        }, 'content_execution_renewal_atomic_fence_required');
+        if (!updated) throw new Error('content_execution_job_lease_update_failed');
+        jobLeaseExpiresAt = renewed.expiresAt;
       }).catch(error => {
         leaseOwned = false;
         console.error('[content-execution] lease renewal failed; fenced worker will stop at the next boundary', {
@@ -620,13 +654,14 @@ async function applyContentExecutionControl(input: {
   } else {
     if (['queued', 'running', 'retry_wait', 'reconciling'].includes(current.status)) return current;
     if (!['blocked', 'dead_letter'].includes(current.status)) throw new Error('content_execution_job_not_retryable');
+    if (current.workerId !== null || current.leaseExpiresAt !== null) throw new Error('content_execution_original_worker_not_settled');
     if (!hasProviderWork(current) && frozenProductFootageRevisionRequired(current))
       throw new Error('content_execution_frozen_footage_revision_required');
     const reconcile = hasProviderWork(current);
     patch = {
       status: reconcile ? 'reconciling' : 'queued',
       retry_class: reconcile ? 'provider_reconciliation' : '',
-      next_attempt_at: now, worker_id: '', lease_expires_at: '', last_error: '', completed_at: '',
+      next_attempt_at: now, worker_id: '', lease_expires_at: '', ...(reconcile ? {} : {last_error:''}), completed_at: '',
       ...(reconcile ? {} : { attempt: 0, reconciliation_attempt: 0 }),
       checkpoints: {
         ...current.checkpoints,

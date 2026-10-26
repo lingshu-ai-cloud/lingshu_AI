@@ -12,6 +12,7 @@ import type { SocialAssetSupplyPlan } from '../../shared/contracts/socialContent
 import type { VoiceQualityReport } from '../lib/voiceQuality.js';
 import type { SocialProductionAsset } from './socialContentProductionPlan.js';
 import { socialRequestHash } from './socialContentValidation.js';
+import { isTenantPrivateObjectKey } from '../storage/materialAssets.js';
 
 export const SOCIAL_MATERIAL_ANALYSIS_CHECKPOINT = 'social.material_analysis';
 export const SOCIAL_MATERIAL_ANALYSIS_CHECKPOINT_VERSION = '1';
@@ -83,18 +84,38 @@ export type DurableSelectedProductionAsset = {
 export function restoreSocialAssetSupplyCheckpointAssets(input: {
   availableAssets: SocialProductionAsset[];
   selectedAssets: DurableSelectedProductionAsset[];
+  tenantId?: string;
 }): SocialProductionAsset[] | null {
   const availableById = new Map(input.availableAssets.map(asset => [asset.id, asset]));
   const restored = input.selectedAssets.map(selected => {
     const asset = availableById.get(selected.assetId);
     if (asset && asset.sourceId === selected.sourceId
       && (!selected.contentHash || selected.contentHash === (asset.contentHash ?? null))) return asset;
+    // A reviewed source window is a deterministic view over an owned source,
+    // not a newly generated file. Its scene-owned ID differs from the library
+    // asset, while the source identity and bytes remain the same. Rebind the
+    // frozen window contract to the current transport location after restart.
+    const frozenView = selected.asset;
+    const windowSource = frozenView?.selectedSourceWindow ? input.availableAssets.find(candidate =>
+      frozenView.id.startsWith(`${candidate.id}:window:`)
+      && candidate.sourceId === selected.sourceId
+      && (!selected.contentHash || candidate.contentHash === selected.contentHash)) : null;
+    if (frozenView && windowSource) {
+      const { localPath: _oldLocalPath, objectKey: _oldObjectKey, url: _oldUrl, ...view } = frozenView;
+      return {
+        ...structuredClone(view),
+        url: windowSource.url,
+        ...(windowSource.localPath ? { localPath: windowSource.localPath } : {}),
+        ...(windowSource.objectKey ? { objectKey: windowSource.objectKey } : {}),
+      };
+    }
     const generated = selected.asset;
     return generated
       && generated.id === selected.assetId
       && generated.sourceId === selected.sourceId
       && Boolean(generated.providerTaskId || generated.idempotencyKey)
-      && Boolean(generated.localPath && existsSync(generated.localPath))
+      && Boolean(generated.localPath && existsSync(generated.localPath)
+        || input.tenantId && generated.objectKey && isTenantPrivateObjectKey(generated.objectKey,input.tenantId))
       && (!selected.contentHash || generated.contentHash === selected.contentHash)
       ? structuredClone(generated)
       : null;

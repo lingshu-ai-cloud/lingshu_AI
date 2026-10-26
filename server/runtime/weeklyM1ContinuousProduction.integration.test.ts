@@ -137,6 +137,9 @@ test('M1 continuous new week capacity activation production audits approval and 
  let starting=await phaseAdapter.execute(originalScript.task);if(starting.status==='blocked'){const {readSocialTaskDetail}=await import('../starter198/socialContentRecords.js');const diagnostic=await readSocialTaskDetail({repository,tenantId:'t',taskId:scope.contentTaskId});console.error('M1_DIRECTOR_REVIEW',JSON.stringify(diagnostic?.agentWorkflow?.executionPlanReview));console.error('M1_EXECUTION_PLAN',JSON.stringify(diagnostic?.agentWorkflow?.executionPlan));}
  assert.equal(starting.status,'pending',JSON.stringify(starting));
  const current=await repository.get('starter_social_content_tasks','t',created.id);assert.ok(current?.run_id);
+ const {readWeeklyReplicationAuthority}=await import('../starter198/socialWeeklyReplicationAuthority.js');
+ assert.ok(await readWeeklyReplicationAuthority(repository,current),'queue receipt must preserve the scheduler-frozen task version and replication authority');
+ assert.equal((current.brief as any)._executionQueueReceipt?.queueItemId,current.orchestrator_item_id);
  assert.equal(schedulerAdmissions,1);const actualJob=await readContentExecutionJob(f.store,'t',scope.contentTaskId,String(current.run_id));assert.ok(actualJob);assert.equal(f.tables.content_execution_jobs?.filter(row=>row.task_id===scope.contentTaskId).length,1);
  let suppliers=0,successes=0,failures=0;
 

@@ -21,3 +21,9 @@ test('expired, wrong currency, unverified price and malformed units are not trus
     await assert.rejects(f.reader.read(intent), /invalid|meter/);
 } const f = fixture(); await assert.rejects(f.reader.read({ ...intent, maximumUnits: { inputTokens: 500 } }), /usage_units_mismatch/); });
 test('re-hashed forged evidence with changed source hash still rejects byte mismatch', async () => { const f = fixture(); f.p.evidenceSha256 = 'f'.repeat(64); f.e.sourceSha256 = 'f'.repeat(64); f.resign(); await assert.rejects(f.reader.read(intent), /source_bytes_changed/); });
+
+test('intact expired quote returns no authority so official refresh can run; expired corruption still rejects',async()=>{
+ const f=fixture();f.p.tariff.validUntil='2026-02-01';f.e.tariff.validUntil='2026-02-01';f.resign();
+ assert.equal(await f.reader.read(intent),null);
+ f.evidence.source_body='changed expired source';await assert.rejects(f.reader.read(intent),/source_bytes_changed/);
+});

@@ -1,3 +1,4 @@
+import { socialRequestHash } from './socialContentValidation.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -15,6 +16,7 @@ import {
   evaluateSocialProductionGates,
   persistSocialProductionHandoff,
   persistSocialProductionReceipt,
+  parseSocialProductionHandoffRecord,
   readSocialProductionState,
 } from './socialContentProductionHandoff.js';
 
@@ -114,6 +116,7 @@ function fixture() {
 
 test('freezes collected-video lineage, DirectorBrief and per-shot Content Agent execution', () => {
   const handoff = fixture();
+  assert.equal(handoff.recordHash, 'e84ecdf2acea90111a8677b7eb85950c30d049b075b284fbe34c3de37d0cae98');
   assert.equal(handoff.shotTraces.length, 2);
   assert.equal(handoff.shotTraces[0]?.sourceAnalysisRef?.referenceShotId, 'reference-hook');
   assert.deepEqual(handoff.compositionBoundary.contentAgentMayNot, ['rewrite_brief', 'change_truth_boundary', 'change_source_lineage', 'self_approve_g5', 'self_approve_g6']);
@@ -122,6 +125,47 @@ test('freezes collected-video lineage, DirectorBrief and per-shot Content Agent 
     variantDifference: { variantId: 'bad', baselineVariantId: null, changedSceneIds: [], dimensions: [], hypothesis: '', unchangedConstraints: [], surfaceHashes } }), /variant_difference_required/);
   assert.throws(() => buildSocialProductionHandoff({ taskId: 'task', version: '4', sourceAnalysis: { ...analysis, version: undefined }, directorBrief: brief, executionPlan, executionPlanReview,
     variantDifference: { variantId: 'variant-b', baselineVariantId: 'variant-a', changedSceneIds: ['scene-hook'], dimensions: ['hook'], hypothesis: '新开场提高停留', unchangedConstraints: ['产品事实', 'CTA'], surfaceHashes } }), /source_analysis_version_required/);
+});
+
+test('freezes original scenes without manufacturing reference analysis and rejects source-contract drift', async () => {
+  const originalBrief: SocialDirectorBrief = {
+    ...structuredClone(brief),
+    referenceAnalysis: null,
+    replicationJobRef: null,
+    referenceMode: null,
+    referenceEvidence: [],
+    inspirationHandoffIds: [],
+    scenes: brief.scenes.map(item => ({ ...structuredClone(item), referenceShotId: null })),
+  };
+  const original = buildSocialProductionHandoff({
+    taskId: 'task-original', version: '3', sourceKind: 'original_scene', sourceAnalysis: null,
+    directorBrief: originalBrief, executionPlan, executionPlanReview,
+    variantDifference: fixture().variantDifference, now: new Date('2026-09-26T01:00:00.000Z'),
+  });
+  assert.equal(original.schemaVersion, 'social-content-production-handoff.v4');
+  assert.equal(original.sourceAnalysis, null);
+  assert.ok(original.shotTraces.every(item => item.sourceAnalysisRef === null));
+  assert.ok(!JSON.stringify(original).includes(analysis.analysisId));
+  if (original.schemaVersion !== 'social-content-production-handoff.v4') assert.fail('expected original handoff');
+  assert.deepEqual(original.sourceContract.scenes.map(item => item.sceneId), ['scene-hook', 'scene-cta']);
+  const repository = new MemoryRepository() as unknown as Starter198Repository;
+  const saved = await persistSocialProductionHandoff(repository, 'tenant-v3', original);
+  assert.equal(saved.source_analysis_id, null);
+  assert.equal(saved.source_analysis_version, null);
+  assert.equal(parseSocialProductionHandoffRecord(saved).recordHash, original.recordHash);
+
+  const forged = structuredClone(original);
+  if (forged.schemaVersion !== 'social-content-production-handoff.v4') assert.fail('expected original handoff');
+  forged.sourceContract.scenes[0]!.sceneContractHash = 'f'.repeat(64);
+  const { recordHash: _oldHash, ...forgedPayload } = forged;
+  forged.recordHash = socialRequestHash(forgedPayload);
+  assert.throws(() => parseSocialProductionHandoffRecord({ ...saved, payload: forged, record_hash: forged.recordHash } as StarterRecord), /storage_integrity_violation/);
+
+  assert.throws(() => buildSocialProductionHandoff({
+    taskId: 'task-original', version: '3', sourceKind: 'original_scene', sourceAnalysis: null,
+    directorBrief: { ...originalBrief, referenceMode: 'single_source_fidelity' }, executionPlan, executionPlanReview,
+    variantDifference: fixture().variantDifference,
+  }), /original_source_lineage_invalid/);
 });
 
 test('records the first render as a baseline and reserves variant differences for derived renders', () => {
@@ -207,4 +251,22 @@ test('migration is additive, tenant-scoped and indexed for immutable identity', 
   assert.match(source, /UNIQUE INDEX idx_social_production_receipt_attempt/);
   assert.match(router, /\/tasks\/:taskId\/production-state/);
   assert.match(router, /readSocialProductionState/);
+});
+
+test('standalone content handoff binds the existing business context without fabricating a weekly package or publishing account',()=>{
+ const context={contextId:`ad_hoc_context_${socialRequestHash({taskId:'task-v3'}).slice(0,20)}`,version:'3',objective:'Create one product introduction',productRef:'fixture-product',audience:'Buyers',platforms:['tiktok'],markets:['US'],languages:['zh'],budgetCny:100,dueAt:null,factSourceRefs:['knowledge:1'],createdBy:'business_agent' as const};
+ const standalone={...brief,source:{weeklyPackageId:null,adHocBusinessContextId:context.contextId},accountRefs:[]};
+ const base={taskId:'task-v3',version:'3',sourceAnalysis:analysis,directorBrief:standalone,executionPlan,executionPlanReview,variantDifference:fixture().variantDifference};
+ const handoff=buildSocialProductionHandoff({...base,adHocBusinessContext:context});
+ assert.equal(handoff.directorBrief.source.weeklyPackageId,null);assert.deepEqual(handoff.directorBrief.accountRefs,[]);
+ assert.equal(handoff.businessContext?.recordHash,socialRequestHash(context));assert.deepEqual(handoff.businessContext?.snapshot,context);
+ assert.throws(()=>buildSocialProductionHandoff(base),/ad_hoc_context_invalid/);
+ assert.throws(()=>buildSocialProductionHandoff({...base,adHocBusinessContext:{...context,contextId:'another-context'}}),/ad_hoc_context_invalid/);
+ assert.throws(()=>buildSocialProductionHandoff({...base,taskId:'another-task',adHocBusinessContext:context}),/ad_hoc_context_invalid/);
+ assert.throws(()=>buildSocialProductionHandoff({...base,adHocBusinessContext:{...context,version:'2'}}),/ad_hoc_context_invalid/);
+ assert.throws(()=>buildSocialProductionHandoff({...base,adHocBusinessContext:{...context,factSourceRefs:[]}}),/ad_hoc_context_invalid/);
+ assert.throws(()=>buildSocialProductionHandoff({...base,directorBrief:{...standalone,callToAction:''},adHocBusinessContext:context}),/g3_incomplete/);
+ assert.throws(()=>buildSocialProductionHandoff({...base,directorBrief:{...brief,accountRefs:[]}}),/g3_incomplete/);
+ const gates=evaluateSocialProductionGates(handoff,[]);
+ assert.notEqual(gates.G6,'passed','creating an ad hoc handoff must never authorize publication');
 });

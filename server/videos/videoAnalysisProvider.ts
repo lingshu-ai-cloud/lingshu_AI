@@ -11,8 +11,7 @@ import { createHash } from 'node:crypto';
 import { presenterDenseSamplingRanges, requiresPresenterDenseSampling, type ReferenceFrameSamplingRange } from '../lib/referenceFrameSamplingPolicy.js';
 import { detectVideoSceneCuts, extractOpeningHookFrames, extractQwenAnalysisFrames } from '../routes/videoFrameExtraction.js';
 import { analyzeVideo } from '../agents/gemini.js';
-import { analyzeVideoFramesWithQwen, repairVideoShotClassificationsWithQwen } from '../agents/qwen.js';
-import { inspectOpeningHookMotionWithGemini } from '../agents/geminiHookMotion.js';
+import { analyzeVideoFramesWithQwen, repairVideoShotClassificationsWithQwen, inspectOpeningHookMotionWithQwen } from '../agents/qwen.js';
 import type { Platform, VideoAiAnalysis } from '../types/index.js';
 import { analysisTimelineQualityError, exactVideoClassificationQualityError, parseAnalysisTimeRange } from '../lib/videoAnalysisCodec.js';
 import { applyOpeningHookMotionEvidence, firstSubstantiveOpeningShot } from '../routes/hookMotionEvidence.js';
@@ -162,6 +161,7 @@ export function createVideoAnalysisProvider(deps: Pick<VideoApplicationPorts, 'r
           tags: opts.tags,
           transcript,
           analysisMode: 'strategy',
+          exactModel: true,
         });
         if (requiresPresenterDenseSampling(preliminary)) {
           const denseRanges = presenterDenseSamplingRanges(preliminary, Number(opts.duration || 0));
@@ -177,7 +177,7 @@ export function createVideoAnalysisProvider(deps: Pick<VideoApplicationPorts, 'r
       // low-quality timelines now fail as retryable instead of being padded with
       // invented tail segments.
       const qwenAnalysis = opts.analysisMode === 'exact' || Number(opts.duration || 0) > 15
-        ? await analyzeExactLongVideoChunks({ frames, title: opts.title, platform: opts.platform, duration: Number(opts.duration), views: opts.views, tags: opts.tags, transcript, analysisMode: opts.analysisMode || 'strategy', sceneCuts: detectedSceneCuts })
+        ? await analyzeExactLongVideoChunks({ filePath: opts.filePath, frames, title: opts.title, platform: opts.platform, duration: Number(opts.duration), views: opts.views, tags: opts.tags, transcript, analysisMode: opts.analysisMode || 'strategy', sceneCuts: detectedSceneCuts })
         : await analyzeVideoFramesWithQwen({
           frames,
           title: opts.title,
@@ -209,12 +209,10 @@ export function createVideoAnalysisProvider(deps: Pick<VideoApplicationPorts, 'r
           if (range) {
             let motionEvidence;
             try {
-              // The exact weekly revision is provider/model scoped to Qwen VL.
-              // Gemini motion inspection is optional enrichment and must not
-              // silently spend against a different provider authorization.
-              if (!permitsCrossProviderHookMotionInspection()) throw new Error('scoped_visual_revision_skips_cross_provider_hook_motion');
+              // Keep this Qwen pipeline on its configured provider/model,
+              // including frozen paid scopes; no second provider is required.
               const hookFrames = await extractOpeningHookFrames(opts.filePath);
-              motionEvidence = await inspectOpeningHookMotionWithGemini({ frames: hookFrames });
+              motionEvidence = await inspectOpeningHookMotionWithQwen({ frames: hookFrames, start: 0, end: 1 });
             } catch (error) {
               console.warn('[videos] opening hook motion inspection unavailable:', error instanceof Error ? error.message : error);
               motionEvidence = { observations: [], transitions: [], uncertainties: ['opening_hook_motion_inspection_failed'] };

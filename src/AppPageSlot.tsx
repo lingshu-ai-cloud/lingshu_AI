@@ -122,6 +122,16 @@ export default function AppPageSlot({
             <ContentCreationOverviewPage />
             </Activity>
           )}
+          {(page === 'inspirationMarket' || mountedPages.has('inspirationMarket')) && (
+            <Activity mode={page === 'inspirationMarket' ? 'visible' : 'hidden'}>
+              <TrafficPage sourcePage="inspirationMarket" onEnterConversation={enterConversation}
+                onLeaveConversation={leaveConversation} isInConversation={conversation?.agent === 'traffic'}
+                onNavigate={handleNavigate} onScriptPanelOpen={() => setScriptPanelOpen(true)}
+                onScriptPanelClose={() => setScriptPanelOpen(false)} onSessionRefresh={() => void refreshSession()}
+                initialView="materials" visibleModes={['materials']} showModeTabs={false}
+                pageTitle={PAGE_REGISTRY.inspirationMarket.canonicalTitle} storageScope={session.tenant?.id || session.user.tenantId}/>
+            </Activity>
+          )}
           {(page === 'smartAssets' || mountedPages.has('smartAssets') || smartAssetsMounted) && (
             <Activity mode={page === 'smartAssets' ? 'visible' : 'hidden'}>
             <div className="h-full min-h-0">

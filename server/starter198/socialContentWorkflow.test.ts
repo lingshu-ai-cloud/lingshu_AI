@@ -1544,13 +1544,16 @@ try {
   }), (error: unknown) => (
     error instanceof Error
     && 'code' in error
-    && error.code === 'social_content_execution_director_review_required'
+    && typeof error.code === 'string'
+    && error.code.startsWith('social_replication_system_review_blocked:')
+    && error.code.includes('product_identity_unresolved')
   ));
   assert.equal(referenceQueueCalls, 0,
     'managed admission must not enqueue a reference that lacks reviewed shot media, hook evidence and presenter authorization');
   const reviewedReference = await request(`/api/overseas/starter-198/social-content/tasks/${viralReferenceTask.body.task.taskId}`);
   assert.equal(reviewedReference.status, 200, reviewedReference.raw);
-  assert.equal(reviewedReference.body.task.replicationScript.status, 'confirmed');
+  assert.notEqual(reviewedReference.body.task.replicationScript.status, 'confirmed',
+    'system review must not confirm a script whose identity and execution evidence are incomplete');
   assert.equal(reviewedReference.body.task.agentWorkflow.executionPlanReview.approved, false,
     'confirming the visible copy does not bypass the production evidence gate');
 

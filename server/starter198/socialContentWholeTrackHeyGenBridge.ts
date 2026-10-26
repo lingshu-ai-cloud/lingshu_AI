@@ -8,7 +8,7 @@ import {HeyGenClient} from '../lib/heygen.js';
 import {withPaidOperationLock} from '../lib/paidOperationLock.js';
 import {createSocialHeyGenBridgePorts,defaultDownload,type SocialHeyGenBridgeDependencies} from './socialContentHeyGenBridge.js';
 import {readPreparedWholeVoiceScene,type PreparedWholeVoice} from './socialContentPreparedWholeVoice.js';
-import {paidProductionHash,presenterGroupContractHash,type BoundPaidRoute,type PaidStageRequirement} from './socialContentPaidOperationPlan.js';
+import {paidProductionHash,presenterGroupFromRequirement,type BoundPaidRoute,type PaidStageRequirement} from './socialContentPaidOperationPlan.js';
 import {productionBillingAccountRef} from './socialContentProductionBudgetRoutes.js';
 import type {SocialTaskBudgetScope} from '../lib/socialContentTaskBudget.js';
 import type {SocialPaidOperationIntent} from '../lib/socialContentTaskBudgetAuthority.js';
@@ -56,8 +56,9 @@ export function createWholeTrackSocialHeyGenBridge(input:{
   if(group){
    if(group.key!==`presenter-group:${request.shotId}:presenter`||group.shotId!==null||!group.presenterGroupShotIds?.length
     ||new Set(group.presenterGroupShotIds).size!==group.presenterGroupShotIds.length||!group.presenterAssetId
-    ||!group.presenterGroupContractHash||group.presenterGroupContractHash!==presenterGroupContractHash({groupId:group.presenterGroupId!,shotIds:group.presenterGroupShotIds,durationSeconds:Number(group.durationSeconds),spokenText:String(group.text),presenterAssetId:group.presenterAssetId}))
+    ||!group.presenterGroupContractHash)
     throw Error('whole_track_heygen_group_contract_changed');
+   try{presenterGroupFromRequirement(group,funding.requirements);}catch{throw Error('whole_track_heygen_group_contract_changed');}
   }
   const key=group?.key||`scene:${request.shotId}:authorized_digital_presenter:presenter`;
   const requirements=funding.requirements.filter(r=>r.key===key),requirement=requirements[0],route=funding.routeBindings[key];
@@ -86,9 +87,11 @@ export function createWholeTrackSocialHeyGenBridge(input:{
    const {request,audio}=bound,{intent,route}=canonical(request);
    await funding.assertCurrent();await funding.assertNewSubmit?.();await funding.assertLivePresenter(route,request,keyHash);
    const frame=frameAssets.get(request.shotId),image=body.image as Record<string,unknown>|undefined;
+   const approvedRatio=request.approvedFirstFrame.targetAspectRatio??'9:16';
    if(!frame||frame.sha256!==request.approvedFirstFrame.sha256||frame.approvalRecordHash!==request.approvedFirstFrame.approvalRecordHash
     ||body.type!=='image'||image?.type!=='asset_id'||image.asset_id!==frame.imageAssetId||'avatar_id' in body
-    ||'engine' in body||body.aspect_ratio!=='9:16'||body.resolution!=='720p'||body.output_format!=='mp4'||'script' in body||'voice_id' in body)throw Error('whole_track_heygen_actual_request_changed');
+    ||'engine' in body||request.aspectRatio!==approvedRatio||body.aspect_ratio!==approvedRatio
+    ||body.resolution!=='720p'||body.output_format!=='mp4'||'script' in body||'voice_id' in body)throw Error('whole_track_heygen_actual_request_changed');
    const actualUnits:Record<string,number>={};
    for(const meter of Object.keys(intent.maximumUnits)){
     if(meter==='providerSeconds'||meter==='audioSeconds')actualUnits[meter]=audio.durationSeconds;
@@ -113,6 +116,7 @@ export function createWholeTrackSocialHeyGenBridge(input:{
  });
  const resolve=async(request:DigitalPresenterExecutionRequest):Promise<WholeTrackPresenterSpeech>=>{
   if(!request.presenter.providerVoiceId||!request.presenter.providerPresenterId)throw Error('whole_track_heygen_avatar_voice_mapping_required');
+  if(request.aspectRatio!==(request.approvedFirstFrame.targetAspectRatio??'9:16'))throw Error('whole_track_heygen_approved_aspect_ratio_changed');
   assertBoundPresenterAudio(request.presenter.providerVoiceId, input.prepared.nativeVoice);
   await funding.assertCurrent();const {requirement,route,intent}=canonical(request);
   if(requirement.presenterGroupId){
@@ -190,7 +194,7 @@ export function createWholeTrackSocialHeyGenBridge(input:{
    if(requirement.presenterGroupContractHash&&requirement.presenterGroupContractHash!==approved.presenterGroupContractHash)throw Error('whole_track_approved_first_frame_group_changed');
    const bytes=fs.readFileSync(approved.localPath);if(sha(bytes)!==approved.sha256)throw Error('whole_track_approved_first_frame_bytes_changed');
    const ext=path.extname(approved.localPath).toLowerCase(),mimeType=ext==='.png'?'image/png':ext==='.webp'?'image/webp':'image/jpeg';
-   const identity={scope:funding.scope,shotId:request.shotId,approvalRecordId:approved.approvalRecordId,approvalRecordHash:approved.approvalRecordHash,presenterGroupContractHash:approved.presenterGroupContractHash,url:approved.url,sha256:approved.sha256};
+   const identity={scope:funding.scope,shotId:request.shotId,approvalRecordId:approved.approvalRecordId,approvalRecordHash:approved.approvalRecordHash,presenterGroupContractHash:approved.presenterGroupContractHash,url:approved.url,sha256:approved.sha256,targetAspectRatio:approved.targetAspectRatio??'9:16'};
    const identityHash=paidProductionHash(identity),file=path.join(root,identityHash+'.image-upload.json');let saved:any;
    try{saved=JSON.parse(fs.readFileSync(file,'utf8'));}catch{}
    if(saved&&saved.identityHash!==identityHash)throw Error('whole_track_approved_first_frame_upload_scope_changed');

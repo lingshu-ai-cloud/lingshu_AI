@@ -153,7 +153,9 @@ export function createStudioMaterialMutationRoutes(deps: Pick<StudioApplicationP
       const { tenantId } = res.locals as AuthLocals;
       try {
         const profile = await readTenantEnterpriseProfile(tenantId);
-        res.json({items: (profile.products.items || []).map((item,index) => ({id:productIdentity(item,index),name:item.name})).filter(item => item.name)});
+        res.json({items: (profile.products.items || []).map((item,index) => ({id:productIdentity(item,index),name:item.name,
+          imageUrls:[...new Set([item.imageUrl,...(item.images||[]).map(image=>image.url),...(item.packagingImages||[]).map(image=>image.url)].filter((url):url is string=>typeof url==='string'&&Boolean(url.trim())))].slice(0,4),
+        })).filter(item => item.name)});
       } catch { res.status(503).json({error:'产品资料暂不可读取，请稍后重试'}); }
     });
   }

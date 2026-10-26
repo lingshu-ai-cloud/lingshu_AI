@@ -1,0 +1,7 @@
+.replication-thumbnails { display: flex; gap: 12px; overflow-x: auto; padding: 10px 6px; align-items: center; }
+.replication-thumbnail { flex: 0 0 112px; width: 112px; min-width: 112px; transition: transform 180ms ease, margin 180ms ease; transform-origin: center; }
+.replication-thumbnail:hover, .replication-thumbnail:focus-visible { transform: scale(1.06); margin-inline: 4px; }
+@media (prefers-reduced-motion: reduce) {
+  .replication-thumbnail { flex: 0 0 112px; width: 112px; min-width: 112px; transition: none; }
+  .replication-thumbnail:hover, .replication-thumbnail:focus-visible { transform: none; margin-inline: 0; }
+}

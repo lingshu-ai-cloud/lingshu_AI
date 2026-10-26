@@ -101,7 +101,7 @@ Page({
     if (this.overview) this.setData(this.project(this.overview, this.queue || {}, this.customers || []))
     this.updateDays()
   },
-  openAssistant() { this.selectComponent('#lingxiaoshu-sheet')?.open() },
+  openAssistant() { wx.redirectTo({ url: '/packages/operator/assistant/index' }) },
   openShooting() { wx.redirectTo({ url: '/packages/operator/shooting/index' }) },
   openTodayGroup(event) {
     const key = event.currentTarget.dataset.key

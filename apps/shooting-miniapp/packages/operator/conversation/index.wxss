@@ -94,3 +94,5 @@
 .quote-preview-actions{display:grid;grid-template-columns:1fr 1fr;gap:12rpx;margin-top:14rpx}
 .quote-preview-actions .quote-small{width:100%}
 .quote-preview-tip{padding:12rpx 8rpx 2rpx;color:#8a5a00;font-size:21rpx;line-height:1.45}
+
+.translation-error,.reply-error{padding:16rpx 20rpx;background:var(--ls-error-bg);color:var(--ls-error);border-radius:16rpx;font-size:24rpx;line-height:36rpx}.translation-error{display:flex;align-items:center;gap:16rpx}.translation-error text{flex:1;min-width:0}.translation-error button{flex:none;margin:0;font-size:24rpx;min-height:88rpx;background:var(--ls-bg);color:var(--ls-error)}

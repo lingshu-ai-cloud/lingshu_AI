@@ -3,6 +3,61 @@
 最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-26 首页卡片收尾纳入小程序基线
+
+- 复用托管隔离树assistant-home-integrated，源本会话3项未提交改动固定为4253dc2e；基于较新117933ac合并得到f4a95242，目标baseline/unified-20261026安全快进，原视频排序补丁哈希不变，未清理或覆盖源工作树。
+- 本轮仅首页标题和删卡、测试与规范；其余本会话旧来源提交已包含，保留旧工作树不重复合并。独立图文分支新907e74d1及12项队列改动仍是另一会话开发现场，未纳入本轮。未推送或部署。
+- 证据和检查见[收尾记录](HOME-CARD-FINAL-INTEGRATION-20261026.md)，恢复点117933ac保留。
+
+## 2026-10-26 小程序功能合入统一基线（仅本轮关联树）
+
+- 来源 `/Users/julia1/Documents/ChatGPT/1026小程序` / `feature/miniapp-fixes-20261026` 固定为 `64ba79a49de8a09ff3647d475c5cab515ba20869`，源码提交后干净；忽略的本地预览服务、数据和图片不迁入基线。
+- 新建受管隔离候选 `/Users/julia1/.codex/worktrees/miniapp-baseline-integration/1026小程序` / `integration/miniapp-baseline-20261026`，以 `353879221169176cb26d97391ad6f4dc7367a9f3` 为起点，源码合并 `5f6e09f4fda1db8306cc07f3d3c4dd909c88ee03`；验证及治理提交后保留候选。
+- 权威基线仍为 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026` / `baseline/unified-20261026`。仅在验证通过且旧指针未变化时快进；原视频排序脏改动逐字保留。恢复点 `backup/pre-miniapp-integration-20261026-35387922`。
+- 本轮未清理、重置、归档其他工作树，未触碰保留的图片AIGC树；未复制运行数据、推送或部署。详见 [本次合入记录](MINIAPP-INTEGRATION-20261026.md)。
+
+## 2026-10-26 灵小枢首页分叉整合
+
+- 新增托管隔离树 `assistant-home-integrated/1026对话界面外部信息`，分支`integration/assistant-home-unified-20261026`，验证源码38d135f1。统一基线由86d855e1安全快进，恢复分支保留；源码与治理提交分开。
+- 资讯、查询条件、图文来源分别固定独立index快照2ae05809、f46166be、182abf08，源HEAD/index/未提交内容未改。场景分支a3b66751全部6项提交合入；旧首页137项保留现场已在580913fe快照中，不重复整合。没有清理、归档、重置任何来源树，保留图片AIGC工作树未触碰。
+- 共享基线原未提交视频排序修复原样保留，不纳入本轮提交；快进前后完整diff哈希一致。基线源码验收不等于工作树干净、运行数据或供应商Ready。
+- quality既有M1受控测试失败在原86d855e1也复现，单列遗留；其他阶段分段验证通过。没有推送或部署。详见[首页整合记录](ASSISTANT-HOME-INTEGRATION-20261026.md)。
+
+## 2026-10-26 两条分叉线统一为最新开发基线
+
+- 新增隔离工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`，分支 `baseline/unified-20261026`，源码合并 `280b54973be6a8cf863cdef98183cf12fa88581f`，治理补记另记；这是本轮用户指定的后续默认开发基线。
+- 从首页线 ff43ca61 合入图文线 7f8bd61c；两个来源及别名 xixi投流+卡片前端 的指针均保留。原 server/index.ts 文件与完整 diff 哈希一致，未切换、清理或重置原树。
+- 仅软链复用已安装依赖，没有复制真实运行数据库/账号/素材。候选树新生成的未跟踪 finalization 测试缓存保全至本轮证据目录。
+- quality 各阶段分段验证、图文管线与隔离浏览器通过，见 [统一基线记录](UNIFIED-BASELINE-20261026.md)。未推送/部署；以下各条为历史记录。
+
+## 2026-10-26 灵小枢功能合入指定本地基线
+
+- 指定目标 `xixi投流+卡片前端`，由新建隔离树 `home-cards-integration-20261026/1026灵小枢对话卡片` 承载；从 `8c7cc7d3` 快进至本轮验证源码及治理提交。
+- 来源 `1026灵小枢对话卡片` / `feature/assistant-home-dialogue-20261026` 保留原 HEAD、index 与 137 项未提交条目；独立 index 快照分支 `codex/home-cards-source-20261026`。
+- `xixi联合功能模块后端改` 及其脏改动未变；其他功能树与保留的图片 AIGC 工作树未同步/清理/归档。
+- 恢复点、SHA、分段质量检查与限制见[集成记录](HOME-CARDS-INTEGRATION-20261026.md)。本轮仅本地，无推送/部署。
+
+## 2026-10-26 图文爆款复刻合入与冒烟准备
+
+- 功能树 `/Users/julia1/Documents/ChatGPT/1026图文创作版本` / `feature/image-text-viral-creation-20261026` 冻结为 `31dced92`，24 个本轮文件，提交后干净；不包含凭据、运行库或媒体文件。
+- 复用干净候选树 `frontend-v2-safe-integration-20261025`，创建 `integration/image-text-smoke-20261026`，以 `6cbfd81b` 合并功能提交并完成定向、图文管线、浏览器、类型、架构、迁移只读及双端构建检查。原 `integration/cards-ads-20261025` 分支保留。
+- 权威基线 `xixi-feature-integration-20261023` / `xixi联合功能模块后端改` 从 `8c7cc7d3` 安全快进；原 `server/index.ts` 未提交修改哈希前后一致。恢复分支 `backup/pre-image-text-smoke-20261026-8c7cc7d3` 保留，治理补记单独提交。
+- 本轮没有清理、重置、归档或同步其他功能树，没有重启其服务或复制其运行数据库。真实冒烟的 5 元预算已确认，但供应商、存储及素材字节/授权准入未齐，未产生真实付费请求。
+
+## 2026-10-25 卡片与投流合入本地基线
+
+- 权威树 `xixi-feature-integration-20261023` / `xixi联合功能模块后端改` 从 `5f0b47a6` 推进至验证源码 `9be85a78`，治理提交另记；原 `server/index.ts` 未提交修改逐字保留。
+- 复用干净候选树 `frontend-v2-safe-integration-20261025`，创建 `integration/cards-ads-20261025`；卡片 `f2ea282c` 与投流快照 `e130395e` 均成为合并祖先。
+- `1025投流` / `feature/platform-ads-20261025` 保持原 HEAD `dfc9b0c8` 和全部原 index/未提交源码；独立 index 快照后完整 tree/status 核验一致，未清理、重置、切分支或暂存原树。其他功能树和预览未同步/重启/清理。
+- 基线恢复分支 `backup/pre-cards-ads-20261025-5f0b47a6`，投流快照分支 `snapshot/platform-ads-20261025-for-baseline`，私有证据 `~/.codex/integration-evidence/20261025-cards-ads/`。详见[本轮报告](CARDS-ADS-INTEGRATION-20261025.md)。未推送或部署。
+
+## 2026-10-25 服务器上传分支安全快进
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`、分支 `xixi联合功能模块后端改` 从 `b97265dc` 快进至 `181868f3f9bad2ff437f124018e9decf5ababb59`，后续仅本机治理记录。原 `server/index.ts` 未提交资源 404 修复完整保留，快进前后文件/补丁哈希一致。
+- 本聊天复用已干净的 `/Users/julia1/.codex/worktrees/frontend-v2-safe-integration-20261025`，切到 `integration/server-upload-20261025` 固定来源验证；原 `integration/frontend-v2-20261025` 分支仍保留。没有新增工作树，没有复制业务或预览数据库；只复用已安装依赖软链。
+- 恢复分支 `backup/pre-server-upload-20261025-b97265dc`。本机证据 `/Users/julia1/.codex/integration-evidence/20261025-server-upload-181868f3/` 保存原补丁、哈希及验证/浏览器记录；临时 53379 验收 Vite 已停止。
+- 其他树未重新盘点、切换、清理、重置或归档。未推送、部署、目标库迁移或真实供应商调用。详见[本轮合入记录](SERVER-UPLOAD-INTEGRATION-20261025.md)。
+
 ## 2026-10-25 助手功能合入本地基线
 
 - 权威工作树 `/Users/julia1/.codex/worktrees/xixi-feature-integration-20261023`、分支 `xixi联合功能模块后端改` 从7801dd0f快进至源码59d3fc06，后续单独提交治理记录。原server/index.ts未提交修复及其哈希保持一致；不宣称干净。

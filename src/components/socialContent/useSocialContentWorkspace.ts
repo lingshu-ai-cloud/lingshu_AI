@@ -12,7 +12,7 @@ import type {
   SubmitSocialMetricsInput,
 } from '../../../shared/contracts/socialContentWorkflow';
 import { SocialContentRequestError, socialContentApi, type SocialContentUploadResult } from '../../lib/socialContentApi';
-import { SOCIAL_CONTENT_NAVIGATION_EVENT, readActiveSocialContentTaskId, setActiveSocialContentTaskId } from '../../lib/socialContentContext';
+import { SOCIAL_CONTENT_NAVIGATION_EVENT, readActiveSocialContentTaskId, setActiveSocialContentTaskId, readSocialContentNavigationTaskId, readSocialContentNavigationQueryTaskId } from '../../lib/socialContentContext';
 import { mergeSocialContentTaskSummaries, restoreSavedSocialContentTask } from '../../lib/socialContentTaskPagination';
 import { socialArtifactGenerationDisclosure } from '../../lib/socialArtifactGeneration';
 
@@ -89,15 +89,18 @@ export function useSocialContentWorkspace() {
     const generation = ++readGeneration.current;
     setError('');
     setErrorCode('');
+    const explicit = readSocialContentNavigationTaskId('smartAssets', window.history.state)
+      || readSocialContentNavigationQueryTaskId('smartAssets', window.location.search);
+    if (explicit) setWorkspace(current => current?.currentTask?.taskId === explicit ? current : null);
     try {
-      let next = await socialContentApi.getWorkspace();
-      const savedTaskId = readActiveSocialContentTaskId();
-      next = await restoreSavedSocialContentTask(next, savedTaskId, taskId => socialContentApi.getTask(taskId));
+      let next = await socialContentApi.getWorkspace(explicit || undefined);
+      const savedTaskId = explicit || readActiveSocialContentTaskId();
+      next = await restoreSavedSocialContentTask(next, savedTaskId, taskId => socialContentApi.getTask(taskId), Boolean(explicit));
       if (!mounted.current || generation !== readGeneration.current || getToken()!==token) return;
       setWorkspace(next);
       setActiveSocialContentTaskId(next.currentTask?.taskId || null);
     } catch (loadError) {
-      if (mounted.current && generation === readGeneration.current && getToken()===token) setError(loadError instanceof Error ? loadError.message : '内容任务暂时无法读取');
+      if (mounted.current && generation === readGeneration.current && getToken()===token) { if (explicit) setWorkspace(null); setError(loadError instanceof Error ? loadError.message : '内容任务暂时无法读取'); }
     } finally {
       if (mounted.current && generation === readGeneration.current && getToken()===token) setLoading(false);
     }

@@ -1,3 +1,6 @@
+import { normalizeAdCountries } from '../../shared/metaAdJourney.js';
+import { normalizeMetaTargeting } from '../../shared/metaTargeting.js';
+import { normalizeMetaMessageChoice, adMarketSummary } from '../../shared/metaMessageChoice.js';
 import { store } from '../storage/index.js';
 import { validateDraftAdMaterial } from './creativeSelection.js';
 import { PlatformAdCreativeError } from './creatives.js';
@@ -7,7 +10,8 @@ import { emptyAdPlanConfiguration, type AdManagement, type AdPlanConfiguration, 
 
 export const PLATFORM_AD_TASKS_COLLECTION = 'platform_ad_tasks';
 export const PLATFORM_AD_CHANNELS = ['Facebook', 'Instagram', 'TikTok', 'YouTube'] as const;
-export const PLATFORM_AD_GOALS = ['提升有效视频观看', '提升互动与主页增长', '扩大目标人群覆盖', '获取线索或转化', '提升网站访问'] as const;
+export { PLATFORM_AD_GOALS } from '../../shared/platformAdCapabilities.js';
+import { PLATFORM_AD_GOALS } from '../../shared/platformAdCapabilities.js';
 
 export type PlatformAdTask = AdManagement & {
   version: number;
@@ -56,13 +60,20 @@ function configuration(input: unknown, budget: number): AdPlanConfiguration {
   if (dailyBudget !== null && (!Number.isFinite(dailyBudget) || dailyBudget < 1 || dailyBudget > budget)) throw new PlatformAdTaskValidationError('日预算须大于等于 1 且不超过总预算');
   const accountConnectionId = raw.accountConnectionId === undefined ? undefined : text(raw.accountConnectionId, 100);
   if (accountConnectionId && !/^[a-zA-Z0-9_-]{1,100}$/.test(accountConnectionId)) throw new PlatformAdTaskValidationError('草稿账户标识无效');
-  return { startsAt, endsAt, dailyBudget, audience: text(raw.audience, 2000), placements: text(raw.placements, 1000), ...(accountConnectionId === undefined ? {} : { accountConnectionId }) };
+  let countries: string[];
+  try { countries = normalizeAdCountries(raw.countries); } catch { throw new PlatformAdTaskValidationError('请选择有效的投放国家或地区'); }
+  const landingPageUrl = text(raw.landingPageUrl, 2000), adMessage = text(raw.adMessage, 2000);
+  if (landingPageUrl) { try { const url = new URL(landingPageUrl); if (url.protocol !== 'https:' || url.username || url.password) throw Error(); } catch { throw new PlatformAdTaskValidationError('推广页面须为有效的 HTTPS 地址'); } }
+  let metaTargeting, metaMessage;
+  try { metaTargeting = normalizeMetaTargeting(raw.metaTargeting); metaMessage = normalizeMetaMessageChoice(raw.metaMessage); } catch (e) { throw new PlatformAdTaskValidationError((e as Error).message); }
+  return { startsAt, endsAt, dailyBudget, countries, landingPageUrl, adMessage, audience: text(raw.audience, 2000), placements: text(raw.placements, 1000), ...(metaTargeting ? { metaTargeting } : {}), ...(metaMessage ? { metaMessage } : {}), ...(accountConnectionId === undefined ? {} : { accountConnectionId }) };
 }
 
 export function validatePlatformAdTask(input: Record<string, unknown>): Omit<PlatformAdTask, 'id' | 'status' | 'createdAt' | 'updatedAt' | 'version' | 'authorization' | 'proposal' | 'sourceContext' | 'managementHistory'> {
   const name = text(input.name, 80);
   const video = text(input.video, 120);
-  const market = text(input.market, 80);
+  const config = configuration(input.configuration, Number(input.budget));
+  const market = config.countries?.length ? adMarketSummary(config.countries, config.metaTargeting?.locales) : text(input.market, 80);
   const goal = text(input.goal, 80);
   const budget = Number(input.budget);
   const currency = adCurrency(input.currency);
@@ -77,8 +88,10 @@ export function validatePlatformAdTask(input: Record<string, unknown>): Omit<Pla
   // Provenance and execution authority cannot be granted through draft input.
   if (input.creationSource !== undefined && input.creationSource !== 'manual') throw new PlatformAdTaskValidationError('创建来源由对应创编服务确定');
   if (input.managementMode !== undefined && input.managementMode !== 'manual') throw new PlatformAdTaskValidationError('请通过托管授权流程切换管理方式');
+  if (config.metaMessage && (goal !== '获取消息会话' || channels.some(c => !['Facebook', 'Instagram'].includes(c)))) throw new PlatformAdTaskValidationError('聊天渠道配置仅适用于 Meta 消息会话目标');
+  try { normalizeMetaTargeting(config.metaTargeting, channels); } catch (e) { throw new PlatformAdTaskValidationError((e as Error).message); }
   return { name, video, market, goal, budget: Math.round(budget * 100) / 100, currency, channels,
-    creationSource: 'manual', managementMode: 'manual', configuration: configuration(input.configuration, budget) };
+    creationSource: 'manual', managementMode: 'manual', configuration: config };
 }
 
 function publicTask(record: StoredTask): PlatformAdTask {

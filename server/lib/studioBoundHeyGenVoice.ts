@@ -1,3 +1,4 @@
+import { readHeyGenVoiceMetadata, type HeyGenSpeechEngine } from './heygenVoiceCapabilities.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -8,14 +9,15 @@ import { withPaidOperationLock } from './paidOperationLock.js';
 import { studioVoicePaidContext, submitStudioVoicePaidRequest, type StudioVoicePaidRequest } from './studioVoicePaidOperation.js';
 
 /** Exact bound voice only; provider errors never reach a generic TTS fallback. */
-export async function synthesizeBoundHeyGenVoice(input: { text: string; voiceId: string; language: string; output: string }, ports: { fetch?: typeof fetch; root?: string; key?: string } = {}) {
+export async function synthesizeBoundHeyGenVoice(input: { text: string; voiceId: string; engine?: HeyGenSpeechEngine; language: string; output: string }, ports: { fetch?: typeof fetch; root?: string; key?: string } = {}) {
   const key = ports.key || process.env.HEYGEN_API_KEY?.trim();
   const context = studioVoicePaidContext();
   if (!key || !input.voiceId || !input.text.trim() || !context || context.primaryProvider !== 'heygen') throw Error('selected_presenter_voice_paid_route_required:'+(!key?'credential_missing':!context?'context_missing':context.primaryProvider!=='heygen'?'provider_mismatch':'input_missing'));
   const transport = ports.fetch || fetch;
+  const engine = input.engine || 'starfish'; // Legacy frozen calls only; new plans always carry the resolved engine.
   const endpoint = 'https://api.heygen.com/v3/voices/speech';
-  const body = { text: input.text, voice_id: input.voiceId, engine: 'starfish', language: input.language, speed: 1, input_type: 'text', force_regenerate: false };
-  const request: StudioVoicePaidRequest = { stage: 'tts', provider: 'heygen', model: 'starfish', voiceId: input.voiceId, endpoint, accountKeyHash: createHash('sha256').update(key).digest('hex'), request: body };
+  const body = { text: input.text, voice_id: input.voiceId, engine, language: input.language, speed: 1, input_type: 'text', force_regenerate: false };
+  const request: StudioVoicePaidRequest = { stage: 'tts', provider: 'heygen', model: engine, voiceId: input.voiceId, endpoint, accountKeyHash: createHash('sha256').update(key).digest('hex'), request: body };
   const call = await context.forRequest(request);
   request.audioSeconds = call.intent.maximumUnits.audioSeconds;
   if (!(request.audioSeconds! > 0)) throw Error('selected_presenter_voice_duration_budget_required');
@@ -31,24 +33,15 @@ export async function synthesizeBoundHeyGenVoice(input: { text: string; voiceId:
     if (state && (state.voiceId !== input.voiceId || state.operationId !== call.intent.operationId || JSON.stringify(state.body) !== JSON.stringify(body))) throw Error('selected_presenter_voice_receipt_changed');
     if (state?.status === 'submitting') throw Error('selected_presenter_voice_submission_unknown_no_repost');
     if (!state) {
-      // Official engine-filtered inventory proves this exact voice is supported.
-      let token = ''; let supported = false;
-      for (let page = 0; page < 20; page++) {
-        const response = await transport('https://api.heygen.com/v3/voices?type=private&engine=starfish&limit=100' + (token ? '&token=' + encodeURIComponent(token) : ''), { headers: { 'x-api-key': key }, redirect: 'error', signal: AbortSignal.timeout(30000) });
-        if (!response.ok) throw Error('selected_presenter_voice_inventory_unavailable');
-        const catalog = await response.json();
-        if (catalog.data?.some((v: any) => v.voice_id === input.voiceId)) { supported = true; break; }
-        if (!catalog.has_more || !catalog.next_token) break;
-        token = catalog.next_token;
-      }
-      if (!supported) throw Error('selected_presenter_bound_voice_engine_unavailable');
+      const metadata = await readHeyGenVoiceMetadata(input.voiceId, { key, ...(ports.fetch ? { fetch: ports.fetch } : {}), fresh: true });
+      if (!metadata.available_engines.includes(engine)) throw Error('user_input_required:presenter_narration_capability_unavailable:heygen:' + engine);
       state = { status: 'submitting', voiceId: input.voiceId, body, operationId: call.intent.operationId };
       await persist(state);
       const response = await submitStudioVoicePaidRequest(request, async () => {
         const r = await transport(endpoint, { method: 'POST', headers: { 'x-api-key': key, 'Content-Type': 'application/json', 'Idempotency-Key': call.intent.operationId }, body: JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(60000) });
         if (!r.ok) throw Error('selected_presenter_voice_provider_rejected:' + r.status);
         const raw = await r.json(); const result = raw.data || raw;
-        if (!result.audio_url || result.engine !== 'starfish' || !Number.isFinite(result.duration) || result.duration <= 0) throw Error('selected_presenter_voice_provider_evidence_invalid');
+        if (!result.audio_url || result.engine !== engine || !Number.isFinite(result.duration) || result.duration <= 0) throw Error('selected_presenter_voice_provider_evidence_invalid');
         await persist({ ...state, status: 'accepted', response: raw });
         return raw;
       });
@@ -56,7 +49,7 @@ export async function synthesizeBoundHeyGenVoice(input: { text: string; voiceId:
     }
     await call.permit.assertRecovery(call.intent.operationId);
     const result = state.response?.data || state.response;
-    if (state.status !== 'accepted' || result?.engine !== 'starfish' || !result.audio_url || !Number.isFinite(result.duration) || result.duration <= 0) throw Error('selected_presenter_voice_provider_evidence_invalid');
+    if (state.status !== 'accepted' || result?.engine !== engine || !result.audio_url || !Number.isFinite(result.duration) || result.duration <= 0) throw Error('selected_presenter_voice_provider_evidence_invalid');
     // Restore the canonical proof and in-memory cache-proof binding after a
     // crash between supplier acceptance and local receipt completion. No POST.
     const receipt = await call.persistProviderReceipt({requestSha256:createHash('sha256').update(JSON.stringify(body)).digest('hex'),response:state.response,audioSeconds:request.audioSeconds});

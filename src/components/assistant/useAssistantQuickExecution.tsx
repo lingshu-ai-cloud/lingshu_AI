@@ -45,9 +45,11 @@ export function useAssistantQuickExecution(input: QuickExecutionInput) {
         detail: { page: 'smartAssets', socialContentTaskId: taskId, socialContentPage: 'smartAssets', directStudio: true },
       }));
     };
-    const recordReceipt = (content: string, taskId?: string, status?: string) => {
+    const recordReceipt = (content: string, taskId?: string, status?: string, queued = false) => {
       const messages = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages;
-      setMessages(PRIMARY_ASSISTANT_THREAD, [...messages, { role: 'assistant', content }]);
+      setMessages(PRIMARY_ASSISTANT_THREAD, [...messages, { role: 'assistant', content,
+        ...(queued && taskId ? { taskPortal: { kind: 'content_task' as const, taskId, title: '内容生产任务', action: 'view_production' as const, phase: 'ready' as const } } : {}),
+      }]);
       if (taskId) {
         upsertTaskCard(PRIMARY_ASSISTANT_THREAD, { taskId: `social-content:${taskId}`, title: '内容周任务', conclusion: content,
           status: status === 'producing' ? 'running' : ['completed', 'delivered', 'published'].includes(status || '') ? 'completed' : status === 'paused' ? 'paused' : 'needs_input', notificationReason: 'routine',
@@ -103,8 +105,8 @@ export function useAssistantQuickExecution(input: QuickExecutionInput) {
     try {
       const response = await socialContentApi.startAssistantAction(entry.taskId, entry.expectedVersion, executionRequestId);
       if (!currentScope()) return;
-      recordReceipt(`「${response.task.brief.title}」：${response.receipt.blockedReason ? '暂未进入生产，请在任务中查看原因。' : '已读取真实生产状态，结果回收到原周任务。'}`, response.receipt.taskId, response.receipt.status);
-      openTask(response.receipt.taskId);
+      recordReceipt(`「${response.task.brief.title}」：${response.receipt.blockedReason ? '暂未进入生产，请在任务中查看原因。' : '已读取真实生产状态，结果回收到原周任务。'}`, response.receipt.taskId, response.receipt.status, response.receipt.queued);
+      if (!response.receipt.queued) openTask(response.receipt.taskId);
     } catch (error) {
       if (currentScope()) recordReceipt(error instanceof Error ? error.message : '生产未启动，请重试。');
     } finally { pipelineInFlightRef.current = false; if (currentScope()) { setLoading(false); setPipelineRefresh(value => value + 1); } }

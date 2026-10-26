@@ -1,4 +1,5 @@
 import { qwenFrameSeconds, selectFramesForPhysicalCuts, shiftedTimelineLabel } from '../routes/videoAnalysisTimelineProjection.js';
+import { completeReferenceWindowFrames } from '../lib/referenceWindowFrames.js';
 import { classifyDiscoverySourceFailure } from '../socialDiscovery/sourceFailure.js';
 import { executeExactChunks } from '../lib/exactChunkExecution.js';
 import { exactQwenScope } from '../agents/exactQwenScope.js';
@@ -40,6 +41,7 @@ export function assertFullVideoTimeline(analysis: VideoAiAnalysis, duration: num
 }
 
 export async function analyzeExactLongVideoChunks(input: {
+  filePath?: string;
   frames: Array<{ base64: string; mimeType: string; timeLabel: string }>;
   title?: string;
   platform?: Platform;
@@ -133,7 +135,8 @@ export async function analyzeExactLongVideoChunks(input: {
     if (planError) throw new Error(`exact_timeline_quality_failed_${chunk.start.toFixed(0)}_${planError}`);
     console.log(`[videos] exact details ${chunk.start.toFixed(0)}-${chunk.end.toFixed(0)}s started, boundaries=${timeline.boundaries.length}`);
     const result = await analyzeVideoTimelineDetailsWithQwen({
-      frames: localFrames,
+      frames: await completeReferenceWindowFrames({ filePath: input.filePath, frames: localFrames,
+        offset: chunk.start, windows: timeline.boundaries }),
       timeline,
       transcript: localSegments.length ? { text: localSegments.map(item => item.text).join(''), segments: localSegments } : undefined,
       signal,

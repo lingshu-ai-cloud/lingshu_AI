@@ -38,9 +38,11 @@ assert.equal(evaluate(expression('contentHeight'), { view: 'dayGridWeek', fixedH
 assert.equal(evaluate(expression('contentHeight'), { view: 'dayGridWeek', fixedHeight: 'auto', showAllEvents: false, timeGridHeight: 520 }), 'auto', 'an explicit full-content calendar may expand to show its complete week');
 assert.equal(evaluate(expression('contentHeight'), { view: 'dayGridWeek', fixedHeight: 'auto', showAllEvents: true, timeGridHeight: 520 }), 'auto', 'a full weekly publishing calendar expands to reveal every item');
 assert.equal(evaluate(expression('contentHeight'), { view: 'dayGridMonth', fixedHeight: 'auto', showAllEvents: true, timeGridHeight: 520 }), 520, 'month and annual views return to the shared bounded workspace');
-assert.equal(attributes.get('scrollTime')?.initializer?.getText(file), '"08:00:00"');
-assert.equal(attributes.get('slotMinTime')?.initializer?.getText(file), '"08:00:00"');
-assert.equal(attributes.get('slotMaxTime')?.initializer?.getText(file), '"22:00:00"');
+for (const [showAllHours, start, end] of [[false, '08:00:00', '22:00:00'], [true, '00:00:00', '24:00:00']] as const) {
+  assert.equal(evaluate(expression('scrollTime'), { showAllHours }), start);
+  assert.equal(evaluate(expression('slotMinTime'), { showAllHours }), start);
+  assert.equal(evaluate(expression('slotMaxTime'), { showAllHours }), end);
+}
 assert.equal(attributes.get('slotDuration')?.initializer?.getText(file), '"00:30:00"', 'half-hour rows give 30-minute three-line cards enough physical height without falsifying their duration');
 assert.equal(attributes.get('slotHeaderInterval')?.initializer?.getText(file), '"02:00:00"', 'the left time axis must stay concise');
 assert.ok(attributes.has('scrollTimeReset'));

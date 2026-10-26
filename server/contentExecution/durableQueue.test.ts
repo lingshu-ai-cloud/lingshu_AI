@@ -32,6 +32,7 @@ import { socialRequestHash } from '../starter198/socialContentValidation.js';
 class MemoryStore implements DataStore {
   rows = new Map<string, Map<string, Record<string, unknown> & { id: string }>>();
   private sequence = 0;
+  beforeCompareAndSwap: (() => void | Promise<void>) | null = null;
 
   private collection(name: string) {
     let collection = this.rows.get(name);
@@ -62,6 +63,26 @@ class MemoryStore implements DataStore {
     const prior = target.get(id);
     if (!prior) return false;
     target.set(id, { ...prior, ...data, id });
+    return true;
+  }
+
+  supportsAtomicCompareAndSwap(): boolean { return true; }
+
+  async compareAndSwap(
+    collection: string,
+    id: string,
+    expected: Record<string, unknown>,
+    data: Record<string, unknown>,
+  ): Promise<boolean> {
+    const hook = this.beforeCompareAndSwap;
+    this.beforeCompareAndSwap = null;
+    await hook?.();
+    const target = this.collection(collection);
+    const prior = target.get(id);
+    if (!prior || !Object.entries(expected).every(([key, value]) => (
+      JSON.stringify(prior[key]) === JSON.stringify(value)
+    ))) return false;
+    target.set(id, { ...prior, ...structuredClone(data), id });
     return true;
   }
 
@@ -341,6 +362,20 @@ test('an unspent blocked admission may refresh only its executor binding', async
   await assert.rejects(refreshUnspentContentExecutionCheckpoint({dataStore:store,tenantId:job.tenantId,jobId:job.id,runId:job.runId,checkpointKey:'social.executor',checkpoint:old}),/refresh_not_allowed/);
 });
 
+test('an unspent blocked graph refresh updates its bridge atomically and refuses paid evidence', async () => {
+  const {createProductionGraphBridgeCheckpoint,productionGraphIdentityFromJob}=await import('./productionGraphBridge.js');
+  const store=new MemoryStore(),old={version:'1',inputHash:'a'.repeat(64),payload:{executor:'langgraph',planVersion:'1'},updatedAt:new Date().toISOString()};
+  const job=await admitContentExecutionJob({dataStore:store,tenantId:'tenant-refresh-bridge',userId:'owner',taskId:'task',runId:'run',taskType:'social',initialCheckpoints:{'social.executor':old,'content.production_bridge':createProductionGraphBridgeCheckpoint({planVersion:'1',inputHash:old.inputHash})}});
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION,job.id,{status:'blocked'});
+  const fresh={...old,inputHash:'b'.repeat(64),payload:{executor:'langgraph',planVersion:'2'}};
+  const updated=await refreshUnspentContentExecutionCheckpoint({dataStore:store,tenantId:job.tenantId,jobId:job.id,runId:job.runId,checkpointKey:'social.executor',checkpoint:fresh});
+  assert.equal(updated.id,job.id);assert.equal(updated.runId,job.runId);
+  assert.equal(productionGraphIdentityFromJob(updated).inputHash,fresh.inputHash);
+  assert.equal(productionGraphIdentityFromJob(updated).planVersion,'2');
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION,job.id,{provider_state:'unknown'});
+  await assert.rejects(refreshUnspentContentExecutionCheckpoint({dataStore:store,tenantId:job.tenantId,jobId:job.id,runId:job.runId,checkpointKey:'social.executor',checkpoint:old}),/refresh_not_allowed/);
+});
+
 test('an unspent pre-provider graph failure may be discarded when refreshing its executor binding', async () => {
   const store = new MemoryStore();
   const old = { version:'1', inputHash:'a'.repeat(64), payload:{executor:'langgraph'}, updatedAt:new Date().toISOString() };
@@ -509,6 +544,54 @@ test('versioned checkpoints survive a new execution context and stale workers ar
   assert.equal(afterFence?.checkpoints['social.director_storyboard']?.inputHash, 'input-v1');
 });
 
+test('checkpoint CAS rejects an owner replaced after the ownership read but before persistence', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({
+    dataStore: store, tenantId: 'tenant-checkpoint-race', userId: 'user-a', taskId: 'task-checkpoint-race',
+    runId: 'run-checkpoint-race', taskType: 'social_content_weekly',
+  });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+    status: 'running', worker_id: 'worker-old', attempt: 1,
+  });
+  store.beforeCompareAndSwap = () => store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+    worker_id: 'worker-new', attempt: 2,
+  }).then(() => undefined);
+
+  await assert.rejects(runWithContentExecutionContext({
+    dataStore: store, jobId: job.id, expectedWorkerId: 'worker-old', expectedAttempt: 1,
+    action: () => recordCurrentContentExecutionCheckpoint({
+      stage: 'social.race_fence', version: '1', inputHash: 'old-worker-output', payload: { stale: true },
+    }),
+  }), /content_execution_stopped/);
+
+  const current = await store.getById<Record<string, unknown>>(CONTENT_EXECUTION_JOB_COLLECTION, job.id);
+  assert.equal(current?.worker_id, 'worker-new');
+  assert.equal(current?.attempt, 2);
+  assert.equal((current?.checkpoints as Record<string, unknown> | undefined)?.['social.race_fence'], undefined);
+});
+
+test('claimed worker checkpoint persistence fails closed without an atomic store fence', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({
+    dataStore: store, tenantId: 'tenant-checkpoint-capability', userId: 'user-a', taskId: 'task-checkpoint-capability',
+    runId: 'run-checkpoint-capability', taskType: 'social_content_weekly',
+  });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+    status: 'running', worker_id: 'worker-a', attempt: 1,
+  });
+  Object.defineProperty(store, 'compareAndSwap', { value: undefined, configurable: true });
+
+  await assert.rejects(runWithContentExecutionContext({
+    dataStore: store, jobId: job.id, expectedWorkerId: 'worker-a', expectedAttempt: 1,
+    action: () => recordCurrentContentExecutionCheckpoint({
+      stage: 'social.atomic_capability', version: '1', inputHash: 'input', payload: { saved: false },
+    }),
+  }), /content_execution_checkpoint_atomic_fence_required/);
+
+  const current = await store.getById<Record<string, unknown>>(CONTENT_EXECUTION_JOB_COLLECTION, job.id);
+  assert.equal((current?.checkpoints as Record<string, unknown> | undefined)?.['social.atomic_capability'], undefined);
+});
+
 test('provider receipt writers merge under a durable lock and stale callbacks cannot downgrade completion', async () => {
   const store = new MemoryStore();
   const job = await admitContentExecutionJob({
@@ -533,6 +616,36 @@ test('provider receipt writers merge under a durable lock and stale callbacks ca
   assert.equal(persisted?.providerReceipts.length, 2);
   assert.equal(persisted?.providerReceipts.find(item => item.requestId === 'request-new')?.state, 'completed');
   assert.equal(persisted?.providerReceipts.find(item => item.requestId === 'request-old-worker')?.providerTaskId, 'task-old');
+});
+
+test('different provider requests serialize on the job receipt aggregate without losing either receipt', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({
+    dataStore: store, tenantId: 'tenant-receipt-race', userId: 'user-a', taskId: 'task-receipt-race',
+    runId: 'run-receipt-race', taskType: 'social_content_weekly',
+  });
+
+  await Promise.all([
+    runWithContentExecutionContext({ dataStore: store, jobId: job.id, action: () => (
+      recordCurrentContentProviderReceipt({
+        provider: 'heygen', requestId: 'avatar-video', state: 'accepted', providerTaskId: 'heygen-task',
+      })
+    ) }),
+    runWithContentExecutionContext({ dataStore: store, jobId: job.id, action: () => (
+      recordCurrentContentProviderReceipt({
+        provider: 'qwen', requestId: 'visual-review', state: 'completed', providerTaskId: 'qwen-task',
+      })
+    ) }),
+  ]);
+
+  const persisted = await readContentExecutionJob(
+    store, 'tenant-receipt-race', 'task-receipt-race', 'run-receipt-race',
+  );
+  assert.deepEqual(
+    persisted?.providerReceipts.map(item => `${item.provider}:${item.requestId}`).sort(),
+    ['heygen:avatar-video', 'qwen:visual-review'],
+  );
+  assert.equal(persisted?.providerState, 'accepted', 'one unsettled request keeps the aggregate reconciliable');
 });
 
 test('customer runtime projection explains capacity, queue position and retry without exposing raw failures', async () => {
@@ -620,6 +733,36 @@ test('group fence suppresses a late worker success callback and preserves provid
     for (let i = 0; i < 30; i += 1) { await new Promise(resolve => setImmediate(resolve)); if (!(await readContentExecutionJob(store, 'tenant-a', 'revision', 'run'))?.workerId) break; }
     assert.equal(executed, true); assert.equal(callbacks, 0);
     assert.notEqual((await readContentExecutionJob(store, 'tenant-a', 'revision', 'run'))?.status, 'succeeded');
+  } finally { worker.stop(); }
+});
+
+test('atomic settlement cannot let a late worker overwrite a successor claim', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({
+    dataStore: store, tenantId: 'tenant-settlement-race', userId: 'owner', taskId: 'task-settlement-race',
+    runId: 'run-settlement-race', taskType: 'social_content_weekly',
+  });
+  let successCallbacks = 0;
+  const worker = new DurableContentExecutionWorker({ dataStore: store, env: {}, execute: async () => {
+    store.beforeCompareAndSwap = async () => {
+      const claimed = await store.getById<Record<string, unknown>>(CONTENT_EXECUTION_JOB_COLLECTION, job.id);
+      await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+        status: 'running', worker_id: 'successor-worker', attempt: Number(claimed?.attempt || 0) + 1,
+      });
+    };
+  }, onSucceeded: async () => { successCallbacks += 1; } });
+  try {
+    await worker.drain();
+    for (let i = 0; i < 30 && worker.isLocallyActive('tenant-settlement-race', 'task-settlement-race'); i += 1) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    const current = await readContentExecutionJob(
+      store, 'tenant-settlement-race', 'task-settlement-race', 'run-settlement-race',
+    );
+    assert.equal(current?.status, 'running');
+    assert.equal(current?.workerId, 'successor-worker');
+    assert.equal(current?.attempt, 2);
+    assert.equal(successCallbacks, 0);
   } finally { worker.stop(); }
 });
 
@@ -737,6 +880,60 @@ test('two worker instances claim one durable job only once', async () => {
   second.stop();
 });
 
+test('claim CAS skips a job paused after selection without executing it', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({
+    dataStore: store, tenantId: 'tenant-claim-race', userId: 'owner', taskId: 'task-claim-race',
+    runId: 'run-claim-race', taskType: 'social_content_weekly',
+  });
+  let executions = 0;
+  store.beforeCompareAndSwap = () => store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+    status: 'paused', worker_id: '', lease_expires_at: '',
+  }).then(() => undefined);
+  const worker = new DurableContentExecutionWorker({
+    dataStore: store, env: {}, execute: async () => { executions += 1; },
+  });
+  try {
+    await worker.drain();
+    const current = await readContentExecutionJob(
+      store, 'tenant-claim-race', 'task-claim-race', 'run-claim-race',
+    );
+    assert.equal(executions, 0);
+    assert.equal(current?.status, 'paused');
+    assert.equal(current?.attempt, 0);
+  } finally { worker.stop(); }
+});
+
+test('abandoned recovery CAS preserves a lease renewed after the stale scan', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({
+    dataStore: store, tenantId: 'tenant-recovery-race', userId: 'owner', taskId: 'task-recovery-race',
+    runId: 'run-recovery-race', taskType: 'social_content_weekly',
+    now: new Date('2026-10-04T00:00:00Z'),
+  });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+    status: 'running', attempt: 1, worker_id: 'remote-worker', lease_expires_at: '2026-10-04T00:01:00Z',
+  });
+  store.beforeCompareAndSwap = () => store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+    lease_expires_at: '2026-10-04T01:00:00Z',
+  }).then(() => undefined);
+  let executions = 0;
+  const worker = new DurableContentExecutionWorker({
+    dataStore: store, env: {}, now: () => new Date('2026-10-04T00:02:00Z'),
+    execute: async () => { executions += 1; },
+  });
+  try {
+    await worker.drain();
+    const current = await readContentExecutionJob(
+      store, 'tenant-recovery-race', 'task-recovery-race', 'run-recovery-race',
+    );
+    assert.equal(executions, 0);
+    assert.equal(current?.status, 'running');
+    assert.equal(current?.workerId, 'remote-worker');
+    assert.equal(current?.leaseExpiresAt, '2026-10-04T01:00:00.000Z');
+  } finally { worker.stop(); }
+});
+
 test('abandoned accepted provider job enters reconciliation without blind resubmission', async () => {
   const store = new MemoryStore();
   const job = await admitContentExecutionJob({
@@ -751,15 +948,16 @@ test('abandoned accepted provider job enters reconciliation without blind resubm
     }],
   });
   let executions = 0;
-  let settled!: () => void;
-  const didSettle = new Promise<void>(resolve => { settled = resolve; });
+  let settled!: (value: 'retry' | 'block') => void;
+  const didSettle = new Promise<'retry' | 'block'>(resolve => { settled = resolve; });
   const worker = new DurableContentExecutionWorker({
     dataStore: store, env, now: () => new Date('2026-10-04T00:02:00Z'),
     execute: async () => { executions += 1; throw new Error('provider_submission_unknown:heygen'); },
-    onRetry: async () => settled(),
+    onRetry: async () => settled('retry'),
+    onBlocked: async () => settled('block'),
   });
   await worker.drain();
-  await didSettle;
+  assert.equal(await didSettle, 'retry');
   const recovered = await readContentExecutionJob(store, 'tenant-a', 'task-a', 'run-a');
   assert.equal(executions, 1);
   assert.equal(recovered?.status, 'reconciling');
@@ -834,7 +1032,7 @@ test('worker pins local storage across claims, execution, callbacks and remote w
   for (let attempt = 0; attempt < 20 && !succeeded; attempt++) await new Promise<void>(resolve => setImmediate(resolve));
   worker.stop();
   assert.ok(executed && succeeded, 'the persisted job reaches successful completion');
-  assert.ok(calls.includes('list') && calls.includes('getById') && calls.includes('update') && calls.includes('delete'));
+  assert.ok(calls.includes('list') && calls.includes('getById') && calls.includes('compareAndSwap') && calls.includes('delete'));
 });
 
 test('durable phase pause settles without success or failure projections, then resumes the same provider identity',async()=>{

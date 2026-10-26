@@ -1,3 +1,5 @@
+import { normalizeLocalMaterialSegmentProfile } from '../../shared/contracts/localMaterialSegmentProfile.js';
+import { sceneNarration, verifySceneMaterials } from './assistantSceneEvidence.js';
 import { hasReferenceMaterialOrigin, isReferenceOnlyMaterial } from '../lib/materialPolicy.js';
 import { materialRoutingRequests } from '../starter198/socialContentMaterialRoutingRequests.js';
 import type { SocialWorkflowMaterialClipCandidate } from '../starter198/socialContentMaterialCandidateSupport.js';
@@ -80,8 +82,12 @@ export async function guidedCreationTurn(tenantId: string, turn: CreationTurn, p
   const allProductIds = new Set(selection.productIds);
   const ownedInventory = inventory.items.filter(row => !hasReferenceMaterialOrigin(row) && !isReferenceOnlyMaterial(row));
   const admitted = selection.productIds.flatMap(productId => buildSocialWorkflowMaterialCandidates({ records: ownedInventory as MaterialRecord[], tenantId, selectedProductId: productId, voiceoverRows: [] }).candidates);
-  const admittedForSlot = (candidate: SocialWorkflowMaterialClipCandidate, duration: number, type: GuideNode['type']) => Boolean(materialRoutingRequests({ policyVersion: 'type-aware.v2', tenantId, productRef: candidate.productRef,
-    shots: [{ shotId: 'guided-candidate', function: 'value', materialType: type, productRef: candidate.productRef, visualContract: candidate.visualContract, requestedDescription: candidate.visualContract.action.path || candidate.label, plannedDurationSeconds: duration }], candidates: [candidate] })[0]?.selectedMaterialSegment);
+  const admittedForSlot = (candidate: SocialWorkflowMaterialClipCandidate, duration: number, type: GuideNode['type']) => {
+    const profile = normalizeLocalMaterialSegmentProfile(candidate.segmentProfile);
+    return Boolean(profile?.productionEligible && candidate.segmentProfile?.productionEligible === true && profile.tenantId === tenantId && profile.assetId === candidate.assetId && profile.segmentId === candidate.segmentId && (type !== 'talking_head' || profile.materialType === 'talking_head' && candidate.materialRoles.includes('presenter')) && materialRoutingRequests({ policyVersion: 'type-aware.v2', tenantId, productRef: candidate.productRef,
+    shots: [{ shotId: 'guided-candidate', function: 'value', materialType: type, productRef: candidate.productRef, visualContract: candidate.visualContract, requestedDescription: candidate.visualContract.action.path || candidate.label, plannedDurationSeconds: duration }], candidates: [candidate],
+    ...(type === 'talking_head' && profile ? { reviewedMaterialBindings: profile.rightsEvidenceRefs.filter(ref => profile.commercialUseApprovalEvidenceRefs.includes(ref)).slice(0,1).map(rightsEvidenceRef => ({ shotId:'guided-candidate', assetId:candidate.assetId, segmentId:candidate.segmentId, sourceRef:candidate.sourceRef, sourceRevision:candidate.sourceRevision, rightsEvidenceRef })) } : {}) })[0]?.selectedMaterialSegment);
+  };
   const productionCandidate = (candidate: CreationShot, duration: number, type: GuideNode['type']) => admitted.find(value => value.assetId === candidate.sourceId && value.segmentId === candidate.segmentId && value.timeRange && Math.abs(value.timeRange.startSeconds - candidate.start) < .05 && (type !== 'product' || Boolean(value.productId && allProductIds.has(value.productId))) && admittedForSlot(value, duration, type));
   const durationUnits = selectedNodes.map(node => {
     const first = sources.find(shot => shot.shotId === node.sourceShotId), last = sources.find(shot => shot.shotId === node.sourceShotIds?.at(-1)) || first;
@@ -95,7 +101,8 @@ export async function guidedCreationTurn(tenantId: string, turn: CreationTurn, p
     const duration = nodeIndex === selectedNodes.length - 1 ? +(sourceDuration - assignedDuration).toFixed(3) : +(durationUnits[nodeIndex]! / totalUnits * sourceDuration).toFixed(3);
     assignedDuration += duration;
     const description = source?.visual || ({ talking_head: '真人口播', factory: '工厂实拍', product: '产品实拍', consumer_demo: '使用演示', general: '通用画面' }[node.type]);
-    const broll = node.type === 'talking_head' && guided.presenterMode === 'none';
+    const ownedHook = nodeIndex === 0 && guided.scene?.hook?.usage === 'editable';
+    const broll = node.type === 'talking_head' && guided.presenterMode === 'none' && !ownedHook;
     const effectiveType = broll ? 'product' : node.type;
     const pool: GuidedReply['candidates'] = fullEvidence.shots.filter(shot => broll ? ['product', 'factory'].includes(shot.kind) : effectiveType === 'product' ? shot.kind === 'product' : effectiveType === 'factory' ? shot.kind === 'factory' : false)
       .map(shot => ({ ...shot, segmentId: shot.segmentId || '', type: shot.kind === 'factory' ? 'factory' as const : effectiveType, productionEligible: Boolean(productionCandidate(shot, duration, shot.kind === 'factory' ? 'factory' : effectiveType)) }));
@@ -109,17 +116,27 @@ export async function guidedCreationTurn(tenantId: string, turn: CreationTurn, p
       pool.push({ id, sourceId: candidate.assetId, segmentId: candidate.segmentId, title: candidate.label, description, type: broll && candidate.materialRoles.includes('factory') ? 'factory' : effectiveType,
         start: candidate.timeRange!.startSeconds, end: candidate.timeRange!.endSeconds, ...(/^(https?:\/\/|\/(?:api|media|studio-media)\/)/.test(url) ? { previewUrl: url } : {}), productionEligible: admittedForSlot(candidate, duration, broll && candidate.materialRoles.includes('factory') ? 'factory' : effectiveType) });
     }
-    const candidates = pool.filter(row => Boolean(row.segmentId)).sort((a, b) => Number(b.productionEligible) - Number(a.productionEligible)).slice(0, 4);
+    const scene = guided.scene;
+    const used = new Set(nodes.flatMap(item => mediaCandidates.filter(candidate => candidate.id === item.selectedCandidateId).map(candidate => candidate.sourceId)));
+    const preferred = (candidate: GuidedReply['candidates'][number]) => nodeIndex > 0 && nodeIndex < selectedNodes.length - 1 && scene?.campaign?.materialIds.includes(candidate.sourceId) && !used.has(candidate.sourceId) ? 1 : 0;
+    const scopedPool = nodeIndex === 0 && scene?.hook?.usage === 'editable' ? pool.map(row => {
+      const hook = scene.hook!;
+      return row.sourceId === hook.materialId && row.start <= hook.startSeconds && row.end >= hook.endSeconds && hook.endSeconds - hook.startSeconds >= duration - .05
+        ? { ...row, start: hook.startSeconds, end: hook.endSeconds } : row;
+    }) : pool;
+    const candidates = scopedPool.filter(row => Boolean(row.segmentId)).sort((a, b) => Number(b.productionEligible) - Number(a.productionEligible) || preferred(b) - preferred(a)).slice(0, 4);
     for (const candidate of candidates) if (!mediaCandidates.some(row => row.id === candidate.id)) mediaCandidates.push(candidate);
 
     const assignment = guided.assignments.find(value => value.nodeId === node.id);
     if (assignment?.intent === 'match' && !candidates.some(value => value.id === assignment.candidateId)) return fail('creation_candidate_stale', '所选片段不属于当前节点的候选，请重新选择。', 409);
     let chosen = assignment?.intent === 'match' ? candidates.find(value => value.id === assignment.candidateId) : undefined;
-    if (guided.productionMode === 'auto' && !(node.type === 'talking_head' && guided.presenterMode !== 'none')) {
-      chosen = candidates.find(value => value.productionEligible);
+    if (guided.productionMode === 'auto' && (ownedHook || !(node.type === 'talking_head' && guided.presenterMode !== 'none'))) {
+      chosen = nodeIndex === 0 && scene?.hook?.usage === 'editable'
+        ? candidates.find(value => value.productionEligible && value.sourceId === scene.hook!.materialId && value.start === scene.hook!.startSeconds && value.end === scene.hook!.endSeconds)
+        : candidates.find(value => value.productionEligible);
     }
-    const digital = node.type === 'talking_head' && guided.presenterMode === 'digital';
-    const shooting = node.type === 'talking_head' && guided.presenterMode === 'shoot';
+    const digital = node.type === 'talking_head' && guided.presenterMode === 'digital' && !ownedHook;
+    const shooting = node.type === 'talking_head' && guided.presenterMode === 'shoot' && !ownedHook;
     const generating = digital || assignment?.intent === 'generate';
     const usable = Boolean(chosen?.productionEligible);
     nodes.push({ ...node, description, duration, candidates: candidates.map(value => value.id), ...(chosen ? { selectedCandidateId: chosen.id } : {}), status: shooting ? 'shooting' : generating ? 'generate' : usable ? 'matched' : chosen ? 'candidate' : 'needs_material' });
@@ -134,9 +151,14 @@ export async function guidedCreationTurn(tenantId: string, turn: CreationTurn, p
   if (guided.assignments.some(value => !nodes.some(node => node.id === value.nodeId))) return fail('creation_node_stale', '结构已变化，旧节点选择已失效。', 409);
   const context = guidedEnterpriseContext(profile as unknown as EnterpriseProfile, selection.productIds);
   const packageValue = !starting && selected ? buildSocialTaskReferencePackage({ record: sourceReference, source: { sourceId: text(sourceReference.id), sourceRef: `trendvideo:${sourceReference.id}`, sourceVersion: null, createdAt: text(sourceReference.crawledAt) || '1970-01-01T00:00:00.000Z' }, themeId: 'supplier_capability', verifiedContext: { ...context, productName: legacy.products.filter(row => allProductIds.has(row.id)).map(row => row.name).join('、') || context.productName } }) : null;
-  const narrationText = packageValue?.replicationScript?.narrationLines?.map(line => line.draftText).join('\n') || '';
-  const narration: GuidedReply['narration'] = { sourceReferenceId: text(sourceReference.id), sourceTitle: text(sourceReference.title), text: narrationText, status: narrationText ? 'ready' : 'needs_evidence', note: narrationText ? '复用爆款复刻的逐句口播与企业身份替换；后台继续核验事实并按所选语言处理，不另问口播和字幕。' : '该结构来源尚缺可复用的原始口播证据；不以模板口播冒充原视频台词。' };
+  const narrationLines = sceneNarration(guided.scene, packageValue?.replicationScript?.narrationLines || []);
+  const narrationText = narrationLines.map(line => line.text).join('\n');
+  const narration: GuidedReply['narration'] = { sourceReferenceId: text(sourceReference.id), sourceTitle: text(sourceReference.title), text: narrationText, lines: narrationLines, status: narrationText ? 'ready' : 'needs_evidence', note: narrationText ? '复用爆款复刻的逐句口播与企业身份替换；后台继续核验事实并按所选语言处理，不另问口播和字幕。' : '该结构来源尚缺可复用的原始口播证据；不以模板口播冒充原视频台词。' };
   if (['guided_production', 'guided_review'].includes(action)) {
+    const referenceHook = guided.scene?.hook?.usage === 'reference_only' ? inventory.items.find(row => row.id === guided.scene?.hook?.materialId) : undefined;
+    const sameReference = Boolean(referenceHook && text(referenceHook.sourceUrl) && text(referenceHook.sourceUrl) === text(sourceReference.sourceUrl)
+      && guided.scene?.hook?.startSeconds === 0 && Math.abs((guided.scene.hook.endSeconds || 0) - (nodes[0]?.duration || 0)) < .05);
+    verifySceneMaterials(guided.scene, nodes, mediaCandidates, blockers, sameReference);
     if (sourceDuration < 6 || sourceDuration > 60) blockers.push({ code: 'creation_duration_unsupported', message: '当前原口播时长超出现有单条生产链路的 6–60 秒范围；不会静默截断或改变口播时间轴。' });
     if (!guided.productionMode || !guided.presenterMode) return fail('creation_production_mode_required', '请选择制作方式和出镜方式。');
     if (narrationText) {

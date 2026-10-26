@@ -14,6 +14,7 @@ import { assistantBubbleStyle } from './globalAssistantRuntime';
 import { SocialPlatformIcon } from '../SocialPlatformIcon';
 import { ThumbnailImage, VideoThumbnail } from '../inspiration/InspirationMedia';
 import AssistantMascot from './AssistantMascot';
+import CompanyReportCard from './CompanyReportCard';
 
 interface Props {
   inlineHome?: boolean;
@@ -79,7 +80,7 @@ export default function AssistantConversationBubbles(props: Props) {
           className={`ls-assistant-bubble-enter flex gap-2 ${inlineHome ? `ls-assistant-flow__turn ls-assistant-flow__turn--${msg.role}` : msg.role === 'user' ? 'justify-end' : ''}`}
           style={assistantBubbleStyle(index + (welcomeBubbleVisible ? 1 : 0))}>
           {msg.role === 'assistant' && !inlineHome && <AssistantMascot size="xs" reduceMotion={reduceMotion} />}
-          {msg.role === 'user' ? <div className="flex min-w-0 max-w-[min(100%,340px)] flex-col items-end gap-2">
+          {msg.role === 'user' ? <div className={inlineHome ? 'ls-assistant-flow__user-content flex min-w-0 flex-col items-end gap-2' : 'flex min-w-0 max-w-[min(100%,340px)] flex-col items-end gap-2'}>
             {msg.referenceMedia && <article className="w-full overflow-hidden rounded-lg border border-border bg-surface text-left text-text-primary" aria-label={`已发送参考视频：${msg.referenceMedia.title}`}>
               <div className="relative aspect-video overflow-hidden bg-surface-2">
                 <VideoThumbnail platform={msg.referenceMedia.platform} title={msg.referenceMedia.title}/>
@@ -101,6 +102,7 @@ export default function AssistantConversationBubbles(props: Props) {
             {msg.creationPortal && <AssistantCreationPortalCard key={msg.creationPortal.id} portal={msg.creationPortal} />}
             {msg.taskPortal && <AssistantTaskPortalCard key={`${msg.taskPortal.taskId}:${msg.taskPortal.phase}`} portal={msg.taskPortal} />}
             {msg.sourcePortal && <AssistantSourcePortalCard portal={msg.sourcePortal} />}
+            {msg.companyReport && <CompanyReportCard report={msg.companyReport}/>}
           </div>}
         </div>
       ))}

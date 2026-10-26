@@ -1,3 +1,4 @@
+import { prepareExternalNewsScope } from '../assistantContext/externalNewsScope.js';
 import { CreationDialogueError } from '../assistantContext/contentCreationDialogue.js';
 import { registerContentCreationDialogue, readCreationChatGrounding } from './contentCreationDialogue.js';
 import {readAuthorizedWhatsAppCustomers} from '../whatsapp/authorizedCustomerRead.js';
@@ -18,6 +19,8 @@ import { ExternalInformationError } from '../externalInformation/http.js';
 import { appendInformationSources } from '../externalInformation/sourceFooter.js';
 import { previewInformationScope } from '../assistantContext/previewInformationScope.js';
 import { ASSISTANT_DETAILS_POLICY } from '../../shared/assistantReadableReply.js';
+import { companyReportIntent, generateCompanyReport, companyReportSummary } from '../externalInformation/companyReport.js';
+import { companyFilingsIntent, companyReportOptions, queryCompanyFilings, renderCompanyFilings, resolveHalfYearReport } from '../externalInformation/companyFilingsDelivery.js';
 import { DecisionMemoryError, recordDecisionMemory, updateDecisionMemory, revokeDecisionMemory, listDecisionMemories, type DecisionMemory } from '../assistantContext/decisionMemory.js';
 
 function currentTimeRule(): string {
@@ -88,6 +91,11 @@ ${ASSISTANT_DETAILS_POLICY}
 export const strategyRouter = Router();
 strategyRouter.use(requireAuth);
 registerContentCreationDialogue(strategyRouter);
+
+strategyRouter.get('/company-report-options', async (_req, res) => {
+  try { res.json(await companyReportOptions()); }
+  catch { res.status(503).json({ error: 'company_report_options_unavailable', message: '企业财报目录暂时无法读取，请稍后重试。' }); }
+});
 
 type AdvisorSnapshot = {
   exposureReady: boolean;
@@ -402,7 +410,8 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const question = latestAssistantQuestion(messages);
+  const newsScope = await prepareExternalNewsScope(messages, tenantId);
+  const question = newsScope?.question ?? latestAssistantQuestion(messages);
   const externalPlan = planExternalQuestion(question);
   const requireSources = externalPlan.kind === 'web';
   const cancellation = new AbortController();
@@ -412,6 +421,38 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
   heartbeat.unref();
   const timeRule = currentTimeRule();
   try {
+    if (newsScope?.clarification) {
+      res.write(`data: ${JSON.stringify({ text: newsScope.clarification })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      return;
+    }
+    const filingsIntent = companyFilingsIntent(question);
+    if (filingsIntent) {
+      const result = renderCompanyFilings(await queryCompanyFilings(filingsIntent.companies, {
+        signal: cancellation.signal, force: filingsIntent.force,
+      }));
+      if (result.sources.length) res.write(`data: ${JSON.stringify({ sources: result.sources })}\n\n`);
+      res.write(`data: ${JSON.stringify({ text: result.text })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      return;
+    }
+    const companyIntent = companyReportIntent(question);
+    if (companyIntent) {
+      if (!companyIntent.target && !companyIntent.lookup) {
+        res.write(`data: ${JSON.stringify({ text: companyIntent.error })}\n\n`);
+      } else {
+        const companyId = companyIntent.target?.id ?? companyIntent.lookup!.companyId;
+        const year = companyIntent.target?.year ?? companyIntent.lookup!.year;
+        const target = await resolveHalfYearReport(companyId, year, { signal: cancellation.signal });
+        const report = await generateCompanyReport(target, tenantId, {
+          signal: cancellation.signal,
+          progress: phase => { if (!res.destroyed) res.write(`data: ${JSON.stringify({ companyReportProgress: phase })}\n\n`); },
+        });
+        res.write(`data: ${JSON.stringify({ companyReport: report, text: companyReportSummary(report) })}\n\n`);
+      }
+      res.write('data: [DONE]\n\n');
+      return;
+    }
     const externalAnswer = await answerExternalData(question, { signal: cancellation.signal });
     if (externalAnswer && (!externalPlan.mixed || externalAnswer.status === 'needs_input')) {
       if (externalAnswer.sources.length) res.write(`data: ${JSON.stringify({ sources: externalAnswer.sources })}\n\n`);
@@ -436,7 +477,7 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
     const generalMethod = externalPlan.kind === 'offline' && !needsGrounding && !creationGrounding;
     const systemPrompt = generalMethod ? `${GENERAL_METHOD_PROMPT}\n${grounding.text}`
       : `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${sourceRule}\n\n${grounding.text}\n${creationGrounding}\n${EXTERNAL_SOURCE_RULES}\n${externalEvidence}\n${ASSISTANT_CONTEXT_RULES}`;
-    for await (const ev of callLLMChatStream(messages, { systemPrompt, deepThinking, requireConclusion: true, validateAnswer: generalMethod ? assertGeneralMethodAnswer : undefined, requireSources, webSearch: requireSources, searchDomains: requireSources ? externalPlan.domains : undefined, searchFreshnessDays: externalPlan.freshnessDays, signal: cancellation.signal })) {
+    for await (const ev of callLLMChatStream(newsScope ? [...messages.slice(0, -1), { role: 'user', content: question }] : messages, { systemPrompt, deepThinking, requireConclusion: true, searchEvidenceFirst: Boolean(newsScope), validateAnswer: generalMethod ? assertGeneralMethodAnswer : undefined, requireSources, webSearch: requireSources, searchDomains: requireSources ? externalPlan.domains : undefined, searchFreshnessDays: externalPlan.freshnessDays, signal: cancellation.signal })) {
       res.write(`data: ${JSON.stringify(ev)}\n\n`);
     }
     if (externalAnswer?.sources.length) res.write(`data: ${JSON.stringify({ text: appendInformationSources('', externalAnswer.sources) })}\n\n`);
@@ -447,7 +488,7 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
     const rawError = err instanceof ExternalInformationError ? err.message : requireSources
       ? `联网检索失败，未能取得可跳转信息来源：${formatStreamError(err)}`
       : formatStreamError(err);
-    const error = requireSources && !rawError.includes('信息来源')
+    const error = requireSources && !rawError.includes('信息来源') && !(err instanceof ExternalInformationError && err.code.startsWith('company_report_'))
       ? `总体结论：${rawError}\n\n信息来源：本轮未取得通过核验的资料。` : rawError;
     res.write(`data: ${JSON.stringify({ error, ...(err instanceof ExternalInformationError ? { code: err.code, publicMessage: error } : {}) })}\n\n`);
     res.write('data: [DONE]\n\n');

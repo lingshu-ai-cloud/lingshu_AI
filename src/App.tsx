@@ -31,7 +31,7 @@ import { AGENT_PAGES, ROLE_PAGE_ACCESS, customerUnifiedAgent, firstUserText, isA
 import { useSocialContentQueryNavigation } from './lib/useSocialContentQueryNavigation';
 import { Layout, AuthScreen } from './components/AppDeferredShell';
 
-import { DesignPrototype, SocialContentPreview, SmartBusinessPreview, ADS_PAGES, prefetchPageModule, scheduleLocalPreviewPreload, normalizeEnterpriseProductsDeepLink } from './appPageModules';
+import { DesignPrototype, SmartBusinessPreview, ADS_PAGES, prefetchPageModule, scheduleLocalPreviewPreload, normalizeEnterpriseProductsDeepLink } from './appPageModules';
 export { normalizeEnterpriseProductsDeepLink } from './appPageModules';
 
 export type { Page } from './pageRegistry';
@@ -44,13 +44,6 @@ export default function App() {
     return (
       <Suspense fallback={<PageLoading />}>
         <DesignPrototype />
-      </Suspense>
-    );
-  }
-  if (import.meta.env.DEV && SocialContentPreview && publicPath === '/social-content-preview') {
-    return (
-      <Suspense fallback={<PageLoading />}>
-        <SocialContentPreview />
       </Suspense>
     );
   }
@@ -228,7 +221,7 @@ export default function App() {
   const [smartAssetsStudioOpen, setSmartAssetsStudioOpen] = useState(() => {
     const detail = canRestoreProductionHistoryState(window.history.state) ? window.history.state?.productionDetail : null;
     return Boolean(new URLSearchParams(window.location.search).get('project')
-      || readSocialContentNavigationQueryTaskId('smartAssets', window.location.search)
+      || (new URLSearchParams(window.location.search).get('taskId') && !new URLSearchParams(window.location.search).has('socialContentTaskId'))
       || detail?.directStudio);
   });
 
@@ -471,7 +464,7 @@ export default function App() {
         restoreHistory?: boolean;
         navigationIdentity?: string;
         page?: Page;
-        view?: LegacyTrafficView | 'products';
+        view?: LegacyTrafficView | 'products' | 'calendar';
         productName?: string;
         materialIds?: string[];
         contentItemId?: string;
@@ -517,6 +510,15 @@ export default function App() {
           delete nextHistoryState.socialContentPage;
           delete nextHistoryState.weeklyContentTarget;
         }
+        if (nextPage === 'socialInspiration' && detail.view === 'calendar') {
+          const calendarUrl = new URL(window.location.href);
+          calendarUrl.searchParams.set('view', 'calendar');
+          calendarUrl.searchParams.delete('taskId');
+          calendarUrl.searchParams.delete('socialContentTaskId');
+          delete nextHistoryState.socialContentTaskId;
+          delete nextHistoryState.socialContentPage;
+          window.history.replaceState(stampProductionHistoryState(nextHistoryState), '', calendarUrl);
+        }
         if (nextPage === 'smartAssets' && detail.contentCreationRequest
           && (!detail.contentCreationRequest.continueProjectId
             || !detail.socialContentTaskId
@@ -524,6 +526,7 @@ export default function App() {
           try { localStorage.removeItem('ow_studio_open_project'); } catch { /* ignore */ }
           const freshUrl = new URL(window.location.href);
           freshUrl.searchParams.delete('project');
+          if (opensCreationWorkbench) { freshUrl.searchParams.delete('socialContentTaskId'); freshUrl.searchParams.delete('taskId'); }
           freshUrl.searchParams.set('view', 'create');
           window.history.replaceState(stampProductionHistoryState({ ...nextHistoryState, productionDetail: detail }), '', freshUrl);
         } else window.history.replaceState(stampProductionHistoryState({ ...nextHistoryState, productionDetail: detail }), '');

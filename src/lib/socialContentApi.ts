@@ -48,7 +48,7 @@ export type SocialAssistantAction = {
 };
 export type SocialAssistantReceipt = {
   task: SocialContentTaskDetail;
-  receipt: { taskId: string; runId?: string | null; status: string; href: string; card: ContentProductionTaskCard; weeklyTaskId?: string; calendarTarget?: { productionTaskId: string }; started?: boolean; blockedReason?: string };
+  receipt: { taskId: string; runId?: string | null; status: string; href: string; card: ContentProductionTaskCard; weeklyTaskId?: string; calendarTarget?: { productionTaskId: string }; started?: boolean; queued?: boolean; blockedReason?: string };
 };
 const JSON_REQUEST_TIMEOUT_MS = 30_000;
 const FILE_UPLOAD_TIMEOUT_MS = 10 * 60_000;
@@ -431,8 +431,8 @@ export const socialContentApi = {
   getAssistantActions: (taskId: string): Promise<{ items: SocialAssistantAction[] }> => requestJson(`/assistant-actions?taskId=${encodeURIComponent(taskId)}`),
   reviseAssistantAction: (taskId: string, artifactId: string, expectedVersion: string, note: string, operationKey: string): Promise<SocialAssistantReceipt> => requestJson(`/assistant-actions/${encodeURIComponent(taskId)}/revise`, { method: 'POST', body: JSON.stringify({ artifactId, expectedVersion, note }) }, operationKey),
   startAssistantAction: (taskId: string, expectedVersion: string, operationKey: string): Promise<SocialAssistantReceipt> => requestJson(`/assistant-actions/${encodeURIComponent(taskId)}/start`, { method: 'POST', body: JSON.stringify({ expectedVersion }) }, operationKey),
-  createAssistantAction: (input: CreateSocialContentTaskInput, operationKey: string): Promise<SocialAssistantReceipt> => requestJson('/assistant-actions/create', { method: 'POST', body: JSON.stringify(input) }, operationKey),
-  getWorkspace: async (): Promise<SocialContentWorkspace> => socialWorkspaceResponse(await requestJson<unknown>('')),
+  createAssistantAction: (input: CreateSocialContentTaskInput & { initialSource?: AddSocialTaskSourceInput }, operationKey: string): Promise<SocialAssistantReceipt> => requestJson('/assistant-actions/create', { method: 'POST', body: JSON.stringify(input) }, operationKey),
+  getWorkspace: async (taskId?: string): Promise<SocialContentWorkspace> => socialWorkspaceResponse(await requestJson<unknown>(taskId ? `?taskId=${encodeURIComponent(taskId)}` : '')),
   listTasks: async (page = 1, perPage = 50): Promise<SocialContentTaskPage> => {
     if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(perPage) || perPage < 1 || perPage > 100) {
       throw new Error('任务列表页码无效，请重新加载');
@@ -447,6 +447,8 @@ export const socialContentApi = {
     return socialSourceOptionPage(await requestJson<unknown>(`/source-options?${params}`));
   },
   getTask: async (taskId: string, signal?: AbortSignal): Promise<SocialContentTaskDetail> => socialTaskEnvelope(await requestJson<unknown>(`/tasks/${encodeURIComponent(taskId)}`, { signal })),
+  getExecutionPortal: (taskId: string, signal?: AbortSignal): Promise<{ item: null | { taskId: string; runId: string | null; title: string; card: ContentProductionTaskCard; href: string } }> => requestJson(`/tasks/${encodeURIComponent(taskId)}/execution-portal`, { signal }),
+  getReplicationContext: (taskId: string): Promise<{ task: SocialContentTaskDetail; weekly: null | { packageId: string; version: number; weekStart: string; weekEnd: string; publicationTaskId: string; accountId: string; plannedPublishAt: string } }> => requestJson(`/tasks/${encodeURIComponent(taskId)}/replication-context`),
   listPresenterFirstFrameReviews: async (taskId: string, runId: string): Promise<PresenterFirstFrameReviewNode[]> => (
     (await requestJson<{ items: PresenterFirstFrameReviewNode[] }>(`/tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}/presenter-first-frame-reviews`)).items
   ),

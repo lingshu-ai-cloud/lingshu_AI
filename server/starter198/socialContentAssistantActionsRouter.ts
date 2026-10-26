@@ -4,12 +4,15 @@ import type { Starter198OrchestratorQueuePort } from './runtimePorts.js';
 import { socialContentAssistantAction, socialContentAssistantReceipt } from './socialContentAssistantActions.js';
 import { decideSocialContentArtifact } from './socialContentOutputs.js';
 import { readSocialTaskDetail, requireSocialTask } from './socialContentRecords.js';
+import { socialContentExecutionAccepted, socialContentExecutionPortal } from './socialContentExecutionPortal.js';
+import { createAndStartSocialAssistantTask, recordAssistantStartFailure } from './socialContentAssistantStart.js';
 import { socialContentReviewAdmissionAllowed } from './socialContentTestBypass.js';
-import { createSocialContentTask, startSocialContentTask } from './socialContentTasks.js';
+import { startSocialContentTask } from './socialContentTasks.js';
 import {
   SocialContentWorkflowError,
   parseArtifactDecision,
   parseCreateSocialTask,
+  parseSocialSource,
   requireIdempotencyKey,
   requireSocialId,
   socialJson,
@@ -46,8 +49,32 @@ export function createSocialContentAssistantActionsRouter(input: {
   const router = Router({ mergeParams: true });
   const receipt = async (tenantId: string, task: Parameters<typeof socialContentAssistantReceipt>[0], blockedReason?: string) => {
     const row = await requireSocialTask({ repository: input.repository, tenantId, taskId: task.taskId });
-    return socialContentAssistantReceipt(task, blockedReason, Boolean(socialObject(socialJson(row.brief))?._weeklyAuthority));
+    return { ...socialContentAssistantReceipt(task, blockedReason, Boolean(socialObject(socialJson(row.brief))?._weeklyAuthority)),
+      queued: socialContentExecutionAccepted(row) };
   };
+  router.get('/tasks/:taskId/execution-portal', input.asyncRoute(async (req, res) => {
+    const identity = await input.authorize(req, res, 'read');
+    const target = { repository: input.repository, tenantId: identity.tenantId, taskId: requireSocialId(req.params.taskId) };
+    const task = await readSocialTaskDetail(target);
+    if (!task) throw new SocialContentWorkflowError('social_content_task_not_found', 404);
+    res.json({ item: socialContentExecutionPortal(await requireSocialTask(target), task) });
+  }));
+  router.get('/tasks/:taskId/replication-context', input.asyncRoute(async (req, res) => {
+    const identity = await input.authorize(req, res, 'read');
+    const target = { repository: input.repository, tenantId: identity.tenantId, taskId: requireSocialId(req.params.taskId) };
+    const task = await readSocialTaskDetail(target);
+    if (!task || task.brief.creationMode !== 'viral_replication') throw new SocialContentWorkflowError('social_content_task_not_found', 404);
+    const row = await requireSocialTask(target);
+    const authority = socialObject(socialObject(socialJson(row.brief))?._weeklyAuthority);
+    const pkg = socialObject(authority?.weeklyPackage), publication = socialObject(authority?.publicationTask);
+    res.json({ task, weekly: pkg && publication ? {
+      packageId: socialText(pkg.packageId), version: Number(pkg.version),
+      weekStart: socialText(pkg.weekStart), weekEnd: socialText(pkg.weekEnd),
+      publicationTaskId: socialText(publication.publicationTaskId),
+      accountId: socialText(publication.accountId),
+      plannedPublishAt: socialText(publication.publishWindow),
+    } : null });
+  }));
   router.get('/assistant-actions', input.asyncRoute(async (req, res) => {
     const identity = await input.authorize(req, res, 'read');
     const taskId = socialText(req.query.taskId);
@@ -81,20 +108,21 @@ export function createSocialContentAssistantActionsRouter(input: {
     const idempotencyKey = requireIdempotencyKey(req.headers['idempotency-key']);
     const current = await readSocialTaskDetail({ repository: input.repository, tenantId: identity.tenantId, taskId });
     if (!current) throw new SocialContentWorkflowError('social_content_task_not_found', 404);
-    if (current.runId) { res.json({ task: current, receipt: await receipt(identity.tenantId, current) }); return; }
-    if (!input.orchestratorQueue) throw new SocialContentWorkflowError('social_content_orchestrator_not_configured', 503);
+    if (current.runId || current.executionAdmission?.state === 'queued') { res.json({ task: current, receipt: await receipt(identity.tenantId, current) }); return; }
     try {
+      if (!input.orchestratorQueue) throw new SocialContentWorkflowError('social_content_orchestrator_not_configured', 503);
       const task = await startSocialContentTask({ repository: input.repository, ...identity, taskId,
         expectedVersion: socialText(source.expectedVersion), idempotencyKey,
         orchestratorQueue: input.orchestratorQueue, now: input.now() });
-      res.status(task.runId ? 202 : 200).json({ task, receipt: await receipt(identity.tenantId, task,
-        task.runId ? undefined : 'social_content_task_waiting_for_input') });
+      res.status(task.runId || task.executionAdmission?.state === 'queued' ? 202 : 200).json({ task, receipt: await receipt(identity.tenantId, task,
+        task.executionAdmission?.state === 'queued' || task.runId ? undefined : 'social_content_task_waiting_for_input') });
     } catch (error) {
       const latest = await readSocialTaskDetail({ repository: input.repository, tenantId: identity.tenantId, taskId });
       if (error instanceof SocialContentWorkflowError && latest?.runId
         && ['social_content_task_version_conflict', 'social_content_task_not_startable'].includes(error.code)) {
         res.json({ task: latest, receipt: await receipt(identity.tenantId, latest) }); return;
       }
+      await recordAssistantStartFailure({ repository: input.repository, ...identity, taskId, error, now: input.now() });
       throw error;
     }
   }));
@@ -124,28 +152,15 @@ export function createSocialContentAssistantActionsRouter(input: {
     const identity = await input.authorize(req, res, 'start');
     bodyWithinLimit(req);
     const idempotencyKey = requireIdempotencyKey(req.headers['idempotency-key']);
-    const parsed = parseCreateSocialTask(req.body);
-    const mode = parsed.mode ?? 'instant';
-    if (mode === 'weekly' && !parsed.dueAt) throw new SocialContentWorkflowError('social_content_due_at_required', 400);
-    let current = await createSocialContentTask({ repository: input.repository, ...identity, idempotencyKey,
-      value: { ...parsed, mode }, entry: 'assistant', now: input.now() });
-    if (current.runId) { res.json({ task: current, receipt: await receipt(identity.tenantId, current) }); return; }
-    let blockedReason: string | undefined;
-    if (!input.orchestratorQueue) blockedReason = 'social_content_orchestrator_not_configured';
-    else if (!current.readiness.complete) blockedReason = 'social_content_task_inputs_incomplete';
-    else {
-      try {
-        current = await startSocialContentTask({ repository: input.repository, ...identity, taskId: current.taskId,
-          expectedVersion: current.version, idempotencyKey: `assistant-start:${current.taskId}`,
-          orchestratorQueue: input.orchestratorQueue, now: input.now() });
-        if (!current.runId) blockedReason = 'social_content_task_waiting_for_input';
-      } catch (error) {
-        blockedReason = error instanceof SocialContentWorkflowError ? error.code : 'social_content_orchestrator_unavailable';
-        current = (await readSocialTaskDetail({ repository: input.repository,
-          tenantId: identity.tenantId, taskId: current.taskId }))!;
-      }
-    }
-    res.status(current.runId ? 202 : 201).json({ task: current,
+    const body = socialObject(req.body);
+    const { initialSource: sourceValue, ...taskValue } = body ?? {};
+    const initialSource = sourceValue === undefined ? undefined : parseSocialSource(sourceValue);
+    const parsed = parseCreateSocialTask(taskValue);
+    const { task: current, blockedReason } = await createAndStartSocialAssistantTask({
+      repository: input.repository, orchestratorQueue: input.orchestratorQueue, ...identity,
+      idempotencyKey, value: parsed, initialSource, now: input.now(),
+    });
+    res.status(current.runId || current.executionAdmission?.state === 'queued' ? 202 : 201).json({ task: current,
       receipt: await receipt(identity.tenantId, current, blockedReason) });
   }));
   return router;

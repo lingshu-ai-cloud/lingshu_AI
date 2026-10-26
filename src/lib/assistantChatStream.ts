@@ -4,6 +4,7 @@ import { assistantFileMarker } from '../../shared/assistantFileIntent';
 import { createAssistantFile } from './assistantFilesApi';
 import { AssistantStreamCompletion } from './assistantStreamCompletion';
 import { assistantTaskPortalSchema } from '../../shared/contracts/assistantTaskPortal';
+import { companyReportSchema, COMPANY_REPORT_PHASES } from '../../shared/contracts/companyReport';
 
 const ASSISTANT_CHAT_RESPONSE_TIMEOUT_MS = 20_000;
 const ASSISTANT_CHAT_STREAM_IDLE_TIMEOUT_MS = 30_000;
@@ -37,6 +38,8 @@ export async function streamAssistantReply(input: {
   onText: (text: string) => void;
   onSources: (sources: NonNullable<Message['sources']>) => void;
   onTaskPortal?: (portal: NonNullable<Message['taskPortal']>) => void;
+  onCompanyReport?: (report: NonNullable<Message['companyReport']>, text: string) => void;
+  onCompanyReportProgress?: (phase: string) => void;
   onFileReady: (content: string) => void;
   onTimeout: () => void;
   responseErrorMessage: (response: Response) => Promise<string>;
@@ -68,6 +71,13 @@ export async function streamAssistantReply(input: {
       try {
         const event = completion.accept(line.slice(6).trim());
         if (!event) return;
+        if (typeof event.companyReportProgress === 'string' && COMPANY_REPORT_PHASES.some(phase => phase === event.companyReportProgress)) input.onCompanyReportProgress?.(event.companyReportProgress);
+        if (event.companyReport !== undefined) {
+          const report = companyReportSchema.safeParse(event.companyReport);
+          if (!report.success) { completion.error = '企业报告传输结构无效，请重新查询。'; return; }
+          input.onCompanyReport?.(report.data, event.text || report.data.analysis.conclusion.text);
+          return;
+        }
         const portal = assistantTaskPortalSchema.safeParse(event.taskPortal);
         if (!fileIntent && portal.success && portal.data.phase === 'offered') input.onTaskPortal?.(portal.data);
         if (event.text) {

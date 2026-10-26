@@ -105,7 +105,9 @@ const supplied = await executeSocialAssetSupplyPlan({
   }],
   adapters: existingAssetSupplyAdapters(),
 });
-assert.deepEqual(supplied.assets.map(asset => asset.id), ['asset-b']);
+assert.equal(supplied.assets.length, 1);
+assert.equal(supplied.assets[0]?.sourceId, 'asset-b');
+assert.match(supplied.assets[0]!.id, /^asset-b:window:/);
 assert.deepEqual(supplied.assets[0]?.segments.map(segment => segment.id), ['segment-2']);
 assert.equal(supplied.execution.shots[0]?.sourceStrategy, 'customer_real_asset');
 assert.equal(supplied.execution.shots[0]?.sourceRef, 'asset-b');

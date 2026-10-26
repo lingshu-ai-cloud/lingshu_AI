@@ -1,4 +1,5 @@
 import type {
+  SocialAdHocBusinessContext,
   SocialContentExecutionPlan,
   SocialDirectorBrief,
   SocialDirectorBriefScene,
@@ -14,8 +15,11 @@ import {
   socialRequestHash,
   socialText,
 } from './socialContentValidation.js';
+import { originalPresenterSceneContract } from './socialContentPresenterSceneSource.js';
 
 export const SOCIAL_PRODUCTION_HANDOFF_SCHEMA = 'social-content-production-handoff.v3';
+export const SOCIAL_PRODUCTION_ORIGINAL_HANDOFF_SCHEMA = 'social-content-production-handoff.v4';
+export const SOCIAL_PRODUCTION_ORIGINAL_SOURCE_SCHEMA = 'social-production-original-scene-source.v1';
 export const SOCIAL_PRODUCTION_RECEIPT_SCHEMA = 'social-content-production-receipt.v3';
 
 export type SocialProductionGate = 'G4' | 'G5' | 'G6';
@@ -64,21 +68,15 @@ export interface SocialVariantDifference {
   };
 }
 
-export interface SocialProductionHandoff {
-  schemaVersion: typeof SOCIAL_PRODUCTION_HANDOFF_SCHEMA;
+interface SocialProductionHandoffCommon {
   handoffId: string;
   version: string;
   taskId: string;
   status: 'locked';
-  sourceAnalysis: {
-    analysisId: string;
-    version: string;
-    referenceSourceId: string;
-    coverageHash: string;
-  };
   directorBrief: SocialDirectorBrief;
   executionPlan: SocialContentExecutionPlan;
   executionPlanReview: SocialExecutionPlanReview;
+  businessContext?: { kind: 'ad_hoc_business_context'; snapshot: SocialAdHocBusinessContext; recordHash: string };
   compositionBoundary: {
     directorOwned: ['creative_intent', 'narrative', 'shot_intent', 'timing', 'truth_boundary', 'acceptance_criteria'];
     contentAgentOwned: ['candidate_selection', 'provider_execution', 'retry', 'composition', 'technical_delivery'];
@@ -90,6 +88,31 @@ export interface SocialProductionHandoff {
   createdBy: 'director_agent';
   recordHash: string;
 }
+
+export interface SocialReferenceProductionHandoff extends SocialProductionHandoffCommon {
+  schemaVersion: typeof SOCIAL_PRODUCTION_HANDOFF_SCHEMA;
+  sourceAnalysis: {
+    analysisId: string;
+    version: string;
+    referenceSourceId: string;
+    coverageHash: string;
+  };
+}
+
+export interface SocialOriginalProductionHandoff extends SocialProductionHandoffCommon {
+  schemaVersion: typeof SOCIAL_PRODUCTION_ORIGINAL_HANDOFF_SCHEMA;
+  sourceAnalysis: null;
+  sourceContract: {
+    kind: 'original_scene';
+    version: typeof SOCIAL_PRODUCTION_ORIGINAL_SOURCE_SCHEMA;
+    aspectRatio: string;
+    scenes: Array<{ sceneId: string; sceneContractHash: string }>;
+    recordHash: string;
+  };
+}
+
+export type SocialProductionHandoff = SocialReferenceProductionHandoff | SocialOriginalProductionHandoff;
+type SocialProductionHandoffPayload = Omit<SocialReferenceProductionHandoff, 'recordHash'> | Omit<SocialOriginalProductionHandoff, 'recordHash'>;
 
 export interface SocialProductionReceipt {
   schemaVersion: typeof SOCIAL_PRODUCTION_RECEIPT_SCHEMA;
@@ -146,7 +169,7 @@ function assertReceiptIntegrity(receipt: SocialProductionReceipt, handoff?: Soci
   }
 }
 
-function handoffPayload(value: Omit<SocialProductionHandoff, 'recordHash'>): Omit<SocialProductionHandoff, 'recordHash'> {
+function handoffPayload(value: SocialProductionHandoffPayload): SocialProductionHandoffPayload {
   return value;
 }
 
@@ -154,39 +177,53 @@ function receiptPayload(value: Omit<SocialProductionReceipt, 'recordHash'>): Omi
   return value;
 }
 
-export function buildSocialProductionHandoff(input: {
+type SocialProductionHandoffBuildCommon = {
   taskId: string;
   version: string;
-  sourceAnalysis: SocialReferenceVideoAnalysis;
   directorBrief: SocialDirectorBrief;
   executionPlan: SocialContentExecutionPlan;
   executionPlanReview: SocialExecutionPlanReview;
   variantDifference: SocialVariantDifference;
+  adHocBusinessContext?: SocialAdHocBusinessContext | null;
   now?: Date;
-}): SocialProductionHandoff {
+};
+
+export type SocialProductionHandoffBuildInput = SocialProductionHandoffBuildCommon & (
+  | { sourceKind?: 'reference_analysis'; sourceAnalysis: SocialReferenceVideoAnalysis }
+  | { sourceKind: 'original_scene'; sourceAnalysis: null }
+);
+
+export function buildSocialProductionHandoff(input: SocialProductionHandoffBuildInput): SocialProductionHandoff {
   const { sourceAnalysis, directorBrief, executionPlan, executionPlanReview } = input;
   const taskId = id(input.taskId);
   const version = id(input.version);
-  const sourceAnalysisVersion = socialText(sourceAnalysis.version);
-  if (!sourceAnalysisVersion) fail('social_production_handoff_source_analysis_version_required');
-  if (sourceAnalysis.status !== 'ready' || sourceAnalysis.coverage?.fullTimelineCovered !== true) {
-    fail('social_production_handoff_source_analysis_not_ready');
-  }
-  if (directorBrief.status !== 'ready'
-    || directorBrief.referenceAnalysis?.analysisId !== sourceAnalysis.analysisId
-    || directorBrief.referenceAnalysis.version !== sourceAnalysisVersion
-    || socialRequestHash({
-      fullDurationSeconds: directorBrief.referenceAnalysis.fullDurationSeconds,
-      precisionIntervals: directorBrief.referenceAnalysis.precisionIntervals,
-      gaps: directorBrief.referenceAnalysis.gaps,
-      overallConfidence: directorBrief.referenceAnalysis.overallConfidence,
-    }) !== socialRequestHash({
-      fullDurationSeconds: sourceAnalysis.coverage.fullDurationSeconds,
-      precisionIntervals: sourceAnalysis.coverage.precisionIntervals,
-      gaps: sourceAnalysis.coverage.gaps,
-      overallConfidence: sourceAnalysis.coverage.overallConfidence,
-    })) {
-    fail('social_production_handoff_director_brief_lineage_invalid');
+  const original = input.sourceKind === 'original_scene';
+  const sourceAnalysisVersion = sourceAnalysis ? socialText(sourceAnalysis.version) : null;
+  if (!original) {
+    if (!sourceAnalysis) fail('social_production_handoff_source_analysis_required');
+    if (!sourceAnalysisVersion) fail('social_production_handoff_source_analysis_version_required');
+    if (sourceAnalysis.status !== 'ready' || sourceAnalysis.coverage?.fullTimelineCovered !== true) {
+      fail('social_production_handoff_source_analysis_not_ready');
+    }
+    if (directorBrief.status !== 'ready'
+      || directorBrief.referenceAnalysis?.analysisId !== sourceAnalysis.analysisId
+      || directorBrief.referenceAnalysis.version !== sourceAnalysisVersion
+      || socialRequestHash({
+        fullDurationSeconds: directorBrief.referenceAnalysis.fullDurationSeconds,
+        precisionIntervals: directorBrief.referenceAnalysis.precisionIntervals,
+        gaps: directorBrief.referenceAnalysis.gaps,
+        overallConfidence: directorBrief.referenceAnalysis.overallConfidence,
+      }) !== socialRequestHash({
+        fullDurationSeconds: sourceAnalysis.coverage.fullDurationSeconds,
+        precisionIntervals: sourceAnalysis.coverage.precisionIntervals,
+        gaps: sourceAnalysis.coverage.gaps,
+        overallConfidence: sourceAnalysis.coverage.overallConfidence,
+      })) fail('social_production_handoff_director_brief_lineage_invalid');
+  } else if (sourceAnalysis !== null || directorBrief.status !== 'ready' || directorBrief.referenceAnalysis !== null
+    || directorBrief.replicationJobRef != null || directorBrief.referenceMode != null
+    || directorBrief.referenceEvidence.length > 0 || (directorBrief.inspirationHandoffIds?.length ?? 0) > 0
+    || directorBrief.scenes.some(scene => scene.referenceShotId !== null)) {
+    fail('social_production_handoff_original_source_lineage_invalid');
   }
   if (executionPlan.status !== 'approved'
     || executionPlan.directorBriefId !== directorBrief.directorBriefId
@@ -203,12 +240,24 @@ export function buildSocialProductionHandoff(input: {
     || executionPlanReview.sceneResults.some(result => !result.approved)) {
     fail('social_production_handoff_execution_review_invalid');
   }
-  if (!directorBrief.source.weeklyPackageId || !directorBrief.accountRefs.length
-    || !directorBrief.factSourceRefs.length || !directorBrief.callToAction) {
-    fail('social_production_handoff_g3_incomplete');
+  let businessContext: SocialProductionHandoff['businessContext'];
+  if (directorBrief.source.weeklyPackageId) {
+    if (directorBrief.source.adHocBusinessContextId || input.adHocBusinessContext || !directorBrief.accountRefs.length) fail('social_production_handoff_g3_incomplete');
+  } else {
+    const context = input.adHocBusinessContext;
+    const expectedContextId = `ad_hoc_context_${socialRequestHash({ taskId }).slice(0, 20)}`;
+    if (!context || context.createdBy !== 'business_agent' || context.contextId !== expectedContextId
+      || directorBrief.source.adHocBusinessContextId !== context.contextId || context.version !== directorBrief.version
+      || !socialText(context.objective) || !Array.isArray(context.factSourceRefs)
+      || directorBrief.factSourceRefs.some(ref => !context.factSourceRefs.includes(ref))
+      || !Array.isArray(context.platforms) || directorBrief.platforms.some(platform => !context.platforms.includes(platform))
+      || !Array.isArray(context.languages) || directorBrief.languages.some(language => !context.languages.includes(language)))
+      fail('social_production_handoff_ad_hoc_context_invalid');
+    businessContext = { kind: 'ad_hoc_business_context', snapshot: structuredClone(context), recordHash: socialRequestHash(context) };
   }
+  if (!directorBrief.factSourceRefs.length || !socialText(directorBrief.callToAction)) fail('social_production_handoff_g3_incomplete');
   if (!directorBrief.scenes.length || !executionPlan.scenes.length) fail('social_production_handoff_scene_count_mismatch');
-  assertUnique(sourceAnalysis.shots.map(shot => shot.shotId), 'social_production_handoff_source_shot_duplicate');
+  if (sourceAnalysis) assertUnique(sourceAnalysis.shots.map(shot => shot.shotId), 'social_production_handoff_source_shot_duplicate');
   assertUnique(directorBrief.scenes.map(scene => scene.sceneId), 'social_production_handoff_scene_lineage_invalid');
   assertUnique(directorBrief.scenes.map(scene => String(scene.order)), 'social_production_handoff_scene_order_invalid');
   assertUnique(executionPlan.scenes.map(scene => scene.sceneId), 'social_production_handoff_execution_scene_duplicate');
@@ -233,7 +282,7 @@ export function buildSocialProductionHandoff(input: {
   assertUnique(input.variantDifference.dimensions, 'social_production_handoff_variant_difference_invalid');
   const shotTraces = executionPlan.scenes.map(scene => {
     const briefScene = exactScene(directorBrief, scene.sceneId);
-    const referenceShot = briefScene.referenceShotId
+    const referenceShot = briefScene.referenceShotId && sourceAnalysis
       ? sourceAnalysis.shots.find(shot => shot.shotId === briefScene.referenceShotId) : null;
     if (briefScene.referenceShotId && !referenceShot) fail('social_production_handoff_source_shot_missing');
     const candidateIds = [...new Set(scene.recommendedCandidateIds)];
@@ -262,9 +311,9 @@ export function buildSocialProductionHandoff(input: {
       order: briefScene.order,
       directorBriefRef: { id: directorBrief.directorBriefId, version: directorBrief.version },
       sourceAnalysisRef: referenceShot ? {
-        analysisId: sourceAnalysis.analysisId,
-        version: sourceAnalysisVersion,
-        referenceSourceId: sourceAnalysis.referenceSourceId,
+        analysisId: sourceAnalysis!.analysisId,
+        version: sourceAnalysisVersion!,
+        referenceSourceId: sourceAnalysis!.referenceSourceId,
         referenceShotId: referenceShot.shotId,
         startSeconds: referenceShot.startSeconds,
         endSeconds: referenceShot.endSeconds,
@@ -280,18 +329,12 @@ export function buildSocialProductionHandoff(input: {
   if (shotTraces.length !== directorBrief.scenes.length) fail('social_production_handoff_scene_count_mismatch');
   const createdAt = (input.now ?? new Date()).toISOString();
   const identity = { taskId, version, directorBriefId: directorBrief.directorBriefId };
-  const payload: Omit<SocialProductionHandoff, 'recordHash'> = {
-    schemaVersion: SOCIAL_PRODUCTION_HANDOFF_SCHEMA,
+  const common: Omit<SocialProductionHandoffCommon, 'recordHash'> = {
     handoffId: `production_handoff_${socialRequestHash(identity).slice(0, 24)}`,
     version,
     taskId,
     status: 'locked',
-    sourceAnalysis: {
-      analysisId: sourceAnalysis.analysisId,
-      version: sourceAnalysisVersion,
-      referenceSourceId: sourceAnalysis.referenceSourceId,
-      coverageHash: socialRequestHash(sourceAnalysis.coverage),
-    },
+    ...(businessContext ? { businessContext } : {}),
     directorBrief: structuredClone(directorBrief),
     executionPlan: structuredClone(executionPlan),
     executionPlanReview: structuredClone(executionPlanReview),
@@ -305,6 +348,28 @@ export function buildSocialProductionHandoff(input: {
     createdAt,
     createdBy: 'director_agent',
   };
+  let payload: SocialProductionHandoffPayload;
+  if (original) {
+    const aspectRatio = socialText(directorBrief.aspectRatio);
+    if (!aspectRatio) fail('social_production_handoff_original_source_lineage_invalid');
+    const sourcePayload = {
+      kind: 'original_scene' as const,
+      version: SOCIAL_PRODUCTION_ORIGINAL_SOURCE_SCHEMA as typeof SOCIAL_PRODUCTION_ORIGINAL_SOURCE_SCHEMA,
+      aspectRatio,
+      scenes: [...directorBrief.scenes].sort((left, right) => left.order - right.order).map(scene => ({
+        sceneId: scene.sceneId,
+        sceneContractHash: socialRequestHash(originalPresenterSceneContract(scene, aspectRatio)),
+      })),
+    };
+    payload = { schemaVersion: SOCIAL_PRODUCTION_ORIGINAL_HANDOFF_SCHEMA, sourceAnalysis: null,
+      sourceContract: { ...sourcePayload, recordHash: socialRequestHash(sourcePayload) }, ...common };
+  } else {
+    if (!sourceAnalysis) fail('social_production_handoff_source_analysis_required');
+    payload = { schemaVersion: SOCIAL_PRODUCTION_HANDOFF_SCHEMA, sourceAnalysis: {
+      analysisId: sourceAnalysis.analysisId, version: sourceAnalysisVersion!, referenceSourceId: sourceAnalysis.referenceSourceId,
+      coverageHash: socialRequestHash(sourceAnalysis.coverage),
+    }, ...common };
+  }
   return { ...payload, recordHash: socialRequestHash(handoffPayload(payload)) };
 }
 
@@ -403,11 +468,30 @@ export function evaluateSocialProductionGates(handoff: SocialProductionHandoff, 
 }
 
 function assertHandoffIntegrity(handoff: SocialProductionHandoff): void {
-  if (handoff.schemaVersion !== SOCIAL_PRODUCTION_HANDOFF_SCHEMA) {
+  if (handoff.schemaVersion !== SOCIAL_PRODUCTION_HANDOFF_SCHEMA
+    && handoff.schemaVersion !== SOCIAL_PRODUCTION_ORIGINAL_HANDOFF_SCHEMA) {
     fail('social_production_handoff_storage_integrity_violation');
   }
   const { recordHash, ...payload } = handoff;
   if (socialRequestHash(payload) !== recordHash) fail('social_production_handoff_storage_integrity_violation');
+  if (handoff.schemaVersion === SOCIAL_PRODUCTION_HANDOFF_SCHEMA) return;
+  const source = handoff.sourceContract;
+  const sourcePayload = { kind: source.kind, version: source.version, aspectRatio: source.aspectRatio, scenes: source.scenes };
+  const expectedScenes = [...handoff.directorBrief.scenes].sort((left, right) => left.order - right.order).map(scene => ({
+    sceneId: scene.sceneId,
+    sceneContractHash: socialRequestHash(originalPresenterSceneContract(scene, source.aspectRatio)),
+  }));
+  if (handoff.sourceAnalysis !== null || source.kind !== 'original_scene'
+    || source.version !== SOCIAL_PRODUCTION_ORIGINAL_SOURCE_SCHEMA || !socialText(source.aspectRatio)
+    || source.aspectRatio !== handoff.directorBrief.aspectRatio || source.recordHash !== socialRequestHash(sourcePayload)
+    || socialRequestHash(source.scenes) !== socialRequestHash(expectedScenes)
+    || handoff.directorBrief.referenceAnalysis !== null || handoff.directorBrief.replicationJobRef != null
+    || handoff.directorBrief.referenceMode != null || handoff.directorBrief.referenceEvidence.length > 0
+    || (handoff.directorBrief.inspirationHandoffIds?.length ?? 0) > 0
+    || handoff.directorBrief.scenes.some(scene => scene.referenceShotId !== null)
+    || handoff.shotTraces.some(trace => trace.sourceAnalysisRef !== null)) {
+    fail('social_production_handoff_storage_integrity_violation');
+  }
 }
 
 export async function persistSocialProductionHandoff(repository: Starter198Repository, tenantId: string, handoff: SocialProductionHandoff): Promise<StarterRecord> {
@@ -425,8 +509,9 @@ export async function persistSocialProductionHandoff(repository: Starter198Repos
     handoff_version: handoff.version, director_brief_id: handoff.directorBrief.directorBriefId,
     director_brief_version: handoff.directorBrief.version, execution_plan_id: handoff.executionPlan.executionPlanId,
     execution_plan_version: handoff.executionPlan.version, execution_review_id: handoff.executionPlanReview.reviewId,
-    execution_review_version: handoff.executionPlanReview.version, source_analysis_id: handoff.sourceAnalysis.analysisId,
-    source_analysis_version: handoff.sourceAnalysis.version, status: handoff.status, payload: handoff,
+    execution_review_version: handoff.executionPlanReview.version,
+    source_analysis_id: handoff.sourceAnalysis?.analysisId ?? null,
+    source_analysis_version: handoff.sourceAnalysis?.version ?? null, status: handoff.status, payload: handoff,
     record_hash: handoff.recordHash, created_at: handoff.createdAt,
   });
 }

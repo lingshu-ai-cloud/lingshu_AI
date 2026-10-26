@@ -11,6 +11,27 @@ import { socialJson, socialObject, socialRequestHash, socialText } from './socia
 import { withStarter198RunMutationLease } from './runMutationLease.js';
 import { writeExecutionStage } from './socialContentProductionRuntimeSupport.js';
 import { assertProductionGraphCompletionBoundary, PRODUCTION_GRAPH_BRIDGE_CHECKPOINT } from '../contentExecution/productionGraphBridge.js';
+import { readSocialProductionWorkspaceBinding, recoverSocialProductionOutputWorkspace } from './socialContentProductionWorkspace.js';
+
+function workspaceErrorCode(error: unknown): string {
+  return error instanceof Error ? error.message : '';
+}
+
+async function completedRunNeedsWorkspaceRecovery(repository: Starter198Repository, job: ContentExecutionJob,
+  artifactId: string): Promise<boolean> {
+  const tasks = await repository.list(STARTER_COLLECTIONS.tasks, job.tenantId,
+    { where: { run_id: job.runId }, perPage: 10 });
+  const pending = tasks.items.some(row => socialText(socialObject(socialObject(socialJson(row.output))?.production)?.stage)
+    === 'production_workspace_pending');
+  try {
+    await readSocialProductionWorkspaceBinding({ repository, tenantId: job.tenantId,
+      taskId: job.taskId, runId: job.runId, artifactId });
+    return pending;
+  } catch (error) {
+    if (workspaceErrorCode(error) === 'social_workspace_binding_missing') return true;
+    throw error;
+  }
+}
 
 /** A graph terminal checkpoint does not replace business completion evidence.
  * Project only after the durable worker settles success; this function is safe
@@ -72,13 +93,22 @@ export async function completeSocialContentGraphRun(repository: Starter198Reposi
     || !manifest || manifest.taskId !== job.taskId || manifest.packageId !== packageIds[0]
     || prepared.package_hash !== socialRequestHash(manifest)
     || socialRequestHash(storedArtifactIds) !== socialRequestHash(artifactIds)) throw new Error('content_graph_completion_delivery_invalid');
+  const completionRun = await repository.get(STARTER_COLLECTIONS.runs, job.tenantId, job.runId);
+  if (!completionRun) throw new Error('content_graph_completion_run_missing');
+  if (['paused', 'pausing', 'cancelling', 'cancelled', 'failed', 'dead_letter'].includes(socialText(completionRun.status))) return false;
+  // The archived artifact is the authority for this projection. Replaying the
+  // settled completion repairs a missing/interrupted Studio binding without
+  // rendering again or contacting a provider. The workspace service verifies
+  // tenant, run, artifact and owned-file hashes before it writes anything.
+  await recoverSocialProductionOutputWorkspace({ repository, tenantId: job.tenantId,
+    taskId: job.taskId, runId: job.runId, artifactId: String(artifactIds[0]) });
   return withStarter198RunMutationLease({ tenantId: job.tenantId, runId: job.runId, dataStore: repository.dataStore, action: async () => {
     const run = await repository.get(STARTER_COLLECTIONS.runs, job.tenantId, job.runId);
     if (!run) throw new Error('content_graph_completion_run_missing');
     if (['paused', 'pausing', 'cancelling', 'cancelled', 'failed', 'dead_letter'].includes(socialText(run.status))) return false;
-    if (['completed', 'succeeded'].includes(socialText(run.status))) return true;
     await writeExecutionStage({ repository, tenantId: job.tenantId, runId: job.runId, stage: 'delivery_prepared', status: 'completed',
       message: '成片已通过人工审核，交付包已准备完成。', extra: { artifactIds, packageIds, externalPublishPerformed: false } });
+    if (['completed', 'succeeded'].includes(socialText(run.status))) return true;
     await repository.update(STARTER_COLLECTIONS.runs, job.tenantId, run.id, { status: 'completed', current_controller: 'system',
       pause_reason: '', completed_at: new Date().toISOString() });
     return true;
@@ -94,10 +124,16 @@ export async function recoverSocialContentGraphCompletions(repository: Starter19
     for (const row of rows.items) {
       if (!socialObject(socialObject(socialJson(row.checkpoints))?.['social.graph_completion'])) continue;
       const run = await dataStore.getById<Record<string, unknown>>(STARTER_COLLECTIONS.runs, socialText(row.run_id));
-      if (!run || run.tenant_id !== row.tenant_id || ['completed', 'succeeded', 'cancelled', 'failed'].includes(socialText(run.status))) continue;
+      if (!run || run.tenant_id !== row.tenant_id || ['cancelled', 'failed'].includes(socialText(run.status))) continue;
       try {
         const job = await readContentExecutionJob(dataStore, socialText(row.tenant_id), socialText(row.task_id), socialText(row.run_id));
-        if (job && job.id === row.id) await completeSocialContentGraphRun(repository, job);
+        if (!job || job.id !== row.id) continue;
+        if (['completed', 'succeeded'].includes(socialText(run.status))) {
+          const completion = socialObject(job.checkpoints['social.graph_completion']?.payload), artifactIds = completion?.artifactIds;
+          if (!Array.isArray(artifactIds) || artifactIds.length !== 1 || typeof artifactIds[0] !== 'string'
+            || !await completedRunNeedsWorkspaceRecovery(repository, job, artifactIds[0])) continue;
+        }
+        await completeSocialContentGraphRun(repository, job);
       } catch {
         console.warn('[content-execution] graph completion still requires evidence reconciliation');
       }

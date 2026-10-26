@@ -10,7 +10,7 @@ export type SeedreamPublishedTariff=Omit<SocialVerifiedAccountTariff,'publicPric
 export function parseSeedreamPublishedPricing(body:string,model:string){
  if(Buffer.byteLength(body)>5*1024*1024||!/^doubao-seedream-5-0-(pro-260628|flash-260915)$/.test(model))return null;
  let row:any,document:any;try{row=JSON.parse(body).Result;document=JSON.parse(row.Content);}catch{return null;}
- if(row.DocumentCode!=='model-pricing'||row.LibraryCode!=='ark'||row.Title!=='模型价格'||row.Status!==2||row.Language!=='zh'||!Number.isFinite(Date.parse(row.UpdatedTime))||document.version!=='0.4.24'||!document.data?.['0']?.ops)return null;
+ if(row.DocumentCode!=='model-pricing'||row.LibraryCode!=='ark'||row.Title!=='模型价格'||row.Status!==2||row.Language!=='zh'||!Number.isFinite(Date.parse(row.UpdatedTime))||!['0.4.24','0.4.37'].includes(document.version)||!document.data?.['0']?.ops)return null;
  const data=document.data;const matches:Array<{input:string;output:string}>=[];
  for(const op of data['0'].ops){const ref=op.attributes?.aceTable;if(typeof ref!=='string')continue;const ids=ref.split(' ');if(ids.length!==2)continue;
   const rowZone=data[ids[0]],colZone=data[ids[1]];if(rowZone?.zoneType!=='R'||colZone?.zoneType!=='C')continue;
@@ -20,7 +20,7 @@ export function parseSeedreamPublishedPricing(body:string,model:string){
  }
  if(matches.length!==1)return null;const found=matches[0]!;
  if(model.includes('-pro-')){
-  const input=found.input.match(/^首张免费\s*第\s*2\s*张起：\s*(\d+(?:\.\d+)?)$/);const output=found.output.match(/^单图生成场景：\s*≤\s*261\s*万像素（分辨率\s*1\.5K\s*及以下）：\s*(\d+(?:\.\d+)?)\s*>\s*261\s*万像素（分辨率\s*1\.5K\s*以上）：\s*(\d+(?:\.\d+)?)\s*图层拆分场景：[\s\S]+$/);
+  const input=found.input.match(/^首张免费\s*第\s*2\s*张起：\s*(\d+(?:\.\d+)?)$/);const output=found.output.match(/^单图生成场景：\s*≤\s*261\s*万像素(?:（分辨率\s*1\.5K\s*及以下）)?：\s*(\d+(?:\.\d+)?)\s*>\s*261\s*万像素(?:（分辨率\s*1\.5K\s*以上）)?：\s*(\d+(?:\.\d+)?)\s*图层拆分场景：[\s\S]+$/);
   if(!input||!output)return null;const inputPriceCnyPerImage=Number(input[1]),outputCeilingCnyPerImage=Math.max(Number(output[1]),Number(output[2]));if(!Number.isFinite(inputPriceCnyPerImage)||inputPriceCnyPerImage<0||!Number.isFinite(outputCeilingCnyPerImage)||outputCeilingCnyPerImage<=0)return null;
   return{inputPriceCnyPerImage,outputCeilingCnyPerImage,firstInputFree:true,sourceContentSha256:sha(row.Content),sourceUpdatedAt:row.UpdatedTime as string};
  }

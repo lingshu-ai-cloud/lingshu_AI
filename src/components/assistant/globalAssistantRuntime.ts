@@ -56,6 +56,10 @@ export const DEFAULT_CONTEXT: Record<string, AssistantContext> = {
     agent: 'traffic', label: '灵感大屏', summary: '当前在灵感大屏，适合发现、筛选和拆解高潜社媒内容。',
     suggestions: ['拆解爆款素材方向', '筛选适合目标市场的内容', '把素材转成创作任务'],
   },
+  inspirationMarket: {
+    agent: 'traffic', label: '灵感集市', summary: '当前在灵感集市，可筛选爆款参考、管理素材、对标账号与待拍事项。',
+    suggestions: ['筛选适合产品的爆款参考', '查看已收藏素材', '拆解对标内容'],
+  },
   scriptLibrary: {
     agent: 'traffic', label: '脚本库', summary: '当前在脚本库，适合整理、复用和迭代历史脚本。',
     suggestions: ['查找可复用脚本', '优化脚本开头', '按平台改写脚本'],
@@ -158,10 +162,12 @@ export function emptyAssistantThread(): AgentThreadState {
  * conversations are restored through the `restore` prop instead.
  */
 export function withoutPersistedConversation(thread: AgentThreadState): AgentThreadState {
+  const retainConversation = thread.creationDraft || thread.messages.some(message =>
+    message.companyReport || message.creationPortal?.scenario === 'viral_replication' || message.taskPortal?.action === 'view_production');
   return {
     ...thread,
-    messages: thread.creationDraft ? thread.messages : [],
-    draftInput: thread.creationDraft ? thread.draftInput : '',
+    messages: retainConversation ? thread.messages : [],
+    draftInput: retainConversation ? thread.draftInput : '',
     scrollPosition: 0,
     unreadCount: 0,
     isFollowingLatest: true,
@@ -198,6 +204,7 @@ export function cloneAssistantThread(thread: AgentThreadState): AgentThreadState
       ...(message.creationPortal ? { creationPortal: { ...message.creationPortal, platforms: [...message.creationPortal.platforms] } } : {}),
       ...(message.taskPortal ? { taskPortal: { ...message.taskPortal } } : {}),
       ...(message.sourcePortal ? { sourcePortal: { ...message.sourcePortal } } : {}),
+      ...(message.companyReport ? { companyReport: structuredClone(message.companyReport) } : {}),
     })),
     taskCards: Object.fromEntries(Object.entries(thread.taskCards).map(([id, card]) => [id, {
       ...card,
@@ -390,7 +397,7 @@ export function mergeConsecutiveAssistant(list: Message[]): Message[] {
   const merged: Message[] = [];
   for (const msg of list) {
     const last = merged[merged.length - 1];
-    if (last?.role === 'assistant' && msg.role === 'assistant' && !last.creation && !msg.creation && !last.creationPortal && !msg.creationPortal && !last.taskPortal && !msg.taskPortal && !last.sourcePortal && !msg.sourcePortal) {
+    if (last?.role === 'assistant' && msg.role === 'assistant' && !last.creation && !msg.creation && !last.creationPortal && !msg.creationPortal && !last.taskPortal && !msg.taskPortal && !last.sourcePortal && !msg.sourcePortal && !last.companyReport && !msg.companyReport) {
       last.content = [last.content, msg.content].filter(Boolean).join('\n\n');
       last.sources = msg.sources ?? last.sources;
     } else {

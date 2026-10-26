@@ -43,6 +43,8 @@ export type SocialProductionAsset = {
   providerTaskId?: string;
   idempotencyKey?: string;
   duration: number;
+  /** Frozen, analyzed source window; offsets refer to the original file. */
+  selectedSourceWindow?: { startSeconds: number; endSeconds: number };
   visualObservations: string[];
   /** Legacy display labels. They are never sufficient to authorize an
    * association-only edit because labels and filenames are not proof that the
@@ -501,9 +503,13 @@ export function buildSocialProductionPlan(input: {
       // exceed a reusable local clip, wrap only after its usable range has
       // been consumed; the next scene still starts at a different frame.
       const cursor = routedSourceCursors.get(asset.id) ?? 0;
+      const window = asset.selectedSourceWindow;
+      if (window && (!Number.isFinite(window.startSeconds) || !Number.isFinite(window.endSeconds)
+        || window.startSeconds < 0 || window.endSeconds > asset.duration + 0.001
+        || window.endSeconds - window.startSeconds + 1e-6 < frozenDuration)) return [];
       const maxStart = Math.max(0, asset.duration - frozenDuration);
-      const start = maxStart > 0 ? cursor % maxStart : 0;
-      const end = Math.min(asset.duration, start + frozenDuration);
+      const start = window ? window.startSeconds : maxStart > 0 ? cursor % maxStart : 0;
+      const end = Math.min(asset.duration, window ? Math.min(window.endSeconds, start + frozenDuration) : start + frozenDuration);
       routedSourceCursors.set(asset.id, cursor + frozenDuration);
       const clip:ProductionClip={clipId:`${asset.id}:routed:${scene.sceneId}`,evidenceShotId:`${asset.id}:routed:${scene.sceneId}`,assetId:asset.id,assetName:asset.name,type:'video',start,end,sourceDuration:end-start,observations:[...asset.visualObservations],confidence:1,needsReview:true,evidenceBasis:'visual_analysis',boundaryConfidence:1,cleanEntry:true,cleanExit:true};
       const review=buildMaterialSceneReview({sceneId:scene.sceneId,intent:sceneIntent(scene),selectedClipId:clip.clipId,candidates:[{type:'video',assetId:asset.id,clipId:clip.clipId,sourceStart:start,sourceEnd:end,score:100,analysisConfidence:1,boundaryConfidence:1,cleanEntry:true,cleanExit:true,needsReview:true,evidenceBasis:'visual_analysis'}]});

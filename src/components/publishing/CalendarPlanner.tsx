@@ -93,7 +93,8 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-export function CalendarPlanner({ onCreate, onOpenPost, pendingItems = [], onOpenPending, onCreatePending, onSchedulePending, refreshKey = 0 }: {
+export function CalendarPlanner({ onCreate, onOpenPost, pendingItems = [], onOpenPending, onCreatePending, onSchedulePending, refreshKey = 0, allowDemo = true }: {
+  allowDemo?: boolean;
   onCreate?: (date: Date) => void;
   onOpenPost?: (post: CalendarPost) => void;
   pendingItems?: PendingPublishContent[];
@@ -103,7 +104,7 @@ export function CalendarPlanner({ onCreate, onOpenPost, pendingItems = [], onOpe
   refreshKey?: number;
 }) {
   const { message } = App.useApp();
-  const [demoMode, setDemoMode] = useState(() => import.meta.env.DEV && (new URLSearchParams(window.location.search).get('mockCalendar') === '1' || window.sessionStorage.getItem('lingshu:calendar-demo') === '1'));
+  const [demoMode, setDemoMode] = useState(() => allowDemo && import.meta.env.DEV && (new URLSearchParams(window.location.search).get('mockCalendar') === '1' || window.sessionStorage.getItem('lingshu:calendar-demo') === '1'));
   const [canEditSchedule, setCanEditSchedule] = useState(false);
   const [mode, setMode] = useState('timeGridWeek');
   const [anchor, setAnchor] = useState(() => new Date());
@@ -143,12 +144,12 @@ export function CalendarPlanner({ onCreate, onOpenPost, pendingItems = [], onOpe
     return () => { active = false; };
   }, []);
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
+    if (!allowDemo || !import.meta.env.DEV) return;
     window.sessionStorage.setItem('lingshu:calendar-demo', demoMode ? '1' : '0');
     const url = new URL(window.location.href);
     if (demoMode) url.searchParams.set('mockCalendar', '1'); else url.searchParams.delete('mockCalendar');
     window.history.replaceState(window.history.state, '', url);
-  }, [demoMode]);
+  }, [demoMode, allowDemo]);
 
   const load = async (silent = false) => {
     if (demoMode) {
@@ -304,7 +305,7 @@ export function CalendarPlanner({ onCreate, onOpenPost, pendingItems = [], onOpe
   };
 
   return <div className="space-y-4" data-lingshu-guide="content-planner">
-    <header className="flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><h2 className="flex items-center gap-2 text-xl font-semibold text-text-primary"><CalendarDays size={19}/>内容排产工作台</h2><Tag>{enterpriseMarketLabel}</Tag></div>{import.meta.env.DEV && <Button onClick={() => setDemoMode(value => !value)}>{demoMode ? '退出参考预览' : '预览参考排期'}</Button>}</header>
+    <header className="flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><h2 className="flex items-center gap-2 text-xl font-semibold text-text-primary"><CalendarDays size={19}/>内容排产工作台</h2><Tag>{enterpriseMarketLabel}</Tag></div>{allowDemo && import.meta.env.DEV && <Button onClick={() => setDemoMode(value => !value)}>{demoMode ? '退出参考预览' : '预览参考排期'}</Button>}</header>
     {demoMode && <Alert type="info" showIcon title="模拟数据 · 仅供页面预览，不会提交发布" description="TikTok / Facebook 各 5 条/周 · YouTube / Instagram 各 3 条/周"/>}
     {error && <Alert type="error" showIcon title={error} action={<Button onClick={() => void load()}>重试</Button>}/>}
     {interactionMessage && <div role="status"><Alert type="info" showIcon closable title={interactionMessage} onClose={() => setInteractionMessage('')}/></div>}

@@ -31,9 +31,9 @@ assert.match(inspiration, /label: `对标账号 ·/);
 assert.match(inspiration, /label: `待拍 ·/);
 assert.doesNotMatch(home, /Segmented|自由创作|useCreationModeControl/, '轻量首页不得再保留自由创作模式切换');
 assert.match(home, /className="creator-home creator-home--employee/, '首页须固定使用数字员工入口逻辑');
-assert.match(promptCatalog, /id: 'weekly-plan', label: '查看当前周计划'[\s\S]{0,500}id: 'content-strategy', label: '查看内容策略'[\s\S]{0,500}id: 'external-news', label: '查看外部资讯'[\s\S]{0,500}id: 'business-analysis', label: '分析经营数据'/, '底部快捷按钮必须优先展示具体高频动作');
-assert.match(promptCatalog, /id: 'external-news'[\s\S]{0,300}promptIds: \['OP-02', 'OP-09', 'OP-10', 'OP-11', 'OP-12'\]/, '外部资讯按钮必须展开不同资讯类型');
-for (const newsType of ['行业资讯', '产品资讯', '社交媒体资讯', '政策与平台资讯']) {
+assert.match(promptCatalog, /id: 'weekly-plan', label: '查看当前周计划'[\s\S]{0,500}id: 'external-news', label: '查看外部资讯'[\s\S]{0,500}id: 'business-analysis', label: '分析经营数据'/, '底部快捷按钮必须优先展示具体高频动作');
+assert.match(promptCatalog, /id: 'external-news'[\s\S]{0,300}promptIds: \['OP-02', 'OP-LEADER', 'OP-09', 'OP-11', 'OP-12', 'OP-RATES', 'OP-TRADE'\]/, '外部资讯按钮必须展开不同资讯类型');
+for (const newsType of ['行业资讯', '社交媒体资讯', '政策与平台资讯']) {
   assert.match(promptCatalog, new RegExp(`label: '${newsType}'`), `今日资讯必须提供${newsType}卡片`);
 }
 assert.match(home, /useState<AssistantHomeQuickLauncherId \| null>\(null\)/, '首页默认不得展示任何大卡片');
@@ -42,9 +42,9 @@ assert.doesNotMatch(home, /全部快捷任务/, '首页不应增加额外的全�
 assert.doesNotMatch(home, /onClick=\{\(\) => onNavigate\?\.\('digitalEmployees'\)\}/, '首页业务卡不得直接跳转经营总览');
 assert.match(home, /className="creator-home__suggestions"/, '自由创作的提示输入须保留在数字员工输入框下方');
 assert.match(home, /ASSISTANT_HOME_QUICK_LAUNCHERS\.map\(launcher =>/, '底部须渲染全部小按钮入口');
-assert.match(creatorStyles, /\.creator-home__suggestions \{[^}]*justify-content: flex-start[^}]*overflow-x: auto/, '高频按钮溢出时必须从最左侧开始并可向右翻阅');
+assert.match(creatorStyles, /\.creator-home__suggestions \{[^}]*flex-wrap: nowrap[^}]*justify-content: flex-start[^}]*overflow-x: auto/, '高频按钮须保持单行，空间不足时左右滑动');
 assert.match(promptCatalog, /id: 'viral-script'[\s\S]{0,1800}id: 'traffic-optimization'/, '其余快捷按钮须覆盖内容、素材、发布、客户和投流高频动作');
-assert.match(home, /ASSISTANT_HOME_PROMPT_EVENT[\s\S]{0,220}detail: \{ prompt: entry\.prompt, mode \}/, '能力卡点击只能把固定提示词写入输入框');
+assert.match(home, /ASSISTANT_HOME_PROMPT_EVENT[\s\S]{0,220}detail: \{ prompt: entry\.prompt, mode \}/, '普通卡片和条件补齐后的查询只能填入原输入框');
 assert.match(home, /追加到现有内容[\s\S]{0,300}替换现有内容/, '输入框已有内容时必须明确提供追加与替换选择');
 assert.doesNotMatch(home, /DigitalEmployeeHomeWork/, '三栏进行中工作必须从首页移走');
 assert.match(workspace, /<DigitalEmployeeHomeWork data=\{data\} onNavigate=\{onNavigate\}/, '三栏进行中工作必须进入经营总览并替代旧日历');
@@ -56,11 +56,11 @@ assert.match(creationOverview, /创作计划/, '内容创作页顶部必须使�
 for (const metric of ['计划内容', '待制作', '制作中', '待验收成片', '已完成成片', '已排期发布']) {
   assert.match(creationOverview, new RegExp(`label: '${metric}'`), `创作计划必须展示${metric}`);
 }
-assert.match(creationOverview, /创造一条新计划/, '创作计划须通过灵小枢创建新计划');
+assert.match(creationOverview, /创建一条新计划/, '创作计划须保留新计划入口');
 assert.match(creationOverview, /loadConnectedSocialPerformance\(50\)/, '右侧必须读取已连接账号的真实历史发布表现');
 assert.match(creationOverview, /当前最火的 3 条视频/, '右侧必须展示历史发布表现前三');
 assert.match(creationOverview, /sort\(\(left, right\) => \(right\.metrics\.views \|\| 0\) - \(left\.metrics\.views \|\| 0\)\)[\s\S]{0,120}slice\(0, 3\)/, '历史视频必须按真实播放量取前三');
-assert.match(creationOverview, /<WeeklyPublishingCalendar data=\{overview\}/, '创作计划下方必须复用真实发布日历');
+assert.match(creationOverview, /<CreationTaskWorkspace data=\{overview\}/, '创作计划下方必须使用共享任务与发布日历工作区');
 assert.doesNotMatch(home, /到爆款库创作/, '首页不得保留旧的中转按钮文案');
 assert.match(inspiration, /requestedReference\?\.startViralReplication[\s\S]{0,1600}startInspirationCreation\(selectedVideo\)/, '其他显式生产入口必须先核对精确引用，再进入既有爆款裂变生产函数');
 assert.match(inspiration, /selectedVideo\.id\.startsWith\('weekly-reference-'\)[\s\S]{0,700}const exactMatch =/, '只有实时库存精确引用可自动发起生产，周快照不得绕过门禁');

@@ -7,11 +7,10 @@ import {
   ChevronUp,
   Clapperboard,
   Lightbulb,
+  Images,
   Megaphone,
   MessagesSquare,
   Newspaper,
-  Send,
-  Target,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Page } from '../pageRegistry';
@@ -23,8 +22,12 @@ import {
   type AssistantHomeQuickLauncher,
   type AssistantHomeQuickLauncherId,
 } from '../lib/assistantHomeQuickPrompts';
+import AssistantQuickPromptDialog from './assistant/AssistantQuickPromptDialog';
+import { assistantQueryKind } from '../lib/assistantQueryQuickPrompts';
 import { useAssistantStore } from '../stores/assistantStore';
+import CompanyReportScene from './assistant/CompanyReportScene';
 import { PRIMARY_ASSISTANT_THREAD } from './assistant/globalAssistantRuntime';
+import { assistantImageReplicationPortal } from './assistant/assistantImageReplicationIntent';
 import {
   ASSISTANT_HOME_ACTIVITY_EVENT,
   ASSISTANT_HOME_PROMPT_EVENT,
@@ -35,12 +38,9 @@ function launcherIcon(id: AssistantHomeQuickLauncherId, size = 18) {
   const props = { size, 'aria-hidden': true as const };
   if (id === 'weekly-plan') return <CalendarCheck2 {...props}/>;
   if (id === 'external-news') return <Newspaper {...props}/>;
-  if (id === 'content-strategy') return <Target {...props}/>;
   if (id === 'business-analysis') return <BarChart3 {...props}/>;
-  if (id === 'publish-plan') return <Send {...props}/>;
   if (id === 'traffic-optimization') return <Megaphone {...props}/>;
   if (id === 'customer-followup') return <MessagesSquare {...props}/>;
-  if (id === 'materials') return <Lightbulb {...props}/>;
   return <Clapperboard {...props}/>;
 }
 
@@ -53,6 +53,9 @@ function resolveLauncherPrompts(launcher: AssistantHomeQuickLauncher | null): As
 
 export default function ContentCreationHome({ inspirationWorkspace }: { onNavigate?: (page: Page) => void; inspirationWorkspace?: ReactNode }) {
   const [activeLauncherId, setActiveLauncherId] = useState<AssistantHomeQuickLauncherId | null>(null);
+  const [companyReportOpen, setCompanyReportOpen] = useState(false);
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [queryPrompt, setQueryPrompt] = useState<AssistantHomePrompt | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<AssistantHomePrompt | null>(null);
   const activeLauncher = useMemo(
     () => ASSISTANT_HOME_QUICK_LAUNCHERS.find(entry => entry.id === activeLauncherId) || null,
@@ -63,8 +66,9 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
 
   useEffect(() => {
     const onAssistantActivity = (event: Event) => {
-      const detail = (event as CustomEvent<{ active?: boolean }>).detail;
-      if (detail?.active) setActiveLauncherId(null);
+      const detail = (event as CustomEvent<{ active?: boolean; busy?: boolean }>).detail;
+      setAssistantBusy(Boolean(detail?.busy));
+      if (detail?.active) { setActiveLauncherId(null); setCompanyReportOpen(false); }
     };
     window.addEventListener(ASSISTANT_HOME_ACTIVITY_EVENT, onAssistantActivity);
     return () => window.removeEventListener(ASSISTANT_HOME_ACTIVITY_EVENT, onAssistantActivity);
@@ -76,16 +80,32 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
     setActiveLauncherId(null);
   };
 
-  const choosePrompt = (entry: AssistantHomePrompt) => {
+  const preparePrompt = (entry: AssistantHomePrompt) => {
     const draft = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].draftInput.trim();
-    if (draft && draft !== entry.prompt.trim()) {
-      setPendingPrompt(entry);
-      return;
-    }
+    if (draft && draft !== entry.prompt.trim()) { setPendingPrompt(entry); return; }
     fillPrompt(entry);
   };
 
+  const choosePrompt = (entry: AssistantHomePrompt) => {
+    if (entry.id === 'OP-LEADER') { setCompanyReportOpen(true); return; }
+    setCompanyReportOpen(false);
+    if (assistantQueryKind(entry.id)) { setQueryPrompt(entry); return; }
+    if (entry.id === 'CO-13') {
+      const portal = assistantImageReplicationPortal(entry.prompt);
+      if (!portal) return;
+      const store = useAssistantStore.getState();
+      store.setMessages(PRIMARY_ASSISTANT_THREAD, [...store.threads[PRIMARY_ASSISTANT_THREAD].messages,
+        { role: 'assistant', content: '先确认参考图和企业产品，其他要求可以补充；确认后我来完成图片和配文。', creationPortal: portal }]);
+      store.setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true);
+      window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_ACTIVITY_EVENT, { detail: { active: true } }));
+      setActiveLauncherId(null);
+      return;
+    }
+    preparePrompt(entry);
+  };
+
   const toggleLauncher = (launcherId: AssistantHomeQuickLauncherId) => {
+    setCompanyReportOpen(false);
     setActiveLauncherId(current => current === launcherId ? null : launcherId);
   };
 
@@ -98,19 +118,29 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
       <div className={`creator-home__canvas-stage${canvasCollapsed ? ' is-collapsed' : ''}`} inert={canvasCollapsed ? true : undefined} aria-hidden={canvasCollapsed || undefined}>
         <section id="creator-home-operations" className="creator-home__canvas" aria-label={activeLauncher ? `${activeLauncher.label}快捷任务` : '快捷任务'}>
           {activeLauncher ? <div className="creator-home__quick-panel">
-            <div id="creator-home-prompt-cards" className="creator-home__prompt-grid" aria-label={`${activeLauncher.label}：${activeLauncher.description}`}>
+            <div id="creator-home-prompt-cards" className={`creator-home__prompt-grid${activeLauncher.id === 'viral-script' ? ' creator-home__prompt-grid--creation' : ''}`} aria-label={`${activeLauncher.label}：${activeLauncher.description}`}>
               {activePrompts.map((entry, index) => <button
                 type="button"
                 key={entry.id}
+                aria-expanded={entry.id === 'OP-LEADER' ? companyReportOpen : undefined}
+                aria-controls={entry.id === 'OP-LEADER' ? 'company-report-selection' : undefined}
                 className={`creator-home__prompt-card${index === 0 ? ' creator-home__prompt-card--primary' : ''}`}
                 onClick={() => choosePrompt(entry)}
               >
-                <span className="creator-home__prompt-card-icon">{launcherIcon(activeLauncher.id, 19)}</span>
+                <span className="creator-home__prompt-card-icon">{entry.id === 'CO-13' ? <Images size={19} aria-hidden="true"/> : launcherIcon(activeLauncher.id, 19)}</span>
                 <span className="creator-home__prompt-card-copy"><strong>{entry.label}</strong><span>{entry.summary}</span></span>
                 <span className={`creator-home__prompt-card-level is-${entry.level}`}>{ASSISTANT_HOME_LEVEL_LABELS[entry.level]}</span>
                 <ArrowRight size={15} aria-hidden="true"/>
               </button>)}
             </div>
+            {companyReportOpen && <div id="company-report-selection"><CompanyReportScene busy={assistantBusy}
+              onCancel={() => setCompanyReportOpen(false)} onConfirm={request => {
+                if (assistantBusy) return;
+                setCompanyReportOpen(false); setActiveLauncherId(null);
+                window.dispatchEvent(new CustomEvent('lingshu-assistant-open', { detail: {
+                  text: request.text, preserveDraft: true, companyReportRequest: { companyId: request.companyId, year: request.year },
+                } }));
+              }}/></div>}
           </div> : null}
         </section>
       </div>
@@ -137,10 +167,12 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
         })}
       </div>
 
-      <section id="creator-home-library" className="creator-home__library" aria-label="爆款视频、素材库、对标账号和待拍">
+      <section id="creator-home-library" className="creator-home__library" aria-label="爆款素材">
         {inspirationWorkspace}
       </section>
     </div>
+    {queryPrompt && assistantQueryKind(queryPrompt.id) && <AssistantQuickPromptDialog key={queryPrompt.id} kind={assistantQueryKind(queryPrompt.id)!}
+      onClose={() => setQueryPrompt(null)} onPrompt={prompt => preparePrompt({ ...queryPrompt, prompt })}/>}
     <Modal open={Boolean(pendingPrompt)} title="输入框已有内容" width={480} closable={false} footer={[
       <Button key="cancel" onClick={() => setPendingPrompt(null)}>取消</Button>,
       <Button key="append" onClick={() => pendingPrompt && fillPrompt(pendingPrompt, 'append')}>追加到现有内容</Button>,

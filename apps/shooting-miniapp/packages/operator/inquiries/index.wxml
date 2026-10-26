@@ -5,9 +5,9 @@
   </view>
   <view class="search-row">
     <view class="search"><text class="search-icon">⌕</text><input placeholder="搜索客户或消息" value="{{query}}" bindinput="inputQuery"/></view>
-    <button class="filter-button {{filterOpen ? 'selected' : ''}}" bindtap="toggleFilters" aria-label="渠道筛选">≡</button>
+    <button class="filter-button {{filterOpen ? 'selected' : ''}}" bindtap="toggleFilters" aria-label="渠道筛选" aria-expanded="{{filterOpen}}">≡</button>
   </view>
-  <scroll-view scroll-x class="quick-scroll" show-scrollbar="false"><view class="quick-filters"><view class="chip {{active === 'all' && !unreadOnly ? 'selected' : ''}}" data-tab="all" bindtap="switchTab">全部</view><view class="chip {{unreadOnly ? 'selected' : ''}}" bindtap="toggleUnread">未读 {{counts.unread}}</view><view class="chip {{active === 'confirm' && !unreadOnly ? 'selected' : ''}}" data-tab="confirm" bindtap="switchTab">待回复 {{counts.confirm}}</view><view class="chip {{active === 'followup' && !unreadOnly ? 'selected' : ''}}" data-tab="followup" bindtap="switchTab">待跟进 {{counts.followup}}</view></view></scroll-view>
+  <scroll-view scroll-x enhanced="{{true}}" class="quick-scroll" show-scrollbar="{{false}}"><view class="quick-filters"><view class="chip {{active === 'all' && !unreadOnly ? 'selected' : ''}}" data-tab="all" bindtap="switchTab">全部</view><view class="chip {{unreadOnly ? 'selected' : ''}}" bindtap="toggleUnread">未读 {{counts.unread}}</view><view class="chip {{active === 'confirm' && !unreadOnly ? 'selected' : ''}}" data-tab="confirm" bindtap="switchTab">待回复 {{counts.confirm}}</view><view class="chip {{active === 'followup' && !unreadOnly ? 'selected' : ''}}" data-tab="followup" bindtap="switchTab">待跟进 {{counts.followup}}</view></view></scroll-view>
   <view class="filter-panel" wx:if="{{filterOpen}}">
     <view class="filter-title">渠道</view><view class="chips"><view class="chip {{channel === '' ? 'selected' : ''}}" data-channel="" bindtap="setChannel">全部渠道</view><view class="chip {{channel === 'Messenger' ? 'selected' : ''}}" data-channel="Messenger" bindtap="setChannel">Messenger</view><view class="chip {{channel === 'Instagram' ? 'selected' : ''}}" data-channel="Instagram" bindtap="setChannel">Instagram</view><view class="chip {{channel === 'WhatsApp' ? 'selected' : ''}}" data-channel="WhatsApp" bindtap="setChannel">WhatsApp</view></view>
   </view>
@@ -21,4 +21,5 @@
     </view>
   </view>
   <view class="empty" wx:else><view class="empty-mark">✓</view><view class="section-title">这一栏已经处理完了</view><view class="muted">新询盘到达后会显示在这里</view></view>
+  <operator-nav active="customers" today-badge="{{counts.unread}}"></operator-nav>
 </view>

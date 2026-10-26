@@ -31,7 +31,7 @@ Page({
         if (epoch !== (this.epoch || 0) || this.disposed) return;
         this.session(s);
         await this.refresh();
-        wx.reLaunch({ url: '/packages/operator/home/index' });
+        wx.reLaunch({ url: '/packages/operator/assistant/index' });
     }
     catch (e) {
         if (epoch === (this.epoch || 0)) this.setData({ error: e.message });
@@ -45,7 +45,7 @@ Page({
         if (epoch !== (this.epoch || 0) || this.disposed) return;
         this.session(s);
         await this.refresh();
-        if ((this.initialTab || 'work') === 'work') wx.reLaunch({ url: '/packages/operator/home/index' });
+        if ((this.initialTab || 'work') === 'work') wx.reLaunch({ url: '/packages/operator/assistant/index' });
     }
     catch (e) {
         if (epoch === (this.epoch || 0)) this.setData({ error: e.message, loggedIn: false });

@@ -642,11 +642,12 @@ export const studioApi = {
       return await response.json() as { ok: boolean; material?: Material; segment?: MaterialSegment; error?: string };
     } catch { return { ok: false, error: '片段更新失败' }; }
   },
-  materialProducts: async (): Promise<{ items: Array<{ id: string; name: string }> }> => {
+  materialProducts: async (): Promise<{ items: Array<{ id: string; name: string; imageUrls?: string[] }> }> => {
     const response = await fetch('/api/overseas/studio/material-products', { headers: authHeader() });
     if (!response.ok) throw new Error(response.status === 401 ? '登录已失效，请重新登录' : '企业知识库产品暂时无法读取，请重试');
     const result = await response.json();
     if (!Array.isArray(result.items)) throw new Error('产品接口返回格式不正确，请重试');
+    if(result.items.some((item:unknown)=>!item||typeof item!=='object'||typeof (item as {id?:unknown}).id!=='string'||typeof (item as {name?:unknown}).name!=='string'||((item as {imageUrls?:unknown}).imageUrls!==undefined&&(!Array.isArray((item as {imageUrls?:unknown}).imageUrls)||!(item as {imageUrls:unknown[]}).imageUrls.every(url=>typeof url==='string')))))throw new Error('产品图片资料格式不正确，请重试');
     return result;
   },
   reviewGeneratedImage: async (id: string): Promise<{ ok: boolean; material?: Material; error?: string }> => {

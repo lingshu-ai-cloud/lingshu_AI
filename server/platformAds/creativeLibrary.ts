@@ -58,15 +58,15 @@ export async function listAdCreativeLibrary(tenantId: string, query: { page?: un
 export async function getAdCreativeReport(tenantId: string, executionId: string): Promise<AdCreativeReport> {
   // Reuse the exact same native report/cache as the data page, never sum daily ratios.
   const r = await getMetaPerformanceReport(tenantId, executionId, { level: 'ad', preset: '7' });
-  const resultKey = r.optimizationGoal === 'THRUPLAY' ? 'thruPlays' : r.optimizationGoal === 'LINK_CLICKS' ? 'linkClicks' : null;
+  const resultKey = r.optimizationGoal === 'THRUPLAY' ? 'thruPlays' : r.optimizationGoal === 'LINK_CLICKS' ? 'linkClicks' : r.optimizationGoal === 'CONVERSATIONS' ? 'messagingConversations' : r.optimizationGoal === 'LEAD_GENERATION' ? 'instantFormLeads' : r.optimizationGoal === 'OFFSITE_CONVERSIONS' && r.objective === 'OUTCOME_LEADS' ? 'websiteLeads' : null;
   const costKey = resultKey === 'thruPlays' ? 'costPerThruPlay' : resultKey === 'linkClicks' ? 'costPerLinkClick' : null;
   return { source: 'provider', scope: 'ad', adId: r.resourceId, accountId: r.accountId, videoId: r.videoId, pageId: r.pageId,
     configuredStatus: r.configuredStatus, effectiveStatus: r.effectiveStatus, issues: r.issues,
     currency: r.currency, reportTimezone: r.reportTimezone, reportedAt: r.reportedAt, window: r.window,
     actionReportTime: r.actionReportTime, useUnifiedAttributionSetting: r.useUnifiedAttributionSetting, attributionSpec: r.attributionSpec,
-    metricLabel: resultKey === 'thruPlays' ? 'ThruPlay' : resultKey === 'linkClicks' ? '链接点击' : `未映射优化目标 ${r.optimizationGoal || '未返回'}`,
+    metricLabel: resultKey === 'thruPlays' ? 'ThruPlay' : resultKey === 'linkClicks' ? '链接点击' : resultKey === 'messagingConversations' ? '发起消息会话' : resultKey === 'instantFormLeads' ? 'Meta 表单线索' : resultKey === 'websiteLeads' ? '网站 Lead 事件' : `未映射优化目标 ${r.optimizationGoal || '未返回'}`,
     spend: r.totals?.spend ?? null, impressions: r.totals?.impressions ?? null, clicks: r.totals?.clicks ?? null,
-    results: resultKey ? r.totals?.[resultKey] ?? null : null, costPerResult: costKey ? r.totals?.[costKey] ?? null : null,
+    results: resultKey ? r.totals?.[resultKey] ?? null : null, costPerResult: costKey ? r.totals?.[costKey] ?? null : resultKey && r.totals?.spend != null && r.totals[resultKey] != null && r.totals[resultKey]! > 0 ? r.totals.spend / r.totals[resultKey]! : null,
     daily: r.daily.map(d => ({ date: d.date, spend: d.spend, impressions: d.impressions, clicks: d.clicks, results: resultKey ? d[resultKey] : null })) };
 }
 

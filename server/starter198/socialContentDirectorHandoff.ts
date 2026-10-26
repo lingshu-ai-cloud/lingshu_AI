@@ -1,4 +1,5 @@
 import type { SocialDirectorPlanSummary } from '../../shared/contracts/socialContentWorkflow.js';
+import { spokenCopyReviewNotice } from './socialSpokenCopyReview.js';
 import {
   SocialContentWorkflowError,
   socialRequestHash,
@@ -43,7 +44,7 @@ export function publicSocialDirectorPlanSummary(plan: StoredSocialDirectorPlan |
     qualityPassed: passed,
     reshootSuggestionCount: plan.optionalReshootSuggestions.length,
     scriptSummary: oneLine(`${first.script.text}；共 ${plan.scenes.length} 个镜头`, 120),
-    voiceoverSummary: oneLine(plan.scenes.map(scene => scene.voiceover).join(plan.language === 'en' ? ' ' : ''), 160),
+    voiceoverSummary: oneLine(spokenCopyReviewNotice(plan.scenes.map(scene => ({ sceneId: scene.sceneId, text: scene.voiceover }))) + plan.scenes.map(scene => scene.voiceover).join(plan.language === 'en' ? ' ' : ''), 160),
     subtitleSummary: oneLine(plan.scenes.map(scene => scene.caption).join(' / '), 160),
     shotRhythmSummary: oneLine(`${plan.direction.pace === 'fast' ? '明快' : plan.direction.pace === 'steady' ? '稳健' : '自然'}节奏 · 约 ${Math.round(plan.direction.targetDurationSeconds)} 秒 · ${shotKinds}`, 120),
     referenceSourceId: plan.scriptSource.referenceSource?.sourceId ?? null,

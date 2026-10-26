@@ -11,6 +11,29 @@ export type SourceSegment = {
 };
 const durationCache = new Map<string, number>();
 
+/**
+ * Resolve the displayed end of the video stream from FFmpeg showinfo output.
+ * Some FFmpeg builds report duration_time=0 for the final frame. In that case
+ * the final PTS alone is one frame short, so use the recent observed cadence
+ * for that frame instead of treating valid footage as missing.
+ */
+export function resolveShowinfoVisualDuration(stderr: string): number {
+  const frames = [...stderr.matchAll(/pts_time:([\d.e+-]+).*?duration_time:([\d.e+-]+)/gi)]
+    .map(match => ({ pts: Number(match[1]), duration: Number(match[2]) }))
+    .filter(frame => Number.isFinite(frame.pts) && Number.isFinite(frame.duration));
+  if (!frames.length) return 0;
+  const explicitEnd = Math.max(0, ...frames.map(frame => frame.pts + Math.max(0, frame.duration)));
+  const last = frames.at(-1)!;
+  if (last.duration > 0 || frames.length < 2) return explicitEnd;
+  const recentDeltas = frames.slice(-6).flatMap((frame, index, tail) => {
+    if (index === 0) return [];
+    const delta = frame.pts - tail[index - 1]!.pts;
+    return Number.isFinite(delta) && delta > 0 ? [delta] : [];
+  }).sort((a, b) => a - b);
+  const cadence = recentDeltas[Math.floor(recentDeltas.length / 2)] || 0;
+  return Math.max(explicitEnd, last.pts + cadence);
+}
+
 /** Validate the video stream, not container/audio length; cache by local file revision. */
 export async function resolveSourceDurations<T extends TimedSourceAsset>(assets: T[]): Promise<T[]> {
   const resolved = new Map<string, number>();
@@ -24,9 +47,9 @@ export async function resolveSourceDurations<T extends TimedSourceAsset>(assets:
         '-loglevel', 'info', '-progress', 'pipe:1', '-i', asset.localPath, '-map', '0:v:0',
         '-vf', 'setpts=PTS-STARTPTS,showinfo=checksum=0', '-an', '-f', 'null', '-',
       ], true, { timeoutMs: 15_000 });
-      const times = [...probe.stderr.matchAll(/pts_time:([\d.e+-]+)\s+duration:\s*\d+\s+duration_time:([\d.e+-]+)/gi)]
-        .map(match => Number(match[1]) + Number(match[2])).filter(Number.isFinite);
-      duration = probe.ok && /progress=end/.test(probe.stdout.toString()) ? Math.max(0, ...times) : 0;
+      duration = probe.ok && /progress=end/.test(probe.stdout.toString())
+        ? resolveShowinfoVisualDuration(probe.stderr)
+        : 0;
       if (duration > 0) {
         if (durationCache.size >= 256) durationCache.clear();
         durationCache.set(key, duration);

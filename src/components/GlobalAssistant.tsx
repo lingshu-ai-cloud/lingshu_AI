@@ -1,4 +1,5 @@
 import { isUnboundOperationError } from '../lib/assistantOperationNotice';
+import { appendProductionReceipt } from '../lib/assistantProductionPortal';
 import { executeAssistantAction } from '../lib/assistantActionRequest';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -236,8 +237,8 @@ export default function GlobalAssistant({
   const inlineHomeActive = inlineHome && Boolean(activeThread.messages.length || loading || activeThread.creationDraft);
   useEffect(() => {
     if (!inlineHome) return;
-    window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_ACTIVITY_EVENT, { detail: { active: inlineHomeActive } }));
-  }, [inlineHome, inlineHomeActive]);
+    window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_ACTIVITY_EVENT, { detail: { active: inlineHomeActive, busy: loading || replyStreaming || fileGenerating } }));
+  }, [inlineHome, inlineHomeActive, loading, replyStreaming, fileGenerating]);
   const todoItems = pageContext.todoItems ?? [];
   const activeTodoItems = todoItems.filter(item => !item.completed);
   const pendingCount = todoItems.length ? activeTodoItems.length : Math.max(0, Number(pageContext.pendingCount ?? 0));
@@ -463,7 +464,7 @@ export default function GlobalAssistant({
       const taskId = response.receipt.taskId;
       const content = `已创建周任务「${response.task.brief.title}」。${response.receipt.blockedReason ? '暂未进入生产，请在任务中查看所需资料或服务状态。' : response.receipt.started ? '生产已启动，交付物将回收到该任务。' : '已保存，等待生产条件。'}`;
       const messages = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages;
-      setMessages(PRIMARY_ASSISTANT_THREAD, [...messages, { role: 'assistant', content }]);
+      setMessages(PRIMARY_ASSISTANT_THREAD, appendProductionReceipt(messages, content, response));
       upsertTaskCard(PRIMARY_ASSISTANT_THREAD, { taskId: `social-content:${taskId}`, title: response.task.brief.title, conclusion: content,
         status: response.receipt.status === 'producing' ? 'running' : ['completed', 'delivered', 'published'].includes(response.receipt.status) ? 'completed' : response.receipt.status === 'paused' ? 'paused' : 'needs_input', notificationReason: 'routine',
         primaryAction: { id: `open-${taskId}`, label: '查看生产任务', href: `/?page=smartAssets&socialContentTaskId=${encodeURIComponent(taskId)}` } });
@@ -471,12 +472,7 @@ export default function GlobalAssistant({
       window.dispatchEvent(new CustomEvent(WEEKLY_WORK_UPDATED_EVENT));
       void onSessionRefresh?.(); setPipelineRefresh(value => value + 1);
     },
-    onFinish: taskId => {
-      setMode('breathing');
-      window.dispatchEvent(new CustomEvent('lingshu:navigate', {
-        detail: { page: 'smartAssets', socialContentTaskId: taskId, socialContentPage: 'smartAssets', directStudio: true },
-      }));
-    },
+    onFinish: () => { setMode('chat'); },
   });
 
   const { send, sendComposerMessage } = useAssistantSend({
@@ -546,7 +542,7 @@ export default function GlobalAssistant({
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ text?: string; assistantText?: string; scriptedReply?: string; context?: Partial<AssistantContext>; tool?: AssistantTool; referenceMedia?: AssistantReferenceMedia }>).detail;
+      const detail = (event as CustomEvent<{ text?: string; assistantText?: string; scriptedReply?: string; context?: Partial<AssistantContext>; tool?: AssistantTool; referenceMedia?: AssistantReferenceMedia; preserveDraft?: boolean; companyReportRequest?: { companyId: string; year: number } }>).detail;
       let targetContext = pageContext;
       if (detail?.context?.agent && detail.context.label && detail.context.summary) {
         targetContext = {
@@ -580,7 +576,7 @@ export default function GlobalAssistant({
         const current = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages;
         setMessages(PRIMARY_ASSISTANT_THREAD, [...current, { role: 'assistant', content: assistantText }]);
       }
-      if (text) window.setTimeout(() => void send(text, routeAgent, targetContext, [], detail?.referenceMedia), 0);
+      if (text) window.setTimeout(() => void send(text, routeAgent, targetContext, [], detail?.referenceMedia, { preserveDraft: detail?.preserveDraft, companyReport: Boolean(detail?.companyReportRequest) }), 0);
     };
     window.addEventListener('lingshu-assistant-open', handler);
     return () => window.removeEventListener('lingshu-assistant-open', handler);
@@ -660,7 +656,9 @@ export default function GlobalAssistant({
 
     // Scoped creation drafts retain their dialogue across evidence and studio navigation.
     if (restore || kickoff) return;
-    if (useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].creationDraft) return;
+    const thread = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
+    if (thread.creationDraft || thread.messages.some(message =>
+      message.companyReport || message.creationPortal?.scenario === 'viral_replication' || message.taskPortal?.action === 'view_production')) return;
     assistantClosedRef.current = null;
     resetTransientConversation();
     focusTaskCard(PRIMARY_ASSISTANT_THREAD, null);
@@ -700,7 +698,7 @@ export default function GlobalAssistant({
     <div
       data-global-assistant="root"
       data-inline-home={inlineHomeAnchor ? 'true' : undefined}
-      data-home-empty={inlineHome && !activeThread.messages.length && !loading && !activeThread.creationDraft ? 'true' : undefined}
+      data-home-empty={inlineHome ? (inlineHomeActive ? 'false' : 'true') : undefined}
       data-home-creation-mode={inlineHomeBounds ? creationMode : undefined}
       className={inlineHomeAnchor ? 'ls-assistant-home-root absolute inset-0 z-[75]' : `fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[75] md:bottom-5 ${launcherRetracted && mode === 'breathing' ? 'right-0 md:right-0' : 'right-4 md:right-5'}`}
     >

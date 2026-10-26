@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { getAdTaskMetrics } from '../platformAds/metrics.js';
@@ -38,5 +39,10 @@ platformAdMetricsRouter.get('/performance/:executionId', async (req, res) => {
 });
 platformAdMetricsRouter.get('/tasks/:id/metrics', async (req, res) => {
   try { res.json(await getAdTaskMetrics((res.locals as AuthLocals).tenantId, req.params.id)); }
-  catch (error) { res.status(error instanceof AdProviderError && error.code === 'NOT_FOUND' ? 404 : 503).json({ error: error instanceof AdProviderError ? error.message : '投放效果暂不可用' }); }
+  catch (error) {
+    const code = error instanceof AdProviderError ? error.code : 'METRICS_UNAVAILABLE';
+    const status = code === 'NOT_FOUND' ? 404 : 503, requestId = randomUUID();
+    console.warn('[platform-ads:metrics-read-failed]', { requestId, taskId: req.params.id, code, status });
+    res.status(status).json({ error: error instanceof AdProviderError ? error.message : '投放效果暂不可用', code, requestId });
+  }
 });

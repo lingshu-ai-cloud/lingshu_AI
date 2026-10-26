@@ -18,8 +18,8 @@ export async function platformAdsRequest<T>(path: string, options?: RequestInit)
     ...options,
     headers: { ...authHeader(), ...(options?.body ? { 'Content-Type': 'application/json' } : {}), ...(options?.headers || {}) },
   });
-  const body = await response.json().catch(() => ({})) as T & { error?: string };
-  if (!response.ok) throw new Error(body.error || '投放服务请求失败');
+  const body = await response.json().catch(() => ({})) as T & { error?: string; code?: string; requestId?: string };
+  if (!response.ok) throw Object.assign(new Error(body.error || '投放服务请求失败'), { status: response.status, code: body.code, requestId: body.requestId });
   return body;
 }
 const request = platformAdsRequest;

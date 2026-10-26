@@ -51,6 +51,7 @@ try {
     assert.equal(u.origin, 'https://graph.facebook.com');
     const common = { account_id: accountId, status };
     if (u.pathname.endsWith('/me/accounts')) return Response.json({ data: [{ id: '600', name: 'Real Page', tasks: ['ADVERTISE'], access_token: 'must-never-return-this-field' }] });
+    if (u.pathname.endsWith('/act_1/promote_pages')) return Response.json({ data: [{ id: '600', name: 'Real Page' }] });
     if (u.pathname.endsWith('/act_1')) return Response.json({ id: 'act_1', currency: 'USD', timezone_name: 'America/Los_Angeles', name: 'Real account metadata', account_status: 1, min_daily_budget: '100', min_campaign_group_spend_cap: '5000' });
     if (u.pathname.endsWith('/101')) return Response.json({ ...common, id: '101', effective_status: status, objective: 'OUTCOME_ENGAGEMENT', spend_cap: '10000' });
     if (u.pathname.endsWith('/102')) return Response.json({ ...common, id: '102', campaign_id: '101', effective_status: status, optimization_goal: optimizationGoal, daily_budget: '500', destination_type: 'ON_VIDEO', billing_event: 'IMPRESSIONS', targeting: { geo_locations: { countries: ['US'] }, publisher_platforms: ['facebook'] }, attribution_spec: [{ event_type: 'CLICK_THROUGH', window_days: 7 }] });

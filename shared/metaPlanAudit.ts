@@ -1,4 +1,5 @@
 export interface MetaPlanAuditEntry {
+  targeting?: Record<string, unknown>;
   executionId: string; connectionId: string; accountId: string; accountName: string; currency: string; timezone: string;
   campaignId: string; adsetId: string; creativeId: string; adId: string;
   pageId: string; videoId: string; linkUrl: string; objective: string; optimizationGoal: string; destinationType: string; billingEvent: string;

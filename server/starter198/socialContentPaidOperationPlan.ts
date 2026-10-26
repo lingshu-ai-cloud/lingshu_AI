@@ -1,4 +1,4 @@
-import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
+import {productionBudgetDuration} from '../../shared/contracts/productionBudgetPolicy.js';
 import { createHash } from 'node:crypto';
 import type { SocialTaskBudgetScope, SocialTaskCorrectionBudgetAuthorization } from '../lib/socialContentTaskBudget.js';
 import type { SocialApprovedBudgetPlan, SocialPaidOperationIntent } from '../lib/socialContentTaskBudgetAuthority.js';
@@ -28,6 +28,7 @@ export interface FrozenPaidProduction {
         spokenText: string;
         presenterSpeech?: 'included' | 'separate' | 'reused' | 'whole_track';
         presenterSpeechReceiptRef?: string | null;
+        visualCompatibilityHash?: string;
     }>;
     /** A presenter group is one provider execution spanning an ordered, contiguous
      * run of frozen scenes. Scenes remain independently addressable downstream. */
@@ -39,6 +40,14 @@ export interface FrozenPaidProduction {
         presenterAssetId: string;
         contractHash: string;
         executionKind?: 'seedance_motion';
+        visualCompatibilityHash?: string;
+        staticReferenceImageCount?: number;
+        firstFramePipeline?: 'background-first.v2';
+        /** New original scenes freeze their authored visual source without
+         * pretending that a benchmark frame exists. Historic/reference
+         * groups omit these fields and retain their previous contract. */
+        sceneSourceKind?: 'original_scene';
+        sceneSourceContractHash?: string;
     }>;
     shots: Array<Pick<SocialAssetSupplyShotPlan, 'shotId' | 'sourceStrategy' | 'fallbackSourceStrategy' | 'materialRouting' | 'sourceRefs' | 'digitalHumanPlan'>>;
     assets: Array<{
@@ -74,6 +83,13 @@ export interface PaidStageRequirement {
     presenterGroupShotIds?: string[];
     presenterAssetId?: string;
     presenterGroupContractHash?: string;
+    presenterVisualCompatibilityHash?: string;
+    presenterSceneSourceKind?: 'original_scene';
+    presenterSceneSourceContractHash?: string;
+    presenterFirstFramePipeline?: 'background-first.v2';
+    presenterStaticReferenceImageCount?: number;
+    presenterExecutionKind?: 'seedance_motion';
+    presenterStaticPhase?: 'background'|'composite';
     inputContractHash: string;
 }
 export interface BoundPaidRoute {
@@ -121,6 +137,24 @@ function stable(v: unknown): unknown {
 export const paidProductionHash = (v: unknown) => createHash('sha256').update(JSON.stringify(stable(v))).digest('hex');
 export type FrozenPresenterGroup = NonNullable<FrozenPaidProduction['presenterGroups']>[number];
 export function presenterGroupContractHash(input: Omit<FrozenPresenterGroup, 'contractHash'> | FrozenPresenterGroup) { const {contractHash:_,...value}=input as FrozenPresenterGroup; return paidProductionHash(value); }
+
+/** One lossless reconstruction for execution and recovery. Historical
+ * visual-v2 requirements omitted the static metadata; recover it only from
+ * their original sibling requirements, then prove the complete frozen hash. */
+export function presenterGroupFromRequirement(requirement:PaidStageRequirement,requirements:PaidStageRequirement[]=[]):FrozenPresenterGroup {
+ const background=requirements.some(item=>item.presenterGroupId===requirement.presenterGroupId&&item.presenterStaticPhase==='background');
+ const pipeline=requirement.presenterFirstFramePipeline??(background?'background-first.v2':undefined);
+ const count=requirement.presenterStaticReferenceImageCount??(background?(requirements.find(item=>item.presenterGroupId===requirement.presenterGroupId&&item.presenterStaticPhase==='composite'&&item.stage==='first_frame_qa')?.frameCount??3)-1:undefined);
+ const group:FrozenPresenterGroup={groupId:requirement.presenterGroupId!,shotIds:[...(requirement.presenterGroupShotIds??[])],durationSeconds:Number(requirement.durationSeconds),spokenText:String(requirement.text??''),presenterAssetId:requirement.presenterAssetId!,contractHash:requirement.presenterGroupContractHash!,
+  ...(requirement.presenterVisualCompatibilityHash!==undefined?{visualCompatibilityHash:requirement.presenterVisualCompatibilityHash}:{}),
+  ...(pipeline!==undefined?{firstFramePipeline:pipeline}:{}),...(count!==undefined?{staticReferenceImageCount:count}:{}),
+  ...(requirement.presenterExecutionKind!==undefined?{executionKind:requirement.presenterExecutionKind}:{}),
+  ...(requirement.presenterSceneSourceKind!==undefined?{sceneSourceKind:requirement.presenterSceneSourceKind}:{}),
+  ...(requirement.presenterSceneSourceContractHash!==undefined?{sceneSourceContractHash:requirement.presenterSceneSourceContractHash}:{})};
+ if(!group.groupId||!group.shotIds.length||!group.presenterAssetId||!(group.durationSeconds>0)
+  ||group.contractHash!==presenterGroupContractHash(group))throw Error('presenter_group_requirement_contract_changed');
+ return group;
+}
 export function paidProductionApprovalHash(input: FrozenPaidProduction) { return paidProductionHash({ scope: input.scope, baselineHash: input.baselineHash, scenes: input.scenes, presenterGroups: input.presenterGroups, shots: input.shots, voice: input.voice }); }
 export function paidProductionRecordHash(input: Omit<FrozenPaidProduction, 'recordHash'> | FrozenPaidProduction) { const { recordHash: _, ...value } = input as FrozenPaidProduction; return paidProductionHash(value); }
 const text = (v: unknown) => typeof v === 'string' && v.trim() === v && v.length > 0 && v.length <= 512;
@@ -191,13 +225,19 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                 return { plan: null, requirements, gaps: ['scene_contract_missing'] };
             const presenterGroups=input.presenterGroups||[], presenterGroupByShot=new Map<string,FrozenPresenterGroup>();
             if(new Set(presenterGroups.map(group=>group.groupId)).size!==presenterGroups.length)return {plan:null,requirements,gaps:['presenter_group_contract_invalid']};
-            let previousGroupLastIndex=-2, previousGroupPresenter='';
+            let previousGroupLastIndex=-2, previousGroupPresenter='',previousVisualHash:string|undefined;
             for(const group of presenterGroups){
                 const indexes=group.shotIds.map(id=>input.scenes.findIndex(scene=>scene.shotId===id));
                 const scenes=group.shotIds.map(id=>input.scenes.find(scene=>scene.shotId===id));
                 const shots=group.shotIds.map(id=>input.shots.find(shot=>shot.shotId===id));
                 const presenterIds=shots.map(shot=>[...new Set(shot?.digitalHumanPlan?.presenterAssetIds?.length?shot.digitalHumanPlan.presenterAssetIds:shot?.sourceRefs||[])]);
                 if(!text(group.groupId)||!group.shotIds.length||new Set(group.shotIds).size!==group.shotIds.length||group.contractHash!==presenterGroupContractHash(group)
+                    ||(group.visualCompatibilityHash!==undefined&&!hash(group.visualCompatibilityHash))
+                    ||(group.firstFramePipeline!==undefined&&(group.firstFramePipeline!=='background-first.v2'||!group.visualCompatibilityHash))
+                    ||(group.sceneSourceKind!==undefined&&(group.sceneSourceKind!=='original_scene'||!hash(group.sceneSourceContractHash)))
+                    ||(group.sceneSourceContractHash!==undefined&&(group.sceneSourceKind!=='original_scene'||!hash(group.sceneSourceContractHash)))
+                    ||(group.staticReferenceImageCount!==undefined&&(!Number.isSafeInteger(group.staticReferenceImageCount)||group.staticReferenceImageCount<2))
+                    ||scenes.some(scene=>scene?.visualCompatibilityHash!==group.visualCompatibilityHash)
                     ||indexes.some(i=>i<0)||indexes.some((value,index)=>index>0&&value!==indexes[index-1]!+1)
                     ||scenes.some(scene=>!scene||(group.executionKind!=='seedance_motion'&&scene.presenterSpeech!=='whole_track'))||shots.some(shot=>shot?.sourceStrategy!=='authorized_digital_presenter')
                     ||presenterIds.some(ids=>ids.length!==1||ids[0]!==group.presenterAssetId)
@@ -205,18 +245,19 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                     ||scenes.map(scene=>scene?.spokenText||'').join(' ')!==group.spokenText
                     ||(group.executionKind!=='seedance_motion'&&!group.spokenText.trim())
                     ||(group.executionKind==='seedance_motion'&&(group.shotIds.length!==1||shots.some(shot=>shot?.digitalHumanPlan?.method!=='reenact'||(shot.digitalHumanPlan as typeof shot.digitalHumanPlan&{silentMotion?:boolean}).silentMotion!==true)))
-                    ||indexes[0]!<=previousGroupLastIndex||(group.executionKind!=='seedance_motion'&&indexes[0]===previousGroupLastIndex+1&&group.presenterAssetId===previousGroupPresenter)
+                    ||indexes[0]!<=previousGroupLastIndex||(group.executionKind!=='seedance_motion'&&indexes[0]===previousGroupLastIndex+1&&group.presenterAssetId===previousGroupPresenter&&group.visualCompatibilityHash===previousVisualHash)
                     ||group.shotIds.some(id=>presenterGroupByShot.has(id))){
                     return {plan:null,requirements,gaps:['presenter_group_contract_invalid']};
                 }
                 group.shotIds.forEach(id=>presenterGroupByShot.set(id,group));
-                previousGroupLastIndex=indexes.at(-1)!;previousGroupPresenter=group.executionKind==='seedance_motion'?'':group.presenterAssetId;
+                previousGroupLastIndex=indexes.at(-1)!;previousGroupPresenter=group.executionKind==='seedance_motion'?'':group.presenterAssetId;previousVisualHash=group.visualCompatibilityHash;
             }
             if(presenterGroups.length&&input.scenes.some(scene=>scene.presenterSpeech==='whole_track'&&input.shots.find(shot=>shot.shotId===scene.shotId)?.sourceStrategy==='authorized_digital_presenter'&&!presenterGroupByShot.has(scene.shotId)))
                 return {plan:null,requirements,gaps:['presenter_group_coverage_invalid']};
             const make = (key: string, stage: string, shotId: string | null, sourceRef: string | null, durationSeconds: number | null, spoken: string | null, frameCount: number | null, presenterGroup?:FrozenPresenterGroup): PaidStageRequirement => {
-                const groupFields=presenterGroup?{presenterGroupId:presenterGroup.groupId,presenterGroupShotIds:[...presenterGroup.shotIds],presenterAssetId:presenterGroup.presenterAssetId,presenterGroupContractHash:presenterGroup.contractHash}:{};
-                return { key, stage, shotId, sourceRef, durationSeconds, text: spoken, frameCount,...groupFields, inputContractHash: paidProductionHash({ scope, baselineHash: input.baselineHash, approvalSourceHash: input.approval.sourceHash, key, stage, shotId, sourceRef, durationSeconds, spoken, frameCount,...groupFields }) };
+                const groupFields=presenterGroup?{presenterGroupId:presenterGroup.groupId,presenterGroupShotIds:[...presenterGroup.shotIds],presenterAssetId:presenterGroup.presenterAssetId,presenterGroupContractHash:presenterGroup.contractHash,...(presenterGroup.visualCompatibilityHash!==undefined?{presenterVisualCompatibilityHash:presenterGroup.visualCompatibilityHash}:{}),...(presenterGroup.sceneSourceKind!==undefined?{presenterSceneSourceKind:presenterGroup.sceneSourceKind}:{}),...(presenterGroup.sceneSourceContractHash!==undefined?{presenterSceneSourceContractHash:presenterGroup.sceneSourceContractHash}:{}),...(presenterGroup.firstFramePipeline!==undefined?{presenterFirstFramePipeline:presenterGroup.firstFramePipeline}:{}),...(presenterGroup.staticReferenceImageCount!==undefined?{presenterStaticReferenceImageCount:presenterGroup.staticReferenceImageCount}:{}),...(presenterGroup.executionKind!==undefined?{presenterExecutionKind:presenterGroup.executionKind}:{})}:{};
+                const phase=presenterGroup?.firstFramePipeline==='background-first.v2'&&['first_frame','first_frame_qa'].includes(stage)?{presenterStaticPhase:shotId===`${presenterGroup.groupId}:background`?'background' as const:'composite' as const}:{};
+                return { key, stage, shotId, sourceRef, durationSeconds, text: spoken, frameCount,...groupFields,...phase, inputContractHash: paidProductionHash({ scope, baselineHash: input.baselineHash, approvalSourceHash: input.approval.sourceHash, key, stage, shotId, sourceRef, durationSeconds, spoken, frameCount,...groupFields,...phase }) };
             };
             const add = (...args: Parameters<typeof make>) => { const r = make(...args); requirements.push(r); return r; };
             const local = async (requirement: PaidStageRequirement, kinds: VerifiedLocalExecution['kind'][], expectedReceipt?: string) => {
@@ -229,6 +270,10 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
             if (new Set(input.assets.map(a => a.assetId)).size !== input.assets.length)
                 gap('material_source_duplicate');
             for(const group of presenterGroups){
+                if(group.firstFramePipeline==='background-first.v2'){
+                    add(`presenter-group:${group.groupId}:background`,'first_frame',`${group.groupId}:background`,null,null,null,null,group);
+                    add(`presenter-group:${group.groupId}:background-qa`,'first_frame_qa',`${group.groupId}:background`,null,null,null,2,group);
+                }
                 // The review image is a real paid production artifact.  One
                 // Seedream edit removes the reference person and composites
                 // the authorised presenter; Qwen then independently reviews
@@ -236,7 +281,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                 // so the whole-film cap is proven before either provider sees
                 // a request.
                 add(`presenter-group:${group.groupId}:first-frame`,'first_frame',group.groupId,null,null,null,null,group);
-                add(`presenter-group:${group.groupId}:first-frame-qa`,'first_frame_qa',group.groupId,null,null,null,3,group);
+                add(`presenter-group:${group.groupId}:first-frame-qa`,'first_frame_qa',group.groupId,null,null,null,1+(group.staticReferenceImageCount??2),group);
                 add(`presenter-group:${group.groupId}:presenter`,'presenter_video',null,null,group.durationSeconds,group.spokenText,null,group);
                 if(group.executionKind==='seedance_motion') add(`presenter-group:${group.groupId}:video-qa`,'video_qa',group.groupId,null,group.durationSeconds,null,4,group);
             }
@@ -279,6 +324,12 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                         const selected = make(key, 'local_supply_selection', shot.shotId, null, scene.durationSeconds, scene.spokenText, null);
                         if (!await local(selected, ['existing_media', 'local_render']))
                             gap(`supply_route_execution_unverified:${route}:${shot.shotId}`);
+                        continue;
+                    }
+                    if(route==='non_evidentiary_ai_visual'&&shot.materialRouting?.policy==='illustrative_video'){
+                        const spec=shot.materialRouting.illustrativeVideo;
+                        if(!spec||spec.provider!=='seedance'||!Number.isSafeInteger(spec.durationSeconds)||spec.durationSeconds<4||spec.durationSeconds>15){gap('concept_video_contract_missing');continue;}
+                        add(`${key}:concept_video`,'concept_video',shot.shotId,null,spec.durationSeconds,null,null);
                         continue;
                     }
                     if (route === 'aigc_product_scene_replication' && ['reference_first_frame_product_replacement_i2v', 'enterprise_authored_product_first_frame_i2v'].includes(shot.materialRouting?.generation?.method || '')) {
@@ -357,7 +408,11 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                 // the already-approved first frame. Frame generation is never
                 // repeated; every additional video/QA POST remains a distinct
                 // pre-priced operation in this same task/run budget scope.
-                const plannedAttempts = ['video', 'video_qa'].includes(requirement.stage)
+                const staticCorrection=presenterGroups.some(group=>group.firstFramePipeline==='background-first.v2'&&group.groupId===requirement.presenterGroupId)
+                    && ['first_frame','first_frame_qa'].includes(requirement.stage);
+                const plannedAttempts = staticCorrection
+                    ? Math.min(2,input.maximumRetries+1)
+                    : ['video', 'video_qa'].includes(requirement.stage)
                     && requirement.shotId && input.directedRetryShotIds?.includes(requirement.shotId)
                     && input.shots.find(shot => shot.shotId === requirement.shotId)?.sourceStrategy === 'aigc_product_scene_replication'
                     ? Math.min(2, input.maximumRetries + 1)
@@ -367,13 +422,52 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                         ? `director-g5-${paidProductionHash({scope,key:requirement.key,attempt})}`
                         : `paid-plan:${paidProductionHash({ scope, key: requirement.key, attempt })}`, provider: route.provider, model: route.model, accountRef: route.accountRef, stage: requirement.stage, shotId: requirement.shotId, inputContractHash: paidProductionHash({ requirement, route, attempt }), maximumUnits: { ...route.maximumUnits } });
             }
+            for(const group of presenterGroups.filter(group=>group.visualCompatibilityHash)){
+                const frames=operations.filter(operation=>operation.shotId===group.groupId&&operation.stage==='first_frame');
+                const inspections=operations.filter(operation=>operation.shotId===group.groupId&&operation.stage==='first_frame_qa');
+                if(frames.length<1||frames.length>2||frames.length!==inspections.length){gap('presenter_static_dependency_ambiguous');continue;}
+                let backgroundParentSets:string[][]=[[]];
+                if(group.firstFramePipeline==='background-first.v2'){
+                    const backgrounds=operations.filter(operation=>operation.shotId===`${group.groupId}:background`&&operation.stage==='first_frame');
+                    const backgroundQa=operations.filter(operation=>operation.shotId===`${group.groupId}:background`&&operation.stage==='first_frame_qa');
+                    if(backgrounds.length<1||backgrounds.length>2||backgrounds.length!==backgroundQa.length){gap('presenter_background_dependency_ambiguous');continue;}
+                    for(let attempt=0;attempt<backgrounds.length;attempt++){
+                        const prior=attempt?[backgrounds[attempt-1]!.operationId,backgroundQa[attempt-1]!.operationId]:[];
+                        backgrounds[attempt]!.executionBindingPolicy={schemaVersion:'paid-execution-binding-policy.v1',parentOperationIds:prior};
+                        backgroundQa[attempt]!.executionBindingPolicy={schemaVersion:'paid-execution-binding-policy.v1',parentOperationIds:[backgrounds[attempt]!.operationId]};
+                    }
+                    backgroundParentSets=backgrounds.map((item,index)=>[item.operationId,backgroundQa[index]!.operationId]);
+                }
+                for(let attempt=0;attempt<frames.length;attempt++){
+                    const prior=attempt?[frames[attempt-1]!.operationId,inspections[attempt-1]!.operationId]:[];
+                    const allowed=backgroundParentSets.map(parents=>[...parents,...prior]);
+                    frames[attempt]!.executionBindingPolicy=allowed.length===1?{schemaVersion:'paid-execution-binding-policy.v1',parentOperationIds:allowed[0]!}:{schemaVersion:'paid-execution-binding-policy.v2',allowedParentOperationSets:allowed};
+                    inspections[attempt]!.executionBindingPolicy={schemaVersion:'paid-execution-binding-policy.v1',parentOperationIds:[frames[attempt]!.operationId]};
+                }
+            }
+            // Preserve the planner's stable order where possible while moving
+            // every paid child behind all parent identities it may bind. This
+            // is required for alternative background candidates and also makes
+            // the frozen plan independently auditable before any POST.
+            const ordered:SocialPaidOperationIntent[]=[];
+            while(ordered.length<operations.length){
+                const ready=operations.find(intent=>!ordered.includes(intent)&&(
+                    intent.executionBindingPolicy===undefined||(
+                        intent.executionBindingPolicy.schemaVersion==='paid-execution-binding-policy.v1'
+                          ? intent.executionBindingPolicy.parentOperationIds
+                          : intent.executionBindingPolicy.allowedParentOperationSets.flat()
+                    ).every(id=>ordered.some(parent=>parent.operationId===id))));
+                if(!ready){gap('paid_execution_dependency_cycle');break;}
+                ordered.push(ready);
+            }
+            if(ordered.length===operations.length)operations.splice(0,operations.length,...ordered);
             await ports.assertCurrent(scope);
             const current = await ports.readFrozenProduction(scope);
             if (!current || current.recordHash !== input.recordHash || paidProductionRecordHash(current) !== input.recordHash)
                 gap('frozen_production_changed');
             if (gaps.length)
                 return { plan: null, requirements, gaps };
-            return { plan: { scope, authorizationRef: input.authorization.ref, productionDurationSeconds:input.authorization.productionDurationSeconds??productionBudgetDuration({scenes:input.scenes.map(scene=>({duration:{startSeconds:0,endSeconds:scene.durationSeconds}}))}), maximumCny: Math.min(productionBudgetLimitCny(input.authorization.productionDurationSeconds??productionBudgetDuration({scenes:input.scenes.map(scene=>({duration:{startSeconds:0,endSeconds:scene.durationSeconds}}))})), input.authorization.maximumCny), maximumExecutionCny:input.authorization.maximumExecutionCny,paidOperations: operations,
+            return { plan: { scope, authorizationRef: input.authorization.ref, productionDurationSeconds:input.authorization.productionDurationSeconds??productionBudgetDuration({scenes:input.scenes.map(scene=>({duration:{startSeconds:0,endSeconds:scene.durationSeconds}}))}), maximumCny: input.authorization.maximumCny, maximumExecutionCny:input.authorization.maximumExecutionCny,paidOperations: operations,
                 ...(presenterGroups.length ? {presenterGroups: structuredClone(presenterGroups)} : {}) }, requirements, gaps };
         } };
 }

@@ -6,7 +6,11 @@
 .meta-performance-toolbar > .ant-input-search { min-width: 240px; max-width: 420px; }
 .meta-performance-toolbar > .ant-select-multiple { min-width: 280px; max-width: 420px; flex: 1; }
 .meta-performance-toolbar > .ant-picker { min-width: 260px; }
-.ads-account-directory-select { flex-shrink: 0; min-width: 0; max-width: 100%; overflow-x: auto; }
+.ads-account-directory-select { display: flex; flex-direction: column; gap: 8px; min-width: 0; width: 100%; max-width: 100%; }
+.ads-account-directory-controls { max-width: 100%; }
+.ads-account-directory-controls > .ant-space-item { min-width: 0; max-width: 100%; }
+.ls-design-system .app-shell .ads-account-directory-select .ant-select .ant-select-input { background: transparent; box-shadow: none; }
+.ads-account-directory-select > .ant-alert { width: 100%; min-width: 0; overflow-wrap: break-word; }
 .meta-performance-task.ant-btn { height: auto; max-width: 100%; white-space: normal; padding: 0; text-align: left; overflow-wrap: break-word; }
 .meta-performance .ant-table p { margin: 4px 0; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .meta-performance-notes p { margin: 8px 0; font-size: 12px; line-height: 18px; color: var(--ls-text-secondary); }

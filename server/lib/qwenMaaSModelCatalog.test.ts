@@ -13,9 +13,10 @@ test('MaaS catalog evidence binds exact endpoint, key digest, model and visual c
  assert.equal(await readQwenMaaSVisionCatalog({...input,credentialSha256:'0'.repeat(64)},{apiKey:()=>key,fetch:async()=>{throw Error('must not call');}}),null);
 });
 
-test('unknown capability, absent model, malformed list, legacy host and catalog error fail closed',async()=>{
+test('known ID-only model uses published vision capability; conflicting/unknown/absent models fail closed',async()=>{
  const inspect=async(body:unknown)=>readQwenMaaSVisionCatalog(input,{apiKey:()=>key,fetch:response(body) as typeof fetch});
- assert.equal(await inspect({object:'list',data:[{id:'qwen3-vl-plus'}]}),null);
+ assert.ok(await inspect({object:'list',data:[{id:'qwen3-vl-plus'}]}));
+ assert.equal(await readQwenMaaSVisionCatalog({...input,model:'unknown-vision-model'},{apiKey:()=>key,fetch:response({object:'list',data:[{id:'unknown-vision-model'}]}) as typeof fetch}),null);
  assert.equal(await inspect({object:'list',data:[{id:'qwen3-vl-plus',input_modalities:['text']}]}),null);
  assert.equal(await inspect({object:'list',data:[{id:'another-model',input_modalities:['image']}]}),null);
  assert.equal(await inspect({data:[{id:'qwen3-vl-plus',input_modalities:['image']}]}),null);

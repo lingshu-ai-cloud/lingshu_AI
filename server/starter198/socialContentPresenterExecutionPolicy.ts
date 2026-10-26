@@ -1,8 +1,16 @@
-import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow.js';
+import type { SocialAssetSupplyPlan, SocialContentTaskBrief, SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow.js';
 import type { PresenterShotMeasurements, PresenterStackDecision } from '../../shared/contracts/presenterStackPolicy.js';
 import { decidePresenterStack } from './presenterStackPolicy.js';
 import type { DataStore } from '../storage/datastore.js';
 import { validatePresenterRightsEvidence } from '../lib/presenterAssetTrust.js';
+
+/** UI selection is an execution constraint, not a suggestion in a prompt. */
+export function assertTaskPresenterPolicy(brief: Pick<SocialContentTaskBrief, 'presenterPolicy'>, plan: SocialAssetSupplyPlan | null | undefined): void {
+  if (!brief.presenterPolicy) return;
+  const usesPresenter = plan?.shots.some(shot => shot.sourceStrategy === 'authorized_digital_presenter');
+  if (brief.presenterPolicy === 'none' && usesPresenter) throw Error('user_input_required:presenter_disabled_for_task');
+  if (brief.presenterPolicy === 'selected' && !usesPresenter) throw Error('user_input_required:selected_presenter_missing_from_plan');
+}
 
 export interface PresenterExecutionSelection {
   sceneId: string;
@@ -198,7 +206,9 @@ export async function verifyNamedPresenterLock(input: {
 /** A missing model measurement is an explicit non-executable decision. The
  * social Seedance product-scene adapter is not a presenter reenactment adapter. */
 export function selectPresenterExecutions(input: {
-  detail: Pick<SocialContentTaskDetail, 'agentWorkflow' | 'referenceVideoAnalysis' | 'assetSupplyPlan' | 'enterpriseProductBinding'>;
+  detail: Pick<SocialContentTaskDetail, 'agentWorkflow' | 'referenceVideoAnalysis' | 'assetSupplyPlan' | 'enterpriseProductBinding'> & {
+    brief?: Pick<SocialContentTaskBrief, 'creationMode' | 'presenterPolicy' | 'presenterAssetId' | 'presenterSpeechReviewPolicy'>;
+  };
   heygenReady: boolean;
   /** Must describe an actual social presenter first-frame executor, not product-scene Seedance. */
   seedancePresenterReady: boolean;
@@ -206,6 +216,7 @@ export function selectPresenterExecutions(input: {
 }): PresenterExecutionSelection[] {
   const workflow = input.detail.agentWorkflow;
   if (!workflow) return [];
+  if (input.detail.brief?.creationMode === 'material_processing') return selectOriginalTalkingPresenters(input);
   const references = new Map((input.detail.referenceVideoAnalysis?.shots ?? []).map(shot => [shot.shotId, shot]));
   const executionByScene = new Map(workflow.executionPlan.scenes.map(scene => [scene.sceneId, scene]));
   const supplyByScene = new Map((input.detail.assetSupplyPlan?.shots ?? []).map(shot => [shot.shotId, shot]));
@@ -311,5 +322,39 @@ export function selectPresenterExecutions(input: {
       reasonCodes,
       enterpriseProductAssetLock,
     };
+  });
+}
+
+/** Original talking is a frozen production intent, not a measurement of a
+ * reference film. Asset rights and live provider bindings remain downstream
+ * admission requirements; this selector never manufactures their evidence. */
+function selectOriginalTalkingPresenters(input: Parameters<typeof selectPresenterExecutions>[0]): PresenterExecutionSelection[] {
+  const { detail } = input, brief = detail.brief!;
+  const scenes = new Map(detail.agentWorkflow!.directorBrief.scenes.map(scene => [scene.sceneId, scene]));
+  const executions = new Map(detail.agentWorkflow!.executionPlan.scenes.map(scene => [scene.sceneId, scene]));
+  return (detail.assetSupplyPlan?.shots ?? []).filter(shot => shot.sourceStrategy === 'authorized_digital_presenter').map(shot => {
+    const scene = scenes.get(shot.shotId), execution = executions.get(shot.shotId);
+    const candidate = execution?.candidates?.find(value => execution.recommendedCandidateIds?.includes(value.candidateId));
+    const strategy = candidate?.sourceStrategy ?? execution?.selectedSourceStrategy;
+    const ids = shot.digitalHumanPlan?.presenterAssetIds ?? [];
+    const reasons = ['original_talking_presenter'];
+    if (!scene || strategy !== 'authorized_digital_presenter') reasons.push('original_presenter_execution_plan_missing');
+    if (shot.digitalHumanPlan?.workflow !== 'material_processing' || shot.digitalHumanPlan.method !== 'talking') reasons.push('original_presenter_talking_method_required');
+    if (brief.presenterPolicy !== 'selected' || !brief.presenterAssetId || ids.length !== 1 || ids[0] !== brief.presenterAssetId) reasons.push('original_presenter_selected_asset_mismatch');
+    if (brief.presenterSpeechReviewPolicy !== 'heygen_native_human_review') reasons.push('presenter_speech_route_unavailable');
+    if (!input.heygenReady) reasons.push('heygen_capability_unavailable');
+    if (!input.budgetReady) reasons.push('presenter_budget_unavailable');
+    const executable = reasons.length === 1;
+    const measurements: PresenterShotMeasurements = {
+      shotId: shot.shotId, durationSeconds: scene?.duration.targetSeconds ?? 0,
+      sourceFirstFrameRef: null, enterprisePresenterAssetRef: ids.length === 1 ? ids[0]! : null,
+      visibleSpeechSeconds: null, lipSyncRequired: null, specificGestureCount: null,
+      bodyCenterTravelFrameWidth: null, cameraTravelFrameDiagonal: null,
+      compositionLockRequired: null, physicalProductContact: null, decisionConfidence: 0, evidence: [],
+    };
+    return { sceneId: shot.shotId, referenceShotId: null,
+      decision: { policyVersion: '1', route: executable ? 'heygen_talking' : 'blocked', executable, reasonCodes: reasons, measurements },
+      providerId: executable ? 'heygen' : null, executionStatus: executable ? 'ready' : 'blocked', reasonCodes: reasons,
+      enterpriseProductAssetLock: null };
   });
 }

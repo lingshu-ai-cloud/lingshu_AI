@@ -1,3 +1,9 @@
+import { adReceiptState } from '../../shared/adReceiptState';
+import MetaLeadFields, { emptyMetaLeadFields } from './MetaLeadFields';
+import AdCountrySelect from './AdCountrySelect';
+import AdJourneyReview from './AdJourneyReview';
+import { metaBusinessMissing, metaNeedsWebsite } from '../../shared/metaAdJourney';
+import { META_AD_GOALS } from '../../shared/metaAdObjectives';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { MetaPageSelect } from './MetaPlanAuditPanel';
 import { Alert, Select } from 'antd';
@@ -82,14 +88,29 @@ function AdExecutionControls({ task, connections, onExecution, releasePolicy, on
   const historyRun = useRef(0);
   useEffect(() => () => { historyRun.current++; }, [task.id]);
   const creationBlocked = action === 'create' && (receiptLoading || !!receiptError || task.status !== 'draft' || records.some(r => r.action === 'create' && r.status !== 'FAILED'));
+  const existingCreate = records.find(r => r.action === 'create' && r.status === 'VERIFIED' && r.resourceId && (!connectionId || r.connectionId === connectionId));
+  const receiptState = existingCreate ? adReceiptState(records, String(existingCreate.connectionId), String(existingCreate.resourceId)) : null;
+  useEffect(() => {
+    if (!existingCreate || action !== 'create') return;
+    setConnectionId(String(existingCreate.connectionId));
+    setResourceId(String(existingCreate.resourceId));
+    setAction(receiptState?.expected === 'ACTIVE' ? 'pause' : 'activate');
+    setPreflight(null);
+  }, [existingCreate?.id, action, receiptState?.expected]);
   const [approvals, setApprovals] = useState<Array<Record<string, unknown>>>([]);
   const [launches, setLaunches] = useState<Array<Record<string, unknown>>>([]);
-  const [meta, setMeta] = useState({ pageId: '', videoId: '', imageUrl: '', linkUrl: '', message: '', countries: 'US', dailyBudget: task.configuration.dailyBudget || 10 });
+  const [lead, setLead] = useState({ ...emptyMetaLeadFields });
+  const [leadAssetsReady, setLeadAssetsReady] = useState(false);
+  useEffect(() => { setLead({ ...emptyMetaLeadFields, messageDestination: task.configuration.metaMessage?.destination || (task.goal === '获取消息会话' ? '' : emptyMetaLeadFields.messageDestination) }); }, [task.id, task.goal, task.version, connectionId]);
+  const [meta, setMeta] = useState({ pageId: task.configuration.metaMessage?.pageId || '', videoId: '', imageUrl: '', linkUrl: task.configuration.landingPageUrl || '', message: task.configuration.adMessage || '', countries: (task.configuration.countries || []).join(','), dailyBudget: task.configuration.dailyBudget || 0 });
+  useEffect(() => { setConnectionId(task.configuration.accountConnectionId || ''); setResourceId(''); setLeadAssetsReady(false); setMeta(value => ({ ...value, pageId: task.configuration.metaMessage?.pageId || '', videoId: '', imageUrl: '' })); }, [task.id]);
+  useEffect(() => { setMeta(value => ({ ...value, ...(task.goal === '获取消息会话' && task.configuration.metaMessage?.pageId ? { pageId: task.configuration.metaMessage.pageId } : {}), linkUrl: metaNeedsWebsite(task.goal) ? task.configuration.landingPageUrl || '' : '', message: task.configuration.adMessage || '', countries: (task.configuration.countries || []).join(','), dailyBudget: task.configuration.dailyBudget || 0 })); }, [task.id, task.goal, task.configuration.landingPageUrl, task.configuration.adMessage, task.configuration.countries?.join(','), task.configuration.dailyBudget, task.configuration.metaMessage?.pageId, task.version]);
   useEffect(() => { setCreative(null); setPreflight(null); setMeta(value => ({ ...value, videoId: '' })); }, [task.id, task.version]);
   const [tiktok, setTikTok] = useState({ identityId: '', tiktokItemId: '', locationIds: '', adText: '' });
   const isTikTok = connections.find(item => item.id === connectionId)?.provider === 'tiktok';
   const isGoogle = connections.find(item => item.id === connectionId)?.provider === 'google';
   const currencyMismatch = !!connectionId && connections.find(item => item.id === connectionId)?.currency !== currency;
+  const missingBusiness = !isTikTok && !isGoogle && action === 'create' ? metaBusinessMissing(task.goal, meta, task.budget) : [];
   const releaseBlocked = creationBlocked || !!releasePolicy && (!releasePolicy.allowedActions.includes(action) || !releasePolicy.executionProviders.includes(connections.find(c => c.id === connectionId)?.provider || '') || (task.managementMode === 'managed' && action === 'create' && launchMode === 'create_and_activate' && !releasePolicy.allowedActions.includes('activate')));
   const [google, setGoogle] = useState({ targetCpa: 10, videoAssetId: '', logoAssetId: '', finalUrl: '', businessName: '', headline: '', longHeadline: '', description: '', locationIds: '' });
   const refresh = async () => {
@@ -109,7 +130,7 @@ function AdExecutionControls({ task, connections, onExecution, releasePolicy, on
     await reads[0];
   };
   useEffect(() => { refresh().catch(e => setFeedback(message(e))); }, [task.id]);
-  const executionInput = { expectedVersion: task.version || 1, ...(creative && task.managementMode === 'manual' && action === 'create' && !isTikTok && !isGoogle && creative.connectionId === connectionId ? { creativeId: creative.id } : {}), connectionId, action, resourceId, ...(task.managementMode === 'managed' && action === 'create' ? { launchMode } : {}), dailyBudget: meta.dailyBudget, ...(isGoogle ? { google: { ...google, locationIds: google.locationIds.split(',').map(item => item.trim()).filter(Boolean) } } : isTikTok ? { tiktok: { ...tiktok, locationIds: tiktok.locationIds.split(',').map(item => item.trim()).filter(Boolean) } } : { meta: { ...meta, countries: meta.countries.split(',').map(c => c.trim().toUpperCase()).filter(Boolean) } }) };
+  const executionInput = { expectedVersion: task.version || 1, ...(creative && task.managementMode === 'manual' && action === 'create' && !isTikTok && !isGoogle && creative.connectionId === connectionId ? { creativeId: creative.id } : {}), connectionId, action, resourceId, ...(task.managementMode === 'managed' && action === 'create' ? { launchMode } : {}), dailyBudget: meta.dailyBudget, ...(isGoogle ? { google: { ...google, locationIds: google.locationIds.split(',').map(item => item.trim()).filter(Boolean) } } : isTikTok ? { tiktok: { ...tiktok, locationIds: tiktok.locationIds.split(',').map(item => item.trim()).filter(Boolean) } } : { meta: { ...meta, ...lead, countries: meta.countries.split(',').map(c => c.trim().toUpperCase()).filter(Boolean) } }) };
   const fingerprint = JSON.stringify({ taskId: task.id, ...executionInput });
   const currentPreflight = preflight?.fingerprint === fingerprint ? preflight.report : null;
   const checkBeforeSubmit = async () => {
@@ -126,6 +147,7 @@ function AdExecutionControls({ task, connections, onExecution, releasePolicy, on
       if (creationBlocked) throw new Error('此计划已有平台动作或不是草稿，请核对原回执，不能重复创建。');
       if (releaseBlocked) throw new Error(releasePolicy?.reason || '当前操作未开放');
       if (currencyMismatch) throw new Error(`广告账户币种与计划 ${currency} 不一致，无法执行；请使用同币种账户或新建方案。`);
+      if (missingBusiness.length) throw new Error(`请确认：${missingBusiness.join('、')}`);
       if (request.current?.fingerprint !== fingerprint) request.current = { fingerprint, id: crypto.randomUUID() };
       const result = await platformAdsRequest<Record<string, unknown>>(`/tasks/${encodeURIComponent(task.id)}/${task.managementMode === 'managed' && action === 'create' ? 'launch' : task.managementMode === 'approval' ? 'approvals' : 'execute'}`, { method: 'POST', body: JSON.stringify({ ...executionInput, requestId: request.current.id }) });
       const execution = result.execution as { status?: string; result?: { campaignId?: string }; error?: string } | undefined;
@@ -135,8 +157,8 @@ function AdExecutionControls({ task, connections, onExecution, releasePolicy, on
       await refresh();
     } catch (e) { setFeedback(message(e)); await refresh().catch(() => {}); } finally { setBusy(false); }
   };
-  return <div className="ads-execution"><h3>真实平台执行</h3><p className="ads-muted">Meta 支持网站引流与视频观看；TikTok 支持已有授权帖子的视频观看；Google 支持使用现有资产的 Demand Gen 转化人工计划。后两者需单一对应渠道与未来起止排期，暂不开放自动托管或审批。创建后广告均暂停，启动会产生真实消耗。任务版本：{task.version || 1}</p>
-    <AdCreativePanel task={task} connections={connections} onUpdate={onUpdate} uploadAllowed={!!releasePolicy?.allowedActions.includes('create') && !!releasePolicy?.executionProviders.includes('meta')} onUse={item => { setCreative(item); setConnectionId(item.connectionId); setAction('create'); setMeta(value => ({ ...value, pageId: connectionId === item.connectionId ? value.pageId : '', imageUrl: '', videoId: item.platformVideoId })); setPreflight(null); void platformAdsRequest<{ thumbnailUrl: string }>(`/creatives/${item.id}/platform-preview`).then(p => setMeta(value => value.videoId === item.platformVideoId ? { ...value, imageUrl: p.thumbnailUrl } : value)).catch(e => setFeedback(message(e))); }} />
+  return <div className="ads-execution"><h3>真实平台执行</h3><p className="ads-muted">Meta 支持网站访问、视频观看、消息会话、即时表单和独立站询盘；TikTok 支持已有授权帖子的视频观看；Google 支持使用现有资产的 Demand Gen 转化人工计划。后两者需单一对应渠道与未来起止排期，暂不开放自动托管或审批。创建后广告均暂停，启动会产生真实消耗。任务版本：{task.version || 1}</p>
+    {!existingCreate && <AdCreativePanel task={task} connections={connections} onUpdate={onUpdate} uploadAllowed={!!releasePolicy?.allowedActions.includes('create') && !!releasePolicy?.executionProviders.includes('meta')} onUse={item => { setCreative(item); setConnectionId(item.connectionId); setAction('create'); setMeta(value => ({ ...value, pageId: connectionId === item.connectionId ? value.pageId : '', imageUrl: '', videoId: item.platformVideoId })); setPreflight(null); void platformAdsRequest<{ thumbnailUrl: string }>(`/creatives/${item.id}/platform-preview`).then(p => setMeta(value => value.videoId === item.platformVideoId ? { ...value, imageUrl: p.thumbnailUrl } : value)).catch(e => setFeedback(message(e))); }} />}
     {creationBlocked && <p role="status">{receiptLoading ? '正在读取原回执，新建暂不可用。' : receiptError ? '原回执读取失败，暂不能确认执行历史；请刷新记录后继续。' : '此计划已有平台动作或不是草稿，新建已禁用；请查看真实资源核对和原回执。'}</p>}
     {creative && <p role="status" className="ads-muted">已选成片：{creative.name} · 当前企业。仅关联本次 Meta 人工创建。<button type="button" className="ads-text-button" onClick={() => { setCreative(null); setMeta(value => ({ ...value, videoId: '', imageUrl: '' })); }}>清除已选成片</button></p>}
     {task.managementMode === 'manual' && <section className="ads-preflight" aria-label="投放前检查">
@@ -144,9 +166,10 @@ function AdExecutionControls({ task, connections, onExecution, releasePolicy, on
       <p className="ads-muted">检查当前计划与表单，不上传素材、不创建广告。结果不代表平台账户在线、审核通过或预算充足。</p>
       {currentPreflight ? <div role="status"><strong>{currentPreflight.canSubmit ? '本地检查通过，平台条件仍待核验' : '以下事项需要处理'}</strong><ul>{currentPreflight.checks.map(check => <li key={check.id}><strong>{check.status === 'pass' ? '通过' : check.status === 'blocked' ? '需处理' : '待核验'} · {check.label}</strong><p>{check.message}</p></li>)}</ul><small>检查时间：{new Date(currentPreflight.checkedAt).toLocaleString('zh-CN')}</small></div> : <p className="ads-muted">{preflight ? '配置已变化，请重新检查。' : '填写下方配置后，可先检查缺失项。'}</p>}
     </section>}
+    {existingCreate && <p role="status">最近已核验投放开关：{receiptState?.pending ? '存在待核对操作' : receiptState?.expected === 'ACTIVE' ? '已启用' : '已暂停'}。审核与实际展示状态请查看上方平台核对；以下选择仅决定下一次操作。</p>}
     <form className="ads-form-fields" onSubmit={execute}>
       <label>广告账户<select aria-label="广告账户" required value={connectionId} onChange={e => { setConnectionId(e.target.value); setCreative(null); setMeta(value => ({ ...value, pageId: '', videoId: '', imageUrl: '', linkUrl: '' })); }}><option value="">选择已连接账户</option>{connections.filter(c => ['meta', 'tiktok', 'google'].includes(c.provider)).map(c => <option key={c.id} value={c.id} disabled={c.currency !== currency || c.status !== 'connected'}>{c.name} · {c.provider} · {c.currency} · {c.status}{c.currency !== currency ? '（币种不匹配）' : ''}</option>)}</select></label>
-      <label>操作<select aria-label="操作" value={action} onChange={e => setAction(e.target.value)}><option value="create">创建完整广告（暂停）</option><option value="activate">启动真实广告</option><option value="pause">暂停广告</option><option value="resume">恢复广告</option><option value="adjust_budget">调整日预算</option></select></label>
+      <label>操作<select aria-label="操作" value={action} onChange={e => setAction(e.target.value)}>{!existingCreate && <option value="create">创建完整广告（暂停）</option>}<option value="activate">启动真实广告</option><option value="pause">暂停广告</option><option value="resume">恢复广告</option><option value="adjust_budget">调整日预算</option></select></label>
       {task.managementMode === 'managed' && action === 'create' && <label>托管创建方式<select value={launchMode} onChange={e => setLaunchMode(e.target.value as typeof launchMode)}><option value="create_paused">创建并保持暂停（不自动启用）</option><option value="create_and_activate">创建后自动启用（可能产生真实消耗）</option></select></label>}
       {creationBlocked ? <Alert type="info" showIcon title={receiptLoading || receiptError ? '请先确认执行历史后再填写新建参数。' : '已有平台动作，不再填写新建参数；请使用真实资源核对及原回执。'}/> : action === 'create' && isGoogle ? <>
         <p className="ads-muted">目标选择“获取线索或转化”，渠道仅选 YouTube。资产 ID 必须为 Google Ads 已有资产，不是 YouTube 视频 ID。</p>
@@ -160,15 +183,18 @@ function AdExecutionControls({ task, connections, onExecution, releasePolicy, on
         <label>TikTok 广告文案<input required value={tiktok.adText} onChange={e => setTikTok({ ...tiktok, adText: e.target.value })} /></label>
         <p className="ads-muted">使用计划总预算 {currency} {task.budget}；当前 TikTok 路径仅支持人工创建和启停。</p>
       </> : action === 'create' ? <>
-        <MetaPageSelect connectionId={connectionId} value={meta.pageId} onChange={pageId => setMeta({ ...meta, pageId })}/>
-        <label>Meta 已上传视频 ID<input required pattern="[0-9]+" readOnly={!!creative && task.managementMode === 'manual'} value={meta.videoId} onChange={e => setMeta({ ...meta, videoId: e.target.value })} /></label>
-        <label>公开视频缩略图 HTTPS 地址<input required type="url" pattern="https://.*" value={meta.imageUrl} onChange={e => setMeta({ ...meta, imageUrl: e.target.value })} /></label>
-        {task.goal === '提升有效视频观看' ? <p>视频观看采用 ON_VIDEO，不写入网站 CTA 或落地页。</p> : <label>落地页 HTTPS 地址<input required type="url" pattern="https://.*" value={meta.linkUrl} onChange={e => setMeta({ ...meta, linkUrl: e.target.value })} /></label>}
+        <MetaPageSelect connectionId={connectionId} value={meta.pageId} onChange={pageId => setMeta(value => ({ ...value, pageId }))}/>
+        <p role="status">{creative && meta.videoId && meta.imageUrl ? '投放视频与封面已自动关联。' : '请在成片素材中确认要投放的视频，系统将关联视频与封面，无需填写平台编号或封面地址。'}</p>
+        {task.managementMode !== 'manual' && <details><summary>高级平台素材配置</summary><label>Meta 已上传视频 ID<input required pattern="[0-9]+" value={meta.videoId} onChange={e => setMeta({ ...meta, videoId: e.target.value })}/></label><label>公开视频缩略图 HTTPS 地址<input required type="url" pattern="https://.*" value={meta.imageUrl} onChange={e => setMeta({ ...meta, imageUrl: e.target.value })}/></label></details>}
+        <MetaLeadFields key={`${task.id}:${connectionId}:${meta.pageId}:${task.goal}`} goal={task.goal} value={lead} onChange={setLead} onAvailability={setLeadAssetsReady} connectionId={connectionId} pageId={meta.pageId}/>
+        {['提升网站访问', '获取独立站询盘'].includes(task.goal) ? <label>落地页 HTTPS 地址<input required type="url" pattern="https://.*" value={meta.linkUrl} onChange={e => setMeta({ ...meta, linkUrl: e.target.value })} /></label> : task.goal === '提升有效视频观看' ? <p>视频观看采用 ON_VIDEO，不写入网站 CTA 或落地页。</p> : null}
         <label>广告文案<textarea required value={meta.message} onChange={e => setMeta({ ...meta, message: e.target.value })} /></label>
-        <label>目标国家代码（逗号分隔）<input required value={meta.countries} onChange={e => setMeta({ ...meta, countries: e.target.value })} placeholder="US,CA" /></label>
+        <AdCountrySelect value={meta.countries.split(',').filter(Boolean)} onChange={countries => setMeta(value => ({ ...value, countries: countries.join(',') }))}/>
+        <AdJourneyReview goal={task.goal}/>
+        {missingBusiness.length > 0 && <p role="status">创建前还需确认：{missingBusiness.join('、')}。</p>}
       </> : <label>已核验广告系列<Select aria-label="已核验广告系列" value={resourceId || undefined} placeholder="先选账户，再从原回执选资源" onChange={setResourceId} options={records.filter(r => r.action === 'create' && r.status === 'VERIFIED' && r.connectionId === connectionId && r.resourceId).map(r => ({ value: String(r.resourceId), label: String(r.resourceId) }))}/></label>}
-      {!creationBlocked && !isTikTok && !isGoogle && ['create', 'adjust_budget'].includes(action) && <label>日预算（{currency}）<input required min="1" max={task.budget} step="0.01" type="number" value={meta.dailyBudget} onChange={e => setMeta({ ...meta, dailyBudget: Number(e.target.value) })} /></label>}
-      <button className="ads-button primary" disabled={busy || currentPreflight?.canSubmit === false || releaseBlocked || !connectionId || currencyMismatch || task.managementMode === 'suggest' || ((isTikTok || isGoogle) && (task.managementMode !== 'manual' || action === 'adjust_budget' || task.goal !== (isGoogle ? '获取线索或转化' : '提升有效视频观看'))) || (task.managementMode === 'managed' && action !== 'create') || (action === 'create' && !isGoogle && !['提升网站访问', '提升有效视频观看'].includes(task.goal))}>{busy ? '处理请求中…' : task.managementMode === 'suggest' ? '建议模式不执行平台动作' : task.managementMode === 'managed' ? action === 'create' ? launchMode === 'create_paused' ? '保存并自动创建暂停广告' : '保存并自动启动真实投放' : '人工调整前请先接管计划' : task.managementMode === 'approval' ? '提交动作审批' : action === 'create' ? '创建真实广告并保持暂停' : ['activate', 'resume'].includes(action) ? '确认启动真实投放' : '执行平台操作'}</button>
+      {!creationBlocked && !isTikTok && !isGoogle && ['create', 'adjust_budget'].includes(action) && <label>日预算（{currency}）<input required min="1" max={task.budget} step="0.01" type="number" value={meta.dailyBudget || ''} onChange={e => setMeta({ ...meta, dailyBudget: Number(e.target.value) })} /></label>}
+      <button className="ads-button primary" disabled={busy || missingBusiness.length > 0 || (action === 'create' && !isGoogle && !isTikTok && ['获取消息会话', '获取Meta表单线索', '获取独立站询盘'].includes(task.goal) && !leadAssetsReady) || currentPreflight?.canSubmit === false || releaseBlocked || !connectionId || currencyMismatch || task.managementMode === 'suggest' || ((isTikTok || isGoogle) && (task.managementMode !== 'manual' || action === 'adjust_budget' || task.goal !== (isGoogle ? '获取线索或转化' : '提升有效视频观看'))) || (task.managementMode === 'managed' && action !== 'create') || (action === 'create' && !isGoogle && !isTikTok && !(META_AD_GOALS as readonly string[]).includes(task.goal))}>{busy ? '处理请求中…' : task.managementMode === 'suggest' ? '建议模式不执行平台动作' : task.managementMode === 'managed' ? action === 'create' ? launchMode === 'create_paused' ? '保存并自动创建暂停广告' : '保存并自动启动真实投放' : '人工调整前请先接管计划' : task.managementMode === 'approval' ? '提交动作审批' : action === 'create' ? '创建真实广告并保持暂停' : ['activate', 'resume'].includes(action) ? '确认启动真实投放' : '执行平台操作'}</button>
     </form>
     {feedback && <p role="status" className="ads-operation-feedback">{feedback}</p>}
     {launches.length > 0 && <section><h3>自动启动状态</h3>{launches.map((launch, index) => <p key={String(launch.id || index)}>{launch.launchMode === 'create_paused' ? '仅创建暂停广告' : '创建后自动启用'} · {statusLabel(launch.status)} · {String(launch.reason || launch.error || '')}{['UNKNOWN', 'CREATING', 'ACTIVATING'].includes(String(launch.status)) && <button className="ads-text-button" disabled={busy} onClick={async () => { setBusy(true); try { await platformAdsRequest(`/tasks/${encodeURIComponent(task.id)}/launch/${encodeURIComponent(String(launch.id))}/reconcile`, { method: 'POST' }); await refresh(); } catch (e) { setFeedback(message(e)); } finally { setBusy(false); } }}>核验平台结果</button>}</p>)}</section>}

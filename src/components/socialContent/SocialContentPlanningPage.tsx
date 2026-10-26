@@ -14,6 +14,7 @@ import SocialCreationWorkbench, {
   type SocialCreationWorkbenchSubmit,
 } from './SocialCreationWorkbench';
 import SocialImageWorkbench from './SocialImageWorkbench';
+import ImageReplicationConversation from './ImageReplicationConversation';
 import SocialContentHistoryHome from './SocialContentHistoryHome';
 import { loadSocialContentStage, readSocialContentStage, type SocialContentStageProfile } from '../../lib/socialContentStage';
 import { studioApi } from '../../lib/studioApi';
@@ -262,7 +263,8 @@ export default function SocialContentPlanningPage({
   if (sourceRequest?.creationDialoguePlan) return <CreationProductionConversation key={sourceRequest.requestId} plan={sourceRequest.creationDialoguePlan}/>;
 
   if (taskOnly) {
-    return <SocialContentWorkspace onNavigate={onNavigate} onNavigateWithTask={onNavigateWithTask} />;
+    return <div className="h-full overflow-y-auto p-4"><Button className="mb-3" onClick={() => onNavigate('strategy')}>返回灵小枢对话</Button>
+      <SocialContentWorkspace onNavigate={onNavigate} onNavigateWithTask={onNavigateWithTask} taskDetailOnly /></div>;
   }
 
   if (resumeChecking) {
@@ -274,6 +276,10 @@ export default function SocialContentPlanningPage({
         </div>
       </div>
     );
+  }
+
+  if (view === 'workbench' && launch?.creationPath === 'viral_replication' && productionMode === 'image' && !imageTask && !sourceRequest?.continueTaskId) {
+    return <ImageReplicationConversation key={sourceRequest?.requestId || 'new-image-replication'} request={sourceRequest} onShowCreations={() => setView('creations')}/>;
   }
 
   return (
@@ -298,11 +304,11 @@ export default function SocialContentPlanningPage({
             creationPath={launch.creationPath}
             contentTaskId={sourceRequest?.continueTaskId}
             entrySource={sourceRequest?.mode === 'weekly' ? 'weekly_package' : 'workspace'}
-            referenceTitle={seed?.referenceTitle}
-            referenceThumbnail={seed?.referenceThumbnail}
-            referenceMediaUrl={seed?.referenceMediaUrl}
-            referenceCaption={sourceRequest?.sourceContext?.referenceCaption}
-            referenceLayerBlueprints={sourceRequest?.sourceContext?.referenceLayerBlueprints}
+            referenceTitle={imageTask?.referenceSnapshot?.title || seed?.referenceTitle}
+            referenceThumbnail={imageTask?.referenceSnapshot?.imageUrls[0] || seed?.referenceThumbnail}
+            referenceMediaUrl={imageTask?.referenceSnapshot?.imageUrls[0] || seed?.referenceMediaUrl}
+            referenceCaption={imageTask?.referenceSnapshot?.caption || sourceRequest?.sourceContext?.referenceCaption}
+            referenceLayerBlueprints={imageTask?.replicationRecipe?.referenceLayerBlueprints || sourceRequest?.sourceContext?.referenceLayerBlueprints}
             initialTask={imageTask}
             onShowCreations={() => setView('creations')}
           /> : <div className="flex h-full min-h-0 flex-col bg-white">
@@ -331,6 +337,7 @@ export default function SocialContentPlanningPage({
           <main className="mx-auto max-w-[1440px] px-4 py-5 sm:px-8 sm:py-7">
             <LsPageHeader title="我的创作" description="查看正在生成的任务、制作进度和待验收内容。" extra={<Button type="primary" onClick={() => setChooserOpen(true)} icon={<ImagePlus size={15} />}>新建内容</Button>} />
             <SocialContentHistoryHome onRequestCreate={() => setChooserOpen(true)} onOpenImageProject={task => {
+              setSourceRequest(null); setSeed(undefined);
               setLaunch({ creationPath: task.creationPath, materialInput: task.materialIds.length ? 'ready' : 'none', managedMode: 'one_click_managed' });
               setImageTask(task);
               setProductionMode('image');
