@@ -3,6 +3,13 @@
 最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-26 图文爆款复刻合入与冒烟准备
+
+- 功能树 `/Users/julia1/Documents/ChatGPT/1026图文创作版本` / `feature/image-text-viral-creation-20261026` 冻结为 `31dced92`，24 个本轮文件，提交后干净；不包含凭据、运行库或媒体文件。
+- 复用干净候选树 `frontend-v2-safe-integration-20261025`，创建 `integration/image-text-smoke-20261026`，以 `6cbfd81b` 合并功能提交并完成定向、图文管线、浏览器、类型、架构、迁移只读及双端构建检查。原 `integration/cards-ads-20261025` 分支保留。
+- 权威基线 `xixi-feature-integration-20261023` / `xixi联合功能模块后端改` 从 `8c7cc7d3` 安全快进；原 `server/index.ts` 未提交修改哈希前后一致。恢复分支 `backup/pre-image-text-smoke-20261026-8c7cc7d3` 保留，治理补记单独提交。
+- 本轮没有清理、重置、归档或同步其他功能树，没有重启其服务或复制其运行数据库。真实冒烟的 5 元预算已确认，但供应商、存储及素材字节/授权准入未齐，未产生真实付费请求。
+
 ## 2026-10-25 卡片与投流合入本地基线
 
 - 权威树 `xixi-feature-integration-20261023` / `xixi联合功能模块后端改` 从 `5f0b47a6` 推进至验证源码 `9be85a78`，治理提交另记；原 `server/index.ts` 未提交修改逐字保留。
