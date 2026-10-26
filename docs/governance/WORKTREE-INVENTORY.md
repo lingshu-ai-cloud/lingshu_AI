@@ -5,6 +5,8 @@
 
 ## 2026-10-26 企业知识库合入最新基线
 
+本节后续：用户仅确认补入助手业务场景与多平台改写承接。新增隔离树 `/Users/julia1/.codex/worktrees/assistant-scenes-final-20261026` / `integration/assistant-scenes-final-20261026`，从072c343b合入ca40301f，源码58e10313。默认基线与本地版本分支快进至最终治理检查点；原视频排序未提交补丁哈希保留，来源功能树不动。干净候选保留作同版本复核，没有推送、部署、归档或运行数据迁移。见[最终本地合并记录](ASSISTANT-SCENES-FINAL-INTEGRATION-20261026.md)。
+
 - 新增隔离树 `/Users/julia1/.codex/worktrees/enterprise-knowledge-integrated-20261026`，分支 `差图文创作加联调`，从a0d965ae合入企业知识库969665d7，源码ddd14683。该树仅软链已安装依赖，不迁入业务数据和凭据。
 - 统一基线仅快进至集成结果，原视频排序未提交补丁保留；原企业知识库功能树969665d7保留。没有清理、重置或归档其他工作树，没有推送或部署。详见[整合记录](ENTERPRISE-KNOWLEDGE-INTEGRATION-20261026.md)。
 

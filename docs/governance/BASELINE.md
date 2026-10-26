@@ -2,6 +2,15 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前统一开发基线：助手业务场景与多平台改写（2026-10-26 最终本地合并）
+
+- 本节覆盖下方历史“当前”声明。默认分支仍为 `baseline/unified-20261026`，权威树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`；本地版本分支 `差图文创作加联调` 同步保留最终结果。起点 `072c343baabc99da9a6ad975d438503740f33799`，来源 `feature/assistant-scene-backend-closure-20261026` / `ca40301f0fb8364d2a39b49ee6532603febb29d2`，双亲源码合并 `58e103131019be049345b25c6f9afb3ad7ec00d8`；后续提交只补记治理证据。
+- 用户仅授权合入经营/客户/投流场景查询与多平台改写继续创作。纳入 `efe54f4d`、`ca40301f` 两个提交，保留当前企业知识库、产品素材关联和图文持久队列；没有夹带媒体404、单条任务界面、本地执行器或视频排序补丁。草稿恢复与素材读取保护同时保留。
+- 合并结果定向20/20、产品素材17/17、图文24/24、V4生产75/75、完整助手脚本、投流74个测试文件、TypeScript、2997文件架构/相对072c343b棘轮、204项迁移只读检查、主站/账号中心构建与diff检查通过。
+- 助手质量164/165：唯一失败为原卡片顺序断言，在原072c343b权威树再次复现。quality通过前置门禁及本地生产运行检查后，在既有M1用例因受控外网禁止访问api.heygen.com而失败；断言失败后进程驻留，仅终止本轮隔离测试进程组。后续quality阶段未执行，未运行verify，不宣称全仓质量全绿。
+- 原权威树未提交 `server/videos/videoVisibilityMaintenance.ts` 的完整补丁SHA-256仍为 `ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`，未纳入提交。干净候选检出 `/Users/julia1/.codex/worktrees/assistant-scenes-final-20261026` 可用于同版本复核。恢复点 `backup/pre-assistant-scenes-final-20261026` 保留原072c343b。
+- 本次仅本地合并，未推送、部署、真实模型/渠道/付费验收或目标库迁移。来源功能树和其他未提交现场保持原位。详细范围与实际命令见 [最终本地合并记录](ASSISTANT-SCENES-FINAL-INTEGRATION-20261026.md)。
+
 ## 当前统一开发基线：差图文创作加联调（2026-10-26）
 
 - 本节覆盖下方历史“当前”声明。默认分支继续为 `baseline/unified-20261026`，权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`；同名版本分支 `差图文创作加联调` 保留合并结果。起点 `a0d965ae9af64ef2a6229198b496fa7a168f3374`，来源 `feature/enterprise-knowledge-20261026` / `969665d7aa4bb37610ed6220d9be3cf4c4a9e000`，源码合并 `ddd146831e25d0ee3fc269fe63b2140c9ed43a3f`；后续治理提交不改变生产源码。
