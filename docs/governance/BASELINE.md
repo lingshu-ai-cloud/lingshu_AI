@@ -2,6 +2,14 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前统一开发基线：差图文创作加联调（2026-10-26）
+
+- 本节覆盖下方历史“当前”声明。默认分支继续为 `baseline/unified-20261026`，权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`；同名版本分支 `差图文创作加联调` 保留合并结果。起点 `a0d965ae9af64ef2a6229198b496fa7a168f3374`，来源 `feature/enterprise-knowledge-20261026` / `969665d7aa4bb37610ed6220d9be3cf4c4a9e000`，源码合并 `ddd146831e25d0ee3fc269fe63b2140c9ed43a3f`；后续治理提交不改变生产源码。
+- 合入分层企业知识库、租户专属场景知识包编辑、产品稳定ID与素材默认选择及任务/草稿恢复修复；保留最新首页、卖点及图文持久调度。仅两处冲突按双方新增规则和字段最小合并，没有新增迁移、依赖或平行业务链路。
+- 领域组合66/66、图文24/24、V4 75/75、TypeScript、2982文件架构/相对a0d965ae棘轮、204项迁移只读/guard、主站与账号中心构建及diff检查通过。助手150/151，原基线复现相同卡片顺序断言失败；quality从测试PB路径配置错误续跑后遇到原已记录M1受控外网禁止失败，不宣称全仓quality/verify通过。
+- 权威树原视频排序未提交补丁保持SHA-256 `ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`，不纳入提交。没有推送、部署、真实供应商调用或目标库迁移，预览运行版本与供应商Ready独立核验。
+- 完整命令、已知限制、恢复点和证据见 [本轮整合记录](ENTERPRISE-KNOWLEDGE-INTEGRATION-20261026.md)。
+
 ## 当前统一开发基线：图文任务持久化调度（2026-10-26）
 
 - 后续修复基线：`7d493ca4ecc06abfc8906884dc9a4027789fe378`。已采集图文帖子逐张显示原始图片，选择和对话恢复保留具体张数；解决封面版式不可用而后续张可用时无法选取的问题。来源隔离提交 `789f5d63b0bbbdbf9bbfd45a31da4c0b2ded84d9`。`pnpm run test:image-replication`（24/24）、`pnpm run test:image-replication-ui`（6 场景）、`pnpm run lint`、`pnpm run check:architecture`、`pnpm run check:digital-employee-migrations`（204 项只读）、`pnpm run build` 与 `git diff --check` 已通过；浏览器确认同帖第 2 张可独立选中。仍未完成真实供应商 E2E，运行数据与 5 元预算准入须独立核验；未推送、部署或发布。
