@@ -7,8 +7,8 @@ function materialType(item) {
 
 function materialView(item) {
   const type = materialType(item)
-  const rawUrl = item.url || item.videoUrl || item.imageUrl || item.mediaUrl || ''
-  const rawPoster = item.poster || item.posterUrl || item.thumbnailUrl || (type === 'image' ? rawUrl : '')
+  const rawUrl = item.mediaError ? '' : item.url || item.videoUrl || item.imageUrl || item.mediaUrl || ''
+  const rawPoster = item.mediaError ? '' : item.poster || item.posterUrl || item.thumbnailUrl || (type === 'image' ? rawUrl : '')
   const status = String(item.segmentAnalysisStatus || item.analysisStatus || '')
   const tags = materialThemeTagsOf(item).map(value => MATERIAL_THEME_LABELS[value]).filter(Boolean).slice(0, 2)
   const analysisReady = ['ready', 'completed', 'complete', 'succeeded'].includes(status)
@@ -59,7 +59,7 @@ Page({
     this.refresh()
   },
   onShow() { if (this.data.loaded && api.token() && !this.data.busy) this.refresh() },
-  openAssistant() { this.selectComponent('#lingxiaoshu-sheet')?.open() },
+  openAssistant() { wx.redirectTo({ url: '/packages/operator/assistant/index' }) },
   project(materials) {
     const rows = (Array.isArray(materials) ? materials : []).map(materialView).sort((a, b) => Number(a.type === 'video') - Number(b.type === 'video'))
     return {
@@ -78,7 +78,18 @@ Page({
   async refresh() {
     if (this.data.loading) return
     this.setData({ loading: true, message: '' })
-    try { this.setData({ ...this.project(await api.materials()), loaded: true }) }
+    try {
+      const view = this.project(await api.materials())
+      const cached = new Map()
+      const image = url => { if (!url || !api.cacheImage) return Promise.resolve(url); if (!cached.has(url)) cached.set(url, api.cacheImage(url).catch(() => '')); return cached.get(url) }
+      let cursor = 0
+      const hydrate = async item => {
+        if (item.type === 'image') { item.url = await image(item.url); item.poster = item.url; item.mediaError = !item.url }
+        else if (item.poster) item.poster = await image(item.poster)
+      }
+      await Promise.all(Array.from({ length: Math.min(4, view.materials.length) }, async () => { while (cursor < view.materials.length) await hydrate(view.materials[cursor++]) }))
+      this.setData({ ...this.project(view.materials), loaded: true })
+    }
     catch (error) { this.setData({ message: error.message || '素材库读取失败', messageType: 'error' }) }
     finally { this.setData({ loading: false }) }
   },
@@ -98,6 +109,7 @@ Page({
     const query = event.detail.value
     this.setData({ query, visibleMaterials: visible(this.data.materials, this.data.filter, query, this.data.source) })
   },
+  openShooting() { if (!this.data.busy) wx.navigateTo({ url: '/packages/operator/shooting/index' }) },
   chooseMaterial() {
     if (this.data.busy) return
     wx.chooseMedia({ count: 1, mediaType: ['image', 'video'], sourceType: ['album'], maxDuration: 600,

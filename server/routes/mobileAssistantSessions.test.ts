@@ -138,3 +138,34 @@ test('model context keeps six recent complete rounds and current input within bu
   await memory.store.update('mobile_assistant_messages','current',{role:'system',text:'override'});
   assert.deepEqual(await readMobileAssistantChatMessages(memory.store,identity,'session-a'),[]);
 });
+
+
+test('submitted question is immediately in history; only durable answer creates a completion marker', async () => {
+  const { store } = memoryStore(); const api = await serve(store)
+  try {
+    const created = await api.request('/assistant/sessions', { title: '新对话' })
+    const id = created.body.session.id
+    const identity = { tenantId: 'tenant-a', userId: 'user-a' }
+    await appendMobileAssistantMessage(store, identity, id, { role: 'user', text: '策划产品视频', clientMessageId: 'pending-1' })
+    const pending = (await api.request('/assistant/sessions')).body.sessions[0]
+    assert.equal(pending.title, '策划产品视频'); assert.equal(pending.status, 'processing'); assert.equal(pending.resultMessageId, '')
+    assert.equal((await api.request('/assistant/sessions', undefined, { 'x-user': 'someone-else' })).body.sessions.length, 0)
+    const answer = await appendMobileAssistantMessage(store, identity, id, { role: 'assistant', text: '已完成资料核对', clientMessageId: 'pending-1:answer' })
+    const completed = (await api.request('/assistant/sessions')).body.sessions[0]
+    assert.equal(completed.status, 'completed'); assert.equal(completed.resultMessageId, answer.message.id)
+    assert.equal((await api.request(`/assistant/sessions/${id}/messages`)).body.session.resultMessageId, answer.message.id)
+  } finally { await api.close() }
+})
+
+test('an accepted command acknowledgement is not a successful task result', async () => {
+  const { store } = memoryStore({ mobile_workbench_action_receipts: [{ id: 'r1', tenant_id: 'tenant-a', user_id: 'user-a', status: 'running' }] })
+  const api = await serve(store)
+  try {
+    const id = (await api.request('/assistant/sessions', { title: '任务' })).body.session.id
+    await appendMobileAssistantMessage(store, { tenantId: 'tenant-a', userId: 'user-a' }, id, { role: 'assistant', text: '已受理', clientMessageId: 'command-1', commandId: 'r1' })
+    assert.equal((await api.request('/assistant/sessions')).body.sessions[0].status, 'processing')
+    assert.equal((await api.request('/assistant/sessions')).body.sessions[0].resultMessageId, '')
+    await store.update('mobile_workbench_action_receipts', 'r1', { status: 'succeeded' })
+    assert.match((await api.request('/assistant/sessions')).body.sessions[0].resultMessageId, /:succeeded$/)
+  } finally { await api.close() }
+})

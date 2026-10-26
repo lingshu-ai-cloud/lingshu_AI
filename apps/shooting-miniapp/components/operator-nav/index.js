@@ -1,14 +1,14 @@
 Component({
   properties: {
-    active: { type: String, value: 'today' },
+    active: { type: String, value: 'assistant' },
     todayBadge: { type: Number, value: 0 }
   },
   data: {
     storedTodayBadge: 0,
     items: [
-      { key: 'today', label: '今日待办', path: '/packages/operator/home/index' },
-      { key: 'shooting', label: '素材拍摄', path: '/packages/operator/shooting/index' },
-      { key: 'materials', label: '素材资产', path: '/packages/operator/materials/index' }
+      { key: 'assistant', label: 'Hi 灵小枢', path: '/packages/operator/assistant/index' },
+      { key: 'materials', label: '我的素材', path: '/packages/operator/materials/index' },
+      { key: 'customers', label: '我的客户', path: '/packages/operator/inquiries/index' }
     ]
   },
   lifetimes: {

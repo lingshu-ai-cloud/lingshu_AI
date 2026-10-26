@@ -31,6 +31,5 @@
     </view>
   </view>
 
-  <lingxiaoshu-sheet id="lingxiaoshu-sheet" auto-open-daily="{{true}}" overview="{{assistantOverview}}" queue="{{assistantQueue}}"></lingxiaoshu-sheet>
   <operator-nav active="today" today-badge="{{customerUnreadCount}}" bindassistant="openAssistant"></operator-nav>
 </view>

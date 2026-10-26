@@ -17,7 +17,7 @@ function guidanceOf(task) {
 
 Page({
   data: {
-    task: null,
+    task: null, pendingMaterialId: '',
     platform: 'tiktok',
     recording: false,
     busy: false,
@@ -31,7 +31,7 @@ Page({
     this.loadTask()
   },
   onReady() { this.camera = wx.createCameraContext() },
-  onUnload() { this.clearTimer() },
+  onUnload() { this.disposed = true; this.clearTimer() },
   async loadTask() {
     if (!this.taskId) return this.setData({ message: '缺少拍摄任务' })
     try {
@@ -51,14 +51,14 @@ Page({
     if (!this.data.recording) this.setData({ devicePosition: this.data.devicePosition === 'back' ? 'front' : 'back' })
   },
   back() {
-    if (!this.data.recording && !this.data.busy) wx.navigateBack()
+    if (!this.data.recording && !this.data.busy && !this.data.pendingMaterialId) wx.navigateBack()
   },
   handleCameraError(event) {
     const detail = event.detail || {}
     this.setData({ message: /auth|permission|authorize/i.test(detail.errMsg || '') ? '请在系统设置中允许微信使用相机' : (detail.errMsg || '相机暂时不可用') })
   },
   toggleRecord() {
-    if (!this.camera || !this.data.task || this.data.busy) return
+    if (!this.camera || !this.data.task || this.data.busy || this.data.pendingMaterialId) return
     if (this.data.recording) return this.stopRecord()
     this.setData({ recording: true, elapsed: 0, message: '' })
     this.timer = setInterval(() => this.setData({ elapsed: this.data.elapsed + 1 }), 1000)
@@ -87,6 +87,21 @@ Page({
   fileInfo(path) {
     return new Promise((resolve, reject) => wx.getFileInfo({ filePath: path, success: resolve, fail: reject }))
   },
+  async attachSavedMaterial() {
+    await api.attach(this.taskId, this.data.pendingMaterialId)
+    this.setData({ pendingMaterialId: '', message: '' })
+    if (!this.disposed) {
+      wx.showToast({ title: '拍摄已完成', icon: 'success' })
+      setTimeout(() => { if (!this.disposed) wx.navigateBack() }, 700)
+    }
+  },
+  async retryAttach() {
+    if (!this.data.pendingMaterialId || this.data.busy) return
+    this.setData({ busy: true, message: '' })
+    try { await this.attachSavedMaterial() }
+    catch (error) { this.setData({ message: error.message || '素材已保存，任务关联暂未完成，请重试关联' }) }
+    finally { this.setData({ busy: false }) }
+  },
   async finishRecord(result) {
     if (this.finishing) return
     this.finishing = true
@@ -98,11 +113,11 @@ Page({
       const info = await this.fileInfo(path)
       if (!info.size || info.size > 30 * 1024 * 1024) throw new Error('视频超过 30 MB，请缩短拍摄时长')
       const material = await api.uploadVideo({ tempFilePath: path, size: info.size, name: 'shoot-' + this.taskId + '.mp4', mimeType: 'video/mp4' })
-      await api.attach(this.taskId, material.id)
-      wx.showToast({ title: '拍摄已完成', icon: 'success' })
-      setTimeout(() => wx.navigateBack(), 700)
+      this.setData({ pendingMaterialId: material.id })
+      await this.attachSavedMaterial()
+
     } catch (error) {
-      this.setData({ message: error.message || error.errMsg || '保存失败，请重新拍摄' })
+      this.setData({ message: this.data.pendingMaterialId ? '素材已保存，任务关联未完成，请点击重试关联' : error.message || error.errMsg || '保存失败，请重新拍摄' })
     } finally {
       this.finishing = false
       this.setData({ busy: false })

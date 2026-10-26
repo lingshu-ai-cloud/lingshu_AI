@@ -88,3 +88,19 @@ test('camera uses one 9:16 capture stage for camera, guidance and reusable FB/TK
   assert.match(cameraStyles, /\.round-action[^}]*width:\s*88rpx[^}]*height:\s*88rpx/)
   assert.match(cameraStyles, /\.side-action, \.time[^}]*min-height:\s*88rpx/)
 })
+
+test('recording with the real upload API can retry attachment without uploading a second material', async () => {
+  const { loadApi } = require('./test-support/native-api.cjs')
+  let uploads = 0, attachments = 0, back = 0
+  const wx = { getStorageSync: () => 'token', getFileInfo: ({success}) => success({size:4}), showToast() {}, navigateBack() { back++ },
+    getFileSystemManager: () => ({readFile: ({success,length}) => queueMicrotask(() => success({data:new ArrayBuffer(length)}))}),
+    request: options => {
+      if (options.url.includes('/materials/file?')) { uploads++; options.success({statusCode:201,data:{material:{id:'persisted-material'}}}) }
+      else { attachments++; options.success(attachments === 1 ? {statusCode:503,data:{error:'link unavailable'}} : {statusCode:200,data:{id:'shot-1'}}) }
+    } }
+  const page = loadPage(loadApi(wx), wx); page.taskId = 'shot-1'
+  await page.finishRecord({tempVideoPath:'fake-video'})
+  assert.equal(page.data.pendingMaterialId, 'persisted-material'); assert.equal(uploads,1); assert.equal(back,0)
+  await page.retryAttach()
+  assert.equal(uploads,1); assert.equal(attachments,2); assert.equal(page.data.pendingMaterialId,''); assert.equal(back,1)
+})

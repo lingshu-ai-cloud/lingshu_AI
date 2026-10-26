@@ -1,8 +1,7 @@
 {
-  "navigationBarTitleText": "素材资产",
+  "navigationBarTitleText": "我的素材",
   "navigationStyle": "default",
   "usingComponents": {
-    "operator-nav": "/components/operator-nav/index",
-    "lingxiaoshu-sheet": "/components/lingxiaoshu-sheet/index"
+    "operator-nav": "/components/operator-nav/index"
   }
 }

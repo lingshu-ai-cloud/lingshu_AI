@@ -18,7 +18,7 @@ Page({
     if (this.data.referencePreview) wx.createVideoContext('reference-preview', this).pause()
     if (this.data.activePreviewId) wx.createVideoContext(this.data.activePreviewId, this).pause()
   },
-  openAssistant() { this.selectComponent('#lingxiaoshu-sheet')?.open() },
+  openAssistant() { wx.redirectTo({ url: '/packages/operator/assistant/index' }) },
   inputEmail(e) { this.setData({ email: e.detail.value }) },
   inputPassword(e) { this.setData({ password: e.detail.value }) },
   async signIn() {

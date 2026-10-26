@@ -1,8 +1,7 @@
 <view class="operator-nav safe-bottom">
-  <button class="assistant-trigger" bindtap="askAssistant" aria-label="询问灵小枢"><text class="assistant-spark">✦</text><text>询问灵小枢</text></button>
-  <view wx:for="{{items}}" wx:key="key" class="nav-item {{active === item.key ? 'active' : ''}}" data-key="{{item.key}}" bindtap="select">
+  <view wx:for="{{items}}" wx:key="key" class="nav-item {{active === item.key ? 'active' : ''}}" data-key="{{item.key}}" bindtap="select" aria-role="button" aria-label="{{item.label}}">
     <view class="nav-icon {{item.key}}"></view>
-    <text wx:if="{{item.key === 'today' && (todayBadge || storedTodayBadge)}}" class="nav-badge">{{(todayBadge || storedTodayBadge) > 99 ? '99+' : (todayBadge || storedTodayBadge)}}</text>
+    <text wx:if="{{item.key === 'customers' && (todayBadge || storedTodayBadge)}}" class="nav-badge">{{(todayBadge || storedTodayBadge) > 99 ? '99+' : (todayBadge || storedTodayBadge)}}</text>
     <text class="nav-label">{{item.label}}</text>
   </view>
 </view>
