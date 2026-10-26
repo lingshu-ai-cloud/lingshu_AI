@@ -24,7 +24,7 @@ export function guidedMaterialRoutingRequests(plan: CreationReply, input: Parame
   });
 }
 
-export function guidedProductIdentityGroups(plan: CreationReply, candidates: SocialWorkflowMaterialClipCandidate[], primary: { productRef: string; imageIds: string[] }) {
+export function guidedProductIdentityGroups(plan: { selection: { productIds: string[] }; products: Array<{ id: string; name: string }> }, candidates: SocialWorkflowMaterialClipCandidate[], primary: { productRef: string; imageIds: string[] }) {
   return plan.selection.productIds.map(id => {
     const productRef = plan.products.find(row => row.id === id)?.name || id;
     const imageIds = [...new Set(candidates.filter(row => row.productId === id && row.mediaType === 'image' && row.materialRoles.includes('product')).map(row => row.assetId))].slice(0, 4);

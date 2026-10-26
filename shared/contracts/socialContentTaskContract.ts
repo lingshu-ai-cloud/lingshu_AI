@@ -199,6 +199,16 @@ export interface SocialReferenceReuseBinding {
   analysisHash: string;
 }
 
+/** Selection provenance carried by existing project specs and task briefs. */
+export interface ProductMaterialSelectionState {
+  productIds: string[];
+  selectedIds: string[];
+  automaticIds: string[];
+  dismissedIds: string[];
+  preservedProductIds: string[];
+  candidateProductIds: Record<string, string>;
+}
+
 export interface SocialContentTaskBrief {
   /** Server-validated free-creation dialogue snapshot, not accepted by generic task writes. */
   creationDialoguePlan?: CreationReply;
@@ -206,6 +216,8 @@ export interface SocialContentTaskBrief {
   objective: string;
   /** Stable Enterprise Center product identity. */
   productId?: string | null;
+  productIds?: string[];
+  productMaterialSelection?: ProductMaterialSelectionState;
   /** Human-readable product label retained for review and legacy records. */
   productRef: string | null;
   /** Optional explicit identity selection for this task; never used as a fuzzy lookup. */
@@ -588,6 +600,8 @@ export interface CreateSocialContentTaskInput {
   title: string;
   objective: string;
   productId?: string | null;
+  productIds?: string[];
+  productMaterialSelection?: ProductMaterialSelectionState;
   productRef?: string | null;
   requestedPresenterName?: string | null;
   requestedPresenterAssetId?: string | null;

@@ -143,7 +143,7 @@ import { referenceVoiceProfile } from './studio/studioReferenceVoiceProfile.js';
 import { scriptQualityFailure, announceRejectedStoryboard, qualityFields, qualitySuccessNotice, manualScriptDraft } from './studio/studioScriptQualityPresentation.js';
 export { scriptQualityFailure } from './studio/studioScriptQualityPresentation.js';
 import { withTimeout } from './studio/studioAsyncSupport.js';
-import { formatSelectedProductInfo, selectedProductLabel, productOptionCategory, buildAiProductOptions, resolveStudioProductIds, resolveStudioProductOption } from './studio/studioProductSelection.js';
+import { formatSelectedProductInfo, selectedProductLabel, productOptionCategory, buildAiProductOptions, resolveStudioProductIds, resolveStudioProductOption, restoreStudioProductPlans } from './studio/studioProductSelection.js';
 import { useProductMaterialSelection } from './studio/useProductMaterialSelection';
 import { productionNavigationIdentity } from '../lib/productionNavigation';
 import { cloneReferenceAnalysisText, cloneReferenceHighlights, ensureDistinctCloneStoryboard } from './studio/studioCloneReference.js';
@@ -336,6 +336,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     get productInfo() { return productInfo; },
     get productSelectMode() { return productSelectMode; },
     get selectedProductIds() { return selectedProductIds; },
+    get getProductMaterialSelection() { return getProductMaterialSelection; }, get restoreProductMaterialSelection() { return restoreProductMaterialSelection; },
     get referenceProductAssignments() { return referenceProductAssignments; },
     get referenceProductTerms() { return referenceProductTerms; },
     get referenceBrandSourceTerm() { return referenceBrandSourceTerm; },
@@ -1183,11 +1184,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
   useEffect(() => {
     if (!socialContentTaskId || !socialTaskProductReference || productOptions.length === 0 || selectedProductIds.length > 0) return;
-    const requested = compactComparable(socialTaskProductReference);
-    const matched = productOptions.find(option => {
-      const label = compactComparable(option.label);
-      return label === requested || (requested.length >= 4 && (label.includes(requested) || requested.includes(label)));
-    });
+    const matched = resolveStudioProductOption({ name: socialTaskProductReference }, productOptions);
     if (!matched) {
       setModeNotice(`任务中的产品“${socialTaskProductReference}”尚未匹配企业知识库产品；请先返回任务核对产品信息。`);
       return;
@@ -1196,7 +1193,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   }, [productOptions, selectedProductIds.length, socialContentTaskId, socialTaskProductReference]);
 
   useEffect(() => {
-    if (!productOptions.some(option => option.catalogProductId) || selectedProductIds.length === 0) return;
+    if (!productOptions.some(option => option.catalogProductId)) return;
+    setStoryboardSourcePlans(current => restoreStudioProductPlans(current, productOptions));
+    setStoryboardAssemblies(current => { const next = current.map(item => { const sourcePlans = restoreStudioProductPlans(item.sourcePlans || {}, productOptions); return sourcePlans === item.sourcePlans ? item : { ...item, sourcePlans }; }); return next.every((item, index) => item === current[index]) ? current : next; });
+    if (!selectedProductIds.length) return;
     const resolved = resolveStudioProductIds(selectedProductIds, productOptions);
     if (JSON.stringify(resolved) !== JSON.stringify(selectedProductIds)) { if (cloneProductFingerprintRef.current === `products:${selectedProductIds.join('|')}`) cloneProductFingerprintRef.current = `products:${resolved.join('|')}`; setSelectedProductIds(resolved); return; }
     const selectedOptions = productOptions.filter(option => resolved.includes(option.id));
@@ -2241,9 +2241,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const requiresReferenceSlots = studioCreateRequest?.creationPath === 'viral_replication' && Boolean(identity?.products.length);
     if (!identity || (requestedProductCount > 0 && !productOptions.length) || (requiresReferenceSlots && !referenceProducts.length) || (socialContentTaskId && !socialTaskProjectLookupDone)
       || appliedIdentityRequestRef.current === studioCreateRequest?.requestId) return;
-    const requestedProducts = identity.products.length
-      ? identity.products.map(mapping => ({ id: mapping.productId, name: mapping.productName }))
-      : (identity.selectedProductIds || []).map((id, index) => ({ id, name: identity.selectedProductNames?.[index] || '' }));
+    const requestedProducts = identity.selectedProductIds?.length
+      ? identity.selectedProductIds.map((id, index) => ({ id, name: identity.selectedProductNames?.[index] || '' }))
+      : identity.products.map(mapping => ({ id: mapping.productId, name: mapping.productName }));
     const selected = requestedProducts.map(requested => resolveStudioProductOption(requested, productOptions)?.id || '').filter(Boolean);
     if (selected.length !== requestedProducts.length) return;
     setSelectedProductIds([...new Set(selected)]);
@@ -2328,11 +2328,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setScriptView('timestamp');
     setModeNotice(`产品已更换为「${activeProductLabel}」：旧脚本、配音、素材匹配和成片结果已失效，请重新调用 AI 生成真实分镜。`);
   }, [activeProductInfo, activeProductLabel, lang, migrationMode, migrationRecommendation.label, mode, selectedProductIds, videoKickoff]);
-  useProductMaterialSelection({
+  const { getSelectionState: getProductMaterialSelection, resetSelectionBaseline: restoreProductMaterialSelection } = useProductMaterialSelection({
     productIds: selectedProductOptions.flatMap(option => option.catalogProductId ? [option.catalogProductId] : []),
     materials, selectedIds: selected, setSelectedIds: setSelected, kickoff: videoKickoff,
     enabled: contentMode === 'video' && !projectHydrationPendingRef.current && !frozenStudioSpecRef.current && (!socialContentTaskId || socialTaskProjectLookupDone),
-    resetKey: `${productionNavigationIdentity()}:${studioCreateRequest?.requestId || socialContentTaskId || 'new'}:${projectHydrationRevision}`,
+    resetKey: productionNavigationIdentity(),
     preserveInitialSelection: projectHydrationRevision > 0 });
   useEffect(() => {
     if (contentMode !== 'poster') return;

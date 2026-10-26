@@ -88,7 +88,7 @@ import { socialContentReviewAdmissionAllowed } from './socialContentTestBypass.j
 import { buildSocialReferenceReuseBinding } from './socialContentReferenceReuse.js';
 import { recoverSocialContentOrderDispatch } from './socialContentOrderDispatchRecovery.js';
 export { recoverSocialContentOrderDispatch } from './socialContentOrderDispatchRecovery.js';
-import { resolveEnterpriseProductSelection } from './socialContentTaskQueries.js';
+import { assertSocialTaskProductSelection, resolveEnterpriseProductSelection } from './socialContentTaskQueries.js';
 export { listSocialContentTasks, readSocialContentWorkspace, resolveEnterpriseProductSelection } from './socialContentTaskQueries.js';
 import { createSocialWeeklyPlanWithTasks, type CreateSocialWeeklyPlanCommand } from './socialContentTaskPlanning.js';
 export { selectSocialWorkPackages } from './socialContentTaskPlanning.js';
@@ -152,13 +152,13 @@ export async function createSocialContentTask(input: {
     replay: async () => {
       const existing = await taskCreatedByOperation(input);
       if (!existing) throw new SocialContentWorkflowError('social_content_operation_integrity_violation', 503);
-      if(input.repository.dataStore)await registerEnterpriseProductMaterials({dataStore:input.repository.dataStore,tenantId:input.tenantId,taskId:socialText(existing.task_id),productId:input.value.productId});
+      if(input.repository.dataStore)for(const productId of input.value.productIds ?? [input.value.productId])await registerEnterpriseProductMaterials({dataStore:input.repository.dataStore,tenantId:input.tenantId,taskId:socialText(existing.task_id),productId});
       return { task: (await readSocialTaskDetail({ ...input, taskId: socialText(existing.task_id) }))! };
     },
     action: async operationId => {
       const existing = await taskCreatedByOperation(input);
       if (existing) {
-        if(input.repository.dataStore)await registerEnterpriseProductMaterials({dataStore:input.repository.dataStore,tenantId:input.tenantId,taskId:socialText(existing.task_id),productId:input.value.productId});
+        if(input.repository.dataStore)for(const productId of input.value.productIds ?? [input.value.productId])await registerEnterpriseProductMaterials({dataStore:input.repository.dataStore,tenantId:input.tenantId,taskId:socialText(existing.task_id),productId});
         if (input.value.creationMode === 'viral_replication') {
           await refreshSocialTaskReferenceOutputs({ ...input, taskId: socialText(existing.task_id), operationId });
         }
@@ -168,6 +168,7 @@ export async function createSocialContentTask(input: {
       const timestamp = (input.now ?? new Date()).toISOString();
       const taskId = input.taskId ?? socialPublicId('socialtask');
       const theme = resolveSocialThemeSelection(input.value);
+      await assertSocialTaskProductSelection(input.tenantId, input.value);
       const brief = defaultBrief(input.value);
       if (input.entry === 'assistant' && !brief.presenterAssetId && !brief.targetAccountRef) {
         const { readDefaultPresenterAssetId } = await import('./socialContentRecordProjection.js');
@@ -221,7 +222,7 @@ export async function createSocialContentTask(input: {
         created_at: timestamp,
         updated_at: timestamp,
       });
-      if(input.repository.dataStore)await registerEnterpriseProductMaterials({dataStore:input.repository.dataStore,tenantId:input.tenantId,taskId,productId:brief.productId});
+      if(input.repository.dataStore)for(const productId of brief.productIds ?? [brief.productId])await registerEnterpriseProductMaterials({dataStore:input.repository.dataStore,tenantId:input.tenantId,taskId,productId});
       if (brief.creationMode === 'viral_replication') {
         await refreshSocialTaskReferenceOutputs({ ...input, taskId, operationId });
       }
@@ -283,6 +284,7 @@ export async function updateSocialContentTask(input: {
         briefChanges.productId = match.canonicalId;
         briefChanges.productRef = socialText(match.item.name);
       }
+      await assertSocialTaskProductSelection(input.tenantId, { ...current, ...briefChanges });
       const nextMode = mode ?? currentSummary.mode ?? 'weekly';
       const hasThemeInput = ['themeId', 'customTopic', 'topic'].some(key => Object.prototype.hasOwnProperty.call(input.value.changes, key));
       const theme = hasThemeInput
@@ -302,7 +304,7 @@ export async function updateSocialContentTask(input: {
           : briefChanges.requestedOutputCount ?? current.requestedOutputCount,
       };
       const scriptFieldsChanged = [
-        'title', 'objective', 'productId', 'productRef', 'languages', 'callToAction', 'brandNotes', 'restrictions',
+        'title', 'objective', 'productId', 'productIds', 'productRef', 'languages', 'callToAction', 'brandNotes', 'restrictions',
       ].some(key => Object.prototype.hasOwnProperty.call(briefChanges, key));
       const productionPlanFieldsChanged = ['productionApproach', 'assetAvailability', 'managementMode', 'presenterAssetId', 'referenceReuse'].some(key => Object.prototype.hasOwnProperty.call(briefChanges, key));
       if (productionPlanFieldsChanged) brief.materialRoutingPolicyVersion = 'type-aware.v2'; // Forward route revision uses the current planner.
@@ -350,7 +352,7 @@ export async function updateSocialContentTask(input: {
         updated_by: input.userId,
         updated_at: timestamp,
       });
-      if(input.repository.dataStore)await registerEnterpriseProductMaterials({dataStore:input.repository.dataStore,tenantId:input.tenantId,taskId:input.taskId,productId:brief.productId});
+      if(input.repository.dataStore)for(const productId of brief.productIds ?? [brief.productId])await registerEnterpriseProductMaterials({dataStore:input.repository.dataStore,tenantId:input.tenantId,taskId:input.taskId,productId});
       if (brief.creationMode === 'viral_replication'
         && (themeChanged || hasThemeInput || scriptFieldsChanged)) {
         await refreshSocialTaskReferenceOutputs({

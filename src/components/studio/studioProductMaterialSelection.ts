@@ -1,13 +1,23 @@
 import { isAutomaticViralMaterialCandidate, type Clip } from './studioSourceMaterial';
 import type { VideoKickoff } from './studioVideoKickoff';
 
-export interface ProductMaterialSelectionState {
-  productIds: string[];
-  selectedIds: string[];
-  automaticIds: string[];
-  dismissedIds: string[];
-  preservedProductIds: string[];
-  candidateProductIds: Record<string, string>;
+import type { ProductMaterialSelectionState } from '../../../shared/contracts/socialContentTaskContract';
+export type { ProductMaterialSelectionState } from '../../../shared/contracts/socialContentTaskContract';
+
+/** Existing project specs are untrusted/legacy JSON; only restore complete selection ownership. */
+export function restoreProductMaterialSelection(value: unknown): ProductMaterialSelectionState | null {
+  if (!value || typeof value !== 'object') return null;
+  const state = value as Record<string, unknown>;
+  const keys = ['productIds', 'selectedIds', 'automaticIds', 'dismissedIds', 'preservedProductIds'] as const;
+  if (keys.some(key => !Array.isArray(state[key]) || !(state[key] as unknown[]).every(id => typeof id === 'string'))
+    || !state.candidateProductIds || typeof state.candidateProductIds !== 'object' || Array.isArray(state.candidateProductIds)
+    || Object.values(state.candidateProductIds).some(id => typeof id !== 'string')) return null;
+  return {
+    productIds: unique(state.productIds as string[]), selectedIds: unique(state.selectedIds as string[]),
+    automaticIds: unique(state.automaticIds as string[]), dismissedIds: unique(state.dismissedIds as string[]),
+    preservedProductIds: unique(state.preservedProductIds as string[]),
+    candidateProductIds: { ...state.candidateProductIds as Record<string, string> },
+  };
 }
 
 export interface ProductMaterialSelectionInput {

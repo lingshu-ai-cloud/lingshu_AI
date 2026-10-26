@@ -20,7 +20,7 @@ import { loadSocialContentStage, readSocialContentStage, type SocialContentStage
 import { studioApi } from '../../lib/studioApi';
 import { replicationResumeStep } from '../../lib/socialContentReplicationResume';import { socialContentApi } from '../../lib/socialContentApi';
 import {
-  socialPlanningMaterialSource,
+  syncPlanningTaskMaterials,
   socialPlanningOperationKey,
   socialPlanningTaskInput,
 } from '../../lib/socialContentPlanningTask';
@@ -52,6 +52,7 @@ function seedFromRequest(request?: SocialContentCreateRequest | null): SocialCre
     confirmedSpeech: request.confirmedSpeech,
     selectedProductIds: request.identityMappings?.selectedProductIds,
     selectedProductNames: request.identityMappings?.selectedProductNames,
+    productMaterialSelection: request.productMaterialSelection,
     productId: request.prefill?.productId,
     productName: request.prefill?.productName,
     creationDialoguePlan: request.creationDialoguePlan,
@@ -173,28 +174,38 @@ export default function SocialContentPlanningPage({
     const operationKey = socialPlanningOperationKey(operationSeed);
     if (sourceRequest?.assistantEntry && (!entryCount || !Number.isSafeInteger(entryCount) || entryCount < 1 || entryCount > 100)) throw new Error('请先确认本轮要创作的内容数量（1至100条）。');
     const taskSeed = { ...operationSeed, initialScript: request.initialScript, specialRequirements: request.specialRequirements,
-      productId: request.productId, productName: request.productName, presenterAssetId: request.presenterAssetId,
+      productId: request.productId, productIds: [...new Set([...distinctProducts.map(item => item.productId), ...(request.productMaterialSelection?.productIds || [])])],
+      productMaterialSelection: request.productMaterialSelection || undefined, productName: request.productName, presenterAssetId: request.presenterAssetId,
       callToAction: request.callToAction, uploadedMaterialCount: new Set([...request.uploadedMaterials, ...(request.selectedProductMaterials || [])].map(item => item.id)).size,
       platforms: request.platforms || sourceRequest?.prefill?.platforms, themeId: sourceRequest?.themeId || 'product_value' as const };
+    const visualMaterials = [...request.uploadedMaterials, ...(request.selectedProductMaterials || [])];
     const identity = productionNavigationIdentity(), entry = currentRequest.current;
     const isCurrent = () => identity === productionNavigationIdentity() && entry === currentRequest.current;
     if (sourceRequest?.assistantEntry && !sourceRequest.continueTaskId) setBatchBusy(true);
     const batchTask = sourceRequest?.assistantEntry && !sourceRequest.continueTaskId
-      ? await createPlanningDraftBatch({ seed: taskSeed, count: entryCount!, keys: batchKeys.current, completed: batchCompleted.current,
-        isCurrent, create: (value, key) => socialContentApi.createTask(value, key), read: id => socialContentApi.getTask(id),
+      ? await createPlanningDraftBatch({ seed: taskSeed, selectionKey: JSON.stringify(visualMaterials.map(item => item.id).sort()), count: entryCount!, keys: batchKeys.current, completed: batchCompleted.current,
+        isCurrent, create: async (value, key) => syncPlanningTaskMaterials({
+          task: await socialContentApi.createTask({ ...value, assetAvailability: 'none' }, key), materials: visualMaterials,
+          operationKey: key, isCurrent, api: socialContentApi }), read: id => socialContentApi.getTask(id),
         onResult: result => setCreatedDrafts(rows => [...rows.filter(row => row.taskId !== result.taskId), result]) }).finally(() => { if (isCurrent()) setBatchBusy(false); }) : null;
     if (!isCurrent()) return;
     if (sourceRequest?.assistantEntry && !sourceRequest.continueTaskId && entryCount! > 1 && batchTask) return;
     let task = sourceRequest?.continueTaskId ? await socialContentApi.getTask(sourceRequest.continueTaskId)
-      : batchTask || await socialContentApi.createTask(socialPlanningTaskInput(taskSeed), `${operationKey}:create`);
+      : batchTask || await socialContentApi.createTask({ ...socialPlanningTaskInput(taskSeed), assetAvailability: 'none' }, `${operationKey}:create`);
 
 
-    const visualMaterials = [...request.uploadedMaterials, ...(request.selectedProductMaterials || [])].filter(material => material.type === 'image' || material.type === 'video');
-    for (const material of visualMaterials.filter((item, index, rows) => rows.findIndex(row => row.id === item.id) === index)) {
-      const source = socialPlanningMaterialSource(material);
-      if (task.sources.some(item => item.status === 'active' && item.kind === source.kind && item.sourceRef === source.sourceRef)) continue;
-      task = (await socialContentApi.addSource(task.taskId, source, `${operationKey}:material:${material.id}`)).task;
+    if (!isCurrent()) return;
+    const previousProductMaterialSelection = task.brief.productMaterialSelection;
+    const { productId, productIds, productRef, productMaterialSelection } = socialPlanningTaskInput(taskSeed);
+    if (sourceRequest?.continueTaskId) {
+      task = await socialContentApi.updateTask(task.taskId, { expectedVersion: task.version,
+        changes: { assetAvailability: 'none' } },
+        `${operationKey}:selection:${task.version}`);
     }
+    task = await syncPlanningTaskMaterials({ task, materials: visualMaterials, previousProductMaterialSelection,
+      selectionChanges: sourceRequest?.continueTaskId ? { productId, productIds, productRef, productMaterialSelection } : undefined,
+      operationKey, isCurrent, api: socialContentApi });
+    if (!isCurrent()) return;
 
     if (request.creationPath === 'material_processing') {
       try {
@@ -239,9 +250,10 @@ export default function SocialContentPlanningPage({
       },
       sourceContext: sourceRequest?.sourceContext,
       creationDialoguePlan: sourceRequest?.creationDialoguePlan,
+      productMaterialSelection: request.productMaterialSelection,
       identityMappings: {
-        selectedProductIds: distinctProducts.map(mapping => mapping.productId),
-        selectedProductNames: distinctProducts.map(mapping => mapping.productName),
+        selectedProductIds: taskSeed.productIds,
+        selectedProductNames: taskSeed.productIds.map(id => distinctProducts.find(mapping => mapping.productId === id)?.productName || ''),
         products: request.productMappings,
         brand: request.brandMapping,
       },

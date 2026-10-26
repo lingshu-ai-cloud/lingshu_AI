@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { productMaterialCandidates, reconcileProductMaterialSelection } from './studioProductMaterialSelection';
+import { productMaterialCandidates, reconcileProductMaterialSelection, restoreProductMaterialSelection } from './studioProductMaterialSelection';
 import type { Clip } from './studioSourceMaterial';
 import { normalizeMaterialAssetV2 } from '../../../shared/contracts/materialAssetV2';
 
@@ -72,4 +72,33 @@ test('manually adding back a dismissed automatic item makes it a retained manual
 test('active kickoff reference is never automatically selected even if bound to the same product', () => {
   const kickoff = { video: { sourceUrl: '/assets/a1.png' } } as Parameters<typeof reconcileProductMaterialSelection>[1]['kickoff'];
   assert.deepEqual(reconcileProductMaterialSelection(null, { productIds: ['a'], materials, selectedIds: [], kickoff }).selectedIds, ['a2']);
+});
+
+
+test('project JSON roundtrip preserves automatic ownership and manual opt-outs before product switching', () => {
+  let state = reconcileProductMaterialSelection(null, { productIds: ['a'], materials, selectedIds: ['factory'] });
+  state = reconcileProductMaterialSelection(state, { productIds: ['a'], materials, selectedIds: ['factory', 'a2'] });
+  const restored = restoreProductMaterialSelection(JSON.parse(JSON.stringify(state)));
+  assert.ok(restored);
+  const sameProduct = reconcileProductMaterialSelection(restored, { productIds: ['a'], materials, selectedIds: restored.selectedIds });
+  assert.deepEqual(sameProduct.selectedIds, ['factory', 'a2']);
+  assert.deepEqual(sameProduct.dismissedIds, ['a1']);
+  const switched = reconcileProductMaterialSelection(sameProduct, { productIds: ['b'], materials, selectedIds: sameProduct.selectedIds });
+  assert.deepEqual(switched.selectedIds, ['factory', 'b1']);
+});
+
+test('saved ownership cannot introduce assets absent from the current tenant inventory', () => {
+  const saved = reconcileProductMaterialSelection(null, { productIds: ['a'], materials, selectedIds: [] });
+  const restored = restoreProductMaterialSelection(JSON.parse(JSON.stringify(saved)));
+  const currentTenant = [clip('tenant-b-own', 'b')];
+  const result = reconcileProductMaterialSelection(restored, { productIds: ['b'], materials: currentTenant, selectedIds: saved.selectedIds });
+  assert.deepEqual(result.selectedIds, ['tenant-b-own']);
+});
+
+test('partial or malformed saved ownership falls back to legacy selection handling', () => {
+  assert.equal(restoreProductMaterialSelection(undefined), null);
+  assert.equal(restoreProductMaterialSelection({ selectedIds: ['a1'] }), null);
+  const valid = reconcileProductMaterialSelection(null, { productIds: ['a'], materials, selectedIds: [] });
+  assert.equal(restoreProductMaterialSelection({ ...valid, automaticIds: [42] }), null);
+  assert.equal(restoreProductMaterialSelection({ ...valid, candidateProductIds: { a1: {} } }), null);
 });

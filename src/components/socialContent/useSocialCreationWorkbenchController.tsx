@@ -12,6 +12,7 @@ import { groupSpeechShots, type SpeechGroup, timeRange } from './speechShotGroup
 import { normalizeFreeCreationState, type FreeCreationState, type FreeCreationShotType } from '../../../shared/contracts/freeCreationProject';
 import { assignReplicationDefaultProduct, parseFreeCreationScript, resolveReplicationProductMappings, serializeFreeCreationLines, type EnterpriseProductOption, type FreeCreationLine } from './socialCreationDraft';
 import { shotStart } from './socialCreationWorkbenchTime';
+import { resolveStudioProductOption } from '../studio/studioProductSelection';
 import { useSocialProductMaterials } from './useSocialProductMaterials';
 import type { SocialCreationWorkbenchSeed, SocialCreationWorkbenchSubmit } from './SocialCreationWorkbench';
 
@@ -130,6 +131,11 @@ export function useSocialCreationWorkbenchController({
   const [generatedSpeech, setGeneratedSpeech] = useState<string[] | null>(null);
   const [generatedMappingKey, setGeneratedMappingKey] = useState<string | null>(null);
   const restoredSpeechRef = useRef<string>('');
+  const restoredMaterialSourceRef = useRef('');
+  useEffect(() => {
+    if (!seed?.productMaterialSelection) return;
+    productMaterials.restore({ selected: seed.productMaterialSelection.selectedIds, productMaterialSelection: seed.productMaterialSelection });
+  }, [seed?.productMaterialSelection]);
   const [spokenNames, setSpokenNames] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!seed?.confirmedSpeech?.length) return;
@@ -151,7 +157,9 @@ export function useSocialCreationWorkbenchController({
     if (!isReplication || !projectId) return undefined;
     let active = true;
     void studioApi.getProject(projectId).then(project => {
-      if (!active || draftTitleEditedRef.current || !project.title.trim()) return;
+      if (!active) return;
+      if (restoredMaterialSourceRef.current !== `project:${projectId}`) { productMaterials.restore(project.spec); restoredMaterialSourceRef.current = `project:${projectId}`; }
+      if (draftTitleEditedRef.current || !project.title.trim()) return;
       setDraftTitle(project.title.trim());
       lastSavedDraftTitleRef.current = project.title.trim();
       setDraftTitleStatus('saved');
@@ -294,7 +302,8 @@ export function useSocialCreationWorkbenchController({
       for (const slot of productSlots) {
         if (Object.prototype.hasOwnProperty.call(next, slot.shotId)) continue;
         const mapping = seed.productMappings!.find(item => (item.sourceTerm.toLocaleLowerCase() === slot.sourceLabel.toLocaleLowerCase() || slot.sourceLabel.toLocaleLowerCase().endsWith(item.sourceTerm.toLocaleLowerCase())));
-        const product = products.find(item => item.id === mapping?.productId || item.name === mapping?.productName);
+        const product = mapping && resolveStudioProductOption({ id: mapping.productId, name: mapping.productName },
+          products.map(item => ({ id: item.id, label: item.name, info: '' })));
         if (product) next[slot.shotId] = product.id;
       }
       return JSON.stringify(next) === JSON.stringify(current) ? current : next;
@@ -302,13 +311,14 @@ export function useSocialCreationWorkbenchController({
   }, [seed?.productMappings, products, productSelectionChanged, JSON.stringify(productSlots)]);
   useEffect(() => {
     if (!seed?.productMappings?.length || !products.length) return;
-    const mapped = seed.productMappings.map(mapping => products.find(item => item.id === mapping.productId || item.name === mapping.productName)?.id).filter((id): id is string => Boolean(id));
+    const options = products.map(item => ({ id: item.id, label: item.name, info: '' }));
+    const mapped = seed.productMappings.map(mapping => resolveStudioProductOption({ id: mapping.productId, name: mapping.productName }, options)?.id).filter((id): id is string => Boolean(id));
     setSelectedProductIds(current => [...new Set([...current, ...mapped])]);
   }, [seed?.productMappings, products]);
   const primaryProductId = productId || selectedProductIds[0] || '';
   const primaryProduct = products.find(item => item.id === primaryProductId);
   const productMappings = resolveReplicationProductMappings(productSlots, products, primaryProductId, productAssignments);
-  const mappedProductIdsKey = JSON.stringify([...new Set(productMappings.map(item => item.productId).filter(Boolean))]);
+  const mappedProductIdsKey = JSON.stringify([...new Set([...productMappings.map(item => item.productId), ...(!productSelectionChanged ? selectedProductIds : [])].filter(Boolean))]);
   useEffect(() => { if (isReplication) setReplicationMaterialProductIds(JSON.parse(mappedProductIdsKey)); }, [isReplication, mappedProductIdsKey]);
   const productsReady = productMappings.every(mapping => mapping.productId && mapping.sourceTerm.trim());
   const productSelectionLoading = productsLoading && (!isReplication || productSlots.length > 0);
@@ -395,6 +405,12 @@ export function useSocialCreationWorkbenchController({
     let timer = 0;
     let refreshed = false;
     const load = () => void socialContentApi.getTask(seed.continueTaskId!).then(async initial => {
+      if (!active) return;
+      if (!seed.continueProjectId && restoredMaterialSourceRef.current !== `task:${initial.taskId}`) {
+        if (initial.brief.productMaterialSelection) productMaterials.restore({ selected: initial.brief.productMaterialSelection.selectedIds, productMaterialSelection: initial.brief.productMaterialSelection });
+        if (initial.brief.productIds?.length) { setSelectedProductIds(initial.brief.productIds); setProductId(initial.brief.productIds[0]); }
+        restoredMaterialSourceRef.current = `task:${initial.taskId}`;
+      }
       let task = initial;
       if (!refreshed && initial.referenceVideoAnalysis?.status !== 'ready') {
         refreshed = true;
@@ -454,11 +470,16 @@ export function useSocialCreationWorkbenchController({
         const items = (Array.isArray(result.items) ? result.items : [])
           .filter(item => item && typeof item.id === 'string' && typeof item.name === 'string');
         setProducts(items);
-        const seeded = items.find(item => item.id === seed?.productId || item.name === seed?.productName);
+        const options = items.map(item => ({ id: item.id, label: item.name, info: '' }));
+        const seeded = resolveStudioProductOption({ id: seed?.productId, name: seed?.productName }, options);
         setProductId(current => items.some(item => item.id === current) ? current : seeded?.id || '');
         setSelectedProductIds(current => {
           const retained = current.filter(id => items.some(item => item.id === id));
-          const mapped = [...items.filter(item => seed?.selectedProductIds?.includes(item.id) || seed?.selectedProductNames?.includes(item.name)).map(item => item.id), ...(seed?.productMappings || []).map(mapping => items.find(item => item.id === mapping.productId || item.name === mapping.productName)?.id || '').filter(Boolean)];
+          const requested = seed?.selectedProductIds?.length
+            ? seed.selectedProductIds.map(id => ({ id }))
+            : (seed?.selectedProductNames || []).map(name => ({ name }));
+          const mapped = [...requested.map(reference => resolveStudioProductOption(reference, options)?.id),
+            ...(seed?.productMappings || []).map(mapping => resolveStudioProductOption({ id: mapping.productId, name: mapping.productName }, options)?.id)].filter((id): id is string => Boolean(id));
           return retained.length ? retained : mapped.length ? [...new Set(mapped)] : seeded ? [seeded.id] : [];
         });
       }).catch(() => { if (active) setProductsUnavailable(true); })
@@ -495,6 +516,10 @@ export function useSocialCreationWorkbenchController({
 
   const startGeneration = async (replicationStep: 1 | 2 | 3 = 1, navigationOnly = false) => {
     if (submitting || productSelectionLoading || (!isReplication && !selectedProductIds.length) || (!navigationOnly && isReplication && (!productsReady || !speechGenerated || confirmedSpeech.some(line => !line.draft.trim())))) return;
+    if (productMaterials.loading || productMaterials.error) {
+      setGenerationNotice(productMaterials.error || '正在读取产品素材，请稍后再试。');
+      return;
+    }
     setSubmitting(true); setGenerationNotice('');
     try {
       const presenterAssetId = isReplication ? seed?.presenterAssetId || taskPresenterAssetId : '';
@@ -583,6 +608,7 @@ export function useSocialCreationWorkbenchController({
         files,
         uploadedMaterials,
         selectedProductMaterials: productMaterials.selectedMaterials,
+        productMaterialSelection: productMaterials.selectionSpec.productMaterialSelection,
         referenceLinks: [...new Set([...(seed?.referenceLinks || []), ...uploadedMaterials.map(item => item.url).filter(Boolean)])],
         callToAction: '',
         specialRequirements: isReplication ? '已确认口播文本；分镜匹配时制作数字人口播镜头，成片渲染时生成统一配音。' : `人工自由创作；用户需求：${briefNotes}；钩子来源：${hookMode}；允许无口播分镜；由 Gemini 依据企业产品资料生成逐句口播及后续分镜。`,

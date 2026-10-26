@@ -6,7 +6,7 @@ import { authHeader } from '../../lib/auth';
 import { createScriptGapTask, shootingSourceBinding } from '../../lib/scriptGapQueue';
 import { patchShot } from '../../lib/shotProduction';
 import { newDigitalHumanRequirements } from '../../lib/digitalHumanPlan';
-import { buildAiProductOptions } from './studioProductSelection.js';
+import { buildAiProductOptions, enterpriseProductIdentity } from './studioProductSelection.js';
 import type { EnterpriseProfileLite } from './studioWorkspaceContracts.js';
 import type { StudioShotLibraryViewInputs } from './studioShotLibraryViewInputs.js';
 
@@ -103,10 +103,9 @@ export function renderStudioShotLibrary(input: StudioShotLibraryViewInputs) {
             const profileResponse = await fetch('/api/overseas/enterprise/profile', { headers: authHeader(), credentials: 'same-origin' });
             if (!profileResponse.ok) throw new Error('无法读取企业产品');
             const profile = await profileResponse.json() as EnterpriseProfileLite & { factVersion?: { contentHash?: string; id?: string } };
-            const index = buildAiProductOptions(profile).findIndex(item => item.id === productId);
             const product = selectedProductOptions.find(item => item.id === productId);
-            const rawIndex = profile.products?.items?.findIndex((item, i) => `product-${i}-${String(item.name || '').trim()}` === productId) ?? -1;
-            if (index < 0 || rawIndex < 0 || !product) throw new Error('产品资料已变化，请刷新后重试');
+            const rawIndex = profile.products?.items?.findIndex(item => enterpriseProductIdentity(item) === productId) ?? -1;
+            if (rawIndex < 0 || !product) throw new Error('产品资料已变化，请刷新后重试');
             const response = await fetch('/api/overseas/enterprise/assets', { method: 'POST', credentials: 'same-origin',
               headers: { ...authHeader(), 'Content-Type': 'application/json' }, body: JSON.stringify({ name: file.name, type: file.type, dataUrl: await fileToDataUrl(file) }) });
             const asset = await response.json(); if (!response.ok || !asset.url) throw new Error(asset.error || '图片上传失败');

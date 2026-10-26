@@ -201,8 +201,8 @@ export async function readSocialTaskDetail(input: {
     themeId: summary.theme?.themeId ?? null,
     linkedRecordIds,
   });
-  if (summary.brief.creationDialoguePlan) {
-    const additional = summary.brief.creationDialoguePlan.selection.productIds.filter(id => id !== selectedTaskProductId).flatMap(selectedProductId => buildSocialWorkflowMaterialCandidates({ records: materialInventory.items, reviewedFootageOverlays, tenantId: input.tenantId, voiceoverRows, selectedProductId, themeId: summary.theme?.themeId ?? null, linkedRecordIds }).candidates);
+  if (summary.brief.creationDialoguePlan || summary.brief.productIds?.length) {
+    const additional = (summary.brief.creationDialoguePlan?.selection.productIds ?? summary.brief.productIds ?? []).filter(id => id !== selectedTaskProductId).flatMap(selectedProductId => buildSocialWorkflowMaterialCandidates({ records: materialInventory.items, reviewedFootageOverlays, tenantId: input.tenantId, voiceoverRows, selectedProductId, themeId: summary.theme?.themeId ?? null, linkedRecordIds }).candidates);
     candidateSet.candidates = [...candidateSet.candidates, ...additional].filter((candidate, index, rows) => rows.findIndex(row => row.segmentCandidateId === candidate.segmentCandidateId) === index);
   }
   const materialCandidates: SocialWorkflowMaterialClipCandidate[] = candidateSet.candidates.map(candidate => ({
@@ -300,7 +300,7 @@ export async function readSocialTaskDetail(input: {
     productionApproach: summary.brief.productionApproach ?? 'ai_enhanced',
     planVersion: summary.version,
     inventory: { customerVideoIds, productImageIds,
-      productIdentityGroups: summary.brief.creationDialoguePlan ? guidedProductIdentityGroups(summary.brief.creationDialoguePlan, materialCandidates, { productRef: primaryProductRef, imageIds: productImageIds }) : productImageIds.length ? [{
+      productIdentityGroups: summary.brief.creationDialoguePlan || summary.brief.productIds?.length ? guidedProductIdentityGroups(summary.brief.creationDialoguePlan ?? { selection: { productIds: summary.brief.productIds! }, products: (enterpriseProfile?.products.items ?? []).map(product => ({ id: String(product.id || product.productId || product.sku || ''), name: product.name })) }, materialCandidates, { productRef: primaryProductRef, imageIds: productImageIds }) : productImageIds.length ? [{
         productRef: primaryProductRef, imageIds: productImageIds,
       }] : [],
       presenterAssetIds: presenterInventory.assetIds,

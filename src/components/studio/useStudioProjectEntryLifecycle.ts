@@ -12,6 +12,8 @@ import { studioSpecHasCompiledStoryboard } from './studioStoryboardParsing.js';
 import type { StudioProjectLifecyclePorts } from './studioProjectLifecyclePorts.js';
 
 export function useStudioProjectSocialTaskHydration(ports: Pick<StudioProjectLifecyclePorts,
+  | 'restoreProductMaterialSelection'
+  | 'setSelectedProductIds'
   | 'socialTaskProjectLookupDone'
   | 'rawSceneTarget'
   | 'socialContentTaskId'
@@ -112,6 +114,8 @@ export function useStudioProjectSocialTaskHydration(ports: Pick<StudioProjectLif
 
       studioSettingsEditedRef.current = true;
       autoGen.current = true;
+      ports.restoreProductMaterialSelection(seed.productMaterialSelection);
+      ports.setSelectedProductIds(seed.selectedProductIds);
       setSocialTaskProductReference(seed.productReference);
       setAgentTaskProductionPreview(seed.productionPreview);
       rememberSocialShotMaterialBindings(seed.shotMaterialBindings);
@@ -130,7 +134,7 @@ export function useStudioProjectSocialTaskHydration(ports: Pick<StudioProjectLif
         setVoiceoverLines(extractVoiceoverText(localStoryboardScript));
       }
       setProjectTitle(seed.projectTitle); setContentMode(seed.contentMode); setMode(seed.creationMode);
-      if (seed.creationMode === 'clone') setProductSelectMode('multi');
+      if (seed.creationMode === 'clone' || seed.selectedProductIds.length > 1) setProductSelectMode('multi');
       setPlatform(seed.platform); setRatio(seed.aspectRatio); setLang(seed.languageCodes[0]!);
       setVoiceLangs(seed.languageCodes); setActiveVoiceLang(seed.languageCodes[0]!);
       setAudience(seed.audience); setPrimaryCta(seed.primaryCta);
@@ -142,7 +146,7 @@ export function useStudioProjectSocialTaskHydration(ports: Pick<StudioProjectLif
           setThemeConversionGoal(DEFAULT_VIDEO_CONVERSION_GOAL);
         }
       }
-      if (seed.selectedMaterialIds.length) setSelected(seed.selectedMaterialIds);
+      setSelected(seed.selectedMaterialIds);
       setSocialDigitalHumanPlans(seed.digitalHumanShotPlans);
       const hydrationNotices = [
         seed.factVerificationNotice,
@@ -154,6 +158,8 @@ export function useStudioProjectSocialTaskHydration(ports: Pick<StudioProjectLif
 }
 
 export function useStudioRequestedProjectEntry(ports: Pick<StudioProjectLifecyclePorts,
+  | 'restoreProductMaterialSelection'
+  | 'setSelected'
   | 'studioCreateRequest'
   | 'socialContentTaskId'
   | 'frozenStudioSpecRef'
@@ -194,6 +200,8 @@ export function useStudioRequestedProjectEntry(ports: Pick<StudioProjectLifecycl
 
     if (!studioCreateRequest || studioCreateRequest.continueProjectId || socialContentTaskId || appliedCreateRequestRef.current === studioCreateRequest.requestId) return;
     appliedCreateRequestRef.current = studioCreateRequest.requestId;
+    ports.restoreProductMaterialSelection(studioCreateRequest.productMaterialSelection);
+    if (studioCreateRequest.productMaterialSelection) ports.setSelected(studioCreateRequest.productMaterialSelection.selectedIds);
     const prefill = studioCreateRequest.prefill;
     frozenStudioSpecRef.current = null;
     setBoundProductionSnapshot(null);

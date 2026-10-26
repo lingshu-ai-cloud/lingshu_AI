@@ -1,3 +1,4 @@
+import type { ProductMaterialSelectionState } from '../studio/studioProductMaterialSelection';
 import CreationDialoguePlanPanel from './CreationDialoguePlanPanel';
 import { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
 export { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
@@ -32,6 +33,7 @@ import { SocialProductMaterialPicker } from './SocialProductMaterialPicker';
 import { useSocialCreationWorkbenchController } from './useSocialCreationWorkbenchController';
 
 export interface SocialCreationWorkbenchSeed {
+  productMaterialSelection?: import('../../../shared/contracts/socialContentTaskContract').ProductMaterialSelectionState | null;
   assistantEntry?: import('../../../shared/contracts/assistantCreationPortal').AssistantCreationPortal;
   creationDialoguePlan?: import('../../../shared/contracts/contentCreationDialogue').CreationReply;
   continueTaskId?: string;
@@ -72,6 +74,7 @@ export interface SocialCreationWorkbenchSubmit {
   files: File[];
   uploadedMaterials: Material[];
   selectedProductMaterials?: Material[];
+  productMaterialSelection?: ProductMaterialSelectionState | null;
   referenceLinks: string[];
   callToAction: string;
   specialRequirements: string;
@@ -323,7 +326,7 @@ export default function SocialCreationWorkbench({
             {/* GENERATION_INTEGRATION_GAP: the server calculates estimatedCostCny only
                 after a task plan exists; there is no preflight quote endpoint yet. */}
             {isReplication && <div className="flex items-center gap-3 text-[11px]"><span className="text-text-muted">预计消耗</span><span className="font-semibold text-text-primary" title="生成任务建立后由服务端返回真实预估">待生成服务核算</span></div>}
-            <button type="button" disabled={submitting || generatingSpeech || productSelectionLoading || (!isReplication && (!selectedProductIds.length || (freeLines.length > 0 && !freeReady))) || (isReplication && (!productsReady || !confirmedSpeech.length || (speechGenerated && confirmedSpeech.some(line => !line.draft.trim()))))} onClick={() => { if (isReplication && !speechGenerated) void generateSpeech(); else void startGeneration(); }} className="flex min-w-[220px] items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-none hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
+            <button type="button" disabled={submitting || generatingSpeech || productSelectionLoading || productMaterials.loading || Boolean(productMaterials.error) || (!isReplication && (!selectedProductIds.length || (freeLines.length > 0 && !freeReady))) || (isReplication && (!productsReady || !confirmedSpeech.length || (speechGenerated && confirmedSpeech.some(line => !line.draft.trim()))))} onClick={() => { if (isReplication && !speechGenerated) void generateSpeech(); else void startGeneration(); }} className="flex min-w-[220px] items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-none hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
               {submitting || generatingSpeech ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}{submitting ? '正在处理…' : generatingSpeech ? '正在生成英文口播' : isReplication ? speechGenerated ? '确认口播，进入分镜匹配' : '生成口播' : freeScriptText ? '确认口播，进入分镜制作' : 'Gemini 生成逐句口播与分镜'}
             </button>
           </div></footer>

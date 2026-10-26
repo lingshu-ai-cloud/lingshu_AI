@@ -36,17 +36,17 @@ export function useSocialProductMaterials(productIds: string[], ready: boolean) 
   }, [identity, revision]);
   const clips = useMemo(() => loadedIdentity === identity ? inventory.map(materialToClip) : [], [inventory, loadedIdentity, identity]);
   const safeSelectedIds = useMemo(() => loadedIdentity === identity ? selectedIds : [], [loadedIdentity, identity, selectedIds]);
-  const { resetSelectionBaseline } = useProductMaterialSelection({ productIds, materials: clips, selectedIds, setSelectedIds,
+  const { resetSelectionBaseline, selectionState } = useProductMaterialSelection({ productIds, materials: clips, selectedIds, setSelectedIds,
     enabled: ready && loadedIdentity === identity, resetKey: identity, preserveInitialSelection: restored });
   const candidates = useMemo(() => productMaterialCandidates({ productIds, materials: clips, selectedIds: [] }), [productIds, clips]);
   const selectedMaterials = useMemo(() => inventory.filter(item => safeSelectedIds.includes(item.id) && candidates.some(candidate => candidate.id === item.id)), [inventory, safeSelectedIds, candidates]);
   const restore = useCallback((spec: Record<string, unknown>) => {
     if (!Array.isArray(spec.selected)) return;
-    resetSelectionBaseline();
+    resetSelectionBaseline(spec.productMaterialSelection);
     setSelectedIds(spec.selected.filter((id): id is string => typeof id === 'string'));
     setRestored(true);
   }, [resetSelectionBaseline]);
-  const selectionSpec = useMemo(() => ({ selected: safeSelectedIds, materialSnapshots: selectedMaterials.map(materialToClip) }), [safeSelectedIds, selectedMaterials]);
+  const selectionSpec = useMemo(() => ({ selected: safeSelectedIds, materialSnapshots: selectedMaterials.map(materialToClip), productMaterialSelection: selectionState }), [safeSelectedIds, selectedMaterials, selectionState]);
   return { candidates, selectedIds: selectedMaterials.map(item => item.id), selectedMaterials, error,
     loading: loadedIdentity !== identity && !error, retry: () => setRevision(value => value + 1), restore,
     toggle: (id: string) => setSelectedIds(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id]),

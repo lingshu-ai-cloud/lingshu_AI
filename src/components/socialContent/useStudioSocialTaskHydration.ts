@@ -19,6 +19,8 @@ export type StudioContentTheme = 'product_proof' | 'use_case' | 'supplier_capabi
 export interface StudioSocialTaskSeed {
   projectTitle: string;
   productReference: string;
+  selectedProductIds: string[];
+  productMaterialSelection?: import('../../../shared/contracts/socialContentTaskContract').ProductMaterialSelectionState;
   contentMode: 'video' | 'poster';
   creationMode: 'material' | 'product' | 'clone';
   reference: VideoKickoff | null;
@@ -351,6 +353,8 @@ export function socialTaskToStudioSeed(task: SocialContentTaskDetail): StudioSoc
   return {
     projectTitle: clean(brief.title) || '社媒内容任务',
     productReference: clean(brief.productRef),
+    selectedProductIds: brief.productIds ?? (brief.productId ? [brief.productId] : []),
+    productMaterialSelection: brief.productMaterialSelection,
     contentMode,
     creationMode: brief.creationMode === 'viral_replication' ? 'clone' : selectedMaterialIds.length ? 'material' : 'product',
     reference: socialTaskReferenceKickoff(task),

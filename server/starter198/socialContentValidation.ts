@@ -123,7 +123,7 @@ function safeRecord(value: unknown, code: string, maxBytes: number): Record<stri
 }
 
 const BRIEF_KEYS = [
-  'title', 'objective', 'productId', 'productRef', 'requestedPresenterName', 'requestedPresenterAssetId', 'presenterAssetId', 'audience', 'markets', 'languages', 'platforms', 'formats',
+  'title', 'objective', 'productId', 'productIds', 'productMaterialSelection', 'productRef', 'requestedPresenterName', 'requestedPresenterAssetId', 'presenterAssetId', 'audience', 'markets', 'languages', 'platforms', 'formats',
   'aspectRatio', 'cadence', 'requestedOutputCount', 'weeklyBudgetCny', 'perItemBudgetCny', 'targetDurationSeconds',
   'retryReserveCny', 'planningMode', 'shootingWindowMinutes', 'specialRequirements', 'dueAt',
   'brandNotes', 'restrictions', 'callToAction', 'mode', 'weeklyPlanId', 'themeId',
@@ -176,6 +176,18 @@ export function parseSocialReferenceReuse(value: unknown) {
   if (!/^[A-Za-z0-9_-]+$/.test(recordId) || !/^[a-f0-9]{64}$/.test(String(pin.contentSha256)) || !/^[a-f0-9]{64}$/.test(String(pin.analysisHash)))
     throw new SocialContentWorkflowError('social_reference_reuse_invalid', 400);
   return {recordId, analysisId, contentSha256: String(pin.contentSha256), analysisHash: String(pin.analysisHash)};
+}
+
+export function parseProductMaterialSelection(value: unknown): import('../../shared/contracts/socialContentTaskContract.js').ProductMaterialSelectionState {
+  const source = socialObject(value), code = 'social_content_material_selection_invalid';
+  if (!source) throw new SocialContentWorkflowError(code, 400);
+  assertKeys(source, ['productIds', 'selectedIds', 'automaticIds', 'dismissedIds', 'preservedProductIds', 'candidateProductIds']);
+  const list = (key: string) => textList(source[key], code, 500, 200);
+  const candidates = socialObject(source.candidateProductIds);
+  if (!candidates || Object.keys(candidates).length > 500) throw new SocialContentWorkflowError(code, 400);
+  return { productIds: list('productIds'), selectedIds: list('selectedIds'), automaticIds: list('automaticIds'),
+    dismissedIds: list('dismissedIds'), preservedProductIds: list('preservedProductIds'),
+    candidateProductIds: Object.fromEntries(Object.entries(candidates).map(([id, product]) => [requiredText(id, code, 200), requiredText(product, code, 200)])) };
 }
 
 export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskInput {
@@ -242,6 +254,8 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     title: requiredText(source.title, 'social_content_title_invalid', 120),
     objective: requiredText(source.objective, 'social_content_objective_invalid', 1_000),
     productId: optionalText(source.productId, 'social_content_product_id_invalid', 200),
+    ...(source.productIds !== undefined ? { productIds: textList(source.productIds, 'social_content_product_ids_invalid', 100, 200) } : {}),
+    ...(source.productMaterialSelection !== undefined ? { productMaterialSelection: parseProductMaterialSelection(source.productMaterialSelection) } : {}),
     productRef: optionalText(source.productRef, 'social_content_product_ref_invalid', 200),
     requestedPresenterName: optionalText(source.requestedPresenterName, 'social_content_presenter_name_invalid', 120),
     requestedPresenterAssetId: optionalText(source.requestedPresenterAssetId, 'social_content_presenter_id_invalid', 200),

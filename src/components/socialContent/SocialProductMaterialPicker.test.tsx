@@ -10,7 +10,7 @@ const productB = { id: 'product-b', name: '产品 B' };
 const selection = (patch: Partial<ReturnType<typeof useSocialProductMaterials>> = {}): ReturnType<typeof useSocialProductMaterials> => ({
   candidates: [{ id: 'image-a', name: '产品 A 正面图', folder: 'product', type: 'image', duration: 0, size: '1 MB', url: '/fixture/a.png', productId: productA.id, scope: 'own' }],
   selectedIds: ['image-a'], selectedMaterials: [], error: '', loading: false,
-  toggle: () => {}, retry: () => {}, restore: () => {}, selectionSpec: { selected: ['image-a'], materialSnapshots: [] }, ...patch,
+  toggle: () => {}, retry: () => {}, restore: () => {}, selectionSpec: { selected: ['image-a'], materialSnapshots: [], productMaterialSelection: null }, ...patch,
 });
 
 test('selected product materials are visible as checked choices and missing product assets are named', () => {

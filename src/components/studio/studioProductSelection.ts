@@ -63,6 +63,21 @@ export function restoreStudioProductIds(ids: string[], options: ProductOption[])
     : [...ids];
 }
 
+/** Migrate each persisted shot binding through the same catalog identity rules as selection. */
+export function restoreStudioProductPlans<T extends { productIds?: string[] }>(
+  plans: Record<string, T>, options: ProductOption[],
+): Record<string, T> {
+  let changed = false;
+  const restored = Object.fromEntries(Object.entries(plans).map(([id, plan]) => {
+    if (!Array.isArray(plan.productIds)) return [id, plan];
+    const productIds = restoreStudioProductIds(plan.productIds, options);
+    if (productIds.length === plan.productIds.length && productIds.every((value, index) => value === plan.productIds![index])) return [id, plan];
+    changed = true;
+    return [id, { ...plan, productIds }];
+  }));
+  return changed ? restored : plans;
+}
+
 export function buildAiProductOptions(profile: EnterpriseProfileLite): ProductOption[] {
   const categories = compact(profile.products?.categories);
   const fallbackNames = compact(profile.strategy?.focusProducts || categories)
