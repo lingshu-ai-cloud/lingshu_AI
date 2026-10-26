@@ -17,7 +17,7 @@ import { socialImageCandidatePixelChecks } from './socialImageQuality.js';
 import { compileEvidenceGuidedSocialImage, compileSocialImageReferencePlan, deriveSocialImageReferenceStrategy,
   inspectSocialImageCandidateFactors, prepareSocialImageReferenceStrategy, socialImageFrozenGraphMatches,
   socialImageFrozenSourceIssue } from './socialImageReferenceStrategy.js';
-import { socialImageV3RenderSpecInputHash } from './socialImagePaidPrerequisites.js';
+import { socialImageV3RenderSpecInputHash, socialImageV3ResolvedAssetIssue } from './socialImagePaidPrerequisites.js';
 
 class MemoryStore implements DataStore {
   private sequence = 0;
@@ -197,6 +197,9 @@ test('V3 offline reference evidence flows through strategy, frozen plan and per-
   assert.equal((task.productionRuntime?.nodeOutputs.filter(node => node.nodeId === 'render_spec').at(-1)?.value as { inputHash: string }).inputHash,
     socialImageV3RenderSpecInputHash(task));
   assert.equal(socialImageFrozenSourceIssue({ task, productBytes: new Map([['product-a', productBytes]]), referenceBytes }), null);
+  assert.equal(socialImageV3ResolvedAssetIssue(task, {
+    productHashes: { 'product-a': digest(productBytes) }, materialHashes: {}, referenceHash: null,
+  }), 'social_image_reference_unreadable');
   assert.equal(socialImageFrozenSourceIssue({ task, productBytes: new Map([['product-a', productBytes]]), referenceBytes: null }),
     'social_image_reference_unreadable');
   assert.equal(socialImageFrozenSourceIssue({ task, productBytes: new Map([['product-a', referenceBytes]]), referenceBytes }),

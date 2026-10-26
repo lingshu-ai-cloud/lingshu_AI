@@ -271,6 +271,7 @@ export function socialImageV3ResolvedAssetIssue(task: SocialImageCreationTask, i
   }
   if (task.creationPath === 'viral_replication') {
     const reference = completedOutput(task, 'reference_snapshot')?.value as SocialImageNodeValueMap['reference_snapshot'] | undefined;
+    if (!input.referenceHash) return 'social_image_reference_unreadable';
     if (!reference?.imageAssetRef?.contentHash || reference.imageAssetRef.contentHash !== input.referenceHash) {
       return 'social_image_reference_bytes_changed';
     }
