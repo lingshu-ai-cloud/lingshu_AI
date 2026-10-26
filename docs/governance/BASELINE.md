@@ -4,12 +4,12 @@
 
 ## 当前统一开发基线：图文参考版式与素材不可读修复（2026-10-26）
 
-- 权威树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，起点 `737d7097551e3682635a5c24e46c66fc7a2aa544`。隔离分支 `codex/image-task-provider-path-20261026` 的后续提交 `81f5a6c9`、`c32fd25b`、`1686080f` 分别合入为 `21473736`、`de22df67`、`2f4e7a92232d2ed0617ddf6ba08ca06c7ee026f2`。原未提交 `server/videos/videoVisibilityMaintenance.ts` 补丁未纳入，SHA-256 仍为 `ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`。
-- 策划解析对缺失 hashtags 做空数组处理；参考版式先从可读 OCR 选标题区，再于不同列选择显著产品区，避免把大标题当产品焦点；冻结图重新读取不到时返回 `social_image_reference_unreadable`，与已读取但哈希不符的 `social_image_reference_bytes_changed` 区分。单图固定产品身份合成仍沿用下节 ADR。
+- 权威树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，起点 `737d7097551e3682635a5c24e46c66fc7a2aa544`。隔离分支 `codex/image-task-provider-path-20261026` 的后续提交 `81f5a6c9`、`c32fd25b`、`1686080f`、`3aece24d` 分别合入为 `21473736`、`de22df67`、`2f4e7a92`、`d6cda73e4922e7e97e671064c5c1e7c35fa09e2d`；中间治理证据提交 `4a0884fd`。原未提交 `server/videos/videoVisibilityMaintenance.ts` 补丁未纳入，SHA-256 仍为 `ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`。
+- 策划解析对缺失 hashtags 做空数组处理；参考版式先从可读 OCR 选标题区，再于不同列选择显著产品区，避免把大标题当产品焦点；本地图层合成及付费出图准入在冻结参考图重新读取不到时均返回 `social_image_reference_unreadable`，与已读取但哈希不符的 `social_image_reference_bytes_changed` 区分。单图固定产品身份合成仍沿用下节 ADR。
 - 本次获批独立预算上限 5 元，限新任务单张图及必要策划/质检，不发布且不自动重复结果不明的付费请求。第一个新任务 `socialtask_b3801b030d86fa7bd421efcb` / `imgce339d1b736e` / job `00cf00be48724c1` 在参考版式校验处阻断，仅有 `image.confirmed` 检查点、0 供应商回执，未提交付费请求。第二个替代任务 `socialtask_d1f3157acd9de646d61eb123` / `img0b279af90bb0` / job `22b2670c58984c2` 在基线 `de22df67` 下完成 Qwen 图文策划检查点；尚无图片供应商回执，随后因本机素材目录访问失效阻断。Qwen 策划可能已计费，准确账单未取得，不宣称本预算尚余确定金额。
 - 替代任务冻结的爬取参考为 `history-image-18a82c3360bc2e222f74ad5f` 第 4 张，来源为本地历史 Apify 图片、仅供结构分析；原图 SHA-256 `dc7d51c39152028af9303b51c0dad9e77124d3c6895d7e3a5e3faeb5025da169`。企业产品 `GUIANFA-RS-001` 主图原 SHA-256 `c9673dc0eb6fc0be4dff188ae7a23c520dcfc07054e71f483d666a7608178548`，资产清单已核为可读且授权。随后 `Documents/ChatGPT/1026图文创作版本` 对本地进程返回 `Operation not permitted`，参考图及主图都无法重新读取；第二条作业停在旧源码的 `social_image_reference_bytes_changed`，实质是不可读，未提交 GPT Image 2 出图。原作业和快照均保留，不重写或盲目重跑。
 - 隔离修复及合入后权威树均通过 `pnpm run test:social-image-pipeline`（86/86 主用例、HTTP/合同/治理检查）、`pnpm run lint`、`pnpm run check:architecture`（3001 个生产 TS，权威树相对 `737d7097` 棘轮）、`pnpm run check:digital-employee-migrations`（204 项只读）及 `git diff --check`。参考第 4 张的本地离线版式分析在新规则下通过，产品区为右上、标题区为左上。未运行全仓 `quality` / `verify` 或目标库迁移，未推送、部署、发布；真实付费成片 E2E **未通过**。
-- 安全恢复点为 `737d7097`、源码提交 `2f4e7a92` 和两条原样保留的作业。下一步先恢复并验证本机素材目录访问，核对 Qwen 已发生的费用/回执与队列安全恢复语义，再决定能否在原授权预算内继续。不得把 0 图片回执解释为 0 总费用。
+- 安全恢复点为 `737d7097`、源码提交 `d6cda73e` 和两条原样保留的作业。下一步先恢复并验证本机素材目录访问，核对 Qwen 已发生的费用/回执，再考虑对第二条已阻塞作业作显式队列重试。其 `image.planning` 已完成、`director_brief` 已落库，当前实现可跳过再次调用 Qwen；任何继续执行前须核对源字节哈希、预算和唯一领取权。不得把 0 图片回执解释为 0 总费用。
 
 ## 当前统一开发基线：图文任务成片身份与文字修复（2026-10-26）
 
