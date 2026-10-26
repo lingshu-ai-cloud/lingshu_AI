@@ -191,7 +191,7 @@ assert.match(appShellChromeSource, /suppressForRightSidebar=\{page !== 'digitalE
 assert.match(conversationPanelSource, /width: inlineHomeBounds\?\.width \?\? assistantPanelWidth,\s*maxWidth: inlineHomeBounds \? '100%' : 'calc\(100vw - 32px\)'/, '首页面板使用锚点尺寸，其余页面继续受视口宽度约束');
 assert.match(source, /inlineHomeAnchor \? createPortal\(assistantRoot, inlineHomeAnchor\) : assistantRoot/, '首页助手必须挂载在内容节点中随页面原生滚动');
 assert.match(source, /!inlineHome && <AssistantLauncher/, '首页只有创作输入区，不叠加全局浮动入口');
-assert.match(homeAnchorSource, /useAssistantHomeInteraction[\s\S]*lingshu:assistant-home-prompt/, '首页快捷建议必须写入原助手草稿');
+assert.match(homeAnchorSource, /ASSISTANT_HOME_PROMPT_EVENT = 'lingshu:assistant-home-prompt'[\s\S]*useAssistantHomeInteraction[\s\S]*setDraftInput\(agent, mergeAssistantHomePrompt/, '首页快捷建议必须写入原助手草稿');
 assert.match(conversationPanelSource, /<AssistantComposer variant=\{inlineHome \? 'home' : 'default'\}/, '首页沿用同一聊天与上传契约，仅切换输入区外观');
 assert.match(conversationPanelSource, /ls-assistant-panel__header[^"\n]*bg-surface/, '助手标题栏统一使用主题表面');
 assert.doesNotMatch(conversationPanelSource, /bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50/, '夜间模式不得保留浅色专用标题条');

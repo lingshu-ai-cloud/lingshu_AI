@@ -1,8 +1,31 @@
 import { useEffect, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
-import type { OrbitAgentId } from '../../stores/assistantStore';
+import { useAssistantStore, type OrbitAgentId } from '../../stores/assistantStore';
 
 export type AssistantHomeBounds = { top: number; left: number; width: number; height: number };
 export const ASSISTANT_HOME_ACTIVITY_EVENT = 'lingshu:assistant-home-activity';
+export const ASSISTANT_HOME_PROMPT_EVENT = 'lingshu:assistant-home-prompt';
+export type AssistantHomePromptMode = 'replace' | 'append';
+export type AssistantHomePromptEventDetail = { prompt: string; mode?: AssistantHomePromptMode };
+
+export function normalizeAssistantHomePromptDetail(value: unknown): AssistantHomePromptEventDetail | null {
+  if (typeof value === 'string') {
+    const prompt = value.trim();
+    return prompt ? { prompt, mode: 'replace' } : null;
+  }
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as { prompt?: unknown; mode?: unknown };
+  const prompt = typeof candidate.prompt === 'string' ? candidate.prompt.trim() : '';
+  if (!prompt) return null;
+  const mode = candidate.mode === 'append' ? 'append' : 'replace';
+  return { prompt, mode };
+}
+
+export function mergeAssistantHomePrompt(current: string, next: string, mode: AssistantHomePromptMode = 'replace') {
+  const prompt = next.trim();
+  if (mode !== 'append') return prompt;
+  const draft = current.trim();
+  return draft ? `${draft}\n\n${prompt}` : prompt;
+}
 
 export function useAssistantHomeMode(active: boolean, setMode: Dispatch<SetStateAction<'breathing' | 'chat'>>) {
   useEffect(() => {
@@ -64,9 +87,10 @@ export function useAssistantHomeInteraction(active: boolean, messageCount: numbe
   useEffect(() => {
     if (!active) return;
     const onPrompt = (event: Event) => {
-      const prompt = (event as CustomEvent<unknown>).detail;
-      if (typeof prompt !== 'string' || !prompt.trim()) return;
-      setDraftInput(agent, prompt);
+      const detail = normalizeAssistantHomePromptDetail((event as CustomEvent<unknown>).detail);
+      if (!detail) return;
+      const current = useAssistantStore.getState().threads[agent].draftInput;
+      setDraftInput(agent, mergeAssistantHomePrompt(current, detail.prompt, detail.mode));
       window.requestAnimationFrame(() => inputRef.current?.focus());
     };
     const onReference = () => window.requestAnimationFrame(() => {
@@ -75,7 +99,7 @@ export function useAssistantHomeInteraction(active: boolean, messageCount: numbe
       inputRef.current?.focus({ preventScroll: true });
     });
     window.addEventListener('lingshu:assistant-home-reference', onReference);
-    window.addEventListener('lingshu:assistant-home-prompt', onPrompt);
-    return () => { window.removeEventListener('lingshu:assistant-home-prompt', onPrompt); window.removeEventListener('lingshu:assistant-home-reference', onReference); };
+    window.addEventListener(ASSISTANT_HOME_PROMPT_EVENT, onPrompt);
+    return () => { window.removeEventListener(ASSISTANT_HOME_PROMPT_EVENT, onPrompt); window.removeEventListener('lingshu:assistant-home-reference', onReference); };
   }, [active, agent, inputRef, setDraftInput]);
 }
