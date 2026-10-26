@@ -3,6 +3,13 @@
 最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-26 灵小枢首页分叉整合
+
+- 新增托管隔离树 `assistant-home-integrated/1026对话界面外部信息`，分支`integration/assistant-home-unified-20261026`，验证源码38d135f1。统一基线由86d855e1安全快进，恢复分支保留；源码与治理提交分开。
+- 资讯、查询条件、图文来源分别固定独立index快照2ae05809、f46166be、182abf08，源HEAD/index/未提交内容未改。场景分支a3b66751全部6项提交合入；旧首页137项保留现场已在580913fe快照中，不重复整合。没有清理、归档、重置任何来源树，保留图片AIGC工作树未触碰。
+- 共享基线原未提交视频排序修复原样保留，不纳入本轮提交；快进前后完整diff哈希一致。基线源码验收不等于工作树干净、运行数据或供应商Ready。
+- quality既有M1受控测试失败在原86d855e1也复现，单列遗留；其他阶段分段验证通过。没有推送或部署。详见[首页整合记录](ASSISTANT-HOME-INTEGRATION-20261026.md)。
+
 ## 2026-10-26 两条分叉线统一为最新开发基线
 
 - 新增隔离工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`，分支 `baseline/unified-20261026`，源码合并 `280b54973be6a8cf863cdef98183cf12fa88581f`，治理补记另记；这是本轮用户指定的后续默认开发基线。
