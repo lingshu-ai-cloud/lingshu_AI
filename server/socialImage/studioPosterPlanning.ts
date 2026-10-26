@@ -248,7 +248,8 @@ Schema:
                         const withoutOriginalNames = boundTask.contentBrief.productNames
                             .reduce((text, name) => text.split(name).join(''), safeDraft.caption);
                         if (/[\u3400-\u9fff]/u.test(withoutOriginalNames)) safeDraft.caption = neutral.caption;
-                        safeDraft.hashtags = safeDraft.hashtags.filter((tag: string) => !/[\u3400-\u9fff]/u.test(tag));
+                        safeDraft.hashtags = (Array.isArray(safeDraft.hashtags) ? safeDraft.hashtags : [])
+                            .filter((tag: unknown): tag is string => typeof tag === 'string' && !/[\u3400-\u9fff]/u.test(tag));
                     }
                     // The fixed compositor renders only three short, verified
                     // copy zones. Dense model-generated rows cannot become tiny
