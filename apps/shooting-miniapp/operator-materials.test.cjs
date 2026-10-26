@@ -76,7 +76,7 @@ test('native miniapp exposes shared work areas and a dedicated assistant page', 
 
 test('my materials opens shooting as a child and upload keeps the existing album picker', () => {
   const navigation = [], selections = []
-  const page = pageWith({}, { navigateTo: value => navigation.push(value.url), chooseMedia: value => selections.push(value) })
+  const page = pageWith({}, { navigateTo: value => navigation.push(value.url), chooseMedia: value => { assert.ok(value.maxDuration === undefined || value.maxDuration <= 60, 'native picker rejects excessive maxDuration even for photos'); selections.push(value) } })
   page.openShooting()
   assert.deepEqual(navigation, ['/packages/operator/shooting/index'])
   page.chooseMaterial()
@@ -119,4 +119,14 @@ test('failed protected image download keeps an explicit unavailable state withou
   const page=pageWith({token:()=> 'token',assetUrl:value=>value,materials:async()=>[{id:'one',type:'image',url:'/media/missing.png',imageUrl:'/media/missing.png'}],cacheImage:async()=>{throw Error('404')}})
   await page.refresh()
   assert.equal(page.data.visibleMaterials[0].mediaError,true); assert.equal(page.data.visibleMaterials[0].url,'')
+})
+
+test('absolute native image paths survive re-projection without becoming server URLs', async () => {
+  const local='/var/mobile/Containers/Data/WeChat/image.png'
+  const page=pageWith({token:()=> 'token',assetUrl:value=>value.startsWith('/')?'https://server.invalid'+value:value,
+    materials:async()=>[{id:'one',type:'image',productName:'产品',url:'/media/private.png'}],cacheImage:async()=>local})
+  await page.refresh()
+  assert.equal(page.data.materials[0].url,local)
+  assert.equal(page.data.folders[0].cover,local)
+  assert.equal(page.data.albums[0].cover,local)
 })

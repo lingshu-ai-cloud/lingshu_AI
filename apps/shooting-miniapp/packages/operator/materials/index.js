@@ -19,8 +19,8 @@ function materialView(item) {
     name: String(item.name || (type === 'image' ? '未命名图片' : '未命名视频')),
     type,
     typeLabel: type === 'image' ? '图片' : '视频',
-    url: rawUrl ? api.assetUrl(rawUrl) : '',
-    poster: rawPoster ? api.assetUrl(rawPoster) : '',
+    url: !item.mediaError && item.localImagePath ? item.localImagePath : rawUrl ? api.assetUrl(rawUrl) : '',
+    poster: type === 'image' && !item.mediaError && item.localImagePath ? item.localImagePath : rawPoster ? api.assetUrl(rawPoster) : '',
     productName: String(item.productName || ''),
     sourceCategory,
     sourceLabel: MATERIAL_SOURCE_LABELS[sourceCategory],
@@ -80,15 +80,15 @@ Page({
     this.setData({ loading: true, message: '' })
     try {
       const view = this.project(await api.materials())
-      const cached = new Map()
-      const image = url => { if (!url || !api.cacheImage) return Promise.resolve(url); if (!cached.has(url)) cached.set(url, api.cacheImage(url).catch(() => '')); return cached.get(url) }
+      const cached = new Map(), failures = []
+      const image = url => { if (!url || !api.cacheImage) return Promise.resolve(url); if (!cached.has(url)) cached.set(url, api.cacheImage(url).catch(error => { failures.push(error.message || '图片读取失败'); return '' })); return cached.get(url) }
       let cursor = 0
       const hydrate = async item => {
-        if (item.type === 'image') { item.url = await image(item.url); item.poster = item.url; item.mediaError = !item.url }
+        if (item.type === 'image') { item.localImagePath = await image(item.url); item.url = item.localImagePath; item.poster = item.localImagePath; item.mediaError = !item.localImagePath }
         else if (item.poster) item.poster = await image(item.poster)
       }
       await Promise.all(Array.from({ length: Math.min(4, view.materials.length) }, async () => { while (cursor < view.materials.length) await hydrate(view.materials[cursor++]) }))
-      this.setData({ ...this.project(view.materials), loaded: true })
+      this.setData({ ...this.project(view.materials), loaded: true, message: failures.length ? `${failures.length} 项图片未能读取：${failures[0]}` : '', messageType: failures.length ? 'error' : '' })
     }
     catch (error) { this.setData({ message: error.message || '素材库读取失败', messageType: 'error' }) }
     finally { this.setData({ loading: false }) }
@@ -112,7 +112,7 @@ Page({
   openShooting() { if (!this.data.busy) wx.navigateTo({ url: '/packages/operator/shooting/index' }) },
   chooseMaterial() {
     if (this.data.busy) return
-    wx.chooseMedia({ count: 1, mediaType: ['image', 'video'], sourceType: ['album'], maxDuration: 600,
+    wx.chooseMedia({ count: 1, mediaType: ['image', 'video'], sourceType: ['album'],
       success: result => { const file = result.tempFiles && result.tempFiles[0]; if (file) this.upload(file) },
       fail: error => { if (!/cancel/i.test(error.errMsg || '')) this.setData({ message: error.errMsg || '无法选择素材', messageType: 'error' }) },
     })

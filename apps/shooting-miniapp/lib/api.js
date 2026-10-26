@@ -205,10 +205,31 @@ module.exports.recommendCustomerReply = (customer, instruction) => request('agen
   manualRequest: true
 })
 
-// Native images do not carry the Bearer header; download owned media with authentication first.
+// Read owned images through the same authenticated request transport as the material list.
+// Keep native local paths intact when projecting the downloaded images back into the UI.
 module.exports.cacheImage = value => {
   const url = String(value || ''), ownBase = base()
   const relative = url.startsWith(ownBase + '/') ? url.slice(ownBase.length) : url
-  if (/^\/(?:media|studio-media|cloud-files|api\/overseas)\//.test(relative)) return downloadPrivate(relative)
-  return Promise.resolve(url)
+  if (!/^\/(?:media|studio-media|cloud-files|api\/overseas)\//.test(relative)) return Promise.resolve(url)
+  const requestToken = token()
+  return new Promise((resolve, reject) => wx.request({
+    url: privateDownloadUrl(relative), responseType: 'arraybuffer',
+    header: requestToken ? { Authorization: 'Bearer ' + requestToken } : {},
+    success(res) {
+      if (res.statusCode === 401 && requestToken && token() === requestToken) clearToken()
+      if (res.statusCode < 200 || res.statusCode >= 300) return reject(new Error('图片读取失败（HTTP ' + res.statusCode + '）'))
+      if (!res.data || !res.data.byteLength) return reject(new Error('图片文件为空'))
+      if (requestToken !== token()) return reject(new Error('登录状态已变化，请刷新素材'))
+      const contentType = String(res.header?.['Content-Type'] || res.header?.['content-type'] || '').split(';')[0].toLowerCase()
+      if (contentType && !contentType.startsWith('image/') && contentType !== 'application/octet-stream') return reject(new Error('服务器返回的文件不是图片'))
+      const extensions = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/heic': 'heic', 'image/avif': 'avif' }
+      const extension = extensions[contentType] || relative.split('?')[0].match(/\.(png|jpe?g|webp|gif|heic|avif)$/i)?.[1] || 'png'
+      let hash = 2166136261
+      const identity = requestToken + ':' + relative.split('?')[0]
+      for (let i = 0; i < identity.length; i++) hash = Math.imul(hash ^ identity.charCodeAt(i), 16777619) >>> 0
+      const filePath = wx.env.USER_DATA_PATH + '/lingshu-image-' + hash.toString(16) + '.' + extension
+      wx.getFileSystemManager().writeFile({ filePath, data: res.data, success: () => resolve(filePath), fail: () => reject(new Error('无法保存图片，请检查微信存储空间')) })
+    },
+    fail() { reject(new Error('图片请求失败，请检查网络后刷新素材')) }
+  }))
 }

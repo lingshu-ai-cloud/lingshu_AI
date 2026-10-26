@@ -9,14 +9,28 @@ test('real upload API accepts an omitted progress callback and posts bytes', asy
   assert.equal(bytes.byteLength, 3)
 })
 
-test('owned image uses authenticated download and external public image never receives credentials', async () => {
-  const calls = []
-  const api = loadApi({ getStorageSync: () => 'test-token', downloadFile: options => { calls.push(options); options.success({ statusCode: 200, tempFilePath: 'wxfile://image' }) } })
-  assert.equal(await api.cacheImage('http://127.0.0.1:8896/media/tenants/tenant/image.png?assetToken=signed'), 'wxfile://image')
+test('owned images use authenticated bytes on devices without downloadFile and external images never receive credentials', async () => {
+  const calls = [], files = []
+  const api = loadApi({ getStorageSync: () => 'test-token', env: { USER_DATA_PATH: 'wxfile://usr' },
+    request: options => { calls.push(options); options.success({statusCode:200,header:{'Content-Type':'image/png'},data:new ArrayBuffer(3)}) },
+    getFileSystemManager: () => ({writeFile: options => {files.push(options);options.success()}}),
+    downloadFile: () => { throw Error('downloadFile unavailable on device') },
+  })
+  const local = await api.cacheImage('http://127.0.0.1:8896/media/tenants/tenant/image.png?assetToken=signed')
+  assert.match(local, /^wxfile:\/\/usr\/lingshu-image-[a-f0-9]+\.png$/)
   assert.equal(calls[0].header.Authorization, 'Bearer test-token')
+  assert.equal(calls[0].responseType, 'arraybuffer')
+  assert.equal(files[0].data.byteLength,3)
   assert.equal(await api.cacheImage('https://external.invalid/image.png'), 'https://external.invalid/image.png')
   assert.equal(calls.length, 1)
   await assert.rejects(api.downloadPrivate('/media/../other'), /下载地址无效/)
+})
+
+test('image HTTP failures and non-image responses are reported instead of cached as successful images', async () => {
+  const api=loadApi({getStorageSync:()=> 'token',request:o=>o.success({statusCode:404})})
+  await assert.rejects(api.cacheImage('/media/missing.png'), /HTTP 404/)
+  const html=loadApi({getStorageSync:()=> 'token',request:o=>o.success({statusCode:200,header:{'content-type':'text/html'},data:new ArrayBuffer(5)})})
+  await assert.rejects(html.cacheImage('/media/login.png'), /不是图片/)
 })
 
 test('native mock translation uses the existing preview contract and production does not send local origin', async () => {

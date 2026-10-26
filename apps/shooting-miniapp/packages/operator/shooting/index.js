@@ -220,7 +220,7 @@ Page({
   chooseExisting() { this.choose(['album']) },
   choose(sourceType) {
     if (!this.canLeaveTask()) return
-    wx.chooseMedia({ count: 1, mediaType: ['video'], sourceType, maxDuration: 600,
+    wx.chooseMedia({ count: 1, mediaType: ['video'], sourceType, maxDuration: 30,
       success: res => { const file = res.tempFiles && res.tempFiles[0]; if (file) this.submit(file) },
       fail: err => { if (!/cancel/i.test(err.errMsg || '')) this.setData({ message: err.errMsg || '无法选择视频' }) }
     })
