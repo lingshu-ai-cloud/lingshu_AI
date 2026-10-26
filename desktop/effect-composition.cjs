@@ -181,10 +181,11 @@ function sceneEffectFilters({ source, output, scene, width, height, target, inte
 }
 
 /** Join scenes, preserving legacy concat when every boundary is a hard cut. */
-function joinSceneFilters({ labels, scenes, targets, output = 'vcat' }) {
+function joinSceneFilters({ labels, scenes, targets, output = 'vcat', animatedTransitionsAvailable = true }) {
   if (!labels.length) return { filters: [], output: `[${output}]`, duration: 0 };
   if (labels.length === 1) return { filters: [`${labels[0]}null[${output}]`], output: `[${output}]`, duration: targets[0] || 0 };
-  const hasAnimatedTransition = scenes.slice(0, -1).some(scene => scene?.enabled && scene.transitionOut?.type !== 'cut' && scene.transitionOut?.duration > 0);
+  const hasAnimatedTransition = animatedTransitionsAvailable
+    && scenes.slice(0, -1).some(scene => scene?.enabled && scene.transitionOut?.type !== 'cut' && scene.transitionOut?.duration > 0);
   if (!hasAnimatedTransition) {
     return {
       filters: [`${labels.join('')}concat=n=${labels.length}:v=1:a=0[${output}]`],

@@ -37,6 +37,21 @@ function ffmpegHasFilter(name) {
   return available;
 }
 
+let xfadeAvailable;
+function ffmpegSupportsXfade() {
+  if (!ffmpegPath) return false;
+  if (xfadeAvailable !== undefined) return xfadeAvailable;
+  const result = spawnSync(ffmpegPath, [
+    '-hide_banner', '-loglevel', 'error',
+    '-f', 'lavfi', '-i', 'color=red:s=16x16:r=30:d=0.5',
+    '-f', 'lavfi', '-i', 'color=blue:s=16x16:r=30:d=0.5',
+    '-filter_complex', '[0:v]fps=30,settb=1/30,setpts=N[a];[1:v]fps=30,settb=1/30,setpts=N[b];[a][b]xfade=transition=dissolve:duration=0.1:offset=0.4[out]',
+    '-map', '[out]', '-frames:v', '27', '-f', 'null', '-',
+  ], { encoding: 'utf8', timeout: 15_000 });
+  xfadeAvailable = result.status === 0;
+  return xfadeAvailable;
+}
+
 /** 画面比例 → 分辨率 */
 function resolution(ratio) {
   switch (ratio) {
@@ -564,7 +579,10 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       targetDuration: clip.targetDuration,
     })));
     const textOverlaysAvailable = ffmpegHasFilter('drawtext');
+    const animatedTransitionsAvailable = ffmpegSupportsXfade();
     const requestedTextOverlayCount = effectPlan.scenes.reduce((total, scene) => total + scene.overlays.length, 0);
+    const requestedAnimatedTransitionCount = effectPlan.scenes.slice(0, -1)
+      .filter(scene => scene.enabled && scene.transitionOut.type !== 'cut' && scene.transitionOut.duration > 0).length;
     const rawEmphasisPlan = manifest && (manifest.emphasisPlan || manifest.emphasis);
     const emphasisPlan = normalizeEmphasisPlan(rawEmphasisPlan, duration);
     // Motion events use the normalized caption events as their timing/layout
@@ -742,7 +760,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
         effectLabels.push(`[${output}]`);
         targets.push(target);
       });
-      const joined = joinSceneFilters({ labels: effectLabels, scenes: canPrecompose ? [] : effectPlan.scenes, targets, output: 'vcat' });
+      const joined = joinSceneFilters({ labels: effectLabels, scenes: canPrecompose ? [] : effectPlan.scenes, targets, output: 'vcat', animatedTransitionsAvailable });
       filters.push(...joined.filters);
       vlabel = joined.output;
     } else {
@@ -927,6 +945,8 @@ async function composite(manifest, onProgress = () => {}, outDir) {
             schemaVersion: 'renderer-effect-attestation.v1',
             textOverlaysAvailable,
             droppedTextOverlayCount: textOverlaysAvailable ? 0 : requestedTextOverlayCount,
+            animatedTransitionsAvailable,
+            droppedAnimatedTransitionCount: animatedTransitionsAvailable ? 0 : requestedAnimatedTransitionCount,
           }, subtitleRenderEvidence: {
             schemaVersion: 'renderer-subtitle-attestation.v2',
             outputSha256,
@@ -948,4 +968,4 @@ async function composite(manifest, onProgress = () => {}, outDir) {
   }
 }
 
-module.exports = { composite, downloadTo, resolution, ffmpegPath, ffmpegHasFilter, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss, appendFinalVisualLayers, finalMuxOutputArgs };
+module.exports = { composite, downloadTo, resolution, ffmpegPath, ffmpegHasFilter, ffmpegSupportsXfade, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss, appendFinalVisualLayers, finalMuxOutputArgs };
