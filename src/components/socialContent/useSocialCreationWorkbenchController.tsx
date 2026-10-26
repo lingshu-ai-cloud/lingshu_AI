@@ -1,4 +1,5 @@
 import { getScrollBehavior } from '../../lib/usePrefersReducedMotion';
+import { readFreeCreationDraft } from '../../lib/readFreeCreationDraft';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { App as AntApp } from 'antd';
 import type { SocialContentCreationPath } from '../../lib/socialContentModel';
@@ -76,6 +77,11 @@ export function useSocialCreationWorkbenchController({
   const lastSavedDraftTitleRef = useRef(initialDraftTitle);
   const draftSaveTimer = useRef<number>(0);
   const draftCreationRef = useRef<Promise<string> | null>(null);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const [draftRecoveryError, setDraftRecoveryError] = useState('');
+  const adaptationMetadata = useRef<Record<string, unknown>>({});
+  const draftMounted = useRef(true);
+  useEffect(() => { draftMounted.current = true; return () => { draftMounted.current = false; }; }, []);
   const draggedFreeLineIndex = useRef<number | null>(null);
   const [contentGoal, setContentGoal] = useState('种草');
   const [targetAudience, setTargetAudience] = useState('海外目标客户');
@@ -207,10 +213,12 @@ export function useSocialCreationWorkbenchController({
     if (isReplication || draftCreationRef.current) return;
     draftCreationRef.current = (async () => {
       const storedId = (() => { try { return localStorage.getItem(draftStorageKey) || ''; } catch { return ''; } })();
-      if (storedId) {
-        const existing = (await studioApi.listProjects()).find(item => item.id === storedId && item.status === 'draft' && item.spec?.freeCreation);
+      if (seed?.continueProjectId || storedId) {
+        const existing = await readFreeCreationDraft(seed?.continueProjectId, storedId, studioApi);
+        if (!draftMounted.current) return '';
         if (existing) {
           studioApi.adoptProjectRevision(existing);
+          adaptationMetadata.current = { caption: existing.spec.caption, adaptation: existing.spec.adaptation };
           const restored = normalizeFreeCreationState(existing.spec.freeCreation);
           productMaterials.restore(existing.spec);
           setSelectedProductIds(restored.brief.productIds); setContentGoal(['种草', '询盘', '品牌认知', '活动推广'].includes(restored.brief.goal) ? restored.brief.goal : '种草'); setTargetAudience(restored.brief.audience || '海外目标客户');
@@ -227,6 +235,7 @@ export function useSocialCreationWorkbenchController({
             lastSavedDraftTitleRef.current = existing.title.trim();
           }
           setDraftProjectId(existing.id);
+          setDraftRestored(true);
           return existing.id;
         }
       }
@@ -236,12 +245,13 @@ export function useSocialCreationWorkbenchController({
       });
       const id = result.ok ? result.project?.id || '' : '';
       if (id) { setDraftProjectId(id); try { localStorage.setItem(draftStorageKey, id); } catch { /* navigation hint only */ } }
+      setDraftRestored(Boolean(id));
       return id;
-    })().catch(() => '');
+    })().catch(() => { if (draftMounted.current) { setDraftRecoveryError('创作草稿读取失败，请返回重试。'); setDraftTitleStatus('error'); } return ''; });
   }, [isReplication]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (isReplication || productMaterials.loading || productMaterials.error) return;
+    if (isReplication || !draftRestored || productMaterials.loading || productMaterials.error) return;
     window.clearTimeout(draftSaveTimer.current);
     setDraftTitleStatus('saving');
     draftSaveTimer.current = window.setTimeout(() => {
@@ -251,6 +261,7 @@ export function useSocialCreationWorkbenchController({
         const title = draftTitle.trim() || '自由创作 · 未命名草稿';
         const productName = selectedFreeProducts.map(item => item.name).join('、');
         const saved = await studioApi.saveProject({ id, title, status: 'draft', spec: {
+          ...adaptationMetadata.current,
           creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true,
           freeCreation: freeCreationState, script: freeScriptText, duration: desiredDuration,
           selectedProductIds, productId: selectedFreeProducts[0]?.id || '', productInfo: productName, ...productMaterials.selectionSpec,
@@ -269,7 +280,7 @@ export function useSocialCreationWorkbenchController({
       })().catch(() => setDraftTitleStatus('error'));
     }, 600);
     return () => window.clearTimeout(draftSaveTimer.current);
-  }, [desiredDuration, draftProjectId, draftTitle, freeCreationState, freeGeneration, freeHookMaterial, freeScriptText, isReplication, selectedFreeProducts, selectedProductIds, productMaterials.selectionSpec, productMaterials.loading, productMaterials.error]);
+  }, [desiredDuration, draftProjectId, draftTitle, draftRestored, freeCreationState, freeGeneration, freeHookMaterial, freeScriptText, isReplication, selectedFreeProducts, selectedProductIds, productMaterials.selectionSpec, productMaterials.loading, productMaterials.error]);
   const referenceShots = isReplication ? taskReferenceShots || seed?.referenceShots || [] : [];
   const referenceLines: ReferenceSpeechLine[] = taskSpeechLines.length
     ? groupSpeechShots(taskSpeechLines, referenceShots).map(group => {
@@ -515,7 +526,7 @@ export function useSocialCreationWorkbenchController({
   }, []);
 
   const startGeneration = async (replicationStep: 1 | 2 | 3 = 1, navigationOnly = false) => {
-    if (submitting || productSelectionLoading || (!isReplication && !selectedProductIds.length) || (!navigationOnly && isReplication && (!productsReady || !speechGenerated || confirmedSpeech.some(line => !line.draft.trim())))) return;
+    if (submitting || productSelectionLoading || (!isReplication && (!draftRestored || !selectedProductIds.length)) || (!navigationOnly && isReplication && (!productsReady || !speechGenerated || confirmedSpeech.some(line => !line.draft.trim())))) return;
     if (productMaterials.loading || productMaterials.error) {
       setGenerationNotice(productMaterials.error || '正在读取产品素材，请稍后再试。');
       return;
@@ -576,6 +587,7 @@ export function useSocialCreationWorkbenchController({
             id: resolvedDraftProjectId,
             title: draftTitle.trim() || '自由创作 · 未命名草稿', status: 'draft',
             spec: {
+              ...adaptationMetadata.current,
               creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true,
               freeCreation: confirmedFreeState, script: freeScriptText, duration: desiredDuration,
               selectedProductIds, productId: selectedFreeProducts[0]?.id || '', productInfo: productName, ...productMaterials.selectionSpec,
@@ -662,6 +674,7 @@ export function useSocialCreationWorkbenchController({
       if (!id) throw new Error('自由创作草稿尚未建立，请重试。');
       const productName = selectedFreeProducts.map(item => item.name).join('、');
       const saved = await studioApi.saveProject({ id, title: draftTitle.trim() || '自由创作 · 未命名草稿', status: 'draft', spec: {
+        ...adaptationMetadata.current,
         creationPath: 'free_creation', mode: 'material', contentMode: 'video', manualWorkflow: true,
         freeCreation: { ...freeCreationState, hookSource: 'ai', hookMaterialId: '' }, script: freeScriptText, duration: desiredDuration,
         selectedProductIds, productId: selectedFreeProducts[0]?.id || '', productInfo: productName, ...productMaterials.selectionSpec,
@@ -749,9 +762,10 @@ export function useSocialCreationWorkbenchController({
       setDraftTitleStatus('error');
     }
   };
-  const freeReady = selectedProductIds.length > 0 && Boolean(contentGoal.trim()) && Boolean(targetAudience.trim()) && freeLines.length > 0
+  const freeReady = draftRestored && selectedProductIds.length > 0 && Boolean(contentGoal.trim()) && Boolean(targetAudience.trim()) && freeLines.length > 0
     && freeLines.every(line => line.visual.trim() && (line.silent || line.speech.trim())) && freeLines.filter(line => line.hook).length === 1;
   return {
+    draftRecoveryError,
     isReplication, products, productId, setProductId, selectedProductIds, setSelectedProductIds, setProductAssignments,
     setProductSelectionChanged, productSelectorOpen, setProductSelectorOpen, setManualProductTerms, newProductTerm, setNewProductTerm, enterpriseBrandName,
     enterpriseCtas, enterpriseProfileState, productsLoading, productsUnavailable, submitting, generatingSpeech, files,

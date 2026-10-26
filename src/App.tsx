@@ -542,7 +542,7 @@ export default function App() {
         setSmartAssetsCreateRequest(detail.contentCreationRequest || null);
         setSmartAssetsStudioOpen(detail.studioPanel === 'projects'
           || detail.directStudio === true
-          || Boolean(detail.contentCreationRequest && detail.contentCreationRequest.creationPath !== 'viral_replication' && !detail.contentCreationRequest.creationDialoguePlan && !detail.contentCreationRequest.assistantEntry));
+          || Boolean(detail.contentCreationRequest && !detail.contentCreationRequest.resumeEditableDraft && detail.contentCreationRequest.creationPath !== 'viral_replication' && !detail.contentCreationRequest.creationDialoguePlan && !detail.contentCreationRequest.assistantEntry));
         if (detail.studioPanel === 'projects') setOpenProjectsSignal(current => current + 1);
         const runId = String(detail.workflowRunId || '').trim();
         const taskId = String(detail.workflowTaskId || '').trim();
@@ -761,6 +761,7 @@ export default function App() {
   const showSocialContentPlanning = smartAssetsView === 'create'
     && !smartAssetsStudioOpen
     && (Boolean(smartAssetsContentTaskId && !smartAssetsWorkflowContext && !smartAssetsCreateRequest)
+      || Boolean(smartAssetsCreateRequest?.resumeEditableDraft)
       || Boolean(smartAssetsCreateRequest?.creationDialoguePlan)
       || Boolean(smartAssetsCreateRequest?.assistantEntry)
       || smartAssetsCreateRequest?.creationPath === 'viral_replication'

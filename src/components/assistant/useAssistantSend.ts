@@ -1,3 +1,4 @@
+import { businessSceneFollowup, type BusinessSceneSelection } from '../../../shared/contracts/assistantBusinessScene';
 import { requestCreationReply } from './contentCreationRequest';
 import { assistantScenarioIntake } from '../../lib/assistantScenarioIntake';
 import type { CreationTurn } from '../../../shared/contracts/contentCreationDialogue';
@@ -100,13 +101,14 @@ export function useAssistantSend(input: AssistantSendInput) {
     forcedContext?: AssistantContext,
     uploadedAttachments: UploadedAssistantAttachment[] = [],
     creationActionOrReference?: CreationTurn['action'] | AssistantReferenceMedia,
-    options: { preserveDraft?: boolean; companyReport?: boolean } = {},
+    options: { preserveDraft?: boolean; companyReport?: boolean; businessScene?: BusinessSceneSelection } = {},
   ) => {
     const creationAction = typeof creationActionOrReference === 'string' ? creationActionOrReference : undefined;
     const referenceMedia = typeof creationActionOrReference === 'object' ? creationActionOrReference : undefined;
     const userText = text.trim();
+    options = { ...options, businessScene: options.businessScene || (!uploadedAttachments.length && !creationActionOrReference && !options.companyReport ? businessSceneFollowup(userText, useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages.at(-1)) : undefined) };
     if ((!userText && !uploadedAttachments.length) || loading || fileGenerating || replyStreaming) return;
-    const creationDraft = options.companyReport ? null : useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].creationDraft;
+    const creationDraft = options.companyReport || options.businessScene ? null : useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].creationDraft;
     if (page === 'strategy' && creationMode === 'free' && creationDraft && !uploadedAttachments.length && (creationAction || !creationDraft.evidenceVersion || !useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages.some(message => message.creation?.selection.referenceId === creationDraft.referenceId))) {
       const requestFence = persistenceFenceRef.current;
       const token = getToken();
@@ -134,7 +136,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       }
       return;
     }
-    if (contentIntake.active && !options.companyReport) {
+    if (contentIntake.active && !options.companyReport && !options.businessScene) {
       if (uploadedAttachments.length) { void uiMessage.warning('请先完成或取消当前任务问答，再发送附件。'); return; }
       contentIntake.answer(userText);
       setDraftInput(PRIMARY_ASSISTANT_THREAD, '');
@@ -176,15 +178,15 @@ export function useAssistantSend(input: AssistantSendInput) {
     const clarifiedDiagram = pendingMapFileRef.current && /(?:业务|路线图|思维导图|流程图|战略)/u.test(visibleText);
     const fileIntent = assistantFileIntent(visibleText) || (clarifiedDiagram ? { format: 'jpg' as const, diagram: true, needsMapScope: false } : null);
     const lastMessage = thread.messages.at(-1);
-    const imagePortal = !fileIntent && !creationAction ? assistantImageReplicationPortal(visibleText, uploadedAttachments) : null;
-    const scene = !imagePortal && ['strategy','socialInspiration'].includes(page) && !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? assistantScenarioIntake(visibleText) : null;
+    const imagePortal = !options.businessScene && !fileIntent && !creationAction ? assistantImageReplicationPortal(visibleText, uploadedAttachments) : null;
+    const scene = !options.businessScene && !imagePortal && ['strategy','socialInspiration'].includes(page) && !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? assistantScenarioIntake(visibleText) : null;
     if (scene) {
       setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: scene.scenario === 'weekly_calendar' ? '发布日历在内容创作中，点击下方卡片即可打开。' : scene.scenario === 'hook_first' ? '先选一个开场片段，再确认产品和内容方向。' : scene.scenario === 'content_task' ? '先确认产品、内容方向和预计发布时间。' : '先确定活动信息，再安排要准备的内容。', creationPortal: scene }]);
       setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;
     }
-    if (!imagePortal && page === 'strategy' && !creationDraft && !uploadedAttachments.length && !fileIntent
+    if (!options.businessScene && !imagePortal && page === 'strategy' && !creationDraft && !uploadedAttachments.length && !fileIntent
       && /(?:借鉴|复刻).{0,12}爆款|爆款复刻/u.test(visibleText)
       && !/(?:取消|不要|先别|如何|怎么)/u.test(visibleText)) {
       setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: '先选一条想借鉴的对标视频，再确定产品和周发布安排。',
@@ -195,14 +197,14 @@ export function useAssistantSend(input: AssistantSendInput) {
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;
     }
-    const sourceReply = !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? assistantSourceFollowUp(visibleText, lastMessage) : null;
+    const sourceReply = !options.businessScene && !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? assistantSourceFollowUp(visibleText, lastMessage) : null;
     if (sourceReply) {
       setMessages(threadAgent, [...nextVisible, sourceReply]);
       setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;
     }
-    const taskPortal = !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction
+    const taskPortal = !options.businessScene && !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction
       && lastMessage?.role === 'assistant' ? confirmedTaskPortal(lastMessage.taskPortal, visibleText) : null;
     if (taskPortal) {
       setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: '点击下方入口继续处理这条任务。', taskPortal }]);
@@ -210,7 +212,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;
     }
-    const portal = imagePortal || (!creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction
+    const portal = imagePortal || (!options.businessScene && !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction
       && !['smartAssets', 'socialInspiration'].includes(page) ? assistantCreationPortal(visibleText) : null);
     if (portal) {
       setMessages(threadAgent, [...nextVisible, { role: 'assistant',
@@ -261,7 +263,7 @@ export function useAssistantSend(input: AssistantSendInput) {
     // Attachments deliberately bypass the deterministic action router. The
     // router accepts only server-signed business object/version inputs; a
     // newly uploaded material must never be guessed into those parameters.
-    const focusedMutationActionId = uploadedAttachments.length || fileIntent ? undefined : focusedNaturalLanguageActionId(visibleText);
+    const focusedMutationActionId = options.businessScene || uploadedAttachments.length || fileIntent ? undefined : focusedNaturalLanguageActionId(visibleText);
     const focusedActionInput = focusedMutationActionId
       ? focusedNaturalLanguageActionInput(focusedCard, focusedMutationActionId)
       : undefined;
@@ -319,7 +321,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       assistantStarted = true;
       const current = useAssistantStore.getState().threads[threadAgent].messages;
       fileMessageIndex = current.length;
-      setMessages(threadAgent, [...current, { role: 'assistant', content: fileIntent ? `正在整理并生成 ${fileIntent.format.toUpperCase()} 文件…` : '' }]);
+      setMessages(threadAgent, [...current, { role: 'assistant', ...(options.businessScene ? { businessScene: options.businessScene } : {}), content: fileIntent ? `正在整理并生成 ${fileIntent.format.toUpperCase()} 文件…` : '' }]);
       setLoading(false);
     };
     const patchAssistant = (patch: (msg: Message) => Message) => {
@@ -346,6 +348,7 @@ export function useAssistantSend(input: AssistantSendInput) {
           deepThinking: false,
           ...(strategyRequest ? {
             userQuestion: visibleText,
+            ...(options.businessScene ? { businessScene: options.businessScene } : {}),
             ...(page === 'strategy' && creationMode === 'free' && creationDraft ? { creationSelection: creationDraft } : {}),
             pageContext: {
               label: context.label,

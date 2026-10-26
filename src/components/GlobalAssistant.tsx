@@ -1,3 +1,4 @@
+import type { BusinessSceneSelection } from '../../shared/contracts/assistantBusinessScene';
 import { isUnboundOperationError } from '../lib/assistantOperationNotice';
 import { appendProductionReceipt } from '../lib/assistantProductionPortal';
 import { executeAssistantAction } from '../lib/assistantActionRequest';
@@ -542,7 +543,7 @@ export default function GlobalAssistant({
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ text?: string; assistantText?: string; scriptedReply?: string; context?: Partial<AssistantContext>; tool?: AssistantTool; referenceMedia?: AssistantReferenceMedia; preserveDraft?: boolean; companyReportRequest?: { companyId: string; year: number } }>).detail;
+      const detail = (event as CustomEvent<{ text?: string; assistantText?: string; scriptedReply?: string; context?: Partial<AssistantContext>; tool?: AssistantTool; referenceMedia?: AssistantReferenceMedia; preserveDraft?: boolean; companyReportRequest?: { companyId: string; year: number }; businessScene?: BusinessSceneSelection }>).detail;
       let targetContext = pageContext;
       if (detail?.context?.agent && detail.context.label && detail.context.summary) {
         targetContext = {
@@ -576,7 +577,7 @@ export default function GlobalAssistant({
         const current = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages;
         setMessages(PRIMARY_ASSISTANT_THREAD, [...current, { role: 'assistant', content: assistantText }]);
       }
-      if (text) window.setTimeout(() => void send(text, routeAgent, targetContext, [], detail?.referenceMedia, { preserveDraft: detail?.preserveDraft, companyReport: Boolean(detail?.companyReportRequest) }), 0);
+      if (text) window.setTimeout(() => void send(text, routeAgent, targetContext, [], detail?.referenceMedia, { preserveDraft: detail?.preserveDraft, companyReport: Boolean(detail?.companyReportRequest), businessScene: detail?.businessScene }), 0);
     };
     window.addEventListener('lingshu-assistant-open', handler);
     return () => window.removeEventListener('lingshu-assistant-open', handler);

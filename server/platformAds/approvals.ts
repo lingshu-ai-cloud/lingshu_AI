@@ -1,3 +1,4 @@
+import { readAdRows } from './readPages.js';
 import { store } from '../storage/index.js';
 import { getPlatformAdTask, withPlatformAdTaskLock, PlatformAdTaskValidationError, PlatformAdTaskConflictError } from './tasks.js';
 import { executeApprovedAdAction, listAdExecutions, reconcileAdExecution } from './execution.js';
@@ -6,9 +7,9 @@ import { getConnectionCredential } from './connections.js';
 
 export const AD_APPROVALS = 'platform_ad_approvals';
 export type AdApproval = { id: string; tenant_id: string; taskId: string; taskVersion: number; status: string; payload: Record<string, unknown>; createdBy: string; decidedBy?: string; createdAt: string; expiresAt: string; updatedAt: string; receipt?: unknown; error?: string };
-export async function listAdApprovals(tenantId: string, taskId: string) {
-  const [records, task] = await Promise.all([store.list<AdApproval>(AD_APPROVALS, { where: { tenant_id: tenantId, taskId }, sort: '-createdAt', perPage: 200 }), getPlatformAdTask(tenantId, taskId)]);
-  return records.items.map(record => ({ ...record, status: record.status !== 'PENDING' ? record.status : Date.parse(record.expiresAt) <= Date.now() ? 'EXPIRED' : !task || task.version !== record.taskVersion || task.managementMode !== 'approval' ? 'INVALIDATED' : 'PENDING' }));
+export async function listAdApprovals(tenantId: string, taskId: string, allPages = false) {
+  const [records, task] = await Promise.all([readAdRows<AdApproval>(AD_APPROVALS, tenantId, taskId, allPages, '-createdAt'), getPlatformAdTask(tenantId, taskId)]);
+  return records.map(record => ({ ...record, status: record.status !== 'PENDING' ? record.status : Date.parse(record.expiresAt) <= Date.now() ? 'EXPIRED' : !task || task.version !== record.taskVersion || task.managementMode !== 'approval' ? 'INVALIDATED' : 'PENDING' }));
 }
 export async function createAdApproval(tenantId: string, userId: string, taskId: string, input: Record<string, unknown>) {
   return withPlatformAdTaskLock(tenantId, taskId, async () => {

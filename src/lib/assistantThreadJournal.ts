@@ -1,3 +1,4 @@
+import { sceneSelectionSchema } from '../../shared/contracts/assistantBusinessScene';
 import { assistantCreationPortalSchema } from '../../shared/contracts/assistantCreationPortal';
 import { assistantTaskPortalSchema } from '../../shared/contracts/assistantTaskPortal';
 import { assistantSourcePortalSchema } from '../../shared/contracts/assistantSourcePortal';
@@ -124,6 +125,7 @@ function sanitizeMessage(value: Message): Message {
   const taskPortal = assistantTaskPortalSchema.safeParse(sanitizeValue(value.taskPortal, 0, 4, 32, 1200));
   const sourcePortal = assistantSourcePortalSchema.safeParse(sanitizeValue(value.sourcePortal, 0, 4, 32, 2400));
   const companyReport = companyReportSchema.safeParse(sanitizeValue(value.companyReport, 0, 10, 128, 6000));
+  const businessScene = sceneSelectionSchema.safeParse(value.businessScene);
   const media = value.referenceMedia;
   const referenceMedia = media?.kind === 'video' && media.title?.trim() && ['tiktok', 'instagram', 'youtube', 'facebook', 'linkedin'].includes(media.platform)
     ? {
@@ -138,6 +140,7 @@ function sanitizeMessage(value: Message): Message {
       }
     : undefined;
   return {
+    ...(businessScene.success && value.role === 'assistant' ? { businessScene: businessScene.data } : {}),
     ...(creation.success ? { creation: creation.data } : {}),
     ...(portal.success && value.role === 'assistant' ? { creationPortal: portal.data } : {}),
     ...(taskPortal.success && value.role === 'assistant' ? { taskPortal: taskPortal.data } : {}),
