@@ -350,6 +350,23 @@ test('bound English poster rejects a different package variant and mixed-languag
   assert.doesNotMatch(JSON.stringify(response),/Mousse|Ophthalmologist|卸妆 product/);
 });
 
+test('a bound task does not turn broad model marketing claims into confirmed image copy',async()=>{
+  const {store,task}=await preparedViralTask('product_poster','paid','en');
+  const response=await planStudioPoster({store,tenantId:'tenant-a',
+    body:{imageTaskId:task.id,expectedImageTaskVersion:task.version},
+    packagingHint:'CLOUD FOAM CLEANSING HONEY',
+    enterpriseCtx:async()=>`公司名称：示例企业\n产品1：${task.contentBrief.productNames[0]}`,
+    allowPaidCall:async()=>true,
+    callPlanner:async()=>JSON.stringify({poster:{headline:'CLOUD FOAM CLEANSING HONEY',
+      subheadline:'Barrier-strengthening with rare polar botanicals',cta:'Inquire for B2B terms'},
+      caption:'Clinically aligned, OEM-ready, and available across North America.',hashtags:['#OEMBeauty']}),
+  });
+  assert.equal(response?.poster.headline,'CLOUD FOAM CLEANSING HONEY');
+  assert.equal(response?.poster.subheadline,'Product and packaging overview');
+  assert.equal(response?.caption,'Explore this product and its packaging. Contact us for verified commercial details.');
+  assert.doesNotMatch(JSON.stringify(response?.hashtags),/OEM|private.label|wholesale/i);
+});
+
 test('a timed-out bound planner keeps the director node unapproved and exposes the provider uncertainty', async () => {
   const {store,task}=await preparedViralTask('product_poster','paid');
   let submissions=0,claims=0;

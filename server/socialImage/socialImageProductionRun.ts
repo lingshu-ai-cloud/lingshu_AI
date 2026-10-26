@@ -526,17 +526,17 @@ export async function recordSocialImageDirectorReview(input: {
   }
   if (input.decision.decision === 'accept_for_user_review' && task.creationPath === 'viral_replication') {
     const factors = task.hookFactorSpec?.factors || [];
-    const factorChecksPassed = factors.length > 0 && reviewSet.outputs.every(output => factors.every(factor => {
+    const factorChecksRecorded = factors.length > 0 && factors.every(factor => {
       const result = input.decision.factorResults.find(item => item.factorId === factor.factorId);
-      return result?.verdict === 'pass' && output.qualityChecks.some(check => check.key === `hook_factor:${factor.factorId}`
-        && check.verdict === 'pass' && check.evidence?.includes(`candidate-sha256:${output.contentHash}`)
-        && factor.evidenceRefs.every(ref => check.evidence?.includes(`reference-region-sha256:${ref.contentHash}`)));
-    }));
-    const referenceChecksReady = reviewSet.outputs.every(output => output.qualityChecks.some(check =>
-      check.key === 'reference_structure_similarity' && check.verdict !== 'fail'));
-    if (!factorChecksPassed || !referenceChecksReady) {
-      throw new SocialImageProductionRunError('social_image_hook_candidate_evidence_incomplete', 422);
-    }
+      const checks = reviewSet.outputs.map(output => output.qualityChecks.find(check =>
+        check.key === `hook_factor:${factor.factorId}`
+        && check.evidence?.includes(`candidate-sha256:${output.contentHash}`)
+        && factor.evidenceRefs.every(ref => check.evidence?.includes(`reference-region-sha256:${ref.contentHash}`))));
+      const verdict = checks.every(check => check?.verdict === 'pass') ? 'pass' : checks.some(check => check?.verdict === 'fail') ? 'fail' : 'uncertain';
+      return checks.every(Boolean) && result?.verdict === verdict;
+    });
+    const referenceChecksReady = reviewSet.outputs.every(output => output.qualityChecks.some(check => check.key === 'reference_structure_similarity' && check.verdict !== 'fail'));
+    if (!factorChecksRecorded || !referenceChecksReady) throw new SocialImageProductionRunError('social_image_hook_candidate_evidence_incomplete', 422);
   }
   const result = await updateSocialImageTask(input.store, input.tenantId, input.taskId, input.expectedVersion, {
     directorReviewDecision: { ...input.decision, candidateRefs: reviewSet.refs,
@@ -590,8 +590,10 @@ export async function runSocialImageDirectorReview(input: {
       verdict: allPassed ? 'pass' as const : checks.some(check => check?.verdict === 'fail') ? 'fail' as const : 'uncertain' as const,
       evidenceRefs: checks.every(Boolean) ? [...factor.evidenceRefs, ...reviewSet.refs] : factor.evidenceRefs };
   });
+  // Measured reference factors are soft evidence; keep failures visible to the user without starting paid repair.
   const factorReady = task.creationPath !== 'viral_replication' || Boolean(task.hookFactorSpec?.factors.length
-    && factorResults.every(result => result.verdict === 'pass'));
+    && factorResults.every(result => reviewSet.refs.every(ref => result.evidenceRefs.some(evidence =>
+      evidence.id === ref.id && evidence.contentHash === ref.contentHash))));
   const failedCriteria = [
     ...(!referenceReady ? ['reference_structure_similarity'] : []),
     ...factorResults.filter(result => result.verdict !== 'pass').map(result => `hook_factor:${result.factorId}`),
@@ -615,7 +617,7 @@ export async function runSocialImageDirectorReview(input: {
       ...reviewSet.outputs.flatMap(output => output.qualityChecks
         .filter(check => failedCriteria.includes(check.key) && check.region).map(check => JSON.stringify(check.region))),
     ],
-    reasonCodes: canAccept ? ['independent_quality_evidence_passed'] : ['reference_factor_evidence_incomplete'],
+    reasonCodes: canAccept ? [failedCriteria.length ? 'soft_reference_difference_requires_user_review' : 'independent_quality_evidence_passed'] : ['reference_factor_evidence_incomplete'],
     repairInstructions: canAccept ? [] : ['补齐每个爆点因素的候选像素证据后重新审查'],
     reviewConfidence: Math.min(.99, ...hardChecks.map(check => check?.score ?? .8)),
     reviewedAt: input.now || new Date().toISOString(),

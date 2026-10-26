@@ -24,6 +24,9 @@ test('single poster frame preserves the source product label pixels instead of c
   const center = (Math.floor(info.height * .61) * info.width + Math.floor(info.width * .5)) * info.channels;
   assert.ok(data[center]! > 220 && data[center + 1]! > 220 && data[center + 2]! > 220,
     'the authoritative white package/card pixels remain visible');
+  const edge = (Math.floor(info.height * .61) * info.width + 60) * info.channels;
+  assert.ok(data[edge]! < data[center]! - 70,
+    'a framed source photo fades into the scene instead of retaining a hard rectangular edge');
 });
 
 test('reference-left poster wraps a long headline and keeps the original square product photo inside its slot', async () => {

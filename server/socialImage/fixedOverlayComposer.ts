@@ -108,6 +108,19 @@ function referenceMaskSvg(width: number, height: number, mask: NonNullable<Socia
   return Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">${filter}${shape}</svg>`);
 }
 
+async function softenFramedProductEdges(bytes: Buffer): Promise<Buffer> {
+  const { width = 0, height = 0 } = await sharp(bytes).metadata();
+  if (!width || !height) return bytes;
+  const inset = Math.max(8, Math.round(Math.min(width, height) * .055));
+  const blur = Math.max(5, Math.round(inset * .8));
+  const mask = Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+    <defs><filter id="feather" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="${blur}"/></filter></defs>
+    <rect x="${inset}" y="${inset}" width="${width - inset * 2}" height="${height - inset * 2}"
+      rx="${inset}" fill="white" filter="url(#feather)"/>
+  </svg>`);
+  return sharp(bytes).ensureAlpha().composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer();
+}
+
 /** Keeps identity and UI pixel-identical across GIF frames. */
 export async function composeFixedSocialLayers(input: {
   background: Buffer;
@@ -149,7 +162,8 @@ export async function composeFixedSocialLayers(input: {
     const productHeight = Math.round(stage.height * height);
     // Keep the source aspect ratio. A square product photo in a tall slot used
     // to acquire large synthetic white bars above and below the package.
-    const rendered = await sharp(transparent).resize(productWidth, productHeight, { fit: 'inside' }).png().toBuffer();
+    const fitted = await sharp(transparent).resize(productWidth, productHeight, { fit: 'inside' }).png().toBuffer();
+    const rendered = input.productTreatment === 'framed_source' ? await softenFramedProductEdges(fitted) : fitted;
     const renderedSize = await sharp(rendered).metadata();
     composites.push({
       input: rendered,

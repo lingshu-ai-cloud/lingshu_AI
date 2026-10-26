@@ -252,7 +252,7 @@ test('wrapped headline OCR blocks jointly satisfy the reference text-region fact
   assert.equal(checks.find(check => check.key === 'hook_factor:reference-text-hierarchy')?.verdict, 'pass');
 });
 
-test('V3 viral carousel repairs the whole set when one page lacks factor evidence and rejects forged acceptance', async () => {
+test('V3 viral carousel surfaces a measured soft factor uncertainty for user review and rejects forged acceptance', async () => {
   const { store, task } = await preparedViralTask('carousel');
   assert.equal(task.deliverySpec.outputCount, 4);
   const units = Array.from({ length: 4 }, (_, index) => ({
@@ -292,7 +292,7 @@ test('V3 viral carousel repairs the whole set when one page lacks factor evidenc
   assert.equal(projectSocialImageProductionSnapshot(staged.task).currentNode, 'director_review');
   const reviewed = await runSocialImageDirectorReview({ store, tenantId: 'tenant-a', taskId: task.id,
     expectedVersion: staged.task.version, candidateId: outputs[0]!.id, candidateVersion: 1, now });
-  assert.equal(reviewed.directorReviewDecision?.decision, 'repair');
+  assert.equal(reviewed.directorReviewDecision?.decision, 'accept_for_user_review');
   assert.equal(reviewed.directorReviewDecision?.candidateRefs?.length, 4);
   assert.ok(reviewed.directorReviewDecision?.failedCriteria.includes(`hook_factor:${task.hookFactorSpec!.factors[0]!.factorId}`));
   assert.equal(reviewed.directorReviewDecision?.factorResults.find(result =>
@@ -301,5 +301,5 @@ test('V3 viral carousel repairs the whole set when one page lacks factor evidenc
     expectedVersion: reviewed.version, decision: { ...reviewed.directorReviewDecision!,
       decision: 'accept_for_user_review', factorResults: reviewed.directorReviewDecision!.factorResults
         .map(result => ({ ...result, verdict: 'pass' as const })) } }), /social_image_hook_candidate_evidence_incomplete/);
-  assert.equal((await readSocialImageTask(store, 'tenant-a', task.id))?.directorReviewDecision?.decision, 'repair');
+  assert.equal((await readSocialImageTask(store, 'tenant-a', task.id))?.directorReviewDecision?.decision, 'accept_for_user_review');
 });

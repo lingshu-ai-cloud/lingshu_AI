@@ -283,6 +283,22 @@ Schema:
                             : `Create a neutral product presentation using the supplied enterprise product images, without additional commercial claims. All newly authored visible text must be in ${lang}.`,
                     };
                 }
+                if (boundTask) {
+                    // The enterprise profile may contain broad marketing copy for
+                    // this or other products. A model paraphrase is not evidence
+                    // that a claim belongs in this particular user-confirmed
+                    // image task. Keep the package-checked product title, and use
+                    // localized, claim-free supporting copy until an explicit
+                    // per-task claim contract and verifier are available.
+                    safeDraft = {
+                        ...safeDraft,
+                        poster: { ...safeDraft.poster, subheadline: neutral.subheadline, cta: neutral.cta },
+                        caption: neutral.caption,
+                        hashtags: [],
+                        commentCta: '',
+                        dmOpening: '',
+                    };
+                }
                 const publishable = fieldsToConfirm.length === 0;
                 return await respond({
                     ok: true,

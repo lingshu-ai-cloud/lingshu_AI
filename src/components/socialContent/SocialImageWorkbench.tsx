@@ -3,7 +3,7 @@ import { Alert, Button, Checkbox, Input, Modal, Select, Spin, Steps, Tag } from 
 import { FileImage, ImagePlus, Layers3, RefreshCw, Upload } from 'lucide-react';
 import LsPageHeader from '../ui/LsPageHeader';
 import { LsMediaStateFrame } from '../ui/LsExperiencePrimitives';
-import { CHECK_LABELS, IMAGE_TYPES, STEP_ITEMS, passedQualityKeys, posterStyleForType, resolvedQuality,
+import { CHECK_LABELS, IMAGE_TYPES, STEP_ITEMS, passedQualityKeys, posterStyleForType, resolvedQuality, socialImageSoftReferenceFindings,
   ReviewImage, topicForType } from './socialImageWorkbenchPresentation';
 import { SocialImageReviewActions } from './SocialImageReviewActions';
 import { useImageReplicationAutoStart } from './useImageReplicationAutoStart';
@@ -218,7 +218,7 @@ function SocialImageWorkbenchSession({
     ['quality_checking', 'approved'].includes(output.state) && socialImageOutputHardChecksPassed(output));
   const reviewQualityPasses = hardChecks.filter(key => reviewOutputs.length > 0 && reviewOutputs.every(output =>
     output.qualityChecks.some(check => check.key === key && check.severity === 'hard' && resolvedQuality(check.verdict))));
-  const referenceStructureUncertain = reviewOutputs.some(output => output.qualityChecks.some(check => check.key === 'reference_structure_similarity' && check.severity === 'soft' && check.verdict === 'uncertain'));
+  const softReferenceFindings = socialImageSoftReferenceFindings(reviewOutputs);
   const reconcileSavedImage = async () => {
     if (!task || !recoverableJob) return;
     setBusy(true); setReconciling(true); setError(''); setNotice('正在核对已有素材；不会重新调用图片供应商。');
@@ -752,7 +752,7 @@ function SocialImageWorkbenchSession({
                 : <Button size="small" className="mt-2" onClick={() => setConfirmationOpen(true)}>统一查看与补充</Button>} />}
             <p className="pt-2 text-sm font-semibold">自动检查（硬门禁）</p>
             <div className="flex flex-wrap gap-2">{hardChecks.map(key => <Tag key={key} color={reviewQualityPasses.includes(key) ? 'success' : 'default'}>{CHECK_LABELS[key]}</Tag>)}</div>
-            {referenceStructureUncertain && <Alert type="warning" showIcon message="参考结构相似度尚不确定" description="产品、文字和安全等硬检查通过后，仍请对照参考图检查画面结构，再决定是否采用。" />}
+            {softReferenceFindings.length > 0 && <Alert type="warning" showIcon message="参考结构需你验收" description={`${softReferenceFindings.join('；')}。这些是软指标，请对照参考图判断是否采用；不会触发自动付费重做。`} />}
             {imageType === 'gif_poster' && <Tag color={reviewOutputs.at(-1)?.qualityChecks.some(check =>
               check.key === 'motion_mechanism_similarity' && check.severity === 'hard' && resolvedQuality(check.verdict))
               ? 'success' : 'default'}>GIF 全帧与动效检查</Tag>}

@@ -29,6 +29,17 @@ export const resolvedQuality = (verdict: string) => verdict === 'pass' || verdic
 export const passedQualityKeys = (outputs: SocialImageCreationTask['outputs']) => [...new Set(outputs.flatMap(output =>
   output.qualityChecks.filter(check => resolvedQuality(check.verdict)).map(check => check.key)))];
 
+export function socialImageSoftReferenceFindings(outputs: SocialImageCreationTask['outputs']): string[] {
+  const labels: Record<string, string> = {
+    reference_structure_similarity: '参考结构相似度待判断',
+    'hook_factor:reference-attention-region': '注意力区域未完全对齐',
+    'hook_factor:reference-text-hierarchy': '标题层级未完全对齐',
+  };
+  return [...new Set(outputs.flatMap(output => output.qualityChecks
+    .filter(check => check.severity === 'soft' && check.verdict !== 'pass')
+    .map(check => labels[check.key] || check.key)))];
+}
+
 export function topicForType(type: SocialImageContentType) {
   if (type === 'brand_news') return 'partnership_news';
   if (type === 'experiment_comparison') return 'experiment_comparison';
