@@ -77,6 +77,7 @@ export default function AppPageSlot({
           {(page === 'strategy' || mountedPages.has('strategy')) && (
             <Activity mode={page === 'strategy' ? 'visible' : 'hidden'}>
             <StrategyPage
+              sessionScope={pagePreferenceScope(session)}
               onEnterConversation={enterConversation}
               onLeaveConversation={leaveConversation}
               isInConversation={conversation?.agent === 'strategy'}

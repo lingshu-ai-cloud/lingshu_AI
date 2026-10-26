@@ -7,10 +7,11 @@ import {
 } from 'lucide-react';
 import type { Page, ConversationContext, Conversation, AgentAction } from '../App';
 import { isPageInNavigationBranch, PAGE_REGISTRY } from '../pageRegistry';
-import { isAdminSession, ROLE_PAGE_ACCESS } from '../appSession';
+import { isAdminSession, pagePreferenceScope, ROLE_PAGE_ACCESS } from '../appSession';
 import { authApi, exitSupportSession, type AuthSession } from '../lib/auth';
 import RightPanel from './RightPanel';
 import DemoGuide from './DemoGuide';
+import HomeGrowthTour from './HomeGrowthTour';
 import AccountSettingsModal from './AccountSettingsModal';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
@@ -73,7 +74,7 @@ function NavItem({
   disabled?: boolean;
 }) {
   return (
-    <div onPointerEnter={disabled ? undefined : onPrefetch} onFocus={disabled ? undefined : onPrefetch} title={disabled ? '投流尚未接通，暂不可打开' : undefined}>
+    <div data-growth-tour-nav={item.id} onPointerEnter={disabled ? undefined : onPrefetch} onFocus={disabled ? undefined : onPrefetch} title={disabled ? '投流尚未接通，暂不可打开' : undefined}>
       <Menu
         className="ls-nav-menu"
         mode="inline"
@@ -231,6 +232,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
     <div className={`app-shell flex h-[100dvh] min-h-0 min-w-0 overflow-hidden ${creatorSurface ? `creator-shell ${homeSurface ? '' : 'creator-shell--section'}` : ''}`}>
 
       <ActionFeedbackHost />
+      <HomeGrowthTour page={page} scope={activeSession ? pagePreferenceScope(activeSession) : 'guest'} onNavigate={onNavigate} />
 
       {/* ── Left sidebar ─────────────────────────────── */}
       {page !== 'agentMonitor' && <motion.aside

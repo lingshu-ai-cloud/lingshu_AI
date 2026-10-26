@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import { Button, Form, Input, Modal, Select, Upload } from 'antd';
 import { CheckCircle2, FileSpreadsheet, Loader2, Sparkles } from 'lucide-react';
 import {
@@ -23,11 +23,21 @@ const applicationGuideSteps = [
   { index: 4, label: '综合确认' },
 ] as const;
 
-function OnboardingGuideFrame({ step, title, headerAction, children, busy = false, dismissible = false,
+export const OnboardingGuideTitleContext = createContext('新手引导');
+
+const assistantQuestions = {
+  1: '你好，我是灵小枢。先告诉我，你的企业和品牌叫什么、主要做什么？我会把你确认的回答整理为企业资料。',
+  2: '接下来，你希望我重点了解哪些产品？可以上传已有资料，也可以手动填写，并选出最多三个主推产品。',
+  3: '这些产品主要面向哪些市场和买家？请告诉我你计划使用的平台、语言及希望客户采取的行动。',
+  4: '我把刚才的回答整理好了。请核对每项内容和来源，确认后我才会写入企业资料。',
+} as const;
+
+function OnboardingGuideFrame({ step, title, guideTitle = '新手引导', headerAction, children, busy = false, dismissible = false,
   onClose, onBack, primaryLabel, primaryDisabled = false, onPrimary,
 }: {
   step: 1 | 2 | 3 | 4;
   title: string;
+  guideTitle?: string;
   headerAction?: ReactNode;
   children: ReactNode;
   busy?: boolean;
@@ -38,8 +48,9 @@ function OnboardingGuideFrame({ step, title, headerAction, children, busy = fals
   primaryDisabled?: boolean;
   onPrimary: () => void;
 }) {
+  const contextualGuideTitle = useContext(OnboardingGuideTitleContext);
   return <LsFlowDialog
-    open title="新手引导" width={840} centered current={step - 1}
+    open title={guideTitle === '新手引导' ? contextualGuideTitle : guideTitle} width={840} centered current={step - 1}
     steps={applicationGuideSteps.map(item => ({
       title: item.label,
       status: item.index < step ? 'finish' : item.index === step ? 'process' : 'wait',
@@ -59,20 +70,24 @@ function OnboardingGuideFrame({ step, title, headerAction, children, busy = fals
         <h2 id={`onboarding-step-${step}-title`} className="ls-type-title-large min-w-0 text-text-primary">{title}</h2>
         {headerAction ? <div className="ml-auto shrink-0">{headerAction}</div> : null}
       </div>
-      <div className="mt-5">{children}</div>
+      <div className="mt-5 flex items-start gap-3" aria-label="灵小枢提问">
+        <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-glow text-sm font-semibold text-accent">枢</span>
+        <p className="max-w-2xl rounded-2xl rounded-tl-sm bg-surface-2 px-4 py-3 text-sm leading-6 text-text-primary">{assistantQuestions[step]}</p>
+      </div>
+      <div className="mt-5" aria-label="我的回答">{children}</div>
     </section>
   </LsFlowDialog>;
 }
 
-export function OnboardingEnterpriseStep({ busy, profileLoading, dismissible, onClose, onConfirm,
+export function OnboardingEnterpriseStep({ busy, profileLoading, dismissible, onClose, onConfirm, guideTitle,
   missingFields, companyName, brandName, industry, primaryBusiness, onChange, error,
 }: {
-  busy: boolean; profileLoading: boolean; dismissible: boolean; onClose?: () => void; onConfirm: () => void;
+  busy: boolean; profileLoading: boolean; dismissible: boolean; onClose?: () => void; onConfirm: () => void; guideTitle?: string;
   missingFields: string[]; companyName: string; brandName: string; industry: string; primaryBusiness: string;
   onChange: (field: 'companyName' | 'brandName' | 'industry' | 'primaryBusiness', value: string) => void;
   error: string;
 }) {
-  return <OnboardingGuideFrame step={1} title="先建立企业与品牌身份" busy={busy}
+  return <OnboardingGuideFrame step={1} title="先建立企业与品牌身份" guideTitle={guideTitle} busy={busy}
     dismissible={dismissible} onClose={onClose} primaryLabel="保存草稿，下一步"
     primaryDisabled={Boolean(missingFields.length)} onPrimary={onConfirm}>
     <Form className="space-y-5" layout="vertical" aria-label="企业与品牌资料">
@@ -90,11 +105,11 @@ export function OnboardingEnterpriseStep({ busy, profileLoading, dismissible, on
   </OnboardingGuideFrame>;
 }
 
-export function OnboardingProductsStep({ busy, productsLoading, productImporting, dismissible,
+export function OnboardingProductsStep({ busy, productsLoading, productImporting, dismissible, guideTitle,
   onClose, onBack, onConfirm, onImport, onAddProduct, products, focusProductIds, onToggleFocus, onProductChange,
   importMessage, error,
 }: {
-  busy: boolean; productsLoading: boolean; productImporting: boolean; dismissible: boolean;
+  busy: boolean; productsLoading: boolean; productImporting: boolean; dismissible: boolean; guideTitle?: string;
   onClose?: () => void; onBack: () => void; onConfirm: () => void; onImport: (file: File) => void; onAddProduct: (name: string) => void;
   products: EnterpriseOnboardingProduct[]; focusProductIds: string[];
   onToggleFocus: (id: string) => void;
@@ -110,7 +125,7 @@ export function OnboardingProductsStep({ busy, productsLoading, productImporting
   };
   const focusProducts = focusProductIds.map(id => products.find(product => product.id === id)).filter(Boolean) as EnterpriseOnboardingProduct[];
   const incompleteFocus = focusProducts.some(product => !product.name.trim() || !product.category?.trim() || !(product.highlights || product.description)?.trim());
-  return <OnboardingGuideFrame step={2} title="导入产品，并确认最多 3 个主推产品"
+  return <OnboardingGuideFrame step={2} title="导入产品，并确认最多 3 个主推产品" guideTitle={guideTitle}
     headerAction={<Upload accept=".xlsx,.xls,.csv,.pdf,.docx,.txt" showUploadList={false}
       disabled={productsLoading || productImporting || busy}
       beforeUpload={file => { onImport(file); return Upload.LIST_IGNORE; }}>
@@ -154,17 +169,17 @@ const platformOptions = [
   { value: 'facebook', label: 'Facebook' },
 ];
 
-export function OnboardingMarketStep({ busy, aiBusy, dismissible, onClose, onBack, onConfirm, onGenerateProposal, contentStage,
+export function OnboardingMarketStep({ busy, aiBusy, dismissible, guideTitle, onClose, onBack, onConfirm, onGenerateProposal, contentStage,
   targetMarket, targetBuyer, primaryPlatform, language, primaryCta, onChange, error,
 }: {
-  busy: boolean; aiBusy: boolean; dismissible: boolean; onClose?: () => void; onBack: () => void; onConfirm: () => void;
+  busy: boolean; aiBusy: boolean; dismissible: boolean; guideTitle?: string; onClose?: () => void; onBack: () => void; onConfirm: () => void;
   onGenerateProposal: () => void;
   contentStage?: SocialContentStageId; targetMarket: string; targetBuyer: string; primaryPlatform: string;
   language: string; primaryCta: string; error: string;
   onChange: (field: 'targetMarket' | 'targetBuyer' | 'primaryPlatform' | 'language' | 'primaryCta' | 'contentStage', value: string) => void;
 }) {
   const incomplete = !contentStage || !targetMarket.trim() || !targetBuyer.trim() || !primaryPlatform.trim() || !language.trim() || !primaryCta.trim();
-  return <OnboardingGuideFrame step={3} title="确认面向谁、在哪里沟通，以及唯一 CTA"
+  return <OnboardingGuideFrame step={3} title="确认面向谁、在哪里沟通，以及唯一 CTA" guideTitle={guideTitle}
     headerAction={<Button icon={<Sparkles size={16} />} loading={aiBusy} disabled={busy || !targetMarket.trim()} onClick={onGenerateProposal}>生成 AI 市场建议</Button>}
     busy={busy} dismissible={dismissible} onClose={onClose} onBack={onBack}
     primaryLabel="确认市场与内容方向" primaryDisabled={incomplete} onPrimary={onConfirm}>
@@ -194,17 +209,17 @@ function SummaryRow({ label, value, source }: { label: string; value: ReactNode;
   return <div className="flex items-start justify-between gap-4 border-b border-border py-3 last:border-b-0"><div className="min-w-0"><p className="text-xs text-text-muted">{label}</p><div className="mt-1 text-sm font-medium text-text-primary">{value}</div></div><SourceBadge source={source} /></div>;
 }
 
-export function OnboardingConfirmationStep({ busy, dismissible, onClose, onBack, onConfirm, draft,
+export function OnboardingConfirmationStep({ busy, dismissible, guideTitle, onClose, onBack, onConfirm, draft,
   onProposalChange, error,
 }: {
-  busy: boolean; dismissible: boolean; onClose?: () => void; onBack: () => void; onConfirm: () => void;
+  busy: boolean; dismissible: boolean; guideTitle?: string; onClose?: () => void; onBack: () => void; onConfirm: () => void;
   draft: EnterpriseOnboardingDraft;
   onProposalChange: (field: 'companyIntro' | 'brandTone', value: string) => void;
   error: string;
 }) {
   const source = (key: EnterpriseOnboardingFieldKey) => draft.sources[key];
   const focusProducts = draft.focusProductIds.map(id => draft.products.find(product => product.id === id)).filter(Boolean) as EnterpriseOnboardingProduct[];
-  return <OnboardingGuideFrame step={4} title="最后核对一次，确认后写入企业知识库"
+  return <OnboardingGuideFrame step={4} title="最后核对一次，确认后写入企业知识库" guideTitle={guideTitle}
     busy={busy} dismissible={dismissible} onClose={onClose} onBack={onBack}
     primaryLabel="确认并进入工作台" primaryDisabled={!draft.companyIntro.trim() || !draft.brandTone.trim()}
     onPrimary={onConfirm}>

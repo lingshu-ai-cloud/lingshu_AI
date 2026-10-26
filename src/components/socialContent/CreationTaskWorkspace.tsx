@@ -82,7 +82,7 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
   const close=()=>{setTaskId(null);setRowKey(null);updateLocation(view);};
   return <section id="content-creation-calendar" aria-label="内容创作工作区" className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
-      {embeddedCalendar?<h3 className="text-sm font-semibold">内容发布排期</h3>:<Segmented<'calendar'|'tasks'> aria-label="内容创作视图" value={view} options={[{label:'发布日历',value:'calendar'},{label:'创作任务',value:'tasks'}]} onChange={value=>{setView(value);updateLocation(value,selected||undefined);}}/>}
+      {embeddedCalendar?<h3 className="text-sm font-semibold">内容发布排期</h3>:<span data-growth-tour="calendar"><Segmented<'calendar'|'tasks'> aria-label="内容创作视图" value={view} options={[{label:'发布日历',value:'calendar'},{label:'创作任务',value:'tasks'}]} onChange={value=>{setView(value);updateLocation(value,selected||undefined);}}/></span>}
       <div className="flex items-center gap-3"><Tag>{rows.length} 条任务</Tag><Button loading={loading} onClick={refresh}>刷新</Button></div>
     </header>
     {error&&<Alert className="m-4" type="warning" showIcon title={error}/>}
