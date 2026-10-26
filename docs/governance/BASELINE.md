@@ -2,6 +2,14 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前统一开发基线：口播核心卖点能力安全合入（2026-10-26）
+
+- 唯一默认基线继续为 `baseline/unified-20261026`，工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`。由 `321f6dcc` 快进至验证源码 `e61c3b688dcbc6bb945780650744e2513e7d6cfa`；本节为独立治理补记，覆盖下方历史“当前”声明。恢复分支 `backup/pre-product-highlight-20261026-321f6dcc` 保留。
+- 用户授权合入此前独有的产品卖点提炼及回填。保留六组首页与原四张创作卡，追加“提炼口播核心卖点”；复用知识库模型与原企业资料PATCH/If-Match/GET读回，不自动改写冻结口播或启动制作。原功能树全部未提交内容、HEAD和index保留。
+- 助手质量149/149、完整助手脚本、企业/首页领域13/13、最终TypeScript、2962文件架构/相对321f6dcc棘轮、204项迁移只读/guard、主站与账号中心构建及diff检查通过。浏览器采用离线候选与旧预览资料GET适配，仅证明新增入口与确认页交互，不是同版本真实E2E或模型质量验收；未运行全仓quality/verify。
+- 基线原 `server/videos/videoVisibilityMaintenance.ts` 未提交补丁SHA-256前后一致（`ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`），不纳入本次提交。原M1及问答路由/业务数据衔接缺口仍保留。未推送、部署、付费或目标数据库迁移。
+- 完整范围、命令、证据和限制见 [安全合入记录](PRODUCT-HIGHLIGHT-INTEGRATION-20261026.md)。
+
 ## 当前统一开发基线：新人首页双卡与实景导览（2026-10-26）
 
 - 唯一默认基线仍为 `baseline/unified-20261026`，权威树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`。从 `7cb757c10c9857ed7c0fbbda2b84396021e6bcd0` 快进到已验证源码 `71c5cecba007b211133d876154198683fd9c33f8`；本节取代下方历史“当前”声明。恢复分支 `backup/pre-home-first-run-20261026-7cb757c1` 保留。
