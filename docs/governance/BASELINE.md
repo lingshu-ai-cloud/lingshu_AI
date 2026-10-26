@@ -2,6 +2,14 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前统一开发基线：图文任务持久化调度（2026-10-26）
+
+- 唯一默认源码基线为 `baseline/unified-20261026`，工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`。从 `240676bea03ccc67e2c83192bc1778bc96565e81` 快进到已验证源码 `d9c0805457d2613796645127152f59c10d79883b`；此节覆盖下方历史“当前”声明。隔离集成分支 `codex/image-paid-integration-20261026` 保留为恢复点，来源功能提交 `1fbda8a7c743cc98a8bb27911390c1d729f756ac`。
+- 图文复刻确认后写入统一内容任务和图文子任务，再持久化入队；worker 读取原任务并记录节点与回执。统一基线的首页、任务详情和对话入口同时保留，首页图文卡为第五张。参考图 OCR 读取区域证据，并在首次付费策划前检查参考画幅与版式；失败明确阻断。图文进度在“内容创作→创作任务”读取同一调度回执。
+- 合成源码实际通过：`pnpm run test:social-image-pipeline`（85/85 主用例及 HTTP/合同/治理）、图文 OCR/调度定向测试（12/12）、`pnpm run test:image-replication-ui`（6 场景）、`pnpm run test:content-production-v4`、`pnpm run test:assistant-production`（36/36）、`pnpm run lint`、`pnpm run check:architecture`（2972 个生产 TS 文件，相对 `240676be` 棘轮）、`pnpm run check:digital-employee-migrations`（204 项，只读）、`pnpm run build`、`git diff --check`。未运行全仓 `quality`/`verify`。
+- 这些结果是源码与隔离浏览器验证，不是真实供应商 E2E。当前本地预览的 `socialtask_ad1a31f88b3736e23ca2cce2` / `img21b450831da3` 在旧实例中因付费开关关闭而阻断，所选方形参考与已确认 4:5 画幅不匹配；不能把该旧回执当作新基线执行成功。图文计划的实际供应商路径为 Qwen 策划/质检与本地图层合成，不等于任务字段声明的 OpenAI 出图；现有 5 元配置不是图文模型成本的强制上限。仍须独立核对预算、素材和同版本 web/worker/store 后才能进行真实付费联调。本次没有真实供应商调用、推送、部署、发布或数据迁移。
+- 原权威树未提交的 `server/videos/videoVisibilityMaintenance.ts` 在快进前后补丁 SHA-256 均为 `ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`，未纳入本次提交。完整决策与实现边界见 [图文持久调度记录](IMAGE-TEXT-DISPATCH-20261026.md)。
+
 ## 当前统一开发基线：口播核心卖点能力安全合入（2026-10-26）
 
 - 唯一默认基线继续为 `baseline/unified-20261026`，工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`。由 `321f6dcc` 快进至验证源码 `e61c3b688dcbc6bb945780650744e2513e7d6cfa`；本节为独立治理补记，覆盖下方历史“当前”声明。恢复分支 `backup/pre-product-highlight-20261026-321f6dcc` 保留。
