@@ -17,6 +17,8 @@ COPY src ./src
 COPY server ./server
 COPY desktop ./desktop
 COPY scripts/bootstrap-workbench-admin.mjs scripts/gemini-video-worker.mjs scripts/render-task-report-pdf.py scripts/rekey-tenant-transfer.mjs scripts/check-runtime-readiness.mjs scripts/check-studio-chunk.mjs scripts/studioBundleImports.mjs scripts/sync-mobile-shared.mjs scripts/generate-design-tokens.mjs scripts/sync-mobile-domain.mjs scripts/generate-miniapp-request-policy.mjs scripts/generate-miniapp-action-form.mjs scripts/generate-miniapp-work-status.mjs scripts/generate-miniapp-material-shooting.mjs ./scripts/
+COPY scripts/customer-preview-ai-scope.mjs scripts/customer-isolated-test-guard.mjs scripts/customer-isolation-canary.mjs scripts/customer-isolation-diagnostics.mjs scripts/customer-isolated-processes.mjs ./scripts/
+COPY scripts/fast_head_pipeline.py scripts/fast_head_preflight.py scripts/fast_head_composite.py scripts/person-replacement-quality.ts ./scripts/
 COPY scripts/person-replacement-qa-requirements.txt scripts/person_replacement_visual_qa.py scripts/validate-syncnet.py ./scripts/
 RUN pnpm run build \
   && pnpm prune --prod
