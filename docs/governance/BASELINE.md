@@ -2,6 +2,13 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前本机会话基线：三路兼容合并（2026-10-26）
+
+- 当前工作树为 `/Users/jiejie/Documents/lingshu-AI`，分支 `节节1025服务器上传`。本轮从干净提交 `181868f3f9bad2ff437f124018e9decf5ababb59` 开始，依次合入 `灵小枢交互卡片基础修改` / `f2ea282c1ec60aedfab46569d1323ad49bbf2e7d`、`codex/lingxiaoshu-mascot-ui-20261025` / `236d17bfd2c4e306f494cafde74dabebf9ac1059`，再合入远端 `xixi全局ui+对话部分快捷键+生产联调未完成` / `7cb757c10c9857ed7c0fbbda2b84396021e6bcd0`；三个合并提交依次为 `7f4747f162b8bc16d0a4e7ba92f779dfa152607b`、`dd0036592d8777633c00e79dd69406d0b30d679a`、`17b290d9e22cee84efe863678d0ba601e0f2e07b`。恢复分支 `backup/pre-session-merges-20261026-181868f3` 保留。
+- 前两路无冲突；第三路只在 `src/components/assistant/AssistantConversationBubbles.tsx` 冲突。按用户确认的兼容方案，同时保留新版 `AssistantMascot` 与 `reduceMotion`，以及远端 `CompanyReportCard`、首页用户消息布局类；没有删除任一侧功能，也没有遗留冲突标记。
+- 实际通过 `pnpm run test:assistant`、`pnpm run test:assistant-quality`（145 项：144 通过、1 项按环境条件跳过）、`AssistantMascot.test.tsx`（3/3）、4 GB Node 堆上限 TypeScript、相对 `181868f3` 的架构/ratchet（2,955 个生产 TypeScript 文件）、204 项迁移清单只读检查、迁移 checksum guard 及 `git diff --check`。远端来源已经记录更大范围的分段质量、构建和领域证据；本轮没有重复执行全仓 `quality` / `verify` 或真实 E2E，不能据此声明真实供应商、运行数据或发布就绪。
+- 第二个来源工作树存在 14 项未提交草稿，本轮仅合入其已提交分支 `236d17bf`，未读取为基线、未清理、未覆盖。未推送、部署、执行目标数据库迁移、真实付费调用或生产写入；源码基线与当前预览进程/本地数据仍是独立状态。
+
 ## 当前统一开发基线：小程序与首页卡片收尾（2026-10-26）
 
 - 唯一默认基线仍为`baseline/unified-20261026`，权威树`/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`。从用户指定的`117933ac8f5059f6782c0dc1b742c3ae13d50e24`快进到验证源码`f4a95242aa28fac1b66dfdc7bd64d9b20d25eef1`，后续仅治理提交；本节取代下方历史“当前”声明。恢复分支`backup/pre-home-card-final-20261026-117933ac`保留。
