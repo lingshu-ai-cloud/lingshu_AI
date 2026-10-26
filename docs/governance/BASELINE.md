@@ -1,6 +1,14 @@
 # 工程基线（阶段二集成）
 
-更新时间：2026-10-26（Asia/Shanghai）
+更新时间：2026-10-27（Asia/Shanghai）
+
+## 当前本机会话阶段性基线：快捷任务封装与会话管理合入（2026-10-27）
+
+- 工作树 `/Users/jiejie/Documents/lingshu-AI`、分支 `节节1025服务器上传`。在 `0c4fda229bf564dbde2120e446aec5e9f6ba8397` 上封装本会话 53 个源码、测试及说明文件为 `75b330e058afc1df93fae2ffbfbddd342a616b56`；不包含忽略的 `.env.local`、账号资料、素材或运行缓存。
+- 第一条来源 `codex/assistant-conversation-management-20261027` / `eeb936f8025519dca1e1049d527381dec4e4a156` 已按用户顺序无冲突合入，合并提交 `8d7ade7a7b484ab124a2b06696cbfe0d92c8d32b`。新增会话清空/删除及隔离保护；带入迁移 `1793059200_assistant_conversation_lifecycle.js` 和校验和，但未执行任何数据库迁移。
+- 第二条来源 `codex/session-ui-onboarding-20261027` / `7a1e2422b9d2a0a4b7644d84d3af9abef3c0c253` 仅运行 `git merge-tree --write-tree` 预检，在 `server/routes/strategy.ts`、`src/components/assistant/AssistantConversationBubbles.tsx`、`src/components/assistant/useAssistantSend.ts` 发现三处冲突。按安全合并约定停止并等待用户决定；没有写入工作区、没有开启未完成的 merge，也没有自动选择任一侧覆盖。
+- 验证边界：封装快照此前实际通过 4 GB Node 堆 `pnpm run lint --pretty false`、对话接口 2/2、会话保存 12/12、布局合同 3/3、3002 文件架构及相对 HEAD 的预算 ratchet、`git diff --check`，详见 `docs/runbook/ASSISTANT-QUICK-TASK-20261027.md`。第一条分支合成后仅完成 Git 合并/差异检查；合成后的 TypeScript、受影响领域回归和 205 项迁移清单只读检查待第二条冲突确认后执行，不能把封装前结果写成合成后的整体验收。
+- 恢复分支 `codex/recovery-pre-quicktasks-integration-20261027-0c4fda22` 保留原起点；`75b330e0` 是包含本会话全部修改的合并前恢复锚点。两个来源工作树及其未提交现场均未改动，保留的图片 AIGC 工作树未触碰。未推送、部署、真实供应商/付费调用或生产写入，无外部 run/task 标识；源码推进不代表预览运行实例或真实供应商 Ready 已同步。
 
 ## 当前本机会话基线：本地预览周计划递归修复（2026-10-26）
 
