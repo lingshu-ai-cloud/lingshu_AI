@@ -109,7 +109,7 @@ test('lower user ceiling persists and larger authorization never raises it', asy
 finally {
     f.clean();
 } });
-test('server correction grant extends only the exact existing run and plan while new defaults stay capped at fifteen', async () => { const f = fixture(3.25, 10); try {
+test('server correction grant extends only the exact existing run and plan while explicit original limits remain independent', async () => { const f = fixture(3.25, 10); try {
     await f.budget.reserveBatch(scope, [op('original-a'), op('original-b'), op('original-c')]);
     const grant = sealSocialTaskCorrectionBudgetAuthorization({schemaVersion:1,tenantId:scope.tenantId,taskId:scope.taskId,
         runId:scope.runId,planHash:scope.planHash,previousMaximumCny:10,maximumCny:16.5,reason:'provider_correction',
@@ -127,7 +127,7 @@ test('server correction grant extends only the exact existing run and plan while
     await assert.rejects(f.budget.reserveBatch(scope,[op('corrective-presenter-1'),op('corrective-presenter-2')]),/production_budget_decision_required/);
     assert.equal(f.budget.status(scope)!.retainedCny,9.75);
     await assert.rejects(f.budget.reserveBatch({...scope,runId:'other-run',planHash:'c'.repeat(64)},[op('other-run-op')]),/exceeded/);
-    const fresh=fixture(1,100);try{await fresh.budget.reserveBatch(scope,[op('fresh')]);assert.equal(fresh.budget.status(scope)!.limitCny,15);}finally{fresh.clean();}
+    const fresh=fixture(1,100);try{await fresh.budget.reserveBatch(scope,[op('fresh')]);assert.equal(fresh.budget.status(scope)!.limitCny,100);}finally{fresh.clean();}
 } finally { f.clean(); } });
 test('correction grant rejects forged hash, changed scope, non-ten baseline and excessive ceiling', async () => { const f=fixture(1,10); try {
     await f.budget.reserveBatch(scope,[op('original')]);

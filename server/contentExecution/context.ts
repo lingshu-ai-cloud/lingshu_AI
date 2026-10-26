@@ -43,11 +43,12 @@ function mergeReceiptState(
 async function acquireReceiptWriteLease(input: {
   current: ContentExecutionContextValue;
   tenantId: string;
-  provider: string;
-  requestId: string;
 }): Promise<DurableOperationLease> {
+  // Every receipt is stored in one aggregate array on the job. Lock the job,
+  // not an individual provider request, so two distinct callbacks cannot both
+  // read the same array and then overwrite each other's external evidence.
   const subjectId = createHash('sha256')
-    .update(`${input.current.jobId}\0${input.provider}\0${input.requestId}`)
+    .update(input.current.jobId)
     .digest('hex');
   const ownerId = `receipt-${process.pid}-${randomUUID()}`;
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -242,6 +243,14 @@ async function assertContentExecutionOwnership(current: ContentExecutionContextV
   return job;
 }
 
+async function supportsAtomicCheckpointFence(dataStore: DataStore): Promise<boolean> {
+  if (!dataStore.compareAndSwap) return false;
+  if (dataStore.supportsAtomicCompareAndSwapFor) {
+    return await dataStore.supportsAtomicCompareAndSwapFor(CONTENT_EXECUTION_JOB_COLLECTION) === true;
+  }
+  return await dataStore.supportsAtomicCompareAndSwap?.() === true;
+}
+
 /** Stop at stage/submission boundaries while allowing already accepted receipts to be saved. */
 export async function assertCurrentContentExecutionActive(): Promise<void> {
   const current = executionContext.getStore();
@@ -328,10 +337,22 @@ export async function recordCurrentContentExecutionCheckpoint<T>(input: {
   }
   current.writeChain = current.writeChain.then(async () => {
     await assertContentExecutionOwnership(current);
-    const updated = await current.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.jobId, {
-      checkpoints: current.checkpoints,
-      updated_at: now,
-    });
+    const patch = { checkpoints: current.checkpoints, updated_at: now };
+    if (current.expectedWorkerId && !await supportsAtomicCheckpointFence(current.dataStore)) {
+      throw new Error('content_execution_checkpoint_atomic_fence_required');
+    }
+    const updated = current.expectedWorkerId
+      ? await current.dataStore.compareAndSwap!(
+        CONTENT_EXECUTION_JOB_COLLECTION,
+        current.jobId,
+        {
+          worker_id: current.expectedWorkerId,
+          ...(current.expectedAttempt === null ? {} : { attempt: current.expectedAttempt }),
+        },
+        patch,
+      )
+      : await current.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.jobId, patch);
+    if (!updated && current.expectedWorkerId) throw new ContentExecutionStoppedError();
     if (!updated) throw new Error('content_execution_checkpoint_persist_failed');
   });
   await current.writeChain;
@@ -366,7 +387,7 @@ export async function recordCurrentContentProviderReceipt(input: {
     );
     const tenantId = compact(initialJob?.tenant_id, 200);
     if (!tenantId) throw new Error('content_provider_receipt_job_missing');
-    const lease = await acquireReceiptWriteLease({ current, tenantId, provider, requestId });
+    const lease = await acquireReceiptWriteLease({ current, tenantId });
     try {
       // Merge this receipt into the latest persisted array while holding an
       // independent receipt lease. An old worker may still report an accepted

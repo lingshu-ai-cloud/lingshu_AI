@@ -605,6 +605,7 @@ export function buildSocialContentProductionReadModel(input: {
     readinessMissing?: string[];
     productionApproach?: string | null;
     targetDurationSeconds?:number|null;
+    presenterSpeechReviewPolicy?:string;
   };
   workflow: SocialContentAgentWorkflow | null;
   assetSupplyPlan?: SocialAssetSupplyPlan | null;
@@ -629,7 +630,7 @@ export function buildSocialContentProductionReadModel(input: {
   const budgetBlocked=stage==='budget_decision_required'||isProductionBudgetBlock(input.productionStage?.message??'')
     ||costQuote?.status==='overrun'||Boolean(costQuote&&[costQuote.upperBoundCostCny,costQuote.actualCostCny]
       .some(amount=>amount!=null&&productionBudgetExceeded(amount,
-        Math.min(costQuote.budgetLimitCny,productionBudgetLimitCny(quoteDuration)))));
+        costQuote.budgetLimitCny)));
   const budgetReason=stage==='budget_decision_required'&&input.productionStage?.message?input.productionStage.message:productionBudgetDecisionMessage(input.productionStage?.message??'');
   const approach = text(input.task.productionApproach, 80) || workflow?.executionPlan.selectedApproach || null;
   const directorById = new Map(workflow?.directorBrief.scenes.map(scene => [scene.sceneId, scene]) ?? []);
@@ -648,6 +649,7 @@ export function buildSocialContentProductionReadModel(input: {
     const shotInput = shotInputs({ scene, directorScene, supplyShot, workflow: workflow!, approach,
       external: external.filter(item => !item.shotId || item.shotId === scene.sceneId) });
     const presenterRoute = presenterProductionRoute({ sourceStrategy: selectedStrategy,
+      speechReviewPolicy:input.task.presenterSpeechReviewPolicy,provider:input.task.presenterSpeechReviewPolicy==='heygen_native_human_review'&&supplyShot?.digitalHumanPlan?.method==='talking'?'heygen':undefined,
       method: supplyShot?.digitalHumanPlan?.method,
       silentMotion: (supplyShot?.digitalHumanPlan as { silentMotion?: boolean } | undefined)?.silentMotion });
     const routeUnavailable = !result && approach !== 'shooting_plan' && !presenterRoute.executable;

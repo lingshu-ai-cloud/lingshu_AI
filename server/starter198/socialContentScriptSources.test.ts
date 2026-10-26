@@ -81,6 +81,23 @@ const resolved = buildSocialTaskReferencePackage({
 });
 
 assert.ok(resolved);
+const repeatedCopyAnalysis = JSON.parse(record.aiAnalysis);
+repeatedCopyAnalysis.gemini.scriptDetails15s[0].dialogue = 'OldProduct is based on only on guesswork.';
+repeatedCopyAnalysis.gemini.audioTranscript={segments:[{start:0,end:3,text:'OldProduct is based on only on guesswork.',provenance:'source_asr'}]};
+const repeatedCopy = buildSocialTaskReferencePackage({record:{...record,aiAnalysis:JSON.stringify(repeatedCopyAnalysis)},source,
+  themeId:'product_value',verifiedContext:{enterpriseName:'新企业',brandName:'新品牌',productName:'新产品',facts:[],source:'enterprise_product',confidence:1}});
+assert.ok(repeatedCopy);
+assert.match(repeatedCopy.replicationScript.shots[0]!.referenceSpokenText||'',/on only on/);
+assert.match(repeatedCopy.replicationScript.shots[0]!.spokenText||'',/based only on guesswork/);
+assert.equal(repeatedCopy.replicationScript.shots[0]!.scriptOrigin,'copy_edit_revision');
+assert.match(repeatedCopy.replicationScript.shots[0]!.speechLines?.[0]?.draftText||'',/based only on guesswork/);
+assert.match(repeatedCopy.replicationScript.structureFidelitySummary,/修订/);
+const copyBaseline=freezeSocialScriptBaseline({brief:{languages:['en'],productRef:'新产品',callToAction:null} as never,
+  theme:{themeId:'product_value'} as never,replicationScript:repeatedCopy.replicationScript,inspiration:repeatedCopy.match,
+  verifiedContext:{productName:'新产品',facts:[],source:'enterprise_product',confidence:1},lockedAt:'2026-09-27T00:01:00.000Z'});
+assert.equal(copyBaseline.scenes[0]?.scriptOrigin,'copy_edit_revision');
+assert.match(copyBaseline.scenes[0]?.voiceover||'',/based only on guesswork/);
+assert.match(parseStoredSocialScriptBaseline(JSON.stringify(copyBaseline))?.scenes[0]?.referenceSpokenText||'',/on only on/);
 const independentRolePayload = JSON.parse(record.aiAnalysis);
 independentRolePayload.contentSha256='current-source';
 const independentFirstShot = independentRolePayload.gemini.scriptDetails15s[0];

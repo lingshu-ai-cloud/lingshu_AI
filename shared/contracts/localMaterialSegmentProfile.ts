@@ -1,8 +1,11 @@
 import type { BenchmarkMaterialType } from '../benchmarkAnalysis.js';
+import { enterpriseScenePurpose } from '../socialMaterialScenePurpose.js';
+import {isObservedHandheldDisplay} from '../socialMaterialReusePolicy.js';
 import {
   FIXED_YIELD_MATERIAL_RULES,
   FIXED_YIELD_ARCHETYPE_IDS,
   classifyFixedYieldArchetype,
+  fixedYieldArchetypesCompatible,
   type FixedYieldArchetypeId,
 } from '../fixedYieldMaterialRegistry.js';
 import {
@@ -81,6 +84,8 @@ export interface LocalMaterialSegmentProfile {
   confidence: number;
   cleanEntry: boolean;
   cleanExit: boolean;
+  /** Editorial advice, not an authorization or source-validity failure. */
+  editingWarnings?: Array<'edit_boundary_unverified'>;
   productionEligible: boolean;
   /** Server-computed; persisted values are never trusted during normalization. */
   rejectionReasons: LocalMaterialSegmentRejectionReason[];
@@ -166,6 +171,7 @@ export function inferLocalMaterialSegmentType(input: {
   materialRoles: SocialMaterialRole[];
   visualContract: SocialSceneVisualContract;
 }): BenchmarkMaterialType {
+  if (enterpriseScenePurpose(input.visualContract)) return 'general';
   if (input.materialRoles.includes('presenter')) return 'talking_head';
   if (input.materialRoles.includes('factory')) return 'factory';
   // A hand acting only as the product holder is the P2A product archetype,
@@ -199,7 +205,6 @@ function structuralRejections(profile: Omit<LocalMaterialSegmentProfile, 'produc
   if (!profile.commercialUseApproved) result.push('commercial_use_not_allowed');
   if (!profile.commercialUseApprovalEvidenceRefs.length) result.push('commercial_use_evidence_missing');
   if (!profile.derivativeUseAllowed) result.push('derivative_use_not_allowed');
-  if (!profile.cleanEntry || !profile.cleanExit) result.push('edit_boundary_unverified');
   return [...new Set(result)];
 }
 
@@ -241,7 +246,6 @@ export function buildLocalMaterialSegmentProfile(input: BuildLocalMaterialSegmen
   if (!input.commercialUseApproved) rejectionReasons.push('commercial_use_not_allowed');
   if (!commercialUseApprovalEvidenceRefs.length) rejectionReasons.push('commercial_use_evidence_missing');
   if (!input.derivativeUseAllowed) rejectionReasons.push('derivative_use_not_allowed');
-  if (!input.cleanEntry || !input.cleanExit) rejectionReasons.push('edit_boundary_unverified');
   if (input.materialType === 'unknown' || startSeconds === null || endSeconds === null) {
     return { profile: null, rejectionReasons: [...new Set(rejectionReasons)] };
   }
@@ -273,6 +277,7 @@ export function buildLocalMaterialSegmentProfile(input: BuildLocalMaterialSegmen
     confidence: Math.max(0, Math.min(1, input.confidence)),
     cleanEntry: input.cleanEntry,
     cleanExit: input.cleanExit,
+    ...(!input.cleanEntry || !input.cleanExit ? { editingWarnings: ['edit_boundary_unverified' as const] } : {}),
   };
   const allReasons = [...new Set([...rejectionReasons, ...structuralRejections(base)])];
   return { profile: { ...base, productionEligible: allReasons.length === 0, rejectionReasons: allReasons }, rejectionReasons: allReasons };
@@ -322,8 +327,9 @@ export function normalizeLocalMaterialSegmentProfile(value: unknown): LocalMater
     confidence: Math.max(0, Math.min(1, confidence)),
     cleanEntry: row.cleanEntry === true,
     cleanExit: row.cleanExit === true,
+    ...(row.cleanEntry !== true || row.cleanExit !== true ? { editingWarnings: ['edit_boundary_unverified' as const] } : {}),
   };
-  const rejectionReasons = [...new Set([...reasons(row.rejectionReasons), ...structuralRejections(base)])];
+  const rejectionReasons = [...new Set([...reasons(row.rejectionReasons).filter(reason => reason !== 'edit_boundary_unverified'), ...structuralRejections(base)])];
   return { ...base, productionEligible: rejectionReasons.length === 0, rejectionReasons };
 }
 
@@ -336,6 +342,9 @@ export function evaluateLocalMaterialSegmentProfile(input: {
   targetMaterialType: Exclude<BenchmarkMaterialType, 'unknown'>;
   targetArchetypeId: FixedYieldArchetypeId;
   requestedProductRef?: string | null;
+  productIdentityRequired?: boolean;
+  allowFunctionalEquivalent?: boolean;
+  allowHandheldDisplay?: boolean;
   requiredDurationSeconds: number;
   alreadyUsed?: boolean;
 }): LocalMaterialSegmentRejectionReason[] {
@@ -346,13 +355,14 @@ export function evaluateLocalMaterialSegmentProfile(input: {
     || profile.segmentId !== text(input.segmentId)) result.push('tenant_mismatch');
   if (input.sourceRevision && profile.sourceRevision !== text(input.sourceRevision)) result.push('source_revision_mismatch');
   if (profile.materialType !== input.targetMaterialType) result.push('material_type_mismatch');
-  if (!profile.archetypeCandidates.includes(input.targetArchetypeId)) result.push('archetype_mismatch');
+  if (!profile.archetypeCandidates.some(candidate => fixedYieldArchetypesCompatible(input.targetArchetypeId, candidate,input.allowFunctionalEquivalent))) result.push('archetype_mismatch');
   const targetRule = FIXED_YIELD_MATERIAL_RULES[input.targetArchetypeId];
   if (!targetRule.requiredAnyRoles.some(role => profile.materialRoles.includes(role))) result.push('required_material_role_missing');
-  if (targetRule.forbiddenRoles.some(role => profile.materialRoles.includes(role))) result.push('forbidden_material_role_present');
+  if (targetRule.forbiddenRoles.some(role => profile.materialRoles.includes(role)
+    && !(role==='person_usage'&&input.allowHandheldDisplay&&profile.materialType==='product'&&isObservedHandheldDisplay(profile)))) result.push('forbidden_material_role_present');
   const requested = normalizedProduct(input.requestedProductRef);
-  if (targetRule.productIdentity === 'same_product' && !requested) result.push('product_identity_mismatch');
-  if (requested && targetRule.productIdentity === 'same_product') {
+  if (input.productIdentityRequired!==false && targetRule.productIdentity === 'same_product' && !requested) result.push('product_identity_mismatch');
+  if (input.productIdentityRequired!==false && requested && targetRule.productIdentity === 'same_product') {
     const candidateRefs = [profile.productId, profile.productRef].map(normalizedProduct).filter(Boolean);
     if (!candidateRefs.includes(requested)) result.push('product_identity_mismatch');
   }

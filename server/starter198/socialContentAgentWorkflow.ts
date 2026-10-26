@@ -1,4 +1,4 @@
-import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
+import {productionBudgetDuration,productionBudgetLimitCny,productionBudgetMaximumCny} from '../../shared/contracts/productionBudgetPolicy.js';
 import type {
   SocialAgentWorkflowStage,
   SocialAssetSupplyPlan,
@@ -147,6 +147,7 @@ function executionScene(input: {
     ? input.supply.materialRouting.localMatch.state === 'matched' && input.supply.materialRouting.policy !== 'authorized_presenter'
       ? candidates.find(candidate => candidate.kind === 'asset' && candidate.sourceStrategy === 'customer_real_asset' && Boolean(candidate.sourceRef && input.supply.materialRouting!.localMatch.sourceRefs.includes(candidate.sourceRef)))
       : input.supply.materialRouting.policy === 'authorized_presenter' ? capability('authorized_digital_presenter')
+        : input.supply.materialRouting.policy === 'illustrative_video' ? capability('non_evidentiary_ai_visual')
         : input.supply.materialRouting.policy === 'local_first_product_i2v'||eligibleProductBudgetCandidate(input.supply,input.policyVersion)
           ? capability('aigc_product_scene_replication')
           : input.supply.materialRouting.policy === 'local_only'
@@ -294,7 +295,7 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
     status: directorBrief.status === 'ready' && scenes.length === directorBrief.scenes.length ? 'review_required' : 'blocked',
     reviewRound: 1,
     maxReviewRounds: 3,
-    budgetLimitCny: productionBudgetLimitCny(productionBudgetDuration({...input.brief,scenes:directorBrief.scenes})),
+    budgetLimitCny: productionBudgetMaximumCny({...input.brief,scenes:directorBrief.scenes}),
     deadlineAt: input.brief.dueAt,
     accountPresenterLock: directorBrief.accountPresenterLock
       ? structuredClone(directorBrief.accountPresenterLock)

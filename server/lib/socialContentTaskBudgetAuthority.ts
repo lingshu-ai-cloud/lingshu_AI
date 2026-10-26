@@ -5,7 +5,6 @@ import {verifyWanPublishedTariff,type WanPublishedPricingEvidence} from './wanPu
 import {isVerifiedPublishedTariff,type LocalPublishedPricingEvidence,type MaaSPublishedPricingEvidence,type PublishedPricingEvidence} from './socialContentPublishedTariffs.js';
 import { createHash } from 'node:crypto';
 import { SocialContentTaskBudget, type SocialTaskBudgetScope, type SocialTaskBudgetOperation, type SocialTaskBudgetQuote } from './socialContentTaskBudget.js';
-import {productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
 /** Server-frozen maximum input usage. Token stages must bound both prompt and
  * response; retry attempts appear as distinct operations in this complete plan. */
 export interface SocialPaidOperationIntent {
@@ -17,6 +16,10 @@ export interface SocialPaidOperationIntent {
     shotId: string | null;
     inputContractHash: string;
     maximumUnits: Record<string, number>;
+    /** Inputs produced by paid parents are bound once after reservation. */
+    executionBindingPolicy?:
+      | {schemaVersion:'paid-execution-binding-policy.v1';parentOperationIds:string[]}
+      | {schemaVersion:'paid-execution-binding-policy.v2';allowedParentOperationSets:string[][]};
     correction?: {attempt:1|2;kind:'presenter_video'|'voice_tts'|'voice_alignment';cause:'approved_first_frame_not_consumed'|'approved_first_frame_not_consumed_and_bound_voice_mismatch';authorizationRef:string;presenterGroupId?:string;approvalRecordHash?:string;selectedVoiceId?:string;selectedVoiceFingerprint?:string};
 }
 export interface SocialApprovedBudgetPlan {
@@ -35,6 +38,10 @@ export interface SocialApprovedBudgetPlan {
         spokenText: string;
         presenterAssetId: string;
         contractHash: string;
+        executionKind?: 'seedance_motion';
+        visualCompatibilityHash?: string;
+        staticReferenceImageCount?: number;
+        firstFramePipeline?: 'background-first.v2';
     }>;
 }
 export interface SocialVerifiedAccountTariff {
@@ -70,11 +77,26 @@ const finite = (n: number) => Number.isFinite(n) && n >= 0;
 const nonempty = (s: string) => typeof s === 'string' && s.trim() === s && s.length > 0 && s.length <= 512;
 function sameScope(a: SocialTaskBudgetScope, b: SocialTaskBudgetScope) { return ['tenantId', 'taskId', 'runId', 'planHash'].every(k => a[k as keyof typeof a] === b[k as keyof typeof b])&&(a.budgetTaskId??a.taskId)===(b.budgetTaskId??b.taskId); }
 function canonicalUnits(units: Record<string, number>) { return Object.fromEntries(Object.entries(units).sort(([a], [b]) => a.localeCompare(b))); }
+function executionParentSets(intent:SocialPaidOperationIntent):string[][]{
+    const policy=intent.executionBindingPolicy;
+    if(!policy)return [];
+    return policy.schemaVersion==='paid-execution-binding-policy.v1'?[policy.parentOperationIds]:policy.allowedParentOperationSets;
+}
 export function socialPaidIntentOperation(scope: SocialTaskBudgetScope, intent: SocialPaidOperationIntent): SocialTaskBudgetOperation {
     if (![intent.operationId, intent.provider, intent.model, intent.accountRef, intent.stage].every(nonempty) || (intent.shotId !== null && !nonempty(intent.shotId)) || !/^[a-f0-9]{64}$/.test(intent.inputContractHash) || !intent.maximumUnits || !Object.keys(intent.maximumUnits).length || Object.entries(intent.maximumUnits).some(([k, v]) => !nonempty(k) || !finite(v)))
         fail('intent_invalid');
+    const policy=intent.executionBindingPolicy;
+    const parentSets=executionParentSets(intent);
+    if(policy!==undefined&&(!parentSets.length||parentSets.some(set=>!Array.isArray(set)||set.some(id=>!nonempty(id)||id===intent.operationId)||new Set(set).size!==set.length)
+        ||new Set(parentSets.map(set=>JSON.stringify([...set].sort()))).size!==parentSets.length))fail('execution_binding_policy_invalid');
     return { operationId: intent.operationId, provider: intent.provider, model: intent.model, accountRef: intent.accountRef, stage: intent.stage, shotId: intent.shotId,
-        fingerprint: digest({ scope, operationId: intent.operationId, provider: intent.provider, model: intent.model, accountRef: intent.accountRef, stage: intent.stage, shotId: intent.shotId, inputContractHash: intent.inputContractHash, maximumUnits: canonicalUnits(intent.maximumUnits) }) };
+        fingerprint: digest({ scope, operationId: intent.operationId, provider: intent.provider, model: intent.model, accountRef: intent.accountRef, stage: intent.stage, shotId: intent.shotId, inputContractHash: intent.inputContractHash, maximumUnits: canonicalUnits(intent.maximumUnits),...(policy?{executionBindingPolicy:policy.schemaVersion==='paid-execution-binding-policy.v1'?{schemaVersion:policy.schemaVersion,parentOperationIds:[...policy.parentOperationIds].sort()}:{schemaVersion:policy.schemaVersion,allowedParentOperationSets:parentSets.map(set=>[...set].sort()).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))}}:{}) }) };
+}
+export function assertSocialPaidExecutionDependencies(intents:SocialPaidOperationIntent[]):void{
+ const indexes=new Map(intents.map((intent,index)=>[intent.operationId,index]));
+ for(const [index,intent] of intents.entries())for(const id of new Set(executionParentSets(intent).flat())){
+  const parent=indexes.get(id);if(parent===undefined||parent>=index)fail('execution_dependency_invalid');
+ }
 }
 const intentOperation=socialPaidIntentOperation;
 function price(intent: SocialPaidOperationIntent, tariff: SocialVerifiedAccountTariff | null): SocialTaskBudgetQuote {
@@ -123,6 +145,7 @@ export function createSocialContentTaskBudgetAuthority(input: {
         if (!sameScope(scope, plan.scope) || !nonempty(plan.authorizationRef) || !Number.isFinite(plan.maximumCny) || plan.maximumCny <= 0 || !Array.isArray(plan.paidOperations) || !plan.paidOperations.length)
             fail('approved_plan_missing');
         const operations = plan.paidOperations.map(i => intentOperation(scope, i));
+        assertSocialPaidExecutionDependencies(plan.paidOperations);
         if (new Set(operations.map(o => o.operationId)).size !== operations.length)
             fail('duplicate_operation');
         const quotes = new Map<string, SocialTaskBudgetQuote>();
@@ -161,7 +184,7 @@ export function createSocialContentTaskBudgetAuthority(input: {
         const ledger = new SocialContentTaskBudget(input.ledgerRoot, {
             assertCurrent: async candidate => { if (!sameScope(candidate, scope)) fail('scope_changed'); await ports.assertCurrent(candidate); },
             authorization: async () => { const current = await ports.readApprovedPlan(scope); if (digest(current) !== digest(prepared.plan))
-                fail('plan_changed'); return { productionDurationSeconds:current.productionDurationSeconds, maximumCny: Math.min(productionBudgetLimitCny(current.productionDurationSeconds), current.maximumCny), maximumExecutionCny:current.maximumExecutionCny,authorizationRef: current.authorizationRef }; },
+                fail('plan_changed'); return { productionDurationSeconds:current.productionDurationSeconds, maximumCny: current.maximumCny, maximumExecutionCny:current.maximumExecutionCny,authorizationRef: current.authorizationRef }; },
             quote: async (_s, operation) => { const intent = prepared.operations.find(o => o.operationId === operation.operationId); if (!intent || digest(intent) !== digest(operation))
                 fail('operation_changed'); return prepared.quotes.get(operation.operationId)!; },
             verifyRejection: ports.verifyRejection,
@@ -180,6 +203,7 @@ export function createSocialContentTaskBudgetAuthority(input: {
             || !Array.isArray(plan.paidOperations) || !operationIds.length
             || new Set(operationIds).size !== operationIds.length) fail('recovery_plan_invalid');
         const operations = plan.paidOperations.map(intent => intentOperation(scope, intent));
+        assertSocialPaidExecutionDependencies(plan.paidOperations);
         if (new Set(operations.map(operation => operation.operationId)).size !== operations.length) fail('duplicate_operation');
         const ledger = new SocialContentTaskBudget(input.ledgerRoot, {
             assertCurrent: ports.assertCurrent,

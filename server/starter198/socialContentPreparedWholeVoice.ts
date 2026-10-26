@@ -1,3 +1,6 @@
+import { normalizePresenterMotherSpokenText } from '../../shared/contracts/presenterMotherSegments.js';
+import { nativeAudioTimingTransform, verifiedHeyGenNativeSubtitleTiming, verifiedNativePhraseCues } from '../lib/heygenNativeSubtitles.js';
+import { resolveActiveVoiceIntent } from '../lib/socialContentVoiceRouteRevision.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -20,9 +23,7 @@ const sha = (bytes: Buffer | string) => createHash('sha256').update(bytes).diges
 type Funding = Parameters<typeof createNativeStudioVoicePaidContext>[0];
 type Voice = Awaited<ReturnType<typeof synthesizeStudioVoiceForAutomation>>;
 export function verifiedHeyGenNativeTiming(response:any,text:string,speed:number,targetDuration:number,duration:number) {
-  const natural=Number(response.duration)/speed+.15;
-  const fit=natural>targetDuration+.02?natural/targetDuration:1;
-  if(!(speed>0)||!Number.isFinite(natural)||Math.abs(Math.min(natural,targetDuration)-duration)>.12)throw Error('native_voice_timing_transform_changed');
+  const {fit}=nativeAudioTimingTransform(Number(response.duration),speed,targetDuration,duration);
   const words=response.word_timestamps.filter((word:any)=>!['<start>','<end>'].includes(word.word)).map((word:any)=>({text:String(word.word||''),begin_time:Number(word.start)/speed/fit*1000,end_time:Number(word.end)/speed/fit*1000}));
   const result={transcripts:[{text:words.map((word:any)=>word.text).join(' '),sentences:words.map((word:any)=>({...word,words:[word]}))}]};
   return {fit,result,cues:verifiedAudioCues(result,text,duration)};
@@ -56,7 +57,7 @@ export async function prepareSocialContentWholeVoice(input: {
   const funding = input.funding;
   const route = funding.routeBindings['voice:0:tts'];
   const nativeProvider = route?.provider === 'qwen' || route?.provider === 'minimax' || route?.provider === 'heygen' ? route.provider : undefined;
-  const plan = resolveStudioVoiceExecutionPlan({ ...funding.voiceInput, nativeProvider });
+  const plan = resolveStudioVoiceExecutionPlan({ ...funding.voiceInput, nativeProvider, ...(route?.model==='avatar_iv'?{heygenSpeechMode:'native_video' as const}:{}) });
   if (!plan.primary || plan.mode !== 'continuous' || plan.texts.length !== 1)
     throw Error('presenter_whole_track_continuous_native_voice_required');
   const primary=plan.primary;
@@ -108,8 +109,7 @@ export async function prepareSocialContentWholeVoice(input: {
       persist(state);
     }
     if (!voice.localPath || !voice.url || !voice.duration) throw Error('prepared_whole_voice_cache_invalid');
-    const sourceReceiptRefs = plan.texts.map((_, index) => {const key=`voice:${index}:tts`,correction=funding.intents.find(intent=>intent.stage==='tts'&&intent.correction?.kind==='voice_tts')?.correction;return nativeStudioVoiceReceiptPath(funding.scope,
-      'paid-plan:' + paidProductionHash(correction?{ scope: funding.scope, key, attempt: 1,correction }:{ scope: funding.scope, key, attempt: 0 }), funding.root);});
+    const sourceReceiptRefs = plan.texts.map((_, index) => nativeStudioVoiceReceiptPath(funding.scope,resolveActiveVoiceIntent(funding,`voice:${index}:tts`).operationId,funding.root));
     for (let index=0;index<sourceReceiptRefs.length;index++) {
       const receipt=sourceReceiptRefs[index]!;
       if (!fs.existsSync(receipt)) throw Error('prepared_whole_voice_original_receipt_missing');
@@ -118,21 +118,37 @@ export async function prepareSocialContentWholeVoice(input: {
       await funding.permit.assertRecovery(raw.operationId);
     }
     const alignmentCorrection=funding.intents.find(intent=>intent.stage==='voice_alignment'&&intent.correction?.kind==='voice_alignment')?.correction;
-    const alignmentId = 'paid-plan:' + paidProductionHash(alignmentCorrection?{ scope: funding.scope, key: 'voice:alignment', attempt: 1,correction:alignmentCorrection }:{ scope: funding.scope, key: 'voice:alignment', attempt: 0 });
+    const alignmentId = funding.requirements.some(requirement=>requirement.key==='voice:alignment') ? resolveActiveVoiceIntent(funding,'voice:alignment').operationId : 'paid-plan:' + paidProductionHash(alignmentCorrection?{ scope: funding.scope, key: 'voice:alignment', attempt: 1,correction:alignmentCorrection }:{ scope: funding.scope, key: 'voice:alignment', attempt: 0 });
     let alignmentReceiptRef = path.resolve(input.alignmentRoot || 'data/social-content-voice-alignment', sha(alignmentId) + '.json');
     // Native timestamps are part of the already-paid exact voice receipt.
     // Keep an unresolved ASR submission intact; it must never be reposted.
     let nativeCues: Array<{start:number;end:number;text:string}> | undefined;
+    let alignmentSource = 'audio_ai';
     if(primary.provider==='heygen') {
       const original=JSON.parse(fs.readFileSync(sourceReceiptRefs[0]!,'utf8'));
       const response=original.response?.data||original.response;
       if(Array.isArray(response?.word_timestamps)&&response.word_timestamps.length) {
         const speed=ttsPostProcessingSpeed('heygen',Number(funding.voiceInput.style?.speed)||1);
         const {fit,result,cues:measured}=verifiedHeyGenNativeTiming(response,funding.voiceInput.text,speed,input.targetDuration,voice.duration);
-        nativeCues=measured;
+        nativeCues=measured; alignmentSource='heygen_native_words';
         alignmentReceiptRef=path.resolve(input.alignmentRoot||'data/social-content-voice-alignment',sha(JSON.stringify({audio:state.wholeTrackSha256,source:sha(fs.readFileSync(sourceReceiptRefs[0]!)),speed,fit,result}))+'.native.json');
         const evidence={state:'completed',scope:{audioSha256:state.wholeTrackSha256},result,source:'heygen_native',sourceReceiptRef:sourceReceiptRefs[0],sourceReceiptSha256:sha(fs.readFileSync(sourceReceiptRefs[0]!)),transform:{speed,fit}};
         if(fs.existsSync(alignmentReceiptRef)){if(sha(fs.readFileSync(alignmentReceiptRef))!==sha(JSON.stringify(evidence)))throw Error('native_voice_timing_evidence_changed');}
+        else {fs.mkdirSync(path.dirname(alignmentReceiptRef),{recursive:true});fs.writeFileSync(alignmentReceiptRef,JSON.stringify(evidence),{flag:'wx',mode:0o600});}
+      }
+    }
+    if(primary.provider==='heygen'&&primary.model==='avatar_iv'&&!nativeCues) {
+      const original=JSON.parse(fs.readFileSync(sourceReceiptRefs[0]!,'utf8')),response=original.response;
+      const track=response?.nativeSpeechTrack;
+      if(response?.subtitlePath) {
+        const subtitle=fs.readFileSync(response.subtitlePath);
+        if(!track||track.status!=='completed'||track.input?.voiceId!==primary.voiceId||track.input?.scope?.tenantId!==funding.scope.tenantId||track.input?.scope?.taskId!==funding.scope.taskId||track.input?.scope?.runId!==funding.scope.runId||sha(subtitle)!==response.subtitleSha256||track.subtitleSha256!==response.subtitleSha256)throw Error('native_subtitle_evidence_changed');
+        const speed=ttsPostProcessingSpeed('heygen',Number(funding.voiceInput.style?.speed)||1);
+        const {fit,result,cues:measured}=verifiedHeyGenNativeSubtitleTiming({srt:subtitle.toString('utf8'),text:funding.voiceInput.text,sourceDuration:Number(track.duration),speed,targetDuration:input.targetDuration,duration:voice.duration});
+        nativeCues=measured; alignmentSource='heygen_native_subtitles';
+        const evidence={state:'completed',scope:{audioSha256:state.wholeTrackSha256},result,source:'heygen_native_subtitles',precision:'phrase',independentAsr:false,sourceReceiptRef:sourceReceiptRefs[0],sourceReceiptSha256:sha(fs.readFileSync(sourceReceiptRefs[0]!)),subtitleSha256:response.subtitleSha256,transform:{speed,fit}};
+        alignmentReceiptRef=path.resolve(input.alignmentRoot||'data/social-content-voice-alignment',sha(JSON.stringify(evidence))+'.native-srt.json');
+        if(fs.existsSync(alignmentReceiptRef)){if(sha(fs.readFileSync(alignmentReceiptRef))!==sha(JSON.stringify(evidence)))throw Error('native_subtitle_evidence_changed');}
         else {fs.mkdirSync(path.dirname(alignmentReceiptRef),{recursive:true});fs.writeFileSync(alignmentReceiptRef,JSON.stringify(evidence),{flag:'wx',mode:0o600});}
       }
     }
@@ -143,7 +159,11 @@ export async function prepareSocialContentWholeVoice(input: {
       const alignment = JSON.parse(fs.readFileSync(alignmentReceiptRef, 'utf8'));
       if (alignment.state !== 'completed' || alignment.scope?.audioSha256 !== state.wholeTrackSha256)
         throw Error('prepared_whole_voice_alignment_changed');
-      cues = verifiedAudioCues(alignment.result, funding.voiceInput.text, voice.duration);
+      if (alignment.source === 'heygen_native_subtitles') alignmentSource = 'heygen_native_subtitles';
+      else if (alignment.source === 'heygen_native') alignmentSource = 'heygen_native_words';
+      cues = alignment.source === 'heygen_native_subtitles' && alignment.precision === 'phrase' && alignment.independentAsr === false
+        ? verifiedNativePhraseCues(alignment.result, funding.voiceInput.text, voice.duration)
+        : verifiedAudioCues(alignment.result, funding.voiceInput.text, voice.duration);
     } else {
       const aligned = await (input.align || alignStudioVoiceForAutomation)({ tenantId: funding.scope.tenantId,
         text: funding.voiceInput.text, url: voice.url, duration: voice.duration, paidContext,
@@ -157,7 +177,7 @@ export async function prepareSocialContentWholeVoice(input: {
       throw new WholeVoiceDurationRevisionRequired(stateFile, voice.duration, input.targetDuration);
     }
     measuredWholeTrackSceneRanges({ scenes: input.scenes, cues, durationSeconds: voice.duration });
-    const result: PreparedWholeVoice = { voice: { ...voice, localPath: voice.localPath, duration: voice.duration, cues, alignmentSource: 'audio_ai' as any },
+    const result: PreparedWholeVoice = { voice: { ...voice, localPath: voice.localPath, duration: voice.duration, cues, alignmentSource },
       inputHash, receiptRef:stateFile, wholeTrackSha256: state.wholeTrackSha256, sourceReceiptRefs, alignmentReceiptRef,
       nativeVoice: { provider: primary.provider, model: primary.model, physicalVoiceId: primary.voiceId } };
     persist({ ...state, status: 'completed', voice: result.voice, proof:{sourceReceiptRefs,alignmentReceiptRef,nativeVoice:result.nativeVoice} });
@@ -190,18 +210,23 @@ export async function readPreparedWholeVoiceScene(input: {
   if(alignment.state!=='completed'||alignment.scope?.audioSha256!==state.wholeTrackSha256)
     throw Error('prepared_whole_voice_alignment_changed');
   const transcript=state.scenes.map((scene:{spokenText:string})=>scene.spokenText).filter(Boolean).join(' ');
-  const cues=verifiedAudioCues(alignment.result,transcript,state.voice.duration);
+  const cues=alignment.source==='heygen_native_subtitles'&&alignment.precision==='phrase'&&alignment.independentAsr===false
+    ? verifiedNativePhraseCues(alignment.result,transcript,state.voice.duration) : verifiedAudioCues(alignment.result,transcript,state.voice.duration);
   if(paidProductionHash(cues)!==paidProductionHash(state.voice.cues))throw Error('prepared_whole_voice_measured_cues_changed');
   const ranges=measuredWholeTrackSceneRanges({scenes:state.scenes,cues,durationSeconds:state.voice.duration});
   const frozenGroupScene=state.scenes.some((item:{shotId:string})=>item.shotId===input.shotId);
+  const failGroup = (reason: string): never => { throw Error('prepared_whole_voice_scene_not_frozen:' + reason + ':' + input.shotId); };
+  if (frozenGroupScene && input.memberShotIds?.length && (input.memberShotIds.length !== 1 || input.memberShotIds[0] !== input.shotId)) failGroup('member_mismatch');
   const members=frozenGroupScene?[input.shotId]:input.memberShotIds?.length?input.memberShotIds:[input.shotId];
-  if(new Set(members).size!==members.length)throw Error('prepared_whole_voice_scene_not_frozen');
+  if(new Set(members).size!==members.length)failGroup('member_duplicate');
   const memberScenes=members.map(id=>state.scenes.find((item:{shotId:string})=>item.shotId===id));
   const memberRanges=members.map(id=>ranges.get(id));
-  if(memberScenes.some((scene:unknown)=>!scene)||memberRanges.some((range:unknown)=>!range))throw Error('prepared_whole_voice_scene_not_frozen');
-  const scene={shotId:input.shotId,spokenText:memberScenes.map((item:any)=>item.spokenText).join(' '),durationSeconds:memberScenes.reduce((sum:number,item:any)=>sum+item.durationSeconds,0)};
+  if(memberScenes.some((scene:unknown)=>!scene)||memberRanges.some((range:unknown)=>!range))failGroup('member_missing');
+  for (let index = 1; index < memberRanges.length; index++) if (Math.abs(memberRanges[index - 1]!.end - memberRanges[index]!.start) > .001) failGroup('window_noncontiguous');
+  const scene={shotId:input.shotId,spokenText:normalizePresenterMotherSpokenText(memberScenes.map((item:any)=>item.spokenText)),durationSeconds:memberScenes.reduce((sum:number,item:any)=>sum+item.durationSeconds,0)};
   const range={start:memberRanges[0]!.start,end:memberRanges.at(-1)!.end};
-  if(scene.spokenText!==input.spokenText||Math.abs((range.end-range.start)-scene.durationSeconds)>.02)throw Error('prepared_whole_voice_scene_not_frozen');
+  if(scene.spokenText!==normalizePresenterMotherSpokenText([input.spokenText]))failGroup('text_mismatch');
+  if(Math.abs((range.end-range.start)-scene.durationSeconds)>.02)failGroup('duration_mismatch');
   const sourceReceipts=input.prepared.sourceReceiptRefs.map(receiptRef=>{
     const bytes=fs.readFileSync(receiptRef),raw=JSON.parse(bytes.toString());
     if(paidProductionHash(raw.scope)!==paidProductionHash(input.scope)||raw.provider!==input.prepared.nativeVoice.provider||raw.model!==input.prepared.nativeVoice.model||raw.voiceId!==input.prepared.nativeVoice.physicalVoiceId)

@@ -42,3 +42,16 @@ test('overlap and unstable slot identity fail closed before hashing',()=>{
   assert.throws(()=>freezePresenterMotherSegments({taskId:'task',referenceAnalysisHash:'a'.repeat(64),slots:[slots[0]!,{...slots[1]!,slotId:'slot-1'}]}),/slot_id_duplicate/);
   assert.throws(()=>freezePresenterMotherSegments({taskId:'task',referenceAnalysisHash:'bad',slots}),/reference_hash_invalid/);
 });
+
+test('v2 splits adjacent shots by frozen visual compatibility and preserves v1 hashes',()=>{
+ const keyed=slots.map((slot,index)=>({...slot,visualCompatibilityHash:(index===1?'b':'a').repeat(64)}));
+ const frozen=freezePresenterMotherSegments({taskId:'task',referenceAnalysisHash:'c'.repeat(64),slots:keyed});
+ assert.equal(frozen.schemaVersion,'presenter-mother-segments.v2');
+ assert.deepEqual(frozen.groups.map(group=>group.memberSlotIds),[['slot-1'],['slot-2'],['slot-30','slot-31'],['slot-36']]);
+ assert.equal(verifyFrozenPresenterMotherSegments(frozen),true);
+ const changed=structuredClone(frozen);changed.groups[0]!.visualCompatibilityHash='d'.repeat(64);assert.equal(verifyFrozenPresenterMotherSegments(changed),false);
+ const downgrade=structuredClone(frozen);downgrade.schemaVersion='presenter-mother-segments.v1';assert.equal(verifyFrozenPresenterMotherSegments(downgrade),false);
+ assert.throws(()=>freezePresenterMotherSegments({taskId:'task',referenceAnalysisHash:'c'.repeat(64),slots:[keyed[0]!,slots[1]!]}),/visual_compatibility_missing/);
+ const legacy=freezePresenterMotherSegments({taskId:'task',referenceAnalysisHash:'c'.repeat(64),slots});
+ assert.equal(legacy.schemaVersion,'presenter-mother-segments.v1');assert.equal(legacy.groups.length,3);assert.equal(verifyFrozenPresenterMotherSegments(legacy),true);
+});

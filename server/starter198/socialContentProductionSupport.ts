@@ -4,6 +4,7 @@ import fsp from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import sharp from 'sharp';
+import { isContactGraphicScene } from '../../shared/socialMaterialScenePurpose.js';
 import type {
   SocialContentTaskBrief,
   SocialContentThemeId,
@@ -338,8 +339,19 @@ export function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[
         ? { ...matched.scriptAnalysis, shots: matched.scriptAnalysis.shots.filter(shot => shot.segmentId === selected.segmentId) }
         : matched.scriptAnalysis;
       if (selected && !selectedSegments.length && !selectedAnalysis?.shots.length) return null;
+      if (selected) {
+        const { startSeconds: start, endSeconds: end } = selected;
+        const ranges = selectedAnalysis?.shots.length ? selectedAnalysis.shots
+          : selectedSegments.map(segment => ({ startSeconds: Number(segment.start), endSeconds: Number(segment.end) }));
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start
+          || end > matched.duration + 0.001 || !ranges.some(range =>
+            Number.isFinite(range.startSeconds) && Number.isFinite(range.endSeconds)
+            && start >= range.startSeconds - 1e-6 && end <= range.endSeconds + 1e-6)) return null;
+      }
       const asset: SocialProductionAsset = selected ? {
         ...matched,
+        id: `${matched.id}:window:${socialRequestHash(selected).slice(0, 20)}`,
+        selectedSourceWindow: { startSeconds: selected.startSeconds, endSeconds: selected.endSeconds },
         segments: selectedSegments,
         ...(selectedAnalysis ? { scriptAnalysis: selectedAnalysis } : {}),
       } : matched;
@@ -400,12 +412,12 @@ export function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[
         };
       }
       const customerEvidence = context.shot.truthBoundary.customerEvidenceRefs.includes(asset.sourceId)
-        || context.shot.truthBoundary.customerEvidenceRefs.includes(asset.id);
+        || context.shot.truthBoundary.customerEvidenceRefs.includes(matched.id);
       return {
         asset,
         sourceStrategy: context.shot.sourceStrategy,
         providerId: this.adapterId,
-        sourceRef: context.shot.sourceRefs.find(ref => ref === asset.sourceId || ref === asset.id) ?? asset.sourceId,
+        sourceRef: selected?.sourceRef ?? context.shot.sourceRefs.find(ref => ref === matched.sourceId || ref === matched.id) ?? matched.sourceId,
         synthetic: false,
         representation: customerEvidence ? 'customer_evidence' : 'non_evidentiary_visual',
         authorizationRef: 'material_library_default',
@@ -446,7 +458,8 @@ export function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[
         ['#4a2b13', '#c87932', '#fff0dc'],
       ] as const;
       const [dark, accent, light] = palette[index % palette.length]!;
-      const title = safeGraphicText(context.baselineScene.shotFunction, 18) || '内容要点';
+      const contactCard = context.shot.visualContract && isContactGraphicScene(context.shot.visualContract, context.shot.requestedDescription ?? '');
+      const title = contactCard ? '联系我们' : safeGraphicText(context.baselineScene.shotFunction, 18) || '内容要点';
       const sensitive = context.shot.truthBoundary.subject !== 'none';
       const replacement = safeGraphicText(
         context.shot.functionalEquivalentReplacement.description || context.baselineScene.subject,

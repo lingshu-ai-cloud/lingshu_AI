@@ -1,3 +1,4 @@
+import { SOCIAL_TECHNICAL_REVIEW_POLICY } from './socialContentTechnicalReplayEvidence.js';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -37,12 +38,15 @@ class MemoryRepository implements Starter198Repository {
   async access() { return {} as never; }
 }
 
-function fixture() {
-  const parentContent = {
+function fixture(technical = false) {
+  const parentContent:Record<string,unknown> = {
     productionResult: { productionResultId: 'production-result', executionPlanId: 'execution-plan' },
     replicationEvaluation: { evaluationId: 'old-evaluation', replicationJobId: 'replication-job', status: 'failed' },
     adaptedScript: '新的产品介绍',
   };
+  if(technical)Object.assign(parentContent,{workflowSchema:'social-content.auto-production.v3',
+    productionWorkspaceSource:{runId:'run-a',outputSha256:mediaSha256},technicalQualityReport:{policyVersion:'old'},
+    review:{creativeChecksPassed:true},render:{completed:true},delivery:{status:'publish_candidate'}});
   const parent: StarterRecord = {
     id: 'parent-row', tenant_id: 'tenant', task_id: 'task', artifact_id: 'parent-artifact', artifact_kind: 'short_video',
     platform: 'tiktok', language: 'zh', version: '7', status: 'review_required', origin: 'agent',
@@ -53,6 +57,7 @@ function fixture() {
   const repository = new MemoryRepository(parent);
   let evaluations = 0;
   let creations = 0;
+  let technicalEvaluations = 0;
   let evaluatorSawExistingFile = false;
   const service = createSocialArtifactReevaluationService({
     repository,
@@ -62,6 +67,12 @@ function fixture() {
         body: (async function* () { yield bytes; })(),
       }),
       readDetail: async () => ({ agentWorkflow: workflow, replicationScript: script } as never),
+      reevaluateTechnical: async input => {
+        technicalEvaluations++;assert.equal(input.scope.runId,'run-a');assert.equal(input.outputSha256,mediaSha256);
+        return {report:{schemaVersion:'initial-scene-quality.v1',policyVersion:SOCIAL_TECHNICAL_REVIEW_POLICY,
+          visual:{passed:true,failures:[],metrics:{}},scenes:{passed:true,issues:[],checkedScenes:1},audio:{ok:true,error:null}} as never,
+          approved:false,failures:['technical_measurement_unverified'],policyVersion:SOCIAL_TECHNICAL_REVIEW_POLICY,evidenceHash:'e'.repeat(64)};
+      },
       evaluate: async input => {
         evaluations += 1;
         evaluatorSawExistingFile = existsSync(input.outputVideoPath);
@@ -95,7 +106,7 @@ function fixture() {
     parentArtifactVersion: '7', parentContentHash: parent.content_hash as string,
     expectedMediaSha256: mediaSha256, requestId: 'reevaluate-request-0001',
   };
-  return { service, request, repository, counters: () => ({ evaluations, creations, evaluatorSawExistingFile }) };
+  return { service, request, repository, technicalEvaluations:()=>technicalEvaluations, counters: () => ({ evaluations, creations, evaluatorSawExistingFile }) };
 }
 
 test('existing artifact reevaluation creates one human-review child over the exact same owned bytes', async () => {
@@ -175,4 +186,28 @@ test('identity evidence is derived once per final scene only from completed auth
   const incomplete = structuredClone(content);
   (incomplete.assetSupplyExecution.shots[1]!.attempts[0] as { status: string }).status = 'failed';
   assert.equal(identityEvidenceFromAssetSupply({ workflow: identityWorkflow, parentContent: incomplete }).length, 4);
+});
+
+
+test('technical policy upgrade creates same-byte child without replication evaluation and preserves unknown',async()=>{
+ const f=fixture(true),request={...f.request,mode:'technical' as const,expectedRunId:'run-a'};
+ const result=await f.service.reevaluate(request),content=result.artifact.content!;
+ assert.equal(result.replayed,false);assert.equal(f.technicalEvaluations(),1);assert.equal(f.counters().evaluations,0);
+ assert.equal((content.review as Record<string,unknown>).technicalChecksPassed,false);
+ assert.equal((content.review as Record<string,unknown>).automatedChecksPassed,false);
+ assert.equal((content.delivery as Record<string,unknown>).status,'requires_revision');
+ assert.equal((content.replicationEvaluation as Record<string,unknown>).evaluationId,'old-evaluation');
+ assert.equal((content.reevaluation as Record<string,unknown>).parentContentHash,request.parentContentHash);
+ assert.equal(result.artifact.resourceRef,'socialfile:file-1');
+ const replay=await f.service.reevaluate({...request,requestId:'different-user-request'});
+ assert.equal(replay.replayed,true);assert.equal(f.technicalEvaluations(),1);assert.equal(f.counters().creations,1);
+});
+test('current technical policy short circuits after byte verification and wrong run cannot reevaluate',async()=>{
+ const f=fixture(true),parent=f.repository.records[0]!,content=parent.content as Record<string,unknown>;
+ (content.technicalQualityReport as Record<string,unknown>).policyVersion=SOCIAL_TECHNICAL_REVIEW_POLICY;
+ parent.content_hash=socialRequestHash({resourceRef:parent.resource_ref,content});
+ const request={...f.request,parentContentHash:String(parent.content_hash),mode:'technical' as const,expectedRunId:'run-a'};
+ const result=await f.service.reevaluate(request);assert.equal(result.replayed,true);assert.equal(result.artifact.artifactId,'parent-artifact');
+ assert.equal(f.technicalEvaluations(),0);assert.equal(f.counters().creations,0);
+ await assert.rejects(f.service.reevaluate({...request,expectedRunId:'other-run'}),/run_changed/);
 });

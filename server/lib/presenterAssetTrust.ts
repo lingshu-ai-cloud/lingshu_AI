@@ -1,3 +1,4 @@
+import { presenterVoicePolicy } from '../../shared/contracts/presenterVoicePolicy.js';
 export type PresenterProvider = 'heygen' | 'volcengine_ark' | 'dashscope';
 export type PresenterUse = 'digital_presenter' | 'voice_synthesis' | 'person_replacement' | 'quality_inspection';
 
@@ -14,6 +15,7 @@ export interface PresenterRightsEvidence {
 }
 
 export interface TrustedPresenterRecord {
+  presenterSource?: unknown; voiceSelectionMode?: unknown;
   id?: unknown;
   authorized?: unknown;
   assetVersion?: unknown;
@@ -27,6 +29,7 @@ export interface TrustedPresenterRecord {
 }
 
 const EVIDENCE_REF = /^(?:https:\/\/|pb:\/\/|document:\/\/|consent:\/\/|rights:\/\/)[^\s]+$/i;
+const HEYGEN_CATALOG_LICENSE = /^license:\/\/heygen\/public-catalog\/[A-Za-z0-9_-]+$/;
 const PROVIDERS = new Set<PresenterProvider>(['heygen', 'volcengine_ark', 'dashscope']);
 const USES = new Set<PresenterUse>(['digital_presenter', 'voice_synthesis', 'person_replacement', 'quality_inspection']);
 
@@ -56,9 +59,13 @@ export function validatePresenterRightsEvidence(
   const reasons: string[] = [];
   const authorizationRef = String(value.authorizationRef || '').trim();
   const consentRef = String(value.consentRef || '').trim();
-  if (!EVIDENCE_REF.test(authorizationRef)) reasons.push('authorization_evidence_ref_invalid');
-  if (!EVIDENCE_REF.test(consentRef)) reasons.push('subject_consent_ref_invalid');
-  if (value.subjectAdultConfirmed !== true) reasons.push('adult_subject_confirmation_missing');
+  // Public catalog imports retain a provider license, not a private subject's consent.
+  const catalogLicense = requirement.provider === 'heygen'
+    && requirement.uses.every(use => use === 'digital_presenter' || use === 'voice_synthesis')
+    && HEYGEN_CATALOG_LICENSE.test(authorizationRef) && HEYGEN_CATALOG_LICENSE.test(consentRef);
+  if (!catalogLicense && !EVIDENCE_REF.test(authorizationRef)) reasons.push('authorization_evidence_ref_invalid');
+  if (!catalogLicense && !EVIDENCE_REF.test(consentRef)) reasons.push('subject_consent_ref_invalid');
+  if (!catalogLicense && value.subjectAdultConfirmed !== true) reasons.push('adult_subject_confirmation_missing');
   const grantedAt = isoTime(value.grantedAt);
   if (grantedAt === null || grantedAt > now.getTime()) reasons.push('rights_granted_at_invalid');
   const expiresAt = value.expiresAt === undefined || value.expiresAt === '' ? undefined : isoTime(value.expiresAt);
@@ -80,7 +87,7 @@ export function validatePresenterRightsEvidence(
   return { ok: true, evidence: {
     authorizationRef, consentRef, grantedAt: String(value.grantedAt),
     ...(value.expiresAt ? { expiresAt: String(value.expiresAt) } : {}),
-    subjectAdultConfirmed: true,
+    subjectAdultConfirmed: value.subjectAdultConfirmed === true,
     permittedProviders: permittedProviders!, permittedUses: permittedUses!, ...(providerScopes.length ? { providerScopes } : {}),
   } };
 }
@@ -95,11 +102,12 @@ export function validateHeyGenPresenterRecord(record: TrustedPresenterRecord, no
   const voiceId = String(mappings.heygen?.voiceId || record.voiceId || '').trim();
   const reasons = [...(record.authorized === true ? [] : ['presenter_not_authorized']),
     ...(id ? [] : ['presenter_id_missing']), ...(avatarId || (Array.isArray(record.referenceMaterialIds) && record.referenceMaterialIds.length) ? [] : ['heygen_avatar_id_missing']),
-    ...(voiceId ? [] : ['heygen_voice_id_missing'])];
+    ...(presenterVoicePolicy({ ...record, toolMappings: mappings, rightsEvidence: record.rightsEvidence as { authorizationRef?: unknown } }).voiceReady ? [] : ['heygen_voice_id_missing'])];
   const rights = validatePresenterRightsEvidence(record.rightsEvidence, {
     provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis'],
   }, now);
   if (!rights.ok) reasons.push(...rights.reasons);
+  if (rights.ok && HEYGEN_CATALOG_LICENSE.test(rights.evidence.authorizationRef) && rights.evidence.authorizationRef !== `license://heygen/public-catalog/${avatarId}`) reasons.push('catalog_license_asset_mismatch');
   if (reasons.length || !rights.ok) return { ok: false, reasons: [...new Set(reasons)] };
   return { ok: true, presenterAssetId: id, avatarId, voiceId,
     assetVersion: Math.max(1, Number(record.assetVersion) || 1), rights: rights.evidence };

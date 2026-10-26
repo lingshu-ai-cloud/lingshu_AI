@@ -1,5 +1,6 @@
-import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
+import {productionBudgetDuration,productionBudgetLimitCny,productionBudgetMaximumCny} from '../../shared/contracts/productionBudgetPolicy.js';
 import { assertSocialPresenterRouteAvailable } from './socialContentPresenterRouteAdmission.js';
+import { assertTaskPresenterPolicy } from './socialContentPresenterExecutionPolicy.js';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type {SocialAssetSupplyPlan} from '../../shared/contracts/socialContentWorkflow.js';
@@ -40,7 +41,7 @@ export async function prepareSocialProductionMaterialRouting(input:{
 	    : null;
 	  let reviewedSupplyPlan = selectedSupplyPlan && detail.brief.materialRoutingPolicyVersion==='type-aware.v1'
 	    ? applyPresenterFirstBudgetDegradation({plan:selectedSupplyPlan,workflow:agentWorkflow,
-	      maximumCny:productionBudgetLimitCny(productionBudgetDuration({...detail.brief,scenes:agentWorkflow.directorBrief.scenes}))})
+	      maximumCny:productionBudgetMaximumCny({...detail.brief,scenes:agentWorkflow.directorBrief.scenes})})
 	    : selectedSupplyPlan;
     if(reviewedSupplyPlan){
       reviewedSupplyPlan={...reviewedSupplyPlan,shots:reviewedSupplyPlan.shots.map(shot=>{
@@ -57,7 +58,7 @@ export async function prepareSocialProductionMaterialRouting(input:{
         referenceReuse:detail.brief.referenceReuse,referenceAnalysis:detail.referenceVideoAnalysis,
         scenes:agentWorkflow.directorBrief.scenes});
     }
-  if (productionApproach !== 'shooting_plan') assertSocialPresenterRouteAvailable(reviewedSupplyPlan);
+  if (productionApproach !== 'shooting_plan') assertSocialPresenterRouteAvailable(reviewedSupplyPlan,new Set(),{policy:detail.brief.presenterSpeechReviewPolicy,heyGenShotIds:new Set(presenterExecutions.filter(item=>item.executionStatus==='ready'&&item.providerId==='heygen').map(item=>item.sceneId))});
 	  const rawAssets = await (input.runtime?.loadProductionAssets ?? taskProductionAssets)({
 	    tenantId: input.tenantId,
 	    sources: detail.sources,
@@ -102,5 +103,6 @@ export async function prepareSocialProductionMaterialRouting(input:{
 	  let materialInputs = socialContentMaterialAnalysisInputs({assets: rawAssets, plan: reviewedSupplyPlan,
       policyVersion: detail.brief.materialRoutingPolicyVersion});
 
+  assertTaskPresenterPolicy(detail.brief, reviewedSupplyPlan);
   return {productionMode,paidVisualProvidersAllowed,rawAssets,reviewedSupplyPlan,materialInputs};
 }

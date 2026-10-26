@@ -6,3 +6,11 @@ test('automatic official endpoint/account tariff retains first free input and re
 test('whole-film Authority accepts source-verified CNY image ceiling without manual tariff rows',async()=>{
  const {createSocialContentTaskBudgetAuthority}=await import('./socialContentTaskBudgetAuthority.js');const baseUrl='https://ark.cn-beijing.volces.com/api/v3',credentialSha256='1'.repeat(64),accountRef='seedream:'+sha(JSON.stringify({baseUrl,credentialSha256})),intent={operationId:'formal-frame',provider:'seedream',model:'doubao-seedream-5-0-pro-260628',accountRef,stage:'first_frame',shotId:'S04',inputContractHash:'a'.repeat(64),maximumUnits:{inputImages:2,outputImages:1}},tariff=await readSeedreamPublishedTariff(intent,{baseUrl,credentialSha256,fetchOfficial:async url=>({url,status:200,body:source()})});assert.ok(tariff);const scope={tenantId:'tenant',taskId:'task',runId:'run',planHash:'b'.repeat(64)};const authority=createSocialContentTaskBudgetAuthority({ports:{assertCurrent:async()=>{},readApprovedPlan:async()=>({scope,authorizationRef:'existing-task-10',maximumCny:10,paidOperations:[intent]}),readVerifiedTariff:async()=>tariff,verifyRejection:async()=>false}});assert.equal((await authority.prepare(scope)).quotes.get(intent.operationId)?.upperBoundCny,.64);
 });
+
+test('2026-10-24 official richtext revision keeps exact single-image brackets without the removed resolution annotation',()=>{
+ const row=JSON.parse(source()),doc=JSON.parse(row.Result.Content);doc.version='0.4.37';row.Result.UpdatedTime='2026-10-24T11:43:57Z';
+ const cell=doc.data.xproxoutput;cell.ops[1].insert=cell.ops[1].insert.replace('（分辨率 1.5K 及以下）','').replace('（分辨率 1.5K 以上）','');
+ row.Result.Content=JSON.stringify(doc);const parsed=parseSeedreamPublishedPricing(JSON.stringify(row),'doubao-seedream-5-0-pro-260628');
+ assert.equal(parsed?.outputCeilingCnyPerImage,.6);assert.equal(parsed?.inputPriceCnyPerImage,.02);
+ doc.version='future-unknown';row.Result.Content=JSON.stringify(doc);assert.equal(parseSeedreamPublishedPricing(JSON.stringify(row),'doubao-seedream-5-0-pro-260628'),null);
+});

@@ -11,6 +11,7 @@ import type { SocialMaterialRouting } from './contracts/socialContentReplication
 import {selectTypeAwareSocialMaterial,selectVerifiedSocialMaterialSegment,affirmativeSocialMaterialDescription,explicitSocialPresenterRequest} from './socialContentMaterialRouting';
 import type { CreateSocialAssetSupplyPlanInput, SocialAssetInventory, SocialAssetSupplyShotRequest } from './socialContentAssetSupplyContracts';
 import {selectVerifiedLocalMaterialCut} from './socialContentLocalMaterialCut';
+import {isObservedConsumerApplication} from './socialMaterialReusePolicy.js';
 import { DEFAULT_SHOTS, EMPTY_INVENTORY, digitalHumanMethod, fallbackFor, inferSocialAssetAvailability, normalizeInventory, presenterLockReady, productionRoute, unique } from './socialContentAssetSupplyPolicy';
 export type { CreateSocialAssetSupplyPlanInput, SocialAssetInventory, SocialAssetSupplyShotRequest } from './socialContentAssetSupplyContracts';
 export { inferSocialAssetAvailability } from './socialContentAssetSupplyPolicy';
@@ -241,12 +242,14 @@ export function buildSocialProductSceneReplicationSpec(input: {
 
 export function classifySocialAssetSupplyMaterialType(shot:SocialAssetSupplyShotRequest,referenceShots?:SocialReferenceShotAnalysis[]):BenchmarkMaterialType {
   const affirmative=affirmativeSocialMaterialDescription(shot.requestedDescription);
-  // Older analyzed reference packages projected the task product into every
-  // person/environment contract and then froze those scenes as `product`.
-  // Respect an explicit classification unless the visible contract itself
-  // proves that this is DTC/customer b-roll with no product-display action.
-  // This correction is deterministic and never promotes an untyped scene to
-  // a paid route.
+  const currentVisual=normalizeSceneVisualContract(shot.visualContract??referenceShot(shot,referenceShots)?.visualContract??{subjects:shot.subjects,interaction:shot.interaction,environment:shot.environment,productUsage:shot.productUsage});
+  if(enterpriseScenePurpose(currentVisual,affirmative)||isContactGraphicScene(currentVisual,affirmative))return 'general';
+  if(isObservedConsumerApplication(currentVisual,affirmative))return 'consumer_demo';
+  if(currentVisual.interaction.kind==='person_holding_product'&&currentVisual.environment.kind!=='factory'
+    &&!currentVisual.subjects.some(subject=>subject.kind==='factory'))return 'product';
+  // Older references projected task products into person/environment scenes.
+  // Preserve labels unless observed use or customer b-roll corrects them;
+  // correcting a material type never authorizes a paid route.
   if(shot.materialType){
     if(shot.materialType!=='product')return shot.materialType;
     const frozenVisual=normalizeSceneVisualContract(shot.visualContract??referenceShot(shot,referenceShots)?.visualContract??{subjects:shot.subjects,interaction:shot.interaction,environment:shot.environment,productUsage:shot.productUsage});
@@ -619,7 +622,8 @@ function planShot(
         && group.imageIds.length > 0
       ))
   );
-  const usesFunctionalEquivalent = signals.personUsesProduct || (signals.hasPerson && signals.factory);
+  const localEquivalent = selected.materialRouting?.localMatch.state==='matched'&&selected.materialRouting.localMatch.reuseKind==='functional_equivalent';
+  const usesFunctionalEquivalent = localEquivalent || signals.personUsesProduct || (signals.hasPerson && signals.factory);
   const realFactoryBackgroundMissing=selected.materialRouting?.policy==='authorized_presenter'&&subject==='customer_factory'&&selected.materialRouting.localMatch.state!=='matched';
   const selectedSegment=selected.materialRouting?.localMatch.state==='matched'?shot.selectedMaterialSegment:(materialRoutingPolicyVersion==='type-aware.v1'||materialRoutingPolicyVersion==='type-aware.v2')&&selected.strategy==='customer_real_asset'?selectVerifiedSocialMaterialSegment(shot,selected.refs):undefined;
   const awaitingProductBudget=materialRoutingPolicyVersion==='type-aware.v2'&&selected.materialRouting?.materialType==='product'
@@ -647,7 +651,7 @@ function planShot(
     productionInstruction: selected.instruction,
     truthBoundary: {
       subject,
-      syntheticVisualAllowed: selected.materialRouting?.policy==='local_only'?false:selected.strategy !== 'customer_real_asset',
+      syntheticVisualAllowed: selected.materialRouting?.policy==='local_only'?!['customer_real_asset','licensed_stock_asset'].includes(selected.strategy):selected.strategy !== 'customer_real_asset',
       customerEvidenceRequired: Boolean(selected.materialRouting&&subject==='customer_factory'&&selected.strategy!=='customer_real_asset'),
       customerEvidenceRefs: selected.materialRouting&&subject==='customer_factory'?selected.materialRouting.localMatch.sourceRefs:[],
       confirmedFactRefs,
@@ -658,12 +662,12 @@ function planShot(
       required: usesFunctionalEquivalent,
       preservesFunction: shot.function,
       replacesSubject: usesFunctionalEquivalent && subject !== 'none' ? subject : null,
-      description: signals.personUsesProduct
+      description: localEquivalent ? '复用已核验本地片段，保留分镜用途与必要动作，允许不同布景或构图并按冻结时间窗裁切' : signals.personUsesProduct
         ? '将人物动作或口播与独立精确产品特写分切，保留表达功能但不伪装完整人货接触'
         : signals.hasPerson && signals.factory
           ? '使用已有工厂环境素材或示意画面保留生产语义，不让数字人伪装设备操作'
           : null,
-      reason: signals.personUsesProduct
+      reason: localEquivalent ? '按本地优先机制选择同功能片段，未触发参考分镜之外的SKU限制' : signals.personUsesProduct
         ? '当前数字人执行器不支持可靠的物理产品接触'
         : signals.hasPerson && signals.factory
           ? '当前数字人执行器不支持可靠的工厂设备交互'
@@ -791,3 +795,4 @@ export function createSocialAssetSupplyPlan(input: CreateSocialAssetSupplyPlanIn
     shots,
   };
 }
+import { enterpriseScenePurpose, isContactGraphicScene } from './socialMaterialScenePurpose.js';

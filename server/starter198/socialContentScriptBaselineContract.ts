@@ -96,7 +96,7 @@ export interface StoredSocialScriptBaseline {
     } | null;
   };
   scenes: Array<{
-    scriptOrigin?: 'independent_revision' | 'budget_semantic_revision';
+    scriptOrigin?: 'independent_revision' | 'budget_semantic_revision' | 'copy_edit_revision';
     referenceShotIds?: string[];
     sceneId: string;
     formulaNodeId: string | null;

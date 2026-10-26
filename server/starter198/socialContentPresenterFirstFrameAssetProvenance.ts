@@ -15,6 +15,40 @@ export interface PresenterFirstFrameAssetProvenance {
 
 type ProvenanceInput=Omit<PresenterFirstFrameAssetProvenance,'schemaVersion'|'manifestHash'>;
 
+/** Source-aware provenance for original planning. It carries no reference
+ * URL/SHA or removal claim. Output bytes are bound by the approval evidence. */
+export interface OriginalScenePresenterAssetProvenance {
+ schemaVersion:'presenter-first-frame-asset-provenance.v2';
+ presenter:PresenterFirstFrameAssetProvenance['presenter'];
+ products:PresenterFirstFrameAssetProvenance['products'];
+ source:{kind:'original_scene';sceneContractHash:string;promptHash:string};
+ manifestHash:string;
+}
+type OriginalProvenanceInput=Omit<OriginalScenePresenterAssetProvenance,'schemaVersion'|'manifestHash'>;
+export function originalScenePresenterAssetProvenanceHash(input:Omit<OriginalScenePresenterAssetProvenance,'manifestHash'>|OriginalScenePresenterAssetProvenance){
+ const {manifestHash:_,...body}=input as OriginalScenePresenterAssetProvenance;return hash(body);
+}
+export function createOriginalScenePresenterAssetProvenance(input:OriginalProvenanceInput):OriginalScenePresenterAssetProvenance {
+ const refs=sortedPairs(input.presenter.referenceAssetIds,input.presenter.referenceSha256s);
+ const body={schemaVersion:'presenter-first-frame-asset-provenance.v2' as const,presenter:{...input.presenter,referenceAssetIds:refs.ids,referenceSha256s:refs.hashes},products:input.products.map(product=>{const paired=sortedPairs(product.referenceImageIds,product.referenceImageSha256s);return{...product,referenceImageIds:paired.ids,referenceImageSha256s:paired.hashes};}).sort((a,b)=>a.productId.localeCompare(b.productId)),source:{...input.source}};
+ const result={...body,manifestHash:originalScenePresenterAssetProvenanceHash(body)};
+ if(!isOriginalScenePresenterAssetProvenance(result))throw Error('presenter_first_frame_asset_provenance_invalid');return result;
+}
+export function isOriginalScenePresenterAssetProvenance(value:unknown):value is OriginalScenePresenterAssetProvenance {
+ if(!value||typeof value!=='object')return false;
+ const item=value as OriginalScenePresenterAssetProvenance,p=item.presenter;
+ if(item.schemaVersion!=='presenter-first-frame-asset-provenance.v2'||item.source?.kind!=='original_scene'||Object.keys(item.source).some(key=>!['kind','sceneContractHash','promptHash'].includes(key))
+  ||!sha(item.source.sceneContractHash)||!sha(item.source.promptHash)||'background' in item
+  ||!p||!text(p.assetId)||!Number.isSafeInteger(p.assetVersion)||p.assetVersion<1
+  ||!Array.isArray(p.referenceAssetIds)||!p.referenceAssetIds.length||!p.referenceAssetIds.every(text)
+  ||new Set(p.referenceAssetIds).size!==p.referenceAssetIds.length||!Array.isArray(p.referenceSha256s)||p.referenceSha256s.length!==p.referenceAssetIds.length||!p.referenceSha256s.every(sha)
+  ||!Array.isArray(item.products))return false;
+ for(const product of item.products)if(!text(product.productId)||!text(product.enterpriseFactRef)||!text(product.enterpriseFactVersion)
+  ||!Array.isArray(product.referenceImageIds)||!product.referenceImageIds.length||!product.referenceImageIds.every(text)
+  ||new Set(product.referenceImageIds).size!==product.referenceImageIds.length||!Array.isArray(product.referenceImageSha256s)||product.referenceImageSha256s.length!==product.referenceImageIds.length||!product.referenceImageSha256s.every(sha))return false;
+ return sha(item.manifestHash)&&item.manifestHash===originalScenePresenterAssetProvenanceHash(item);
+}
+
 function sortedPairs(ids:string[],hashes:string[]){
   if(ids.length!==hashes.length)throw Error('presenter_first_frame_asset_provenance_reference_pair_invalid');
   const pairs=ids.map((id,index)=>({id,sha256:hashes[index]!})).sort((a,b)=>a.id.localeCompare(b.id));

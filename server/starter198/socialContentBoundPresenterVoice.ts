@@ -1,9 +1,13 @@
+import { readHeyGenVoiceMetadata, selectHeyGenSpeechEngine, type HeyGenSpeechEngine } from '../lib/heygenVoiceCapabilities.js';
+import { presenterVoicePolicy } from '../../shared/contracts/presenterVoicePolicy.js';
+import { resolveCatalogPresenterVoice } from '../lib/presenterVoiceResolution.js';
 import type { DataStore } from '../storage/datastore.js';
 import { paidProductionHash } from './socialContentPaidOperationPlan.js';
 import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
 
 async function assertWeeklyPresenterSource(store: DataStore, tenantId: string, presenter: any): Promise<void> {
   const ref = String(presenter?.rightsEvidence?.authorizationRef || '');
+  if (presenterVoicePolicy(presenter).presenterSource === 'heygen_catalog' && validateHeyGenPresenterRecord(presenter).ok) return;
   const match = /^document:\/\/studio_presenter_assets\/([^/]+)\/([^/]+)$/.exec(ref);
   if (!match) throw Error('weekly_default_voice_source_missing');
   const row = await store.getById<any>('studio_presenter_assets', match[1]!);
@@ -44,7 +48,7 @@ async function assertWeeklyPresenterSource(store: DataStore, tenantId: string, p
 
 export interface BoundPresenterVoice {
   presenters: Array<{ id: string; assetVersion: number; avatarId: string; voiceId: string }>;
-  provider: 'heygen'; voiceId: string; logicalVoice: string; fingerprint: string;
+  provider: 'heygen'; engine: HeyGenSpeechEngine; voiceId: string; logicalVoice: string; fingerprint: string;
 }
 
 /** Projects presenter identities from the immutable reviewed supply plan. */
@@ -68,31 +72,32 @@ export function weeklyProductionPresenterIds(plan: unknown): string[] {
 }
 
 /** Only authoritative tenant assets may select a production voice. */
-export async function readBoundPresenterVoice(store: DataStore, tenantId: string, ids: string[]): Promise<BoundPresenterVoice | null> {
+export async function readBoundPresenterVoice(store: DataStore, tenantId: string, ids: string[], ports: { readLook?: Parameters<typeof resolveCatalogPresenterVoice>[1]; readVoice?: typeof readHeyGenVoiceMetadata } = {}): Promise<BoundPresenterVoice | null> {
   const selected = [...new Set(ids)].sort();
   if (!selected.length) return null;
   const rows = await store.list<any>('studio_production_defaults', { where: { tenant_id: tenantId }, perPage: 2 });
   if (rows.items.length !== 1 || rows.items[0].tenant_id !== tenantId) throw Error('selected_presenter_voice_registry_missing');
   const assets = rows.items[0].payload?.presenters || [];
-  const presenters = selected.map(id => {
+  const presenters = await Promise.all(selected.map(async id => {
     const matches = assets.filter((item: any) => item.id === id);
     if (matches.length !== 1) throw Error('selected_presenter_voice_registry_ambiguous:' + id);
-    const p = matches[0];
+    const p = await resolveCatalogPresenterVoice(matches[0], ports.readLook);
     const voiceId = String(p?.toolMappings?.heygen?.voiceId || p?.voiceId || '').trim();
     const avatarId = String(p?.toolMappings?.heygen?.avatarId || p?.avatarId || '').trim();
     if (p?.authorized !== true || !voiceId || !avatarId || (p.voiceId && p.voiceId !== voiceId) || (p?.avatarId && p.avatarId !== avatarId)) throw Error('selected_presenter_bound_voice_missing_or_conflicting:' + id);
-    return { id, assetVersion: Math.max(1, p.assetVersion || 1), avatarId, voiceId };
-  });
+    return { id, assetVersion: Math.max(1, p.assetVersion || 1), avatarId, voiceId, ...(p.voiceSelectionMode ? { presenterSource: presenterVoicePolicy(p).presenterSource, voiceSelectionMode: presenterVoicePolicy(p).voiceSelectionMode } : {}) };
+  }));
   if (new Set(presenters.map(p => p.voiceId)).size !== 1) throw Error('multiple_presenter_voices_require_separate_audio_tracks');
   const voiceId = presenters[0]!.voiceId;
-  const fingerprint = paidProductionHash({ tenantId, presenters, provider: 'heygen', voiceId });
-  return { presenters, provider: 'heygen', voiceId, fingerprint, logicalVoice: `heygen:${voiceId}:${fingerprint}` };
+  const engine = selectHeyGenSpeechEngine(await (ports.readVoice || readHeyGenVoiceMetadata)(voiceId), voiceId);
+  const fingerprint = paidProductionHash({ tenantId, presenters, provider: 'heygen', voiceId, engine });
+  return { presenters, provider: 'heygen', voiceId, engine, fingerprint, logicalVoice: `heygen:${voiceId}:${fingerprint}:${engine}` };
 }
 
 /** Weekly acceptance authorizes the enterprise's default voice for the whole
  * film, including product-only and silent-motion shots. A generic TTS preset
  * must never stand in for that identity. Manual creation keeps its own rules. */
-export async function readWeeklyProductionVoice(store: DataStore, tenantId: string, selectedPresenterIds: string[]): Promise<BoundPresenterVoice> {
+export async function readWeeklyProductionVoice(store: DataStore, tenantId: string, selectedPresenterIds: string[], ports: Parameters<typeof readBoundPresenterVoice>[3] = {}): Promise<BoundPresenterVoice> {
   const rows = await store.list<any>('studio_production_defaults', { where: { tenant_id: tenantId }, perPage: 2 });
   if (rows.totalItems !== 1 || rows.items.length !== 1 || rows.items[0].tenant_id !== tenantId) throw Error('weekly_default_voice_registry_missing');
   const defaults = rows.items[0].payload || {};
@@ -105,7 +110,7 @@ export async function readWeeklyProductionVoice(store: DataStore, tenantId: stri
     if (selected.length !== 1 || !validateHeyGenPresenterRecord(selected[0]).ok) throw Error(`weekly_default_voice_authorization_missing:${id}`);
     await assertWeeklyPresenterSource(store, tenantId, selected[0]);
   }
-  const voice = await readBoundPresenterVoice(store, tenantId, ids);
+  const voice = await readBoundPresenterVoice(store, tenantId, ids, ports);
   if (!voice) throw Error('weekly_default_voice_identity_missing');
   return voice;
 }

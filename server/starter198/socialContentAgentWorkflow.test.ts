@@ -786,3 +786,9 @@ test('v9 whole-film budget status remains blocked at the real configured rate ra
   assert.equal(budget.estimatedCostCny,14.8);assert.equal(budget.exceeded,true);
  }finally{if(saved===undefined)delete process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND;else process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND=saved;}
 });
+
+test('an explicit 100-yuan task reports its own advisory ceiling instead of recomputing a duration cap',()=>{
+ const scene={sceneId:'approved-scene',recommendedCandidateIds:['approved-candidate'],candidates:[{candidateId:'approved-candidate',sourceStrategy:'non_evidentiary_ai_visual',dataTransfer:'external_processor',estimatedCostCny:45.45}]};
+ const result=socialExecutionBudgetStatus({scenes:[scene],budgetLimitCny:100} as never,{scenes:[{sceneId:scene.sceneId,duration:{startSeconds:0,endSeconds:38}}]} as never);
+ assert.equal(result.estimatedCostCny,45.45);assert.equal(result.budgetLimitCny,100);assert.equal(result.exceeded,false);
+});

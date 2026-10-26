@@ -23,6 +23,10 @@ export interface FrozenProductBudgetInputs {
     qaModel: string;
 }
 export interface CanonicalProductBudgetBounds {qaModel?:'qwen3-vl-plus';videoProvider?:'wan'|'seedance';videoModel?:'wan2.6-i2v-flash'|'wan2.2-i2v-flash';firstFrameMaximumFrames:number;videoMaximumFrames:number;productSha256s:string[];providerDurationSeconds:number;evidenceRef:string;}
+export interface FrozenConceptVideoBudgetInputs {
+    inputContractHash: string; model: string; baseUrl: string; credentialSha256: string;
+    providerDurationSeconds: number; maximumOutputTokens: number; usageBoundRef: string;
+}
 const digest = (v: string) => createHash('sha256').update(v).digest('hex');
 const official = (base: string, host: string) => { try {
     const u = new URL(base);
@@ -38,6 +42,8 @@ export function createProductionBudgetRouteReaders(input: {
     env?: () => NodeJS.ProcessEnv;
     readQwenBinding?: typeof getQwenProviderBinding;
     readFrozenProduct?: (requirement: PaidStageRequirement) => Promise<FrozenProductBudgetInputs | null>;
+    /** Trusted server account/contract proof, never a client estimate or copied token formula. */
+    readFrozenConceptVideo?: (requirement: PaidStageRequirement) => Promise<FrozenConceptVideoBudgetInputs | null>;
     readCanonicalProductBounds?: (requirement:PaidStageRequirement)=>Promise<CanonicalProductBudgetBounds|null>;
     readQwenVisionCatalog?: typeof readQwenMaaSVisionCatalog;
 } = {}) {
@@ -63,6 +69,17 @@ export function createProductionBudgetRouteReaders(input: {
     };
     return {
         async resolveBoundRoute(r: PaidStageRequirement): Promise<BoundPaidRoute | null> {
+            if(r.stage==='concept_video'){
+                const config=ark('seedance'),bound=await input.readFrozenConceptVideo?.(r);
+                if(!config||!bound||bound.inputContractHash!==r.inputContractHash||bound.model!==config.model
+                  ||bound.baseUrl!==config.baseUrl||bound.credentialSha256!==config.credentialSha256
+                  ||bound.providerDurationSeconds!==r.durationSeconds||!Number.isSafeInteger(bound.providerDurationSeconds)
+                  ||bound.providerDurationSeconds<4||bound.providerDurationSeconds>15
+                  ||!Number.isSafeInteger(bound.maximumOutputTokens)||bound.maximumOutputTokens<=0||!bound.usageBoundRef.trim())return null;
+                return{provider:'seedance',model:config.model,accountRef:productionBillingAccountRef('seedance',config.baseUrl,config.credentialSha256),
+                  routeEvidenceRef:`sdk:seedance-concept:${paidProductionHash(config)}`,usageBoundRef:bound.usageBoundRef,
+                  maximumAttempts:1,maximumUnits:{outputTokens:bound.maximumOutputTokens}};
+            }
             if(r.stage==='director_review_capacity'){
                 if(!Number.isSafeInteger(r.frameCount)||r.frameCount!<3||r.frameCount!>90)return null;
                 const route=await qwenRoute(r.stage,getDirectorG5QwenModel(),r.frameCount!,2400);

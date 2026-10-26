@@ -1,3 +1,4 @@
+import { freezePresenterMotherSegments } from '../../shared/contracts/presenterMotherSegments.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -88,3 +89,28 @@ test('one guarded full track and real alignment feed measured scene clips and re
  assert.throws(()=>verifiedHeyGenNativeTiming(response,'Different world.',2,5,2.15),/口播文本不一致/);
  assert.throws(()=>verifiedHeyGenNativeTiming(response,'Hello world.',2,5,3),/transform_changed/);
  });
+
+test('37 visual cuts preserve the three frozen presenter groups with silent members and cross-cut phrase speech',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'prepared-37-group-contract-'));
+ try{
+  const scope={tenantId:'fixture',taskId:'task',runId:'run',planHash:'a'.repeat(64)},file=path.join(root,'whole.wav');
+  execFileSync(ffmpeg!,['-hide_banner','-loglevel','error','-f','lavfi','-i','sine=frequency=440:sample_rate=24000:duration=4','-ac','1','-c:a','pcm_s16le',file]);
+  const hash=createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  const scenes=Array.from({length:37},(_,index)=>({shotId:'shot-'+(index+1),spokenText:index===0?'Hello  world.':index===29?'Build with care.':index===34?'Send a note.':'',durationSeconds:.1,startSeconds:index/10,endSeconds:(index+1)/10}));
+  const groups=freezePresenterMotherSegments({taskId:'task',referenceAnalysisHash:'b'.repeat(64),slots:scenes.map((scene,index)=>({slotId:scene.shotId,referenceShotId:scene.shotId,startSeconds:scene.startSeconds,endSeconds:scene.endSeconds,spokenText:scene.spokenText,materialType:[0,1,29,34,35].includes(index)?'talking_head':'product',frontFacing:true,lipSyncRequired:true}))});
+  assert.deepEqual(groups.groups.map(group=>group.memberSlotIds),[['shot-1','shot-2'],['shot-30'],['shot-35','shot-36']]);
+  const cues=[{start:0,end:.3,text:'Hello'},{start:.3,end:.9,text:'world.'},{start:.9,end:2.5,text:'Build with care.'},{start:2.5,end:3.7,text:'Send a note.'}];
+  const voice:any={ok:true,source:'heygen',localPath:file,url:'https://fixture/whole.wav',duration:4,cues};
+  const source=path.join(root,'source.json'),alignment=path.join(root,'alignment.json'),receipt=path.join(root,'prepared.json'),nativeVoice={provider:'heygen' as const,model:'avatar_iv',physicalVoiceId:'original'};
+  fs.writeFileSync(source,JSON.stringify({scope,provider:'heygen',model:'avatar_iv',voiceId:'original',operationId:'original-paid-fixture'}));
+  fs.writeFileSync(alignment,JSON.stringify({state:'completed',scope:{audioSha256:hash},source:'heygen_native_subtitles',precision:'phrase',independentAsr:false,result:{transcripts:[{text:'Hello world. Build with care. Send a note.',sentences:cues.map(cue=>({text:cue.text,begin_time:cue.start*1000,end_time:cue.end*1000}))}]}}));
+  const prepared:any={voice,inputHash:'fixture-input',receiptRef:receipt,wholeTrackSha256:hash,sourceReceiptRefs:[source],alignmentReceiptRef:alignment,nativeVoice};
+  fs.writeFileSync(receipt,JSON.stringify({status:'completed',inputHash:prepared.inputHash,scope,voice,wholeTrackSha256:hash,scenes,proof:{sourceReceiptRefs:[source],alignmentReceiptRef:alignment,nativeVoice}}));
+  const read=(group:any)=>readPreparedWholeVoiceScene({prepared,scope,shotId:group.segmentId,memberShotIds:group.memberSlotIds,spokenText:group.mergedSpokenText,assertCurrent:async()=>{}});
+  for(const group of groups.groups){const clip=await read(group);assert.ok(Math.abs(clip.durationSeconds-group.durationSeconds)<.001);assert.equal(clip.spokenText,group.mergedSpokenText);assert.equal((await read(group)).clipSha256,clip.clipSha256);}
+  await assert.rejects(read({...groups.groups[0],mergedSpokenText:'Hello other.'}),/scene_not_frozen:text_mismatch:presenter-mother-1/);
+  await assert.rejects(read({...groups.groups[0],memberSlotIds:['shot-1','missing']}),/scene_not_frozen:member_missing/);
+  await assert.rejects(read({...groups.groups[0],memberSlotIds:['shot-1','shot-3']}),/scene_not_frozen:window_noncontiguous/);
+  await assert.rejects(read({...groups.groups[0],memberSlotIds:['shot-2','shot-1']}),/scene_not_frozen:window_noncontiguous/);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});

@@ -1,4 +1,4 @@
-import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
+import {productionBudgetDuration,productionBudgetLimitCny,productionBudgetMaximumCny} from '../../shared/contracts/productionBudgetPolicy.js';
 import {executeWanImageVideo,type WanImageVideoCheckpoint} from '../lib/wanImageVideo.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -23,6 +23,8 @@ import {bindProductPaidStage, hasProductPaidStage, productPaidReservedCostCny, t
 import type {ProductReplacementPorts} from './socialContentProductReplacementExecution.js';
 import type {ProductSceneExecutionPorts} from './socialContentProductSceneAdapter.js';
 import type {SocialAssetSupplyPlan} from '../../shared/contracts/socialContentWorkflow.js';
+import {readTenantEnterpriseProfile} from '../lib/socialContentLegacyPorts.js';
+import {resolveEnterpriseProductSelection} from './socialContentTaskQueries.js';
 
 type Input = Parameters<ProductSceneExecutionPorts['execute']>[0];
 type Row = Record<string, any>;
@@ -68,6 +70,7 @@ export function productReplacementOperationFingerprint(kind: string, value: unkn
   return sha(JSON.stringify({schema: 'product-replacement-operation.v1', kind, value}));
 }
 export interface ProductReplacementEnvironmentContext {
+  readEnterpriseProfile?:typeof readTenantEnterpriseProfile;
   dataStore?: Pick<typeof store, 'getById' | 'list'>;
   materials?: typeof readMaterialLibrary;
   download?: typeof objectStorageDownload;
@@ -140,12 +143,25 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
   const accountId = brief?.targetAccountRef?.id ?? null;
   if (typeof productId !== 'string' || !productId) throw Error('product_replacement_canonical_product_identity_missing');
   const frozenProductRefs: string[] = shot.productSceneReplication.productIdentity.groups.map((group: {productRef:string}) => group.productRef.replace(/^product:/, ''));
-  if (!frozenProductRefs.length || frozenProductRefs.some((ref: string) => ref !== productId)) throw Error('product_replacement_canonical_product_identity_changed');
+  const readProfile=context.readEnterpriseProfile??(db===store?readTenantEnterpriseProfile:null);
+  const aliases=async()=>{
+    const profile=await readProfile?.(input.tenantId),selected=resolveEnterpriseProductSelection(profile?.products.items??[],{productId});
+    if(!selected||selected.canonicalId!==productId)return null;
+    return [...new Set([selected.canonicalId,selected.item.id,selected.item.productId,selected.item.sku,selected.item.name].map(value=>String(value??'').normalize('NFKC').trim()).filter(Boolean))].sort();
+  };
+  let aliasHash:string|null=null;
+  if (!frozenProductRefs.length)throw Error('product_replacement_canonical_product_identity_changed');
+  if(frozenProductRefs.some(ref=>ref!==productId)){
+    const trusted=await aliases();
+    if(!trusted||frozenProductRefs.some(ref=>!trusted.includes(ref.normalize('NFKC').trim())))throw Error('product_replacement_canonical_product_identity_changed');
+    aliasHash=socialRequestHash(trusted);
+  }
   const productAuthorities = new Map<string, {hash:string; recordHash:string}>();
   let usageAuthority: {id: string; hash: string} | null = null;
   const taskIdentity = socialRequestHash({run: task.run_id, script: task.replication_script, brief: task.brief});
   const assertCurrent = async () => {
     await context.assertCurrent?.();
+    if(aliasHash&&socialRequestHash(await aliases())!==aliasHash)throw Error('product_replacement_canonical_product_identity_changed');
     const live = await db.getById<Row>('starter_social_content_tasks', task.id);
     if (!live || live.tenant_id !== input.tenantId || socialRequestHash({run: live.run_id, script: live.replication_script, brief: live.brief}) !== taskIdentity) throw Error('product_replacement_task_changed');
     if (productAuthorities.size) {
@@ -197,7 +213,7 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
   const taskBudget = new SocialContentTaskBudget(path.join(path.dirname(budgetRoot), 'social-content-task-budget'), {
     assertCurrent: async () => assertCurrent(),
     authorization: async () => {
-      const duration=productionBudgetDuration(brief),limit=productionBudgetLimitCny(duration);
+      const duration=productionBudgetDuration(brief),limit=productionBudgetMaximumCny(brief);
       if (!Number.isFinite(limit) || limit <= 0) throw Error('product_whole_film_budget_missing');
       return {productionDurationSeconds:duration, maximumCny:limit, authorizationRef: 'canonical-task-budget:' + taskIdentity};
     },

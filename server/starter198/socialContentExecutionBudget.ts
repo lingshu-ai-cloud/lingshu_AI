@@ -31,9 +31,10 @@ export function socialExecutionBudgetStatus(
   _tenantId?: string,
 ): { estimatedCostCny: number; budgetLimitCny: number | null; exceeded: boolean } {
   const estimatedCostCny = socialExecutionExternalCost(plan, directorBrief);
+  const maximumCny = plan.budgetLimitCny ?? productionBudgetLimitCny(productionBudgetDuration({scenes:directorBrief.scenes}));
   return {
     estimatedCostCny,
-    budgetLimitCny: productionBudgetLimitCny(productionBudgetDuration({scenes:directorBrief.scenes})),
-    exceeded: productionBudgetExceeded(estimatedCostCny,productionBudgetLimitCny(productionBudgetDuration({scenes:directorBrief.scenes}))),
+    budgetLimitCny: maximumCny,
+    exceeded: productionBudgetExceeded(estimatedCostCny,maximumCny),
   };
 }

@@ -35,6 +35,7 @@ export async function evaluateStoryboardFirstFrameQuality(input: {
   hasEnvironmentReference?: boolean;
   hasContact: boolean;
   hasAction: boolean;
+  personRemovalRequired?:boolean;personAbsenceRequired?:boolean;naturalCompositeRequired?:boolean;
   candidateLabels: string[];
   referenceLabels?: string[];
   applyReplicationAutomation: boolean;
@@ -54,7 +55,7 @@ export async function evaluateStoryboardFirstFrameQuality(input: {
   if (referenceLabels.some(label => candidateLabels.includes(label))) return invalid(['candidate_labels:ambiguous_reference_role']);
   const shape = { phase: 'first_frame' as const, sceneType: input.sceneType,
     hasProduct: input.hasProduct, hasNamedPerson: input.hasNamedPerson,
-    hasEnvironmentReference: input.hasEnvironmentReference, hasContact: input.hasContact, hasAction: input.hasAction };
+    hasEnvironmentReference: input.hasEnvironmentReference, hasContact: input.hasContact, hasAction: input.hasAction,personRemovalRequired:input.personRemovalRequired,personAbsenceRequired:input.personAbsenceRequired,naturalCompositeRequired:input.naturalCompositeRequired };
   let observations: unknown;
   let technical: StoryboardQaObservation[];
   try {

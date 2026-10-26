@@ -60,10 +60,13 @@ export interface SocialProductSceneReplicationSpec {
 }
 
 export interface SocialMaterialRouting {
+  reusePolicy?: import('../socialMaterialReusePolicy.js').SocialMaterialReusePolicy;
   schemaVersion: 'social-material-routing.v1';
   materialType: BenchmarkMaterialType;
-  policy: 'local_only' | 'local_first_product_i2v' | 'authorized_presenter';
+  policy: 'local_only' | 'local_first_product_i2v' | 'authorized_presenter' | 'illustrative_video';
+  illustrativeVideo?: { purpose: 'design' | 'shopping' | 'meeting'; provider: 'seedance'; durationSeconds: number; disclosure: 'AI 场景示意' };
   localMatch: {
+    reuseKind?: 'direct_cut' | 'functional_equivalent';
     state: 'matched' | 'missing';
     sourceRefs: string[];
     evidenceRef: string | null;

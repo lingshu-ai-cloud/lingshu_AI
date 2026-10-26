@@ -27,6 +27,11 @@ test('canonical tenant video selection produces readonly executor-bound proof; s
     const proof = await read(requirement); assert.ok(proof); assert.equal(proof.sourceSha256,sha); assert.equal(proof.scopeHash,paidProductionHash(scope)); assert.match(proof.receiptRef,/^local_selection:/); assert.equal(LOCAL_SUPPLY_EXECUTOR,'existing_customer_asset.v1'); assert.equal(assertions,2);
     assert.ok(await createSocialContentLocalSupplyBudgetProofReader({...input,assets:[{...asset,duration:3.9999967}]} as never)(requirement),'container time-base rounding must not reject the exact selected cut');
     assert.equal(await createSocialContentLocalSupplyBudgetProofReader({...input,assets:[{...asset,duration:3.998}]} as never)(requirement),null,'a materially short source must still fail closed');
+    const fractionalAnalysis={...analysis,shots:[{...analysis.shots[0],startSeconds:26,endSeconds:28}]};
+    const fractionalInput={...input,assets:[{...asset,duration:30,scriptAnalysis:fractionalAnalysis}],repository:{...input.repository,materialLibrary:async()=>({items:[{...record,scriptAnalysis:fractionalAnalysis}]})},supplyPlan:{shots:[{...shot,selectedMaterialSegment:{...shot.selectedMaterialSegment,startSeconds:26.83,endSeconds:27.229999999999997}}]}};
+    const fractionReq={...requirement,durationSeconds:5.3-4.9};
+    assert.ok(await createSocialContentLocalSupplyBudgetProofReader(fractionalInput as never)(fractionReq),'decimal subtraction at source and timeline origins must agree within nanosecond precision');
+    assert.equal(await createSocialContentLocalSupplyBudgetProofReader(fractionalInput as never)({...fractionReq,durationSeconds:.401}),null,'a truly shorter selected window is not a match');
     record.tenantId='other'; assert.equal(await read(requirement),null); record.tenantId='tenant';
     record.scriptAnalysis={...analysis,status:'missing'}; assert.equal(await read(requirement),null); record.scriptAnalysis=analysis;
     for (const patch of [{sourceStrategy:'customer_product_image_animation'},{selectedMaterialSegment:{...shot.selectedMaterialSegment,endSeconds:7}},{materialRouting:{...shot.materialRouting,localMatch:{...shot.materialRouting.localMatch,evidenceRef:null}}}]) {

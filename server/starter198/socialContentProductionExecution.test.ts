@@ -169,7 +169,7 @@ const wholeFilmBudget=source.indexOf('const productionBudget = await prepareSoci
 const presenterProvider=source.indexOf('motherSupply=await preparePresenterMotherSupply(');
 assert.ok(wholeFilmBudget>0&&presenterPrepare>wholeFilmBudget&&presenterPause>presenterPrepare&&presenterProvider>presenterPause,
   'whole-film admission must prepare and persist review nodes before any mother provider invocation');
-assert.match(source,/preparePresenterFirstFrameReviews:async[\s\S]*?await input\.runtime\.preparePresenterMotherFirstFrames[\s\S]*?automaticallyConfirmPresenterFirstFrameApproval[\s\S]*?status:'automatically_confirmed_after_static_qa'/,
+assert.match(source,/preparePresenterFirstFrameReviews:async[\s\S]*?await input\.runtime\.preparePresenterMotherFirstFrames[\s\S]*?automaticallyConfirmPresenterFirstFrameApproval[\s\S]*?status:(?:nativeSourceOnly\?'catalogue_source_confirmed_visual_review_pending':)?'automatically_confirmed_after_static_qa'/,
   'preflight callback must automatically confirm QA-passed review nodes with the trusted system actor');
 assert.doesNotMatch(source,/awaiting_explicit_user_confirmation|presenter_first_frames_pending_confirmation/,
   'production must never pause for a user confirmation after static first-frame QA passes');
@@ -263,3 +263,12 @@ await assert.rejects(() => archiveGeneratedSocialContentFile({
 }), /social_content_file_integrity_violation/);
 
 console.log('social content shooting-plan execution tests passed');
+
+assert.match(source,/schemaVersion==='social-presenter-first-frame-approval.v3'\?\{originalSceneApproval:structuredClone\(confirmation.approval\)\}/,'only verified v3 original approvals reach the presenter adapter');
+assert.match(source,/buildSocialPresenterSceneSources\(\{groups,/,'budget static preparation consumes original scene source contract');
+assert.match(source,/buildSocialPresenterMotherSceneSources\(/,'mother handoff reuses frozen original scene sources');
+assert.match(source,/if \(executedSupplyPlan && assetSupplyExecution\) \{[\s\S]*?buildInitialSocialSceneCacheInput\([\s\S]*?referenceAnalysis: detail\.referenceVideoAnalysis \?\? null/,
+  'both original and reference productions enter the same initial scene-cache handoff');
+assert.doesNotMatch(source,/executedSupplyPlan && assetSupplyExecution && detail\.referenceVideoAnalysis/,
+  'an original production must not be excluded from scene-cache and rework recovery');
+assert.doesNotMatch(source,/if\(!referenceAnalysis\)throw Error\('presenter_first_frame_reference_analysis_missing'\)/,'authored scenes do not require fabricated benchmark analysis');

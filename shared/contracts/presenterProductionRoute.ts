@@ -4,6 +4,8 @@ export function presenterProductionRoute(input: {
   sourceStrategy?: string | null;
   method?: string | null;
   silentMotion?: boolean;
+  provider?: string;
+  speechReviewPolicy?: string;
 }): { kind: 'real_material' | 'silent_motion' | 'generated_speech' | 'other'; executable: boolean; code: string | null; message: string; nextActions: string[] } {
   if (input.sourceStrategy === 'customer_real_asset' || input.sourceStrategy === 'owned_exact_local_video') {
     return { kind: 'real_material', executable: true, code: null,
@@ -15,6 +17,10 @@ export function presenterProductionRoute(input: {
   if (input.method === 'reenact' && input.silentMotion === true) return {
     kind: 'silent_motion', executable: true, code: null,
     message: '无口型要求的人物动作；仍需动作测量、人物授权和动态质检。', nextActions: [],
+  };
+  if (input.provider === 'heygen' && input.speechReviewPolicy === 'heygen_native_human_review') return {
+    kind: 'generated_speech', executable: true, code: null,
+    message: 'HeyGen 原生口播；口型效果待成片人工验收，未通过独立口型自动检测。', nextActions: [],
   };
   return { kind: 'generated_speech', executable: false,
     code: 'presenter_speech_route_unavailable',

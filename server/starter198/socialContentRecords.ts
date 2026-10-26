@@ -1,4 +1,5 @@
 import { guidedMaterialRoutingRequests, guidedProductIdentityGroups } from './guidedCreationRouting.js';
+import { bindTaskContactCards } from './socialContentContactCard.js';
 import {applySocialContentRevisionSupply} from './socialContentRevisionProjection.js';
 import {readHandoffProductFootageRevisionSupply} from './socialContentProductFootageRevisionProjection.js';
 import {auditWeeklyMaterialInventory} from './weeklyMaterialInventory.js';
@@ -124,7 +125,9 @@ export async function readSocialTaskDetail(input: {
     const record = materialById.get(decodeMaterialRef(source.sourceRef));
     return record ? [{ source, record }] : [];
   });
-  const presenterInventory = await readAuthorizedPresenterInventory(
+  const presenterInventory = summary.brief.presenterPolicy === 'none'
+    ? { assetIds: [], accountPresenterLock: null, selectedPresenterEvidence: null }
+    : await readAuthorizedPresenterInventory(
     input.repository,
     input.tenantId,
     summary.brief.targetAccountRef?.id,
@@ -192,6 +195,7 @@ export async function readSocialTaskDetail(input: {
     }
   }
   const candidateSet = buildSocialWorkflowMaterialCandidates({
+    deferVideoSkuFilter: summary.brief.materialRoutingPolicyVersion==='type-aware.v2',
     records: materialInventory.items,
     reviewedFootageOverlays,
     tenantId: input.tenantId,
@@ -319,10 +323,12 @@ export async function readSocialTaskDetail(input: {
       referenceShots: referenceVideoAnalysis?.shots,
       productRef: primaryProductRef, shots: replicationScript?.shots.map(shot => ({
       shotId: shot.shotId,
+      illustrativeVideoApproved: summary.brief.productionApproach === 'ai_enhanced' && summary.brief.illustrativeSceneIds?.includes(shot.shotId) === true,
       function: shot.purpose,
       requestedDescription: shot.visualInstruction,
       truthSensitiveSubject: shot.materialPlan.truthBoundary.subject,
       referenceShotId: shot.referenceShotId,
+      ...(summary.brief.materialRoutingPolicyVersion==='type-aware.v2'?{plannedDurationSeconds:shot.endSeconds-shot.startSeconds}:{}),
       ...(summary.brief.creationDialoguePlan ? { plannedDurationSeconds: shot.endSeconds - shot.startSeconds, visualContract: shot.materialPlan.visualContract } : {}),
       ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || summary.brief.materialRoutingPolicyVersion === 'type-aware.v2') && shot.materialPlan.materialRouting ? {
         plannedDurationSeconds: shot.endSeconds - shot.startSeconds,
@@ -337,6 +343,7 @@ export async function readSocialTaskDetail(input: {
     })) ?? [] }),
     rightsConfirmationRequired: false,
   }) });
+  assetSupplyPlan = bindTaskContactCards(assetSupplyPlan, summary.brief);
   const footageRevision = await readHandoffProductFootageRevisionSupply({ repository: input.repository,
     tenantId: input.tenantId, taskId: summary.taskId, task, ledgerRoot: input.ledgerRoot });
   if (footageRevision) assetSupplyPlan = footageRevision.plan;
@@ -483,6 +490,7 @@ export async function readSocialTaskDetail(input: {
       readinessMissing: summary.readiness.missing,
       productionApproach: summary.brief.productionApproach,
       targetDurationSeconds:summary.brief.targetDurationSeconds,
+      presenterSpeechReviewPolicy:summary.brief.presenterSpeechReviewPolicy,
     },
     workflow: agentWorkflow,
     assetSupplyPlan,

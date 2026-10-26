@@ -1,4 +1,4 @@
-import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
+import {productionBudgetDuration,productionBudgetLimitCny,productionBudgetMaximumCny} from '../../shared/contracts/productionBudgetPolicy.js';
 import type {Starter198Repository,StarterRecord} from './repository.js';
 import {STARTER_COLLECTIONS} from './repository.js';
 import {socialJson,socialObject,socialRequestHash,socialText,SocialContentWorkflowError} from './socialContentValidation.js';
@@ -112,7 +112,7 @@ export async function resolveSocialContentCostLineage(input:{repository:Starter1
    const programId=socialText(order?.programId)||socialText(weekly?.programId)||null;
    let originWeek=socialText(order?.originWeek)||null;
    if(!originWeek&&weekly){const date=new Date(String(task.created_at??task.created??''));if(!Number.isFinite(date.getTime()))return fail('original_week_missing');originWeek=shanghaiNaturalWeek(date);}
-   const amount=productionBudgetLimitCny(productionBudgetDuration(brief??{}));
+   const amount=productionBudgetMaximumCny(brief??{});
    const body={schemaVersion:'social-content-cost-lineage.v1' as const,executionTaskId:taskId,contentId:taskId,budgetTaskId:taskId,parentTaskId:null,
     originalMaximumCny:Number.isFinite(amount)&&amount>0?amount:null,maximumAdditionalCostCny:null,
     programId,originWeek,kind:revision?'in_place_revision' as const:'original' as const,

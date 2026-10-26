@@ -355,7 +355,7 @@ export function freezeSocialScriptBaseline(input: {
       shotFunction: socialText(shot.purpose) || '主题表达',
       subject: socialText(shot.materialPlan?.requestedDescription) || visualInstruction || '本次内容',
       action: visualInstruction || '按参考节奏展示',
-      ...(['independent_revision','budget_semantic_revision'].includes(shot.scriptOrigin||'') ? {scriptOrigin:shot.scriptOrigin} : {}),
+      ...(['independent_revision','budget_semantic_revision','copy_edit_revision'].includes(shot.scriptOrigin||'') ? {scriptOrigin:shot.scriptOrigin} : {}),
       ...(shot.referenceShotIds ? {referenceShotIds:[...shot.referenceShotIds]} : {}),
       script: visualInstruction || narration,
       referenceSpokenText: shot.referenceSpokenText ?? null,
@@ -628,7 +628,7 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
       ...(Object.prototype.hasOwnProperty.call(scene ?? {}, 'referenceSpokenText')
         ? { referenceSpokenText: socialText(scene?.referenceSpokenText) || null }
         : {}),
-      ...(['independent_revision','budget_semantic_revision'].includes(socialText(scene?.scriptOrigin)) ? {scriptOrigin:socialText(scene?.scriptOrigin) as 'independent_revision'|'budget_semantic_revision'} : {}),
+      ...(['independent_revision','budget_semantic_revision','copy_edit_revision'].includes(socialText(scene?.scriptOrigin)) ? {scriptOrigin:socialText(scene?.scriptOrigin) as 'independent_revision'|'budget_semantic_revision'|'copy_edit_revision'} : {}),
       ...(Array.isArray(scene?.referenceShotIds) ? {referenceShotIds:scene.referenceShotIds.map(socialText)} : {}),
       voiceover: socialText(scene?.voiceover) || socialText(scene?.narration),
       ...(speechLines ? { speechLines: speechLines.map(rawLine => {

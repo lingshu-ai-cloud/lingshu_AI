@@ -15,5 +15,7 @@ export function selectVerifiedLocalMaterialCut(input:{
   ||!inventory.customerVideoIds.includes(segment.sourceRef))return null;
  return{strategy:'customer_real_asset',refs:[segment.sourceRef],instruction:'仅使用已审核、已冻结片段执行本地裁切；不得调用生成供应商',
   materialRouting:{schemaVersion:'social-material-routing.v1',materialType:input.materialType,policy:'local_only',
-   localMatch:{state:'matched',sourceRefs:[segment.sourceRef],evidenceRef:match.evidenceRef,productRef:match.productRef??shot.productRef??null}}};
+   ...(shot.materialReusePolicy?{reusePolicy:structuredClone(shot.materialReusePolicy)}:{}),
+   localMatch:{state:'matched',sourceRefs:[segment.sourceRef],evidenceRef:match.evidenceRef,productRef:match.productRef??shot.productRef??null,
+    ...(match.reuseKind?{reuseKind:match.reuseKind}:{}),...(match.sourceTier?{sourceTier:match.sourceTier}:{}),...(match.archetypeId?{archetypeId:match.archetypeId}:{})}}};
 }

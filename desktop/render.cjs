@@ -10,7 +10,7 @@
  * voiceover.url 与 bgm.url 均会下载并混入最终音轨；声明了音轨却下载失败时必须终止，
  * 避免用户拿到“字幕正常但没有声音”的静默成片。
  */
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const { createHash } = require('node:crypto');
 const os = require('node:os');
@@ -26,6 +26,31 @@ const { advancedEvents, renderTransparentOverlay } = require('./remotion-overlay
 
 let ffmpegPath = null;
 try { ffmpegPath = require('ffmpeg-static'); } catch { ffmpegPath = null; }
+
+const ffmpegFilterAvailability = new Map();
+function ffmpegHasFilter(name) {
+  if (!ffmpegPath) return false;
+  if (ffmpegFilterAvailability.has(name)) return ffmpegFilterAvailability.get(name);
+  const result = spawnSync(ffmpegPath, ['-hide_banner', '-filters'], { encoding: 'utf8', timeout: 15_000 });
+  const available = result.status === 0 && new RegExp(`\\b${name}\\b`).test(`${result.stdout || ''}\n${result.stderr || ''}`);
+  ffmpegFilterAvailability.set(name, available);
+  return available;
+}
+
+let xfadeAvailable;
+function ffmpegSupportsXfade() {
+  if (!ffmpegPath) return false;
+  if (xfadeAvailable !== undefined) return xfadeAvailable;
+  const result = spawnSync(ffmpegPath, [
+    '-hide_banner', '-loglevel', 'error',
+    '-f', 'lavfi', '-i', 'color=red:s=16x16:r=30:d=0.5',
+    '-f', 'lavfi', '-i', 'color=blue:s=16x16:r=30:d=0.5',
+    '-filter_complex', '[0:v]fps=30,settb=1/30,setpts=N[a];[1:v]fps=30,settb=1/30,setpts=N[b];[a][b]xfade=transition=dissolve:duration=0.1:offset=0.4[out]',
+    '-map', '[out]', '-frames:v', '27', '-f', 'null', '-',
+  ], { encoding: 'utf8', timeout: 15_000 });
+  xfadeAvailable = result.status === 0;
+  return xfadeAvailable;
+}
 
 /** 画面比例 → 分辨率 */
 function resolution(ratio) {
@@ -284,10 +309,11 @@ function groupSpokenCues(cues, options = {}) {
       start: Number.isFinite(Number(word && word.startMs)) ? Number(word.startMs) / 1000 : Number(word && word.start),
       end: Number.isFinite(Number(word && word.endMs)) ? Number(word.endMs) / 1000 : Number(word && word.end),
     })).filter(word => word.text && Number.isFinite(word.start) && Number.isFinite(word.end) && word.end > word.start);
-    if (previous && !terminal && gap >= 0 && gap <= gapLimit && end - previous.start <= maxDuration) {
+    const placement = cue.placement === 'upper' ? 'upper' : 'default';
+    if (previous && previous.placement === placement && !terminal && gap >= 0 && gap <= gapLimit && end - previous.start <= maxDuration) {
       previous.text += (/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text) ? '' : ' ') + text;
       previous.end = end; previous.parts.push({ start, end, text, words }); previous.words.push(...words);
-    } else groups.push({ start, end, text, words, parts: [{ start, end, text, words }] });
+    } else groups.push({ start, end, text, words, placement, parts: [{ start, end, text, words }] });
   }
   return groups;
 }
@@ -317,7 +343,7 @@ function normalizeSubtitleCues(cues, options = {}) {
       const start = index === 0 ? group.start : at(offset, false);
       offset += units(page.join(''));
       const end = index === pages.length - 1 ? group.end : at(Math.min(totalWeight, offset), true);
-      return { start, end, text: page.join('\\N'), words: group.words.filter(word => word.start < end && start < word.end) };
+      return { start, end, text: page.join('\\N'), placement: group.placement, words: group.words.filter(word => word.start < end && start < word.end) };
     });
   });
 }
@@ -356,18 +382,34 @@ function filterPath(value) {
 
 // Motion graphics are an input visual layer. Burn the frozen ASS track only
 // after all overlays so an opaque motion frame cannot silently hide a cue.
-function appendFinalVisualLayers(filters, visualLabel, motionOverlayIdx, width, height, assFile, captureCaptionBaseline = false) {
+function appendFinalVisualLayers(filters, visualLabel, motionOverlayIdx, width, height, assFile, captureCaptionBaseline = false, duration = 0) {
   let composedLabel = visualLabel;
   if (motionOverlayIdx >= 0) {
     filters.push(`[${motionOverlayIdx}:v]fps=30,scale=${width}:${height},format=yuva420p,setpts=PTS-STARTPTS[vmotion]`);
     filters.push(`${composedLabel}[vmotion]overlay=0:0:format=auto:shortest=1[vbeforecaption]`);
     composedLabel = '[vbeforecaption]';
   }
+  if (duration > 0) {
+    // Repair at most one boundary frame, never conceal a materially short
+    // timeline. Normalize before splitting so caption evidence has identical PTS.
+    filters.push(`${composedLabel}fps=30,settb=1/30,setpts=N,tpad=stop_mode=clone:stop=1,trim=end_frame=${Math.round(duration * 30)},setpts=N[vtimeline]`);
+    composedLabel = '[vtimeline]';
+  }
   if (assFile && captureCaptionBaseline) {
     filters.push(`${composedLabel}split=2[vcaptioninput][vbaseline]`);
     filters.push(`[vcaptioninput]subtitles='${filterPath(assFile)}':fontsdir='${filterPath(fontsDirectory)}'[vout]`);
   } else if (assFile) filters.push(`${composedLabel}subtitles='${filterPath(assFile)}':fontsdir='${filterPath(fontsDirectory)}'[vout]`);
   else filters.push(`${composedLabel}null[vout]`);
+}
+
+function finalMuxOutputArgs(duration, outputPath, audio = true) {
+  return ['-t', String(duration), '-c:v', 'libx264', '-threads', audio ? '2' : '1',
+    '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
+    '-r', '30', '-g', '60', '-keyint_min', '30', '-sc_threshold', '0',
+    ...(audio ? ['-c:a', 'aac', '-b:a', '128k'] : ['-an']),
+    // MP4 edit lists preserve AAC priming while video starts at zero. Shifting
+    // all streams with make_zero instead offsets only the audio-bearing output.
+    '-use_editlist', '1', '-movflags', '+faststart', '-y', outputPath];
 }
 
 function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {}, emphasisPlan = null) {
@@ -394,6 +436,7 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
       end: Math.max(0, Number(cue && cue.end) || 0),
       text: String(cue && cue.text || '').replace(/[{}]/g, '').trim(),
       screen: cue && cue.kind === 'screen',
+      placement: cue && cue.placement === 'upper' ? 'upper' : 'default',
       words: Array.isArray(cue && cue.words) ? cue.words : [],
     }))
     .filter(cue => cue.text && cue.end > cue.start);
@@ -410,8 +453,9 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
   const events = valid.flatMap(cue => {
     const prefix = cue.screen
       ? `{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.12)})}`
+      : cue.placement === 'upper' ? `{\\an8\\pos(${Math.round(width / 2)},${Math.round(height * 0.25)})}`
       : '';
-    const overlays = cue.screen ? [] : wordHighlightOverlays(cue.text, cue.words, cue.start, cue.end);
+    const overlays = cue.screen || cue.placement === 'upper' ? [] : wordHighlightOverlays(cue.text, cue.words, cue.start, cue.end);
     // Timed-word captions keep the base sentence in the manifest color; the
     // WordHighlight layer is the only span allowed to use the accent color.
     const text = cue.screen ? cue.text : overlays.length ? cue.text : automaticSubtitleText(cue.text, style);
@@ -466,14 +510,14 @@ async function composite(manifest, onProgress = () => {}, outDir) {
   }
 
   const spec = (manifest && manifest.spec) || {};
-  const duration = Math.max(1, Number(spec.duration) || 20);
   const frameContract = manifest && manifest.frameContract;
+  const duration = frameContract ? Number(spec.duration) : Math.max(1, Number(spec.duration) || 20);
   if (frameContract) {
     const expected = Math.round(duration * 30);
-    if (frameContract.schemaVersion !== 'social-render-frame-contract.v1' || frameContract.fps !== 30 ||
+    if (!Number.isFinite(duration) || duration <= 0 || expected < 1 || frameContract.schemaVersion !== 'social-render-frame-contract.v1' || frameContract.fps !== 30 ||
         frameContract.durationSeconds !== duration || !Number.isInteger(frameContract.expectedFrames) ||
         frameContract.expectedFrames !== expected || Math.abs(duration * 1000 - Math.round(duration * 1000)) > 1e-6 ||
-        duration > 45 || expected > 1350) return { ok: false, error: 'render_frame_contract_invalid' };
+        !Number.isSafeInteger(Math.round(duration * 1000)) || !Number.isSafeInteger(expected)) return { ok: false, error: 'render_frame_contract_invalid' };
   }
   const [baseW, baseH] = resolution(spec.ratio);
     const scale = spec.resolution === '720p' ? 2 / 3 : 1;
@@ -534,6 +578,11 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       clipId: clip.clipId,
       targetDuration: clip.targetDuration,
     })));
+    const textOverlaysAvailable = ffmpegHasFilter('drawtext');
+    const animatedTransitionsAvailable = ffmpegSupportsXfade();
+    const requestedTextOverlayCount = effectPlan.scenes.reduce((total, scene) => total + scene.overlays.length, 0);
+    const requestedAnimatedTransitionCount = effectPlan.scenes.slice(0, -1)
+      .filter(scene => scene.enabled && scene.transitionOut.type !== 'cut' && scene.transitionOut.duration > 0).length;
     const rawEmphasisPlan = manifest && (manifest.emphasisPlan || manifest.emphasis);
     const emphasisPlan = normalizeEmphasisPlan(rawEmphasisPlan, duration);
     // Motion events use the normalized caption events as their timing/layout
@@ -706,11 +755,12 @@ async function composite(manifest, onProgress = () => {}, outDir) {
           source: `[v${index}]`, output,
           scene: canPrecompose ? null : effectPlan.scenes[index], width: w, height: h, target,
           intensity: canPrecompose ? 0 : effectPlan.intensity,
+          textOverlaysAvailable,
         }));
         effectLabels.push(`[${output}]`);
         targets.push(target);
       });
-      const joined = joinSceneFilters({ labels: effectLabels, scenes: canPrecompose ? [] : effectPlan.scenes, targets, output: 'vcat' });
+      const joined = joinSceneFilters({ labels: effectLabels, scenes: canPrecompose ? [] : effectPlan.scenes, targets, output: 'vcat', animatedTransitionsAvailable });
       filters.push(...joined.filters);
       vlabel = joined.output;
     } else {
@@ -761,7 +811,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       if (!status.isDirectory() || status.isSymbolicLink()) throw new Error('字幕基底私有目录无效');
       fs.chmodSync(baselineDirectory, 0o700);
     }
-    appendFinalVisualLayers(filters, vlabel, motionOverlayIdx, w, h, assFile, captureCaptionBaseline);
+    appendFinalVisualLayers(filters, vlabel, motionOverlayIdx, w, h, assFile, captureCaptionBaseline, duration);
 
     // 4) 音轨混音：bgmVol 表示最终混音增益，必须与界面显示一致。
     // 默认值本身已经按“口播垫底”设置，不能在有配音时再静默减半，
@@ -827,17 +877,9 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     args.push(
       '-filter_complex', filterGraph,
       '-map', '[vout]', '-map', '[aout]',
-      '-t', String(duration),
-      '-c:v', 'libx264', '-threads', '2', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
-      '-r', '30', '-g', '60', '-keyint_min', '30', '-sc_threshold', '0',
-      '-c:a', 'aac', '-b:a', '128k',
-      '-avoid_negative_ts', 'make_zero',
-      '-movflags', '+faststart',
-      '-y', outputPath,
+      ...finalMuxOutputArgs(duration, outputPath),
     );
-    if (baselinePath) args.push('-map', '[vbaseline]', '-an', '-t', String(duration),
-      '-c:v', 'libx264', '-threads', '1', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
-      '-r', '30', '-g', '60', '-keyint_min', '30', '-sc_threshold', '0', '-y', baselinePath);
+    if (baselinePath) args.push('-map', '[vbaseline]', ...finalMuxOutputArgs(duration, baselinePath, false));
 
     // 5) 跑 ffmpeg
     if (process.env.RENDER_DEBUG) console.error('[render] ARGV=' + JSON.stringify(args));
@@ -899,7 +941,13 @@ async function composite(manifest, onProgress = () => {}, outDir) {
           resolve({ ok: true, outputPath, ...(frameContract ? { frameRenderEvidence: {
             schemaVersion: 'renderer-frame-attestation.v1', outputSha256, fps: 30,
             durationSeconds: duration, expectedFrames: frameContract.expectedFrames,
-          } } : {}), subtitleRenderEvidence: {
+          } } : {}), effectRenderEvidence: {
+            schemaVersion: 'renderer-effect-attestation.v1',
+            textOverlaysAvailable,
+            droppedTextOverlayCount: textOverlaysAvailable ? 0 : requestedTextOverlayCount,
+            animatedTransitionsAvailable,
+            droppedAnimatedTransitionCount: animatedTransitionsAvailable ? 0 : requestedAnimatedTransitionCount,
+          }, subtitleRenderEvidence: {
             schemaVersion: 'renderer-subtitle-attestation.v2',
             outputSha256,
             assSha256: subtitleAssSha256,
@@ -920,4 +968,4 @@ async function composite(manifest, onProgress = () => {}, outDir) {
   }
 }
 
-module.exports = { composite, downloadTo, resolution, ffmpegPath, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss, appendFinalVisualLayers };
+module.exports = { composite, downloadTo, resolution, ffmpegPath, ffmpegHasFilter, ffmpegSupportsXfade, dataUrlParts, extensionForAsset, isImageAsset, subtitlePages, groupSpokenCues, normalizeSubtitleCues, cuesToAss, appendFinalVisualLayers, finalMuxOutputArgs };

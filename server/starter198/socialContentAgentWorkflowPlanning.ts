@@ -1,3 +1,4 @@
+import { estimateSeedanceCostCny } from '../lib/generativeVideoGateway.js';
 import type {
   SocialAssetSupplyShotPlan,
   SocialDirectorBrief,
@@ -540,7 +541,16 @@ export function capabilityCandidates(input: {
     .map(material => ({ sourceRef: material.sourceRef, material }));
   const actualAssetRows = [...explicitAssetRows, ...localAssetRows.filter(row =>
     !explicitAssetRows.some(explicit => explicit.sourceRef === row.sourceRef))];
-  const actualAssets = actualAssetRows.map(({ sourceRef, material }, index): SocialExecutionCandidate => {
+  const frozenSegment = input.supply.selectedMaterialSegment;
+  const actualAssets = actualAssetRows.filter(({ sourceRef, material }) => !frozenSegment || sourceRef !== frozenSegment.sourceRef
+    || material?.segmentId === frozenSegment.segmentId).map(({ sourceRef, material: originalMaterial }, index): SocialExecutionCandidate => {
+    let material = originalMaterial;
+    if (material && frozenSegment && sourceRef === frozenSegment.sourceRef && material.segmentId === frozenSegment.segmentId) {
+      const range = material.timeRange;
+      if (!range || frozenSegment.startSeconds < range.startSeconds - 1e-6 || frozenSegment.endSeconds > range.endSeconds + 1e-6
+        || frozenSegment.endSeconds <= frozenSegment.startSeconds) throw Error(`material_execution_window_invalid:${input.sceneId}`);
+      material = { ...material, timeRange: { startSeconds: frozenSegment.startSeconds, endSeconds: frozenSegment.endSeconds } };
+    }
     const cueMatched = material ? matchesSceneSpeech(material) : false;
     const normalizedMatch = material ? Math.max(0, Math.min(1, material.matchScore / 1_000)) : 0;
     const visualScore = material?.visualContract && (input.scene.visualContract ?? input.supply.visualContract)
@@ -640,7 +650,8 @@ export function capabilityCandidates(input: {
       qualityScore: capability.estimatedSuccessRate,
       durationFitScore: 0.8,
       repetitionPenalty: 0,
-      estimatedCostCny: +(capability.strategy === 'authorized_digital_presenter'
+      estimatedCostCny: +(capability.strategy==='non_evidentiary_ai_visual'&&input.supply.materialRouting?.illustrativeVideo
+        ? estimateSeedanceCostCny(input.supply.materialRouting.illustrativeVideo.durationSeconds,'720p') : capability.strategy === 'authorized_digital_presenter'
         && Number.isFinite(Number(process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND))
         && Number(process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND) > 0
         ? Number(process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND) * targetSeconds
@@ -653,7 +664,7 @@ export function capabilityCandidates(input: {
       clipId: null,
       timeRange: null,
       promptRef: null,
-      retryPolicy: { maxAttempts: 3, fallbackStrategies: input.scene.referenceProductionRouting ? [] : [...capability.fallbackStrategies] },
+      retryPolicy: { maxAttempts: input.supply.materialRouting?.policy==='illustrative_video'?1:3, fallbackStrategies: input.scene.referenceProductionRouting||input.supply.materialRouting?.policy==='illustrative_video' ? [] : [...capability.fallbackStrategies] },
       provenance: { origin: capability.strategy === 'licensed_stock_asset' ? 'licensed_library' : 'system_capability', inputVersion: input.taskVersion, authorizationRef: capability.rightsStatus === 'confirmed' ? `capability:${capability.strategy}` : null, executionRecordId: null },
     }));
   const ranked = [...actualAssets, ...capabilityRows]
@@ -681,6 +692,7 @@ export function capabilityCandidates(input: {
           && candidate.dataTransfer === 'local_only'
           && ['motion_graphics', 'verified_fact_card'].includes(candidate.sourceStrategy)
           && candidate.sourceStrategy === input.supply.sourceStrategy;
+        if (typed.policy === 'illustrative_video') return candidate.kind==='capability' && candidate.sourceStrategy==='non_evidentiary_ai_visual';
         return candidate.kind === 'capability' && (typed.policy === 'authorized_presenter'
           ? candidate.sourceStrategy === 'authorized_digital_presenter'
           : candidate.sourceStrategy === 'aigc_product_scene_replication');

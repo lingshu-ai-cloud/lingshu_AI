@@ -44,7 +44,7 @@ function time(value: string, now: number) { return Number.isFinite(Date.parse(va
 function binding(row: Record_, tenantId: string, intent: SocialPaidOperationIntent) { if (row.tenant_id !== tenantId || row.provider !== intent.provider || row.model !== intent.model || row.account_ref !== intent.accountRef || row.stage !== intent.stage)
     fail('scope_mismatch'); }
 function tariffValid(t: SocialVerifiedAccountTariff, intent: SocialPaidOperationIntent, now: number) {
-    if (!t || t.currency !== 'CNY' || !((t.verifiedAccountPrice===true&&(!t.pricingBasis||t.pricingBasis==='negotiated_verified_account'))||isVerifiedPublishedTariff(t)||verifyWanPublishedTariff(t)||verifySeedreamPublishedTariff(t)||verifyHeyGenPublishedTariff(t)) || !string(t.evidenceRef) || ['provider', 'model', 'accountRef', 'stage'].some(k => t[k as 'provider'] !== intent[k as 'provider']) || !time(t.checkedAt, now) || !Number.isFinite(Date.parse(t.validUntil)) || Date.parse(t.validUntil) <= now || !t.meters || typeof t.meters !== 'object' || Array.isArray(t.meters) || !Object.keys(t.meters).length)
+    if (!t || t.currency !== 'CNY' || !((t.verifiedAccountPrice===true&&(!t.pricingBasis||t.pricingBasis==='negotiated_verified_account'))||isVerifiedPublishedTariff(t)||verifyWanPublishedTariff(t)||verifySeedreamPublishedTariff(t)||verifyHeyGenPublishedTariff(t)) || !string(t.evidenceRef) || ['provider', 'model', 'accountRef', 'stage'].some(k => t[k as 'provider'] !== intent[k as 'provider']) || !time(t.checkedAt, now) || !Number.isFinite(Date.parse(t.validUntil)) || Date.parse(t.validUntil) <= Date.parse(t.checkedAt) || !t.meters || typeof t.meters !== 'object' || Array.isArray(t.meters) || !Object.keys(t.meters).length)
         fail('invalid_or_expired');
     const keys = Object.keys(t.meters).sort();
     if (JSON.stringify(keys) !== JSON.stringify(Object.keys(intent.maximumUnits).sort()))
@@ -86,6 +86,11 @@ export function createSocialContentVerifiedTariffReader(store: Pick<DataStore, '
                 fail('evidence_mismatch');
             if (typeof evidence.source_body !== 'string' || evidence.source_body.length < 1 || Buffer.byteLength(evidence.source_body) > 2 * 1024 * 1024 || sha(evidence.source_body) !== e.sourceSha256)
                 fail('source_bytes_changed');
+            // An intact expired cache entry grants no spending authority. Let
+            // the caller obtain fresh official evidence instead of making the
+            // stale row permanently block the existing refresh reader. Corrupt
+            // source bytes, ambiguous rows and invalid contracts still throw.
+            if (Date.parse(p.tariff.validUntil) <= now) return null;
             return structuredClone(p.tariff);
         } };
 }

@@ -1,3 +1,5 @@
+import type { BoundPresenterVoice } from '../starter198/socialContentBoundPresenterVoice.js';
+import { resolveActiveVoiceIntent } from './socialContentVoiceRouteRevision.js';
 import {nativeVoiceBillableCharacters} from './studioVoiceBilling.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,7 +9,7 @@ import {productionBillingAccountRef} from '../starter198/socialContentProduction
 import {paidProductionHash,type PaidStageRequirement,type BoundPaidRoute} from '../starter198/socialContentPaidOperationPlan.js';
 import type {SocialTaskBudgetScope} from './socialContentTaskBudget.js';
 import type {SocialPaidOperationIntent} from './socialContentTaskBudgetAuthority.js';
-import type {createSocialContentPaidOperationPermit} from './socialContentPaidOperationPermit.js';
+import type {SocialPaidOperationSubmissionPermit} from './socialContentPaidOperationPermit.js';
 import type {StudioVoicePaidContext,StudioVoicePaidRequest} from './studioVoicePaidOperation.js';
 const sha=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 type VoiceInput=Parameters<typeof resolveStudioVoiceExecutionPlan>[0];
@@ -17,13 +19,15 @@ export function nativeStudioVoiceReceiptPath(scope:SocialTaskBudgetScope,operati
 
 /** Trusted runtime factory. Uses automatic canonical requirements and real live
  * Studio voices. No body supplied pricing, routes, account or receipt paths. */
-export function createNativeStudioVoicePaidContext(input:{scope:SocialTaskBudgetScope;requirements:PaidStageRequirement[];routeBindings:Record<string,BoundPaidRoute>;intents:SocialPaidOperationIntent[];permit:ReturnType<typeof createSocialContentPaidOperationPermit>;voiceInput:VoiceInput;assertCurrent:()=>Promise<void>;root?:string}):StudioVoicePaidContext {
+export function createNativeStudioVoicePaidContext(input:{scope:SocialTaskBudgetScope;requirements:PaidStageRequirement[];routeBindings:Record<string,BoundPaidRoute>;intents:SocialPaidOperationIntent[];permit:SocialPaidOperationSubmissionPermit;voiceInput:VoiceInput;presenterBinding?:BoundPresenterVoice|null;assertCurrent:()=>Promise<void>;root?:string}):StudioVoicePaidContext {
  const nativeRoute=input.routeBindings['voice:0:tts'];
  const selectedProvider:'qwen'|'minimax'|'heygen'|undefined=nativeRoute?.provider==='qwen'||nativeRoute?.provider==='minimax'||nativeRoute?.provider==='heygen'?nativeRoute.provider:undefined;
- const voiceInput={...input.voiceInput,...(selectedProvider?{nativeProvider:selectedProvider}:{})};
+ const voiceInput={...input.voiceInput,...(selectedProvider?{nativeProvider:selectedProvider}:{}),...(nativeRoute?.model==='avatar_iv'?{heygenSpeechMode:'native_video' as const}:{})};
  const plan=resolveStudioVoiceExecutionPlan(voiceInput);
  if(!plan.primary)throw Error('native_voice_route_requires_exact_clone_or_provider_plan');
  const primary=plan.primary;
+ const avatars=[...new Set(input.presenterBinding?.presenters.map(p=>p.avatarId)||[])];
+ if(primary.provider==='heygen'&&primary.model==='avatar_iv'&&(avatars.length!==1||!avatars[0]||input.presenterBinding?.voiceId!==primary.voiceId||!Number.isFinite(nativeRoute?.maximumUnits.providerSeconds)||!(nativeRoute.maximumUnits.providerSeconds!>0)))throw Error('native_voice_selected_presenter_identity_missing');
  const root=path.join(input.root||path.resolve('data/social-content-native-voice-receipts'),sha(input.scope.tenantId),sha(input.scope.taskId));
  const completed=new Map<string,string>();
  const write=(file:string,row:unknown)=>{
@@ -37,10 +41,11 @@ export function createNativeStudioVoicePaidContext(input:{scope:SocialTaskBudget
  };
  const cacheKey=(record:{text:string;logicalVoice:string;language:string;provider:string;audioSha256:string})=>sha(record);
  const cacheFile=(record:{text:string;logicalVoice:string;language:string;provider:string;audioSha256:string})=>path.join(root,'audio-proof',cacheKey(record)+'.json');
- const selectedText=(r:StudioVoicePaidRequest)=>String(r.request.text??(r.request.input as any)?.text??'');
+ const selectedText=(r:StudioVoicePaidRequest)=>String(r.request.text??r.request.script??(r.request.input as any)?.text??'');
  const providerName=(source:string)=>source==='qwen_tts'?'qwen':source;
  return {
-  primaryProvider:primary.provider,
+  primaryProvider:primary.provider, primaryModel:primary.model,
+  ...(primary.provider==='heygen'&&primary.model==='avatar_iv'?{nativeSpeech:{scope:input.scope,avatarId:avatars[0]!,maximumDurationSeconds:nativeRoute.maximumUnits.providerSeconds!}}:{}),
   async forRequest(request){
    await input.assertCurrent();
    if(request.stage==='voice_asr'&&input.intents.some(intent=>intent.correction?.cause==='approved_first_frame_not_consumed_and_bound_voice_mismatch'))throw Error('corrected_bound_voice_forbids_legacy_asr');
@@ -55,13 +60,8 @@ export function createNativeStudioVoicePaidContext(input:{scope:SocialTaskBudget
    const requirement=requirements[0],route=input.routeBindings[key];
    if(requirements.length!==1 || !requirement || !route)throw Error('native_voice_canonical_requirement_route_missing');
    if(request.stage==='tts' && requirement.text!==plan.texts[index])throw Error('director_voice_text_changed_requires_budget_replan');
-   const corrections=input.intents.filter(i=>i.correction&&i.stage===request.stage&&i.correction.kind===(request.stage==='tts'?'voice_tts':'voice_alignment'));
-   if(corrections.length>1)throw Error('native_voice_correction_ambiguous');
-   const correction=corrections[0]?.correction;
-   const operationId=correction?'paid-plan:'+paidProductionHash({scope:input.scope,key,attempt:1,correction}):'paid-plan:'+paidProductionHash({scope:input.scope,key,attempt:0});
-   const intents=input.intents.filter(i=>i.operationId===operationId),intent=intents[0];
-   const expected=correction?paidProductionHash({requirement,route,attempt:1,correction}):paidProductionHash({requirement,route,attempt:0});
-   if(intents.length!==1||!intent||intent.inputContractHash!==expected||intent.provider!==route.provider||intent.model!==route.model||intent.accountRef!==route.accountRef||intent.stage!==requirement.stage||intent.shotId!==requirement.shotId||paidProductionHash(intent.maximumUnits)!==paidProductionHash(route.maximumUnits))throw Error('native_voice_canonical_intent_changed');
+   let intent: SocialPaidOperationIntent, operationId: string;
+   try { ({intent,operationId}=resolveActiveVoiceIntent(input,key)); } catch { throw Error('native_voice_canonical_intent_changed'); }
    return {
     intent,permit:input.permit,
     async assertProviderBinding(actual){
@@ -101,7 +101,7 @@ export function createNativeStudioVoicePaidContext(input:{scope:SocialTaskBudget
    if(!fs.existsSync(file))return false;const proof=JSON.parse(fs.readFileSync(file,'utf8'));
    if(record.tenantId!==input.scope.tenantId||record.audioSha256!==proof.audioSha256||record.durationSeconds!==proof.durationSeconds||record.logicalVoice!==plan.logicalVoice||record.language!==plan.language||providerName(record.provider)!==primary.provider||proof.providerVoiceId!==primary.voiceId||proof.accountKeyHash!==primary.accountKeyHash)return false;
    const receipt=path.resolve(proof.receipt||'');if(!receipt.startsWith(path.resolve(root)+path.sep)||!fs.existsSync(receipt))return false;
-   const raw=JSON.parse(fs.readFileSync(receipt,'utf8'));return raw.scope?.tenantId===input.scope.tenantId&&raw.scope?.taskId===input.scope.taskId&&sha(raw)===proof.receiptSha256&&raw.voiceId===primary.voiceId&&raw.accountKeyHash===primary.accountKeyHash;
+   const raw=JSON.parse(fs.readFileSync(receipt,'utf8'));return raw.scope?.tenantId===input.scope.tenantId&&raw.scope?.taskId===input.scope.taskId&&sha(raw)===proof.receiptSha256&&raw.voiceId===primary.voiceId&&raw.model===primary.model&&raw.endpoint===primary.endpoint&&raw.accountKeyHash===primary.accountKeyHash;
   },
  };
 }

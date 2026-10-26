@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {verifiedAudioCues} from '../integrations/qwenAlignment.js';
+import {verifiedNativePhraseCues} from '../lib/heygenNativeSubtitles.js';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import ffmpegStatic from 'ffmpeg-static';
@@ -56,7 +57,9 @@ export function createWholeTrackPresenterAudioPort(input:{
   const source=fs.readFileSync(input.sourceReceiptRef),alignment=fs.readFileSync(input.alignmentReceiptRef);
   const original=JSON.parse(source.toString()),timing=JSON.parse(alignment.toString());
   if(original.scope?.tenantId!==input.scope.tenantId||original.scope?.taskId!==input.scope.taskId||original.scope?.runId!==input.scope.runId||original.scope?.planHash!==input.scope.planHash||original.provider!==input.nativeVoice.provider||original.model!==input.nativeVoice.model||original.voiceId!==input.nativeVoice.physicalVoiceId||timing.state!=='completed'||timing.scope?.audioSha256!==input.wholeTrackSha256||!timing.result)throw Error('presenter_whole_track_paid_evidence_changed');
-  const measured = verifiedAudioCues(timing.result, input.scenes.map(scene => scene.spokenText).filter(Boolean).join(' '), input.durationSeconds);
+  const transcript = input.scenes.map(scene => scene.spokenText).filter(Boolean).join(' ');
+  const measured = timing.source==='heygen_native_subtitles'&&timing.precision==='phrase'&&timing.independentAsr===false
+    ? verifiedNativePhraseCues(timing.result,transcript,input.durationSeconds) : verifiedAudioCues(timing.result,transcript,input.durationSeconds);
   if (JSON.stringify(measured) !== JSON.stringify(input.cues)) throw Error('presenter_whole_track_alignment_proof_changed');
   return {sourceReceiptSha256:sha(source),alignmentReceiptSha256:sha(alignment)};
  };
