@@ -419,7 +419,7 @@ assert.match(taskCardActionSource, /const parameters = action\.parameters/, '按
 assert.match(taskCardActionSource, /\.\.\.\(parameters \? \{ parameters \} : \{\}\)/, '按钮操作必须把同一 parameters 对象原样转发到请求');
 
 const hydrationSource = sourceSection(
-  'if (assistantThreadHydrationStartedRef.current)',
+  'useEffect(() => {',
   '  return assistantThreadHydrated;',
   '助手线程恢复流程',
   hydrationHookSource,
@@ -427,20 +427,18 @@ const hydrationSource = sourceSection(
 assert.match(source, /useAssistantThreadHydration\(\{[\s\S]*page, stablePersistenceScope, persistThread, hydrateThread,[\s\S]*executeAssistantAction, upsertTaskCard, focusTaskCard, requestId/, '浮层必须将当前租户的线程恢复与动作重签交给独立 hook');
 assert.match(hydrationSource, /actionId:\s*'view_status'/, '恢复聚焦卡片时必须重新读取权威工作状态');
 assert.match(hydrationSource, /executeAssistantAction\(PRIMARY_ASSISTANT_THREAD, request\)/, '刷新后必须由服务端重新签发可执行动作');
-assert.match(hydrationSource, /assistantThreadHydrationStartedRef\.current/, '线程持久化快照每次挂载只能初始化一次');
+assert.match(hydrationSource, /return \(\) => \{ cancelled = true; \}/, '线程恢复必须取消旧请求并允许 StrictMode 重挂载重新读取');
 assert.match(hydrationSource, /version:\s*Number\.isSafeInteger/, '恢复线程时必须同时恢复服务端 CAS 版本');
-assert.match(hydrationSource, /withoutPersistedConversation\(journal\)/, '进入新会话时不得从本地恢复旧消息正文');
-assert.match(hydrationSource, /withoutPersistedConversation\(persistedRemote\)/, '进入新会话时不得从服务端恢复旧消息正文');
+assert.match(hydrationSource, /storedJournal\.conversationKey \|\| 'business'\) === conversationKey/, '仅恢复同一会话的本地日志');
+assert.match(hydrationSource, /readAssistantConversationKey\(stablePersistenceScope\)/, '活动会话必须按租户与用户隔离');
+assert.match(hydrationSource, /conversationResetVersion: item\.conversationResetVersion/, '恢复时必须读取清空版本，防止旧日志复活');
 
 const pageConversationResetSource = sourceSection(
   'const previousPage = conversationPageRef.current',
   'setLiveContext(null)',
   '跨页面会话重置',
 );
-assert.match(pageConversationResetSource, /if \(restore \|\| kickoff\) return/, '主动恢复的会话或任务跳转不得被页面切换清空');
-assert.match(pageConversationResetSource, /const thread = useAssistantStore\.getState\(\)\.threads\[PRIMARY_ASSISTANT_THREAD\];[\s\S]{0,300}if \(thread\.creationDraft \|\| thread\.messages\.some\([\s\S]{0,220}\)\) return/, '带创作草稿的证据补齐与工作台导航不得清空方案对话');
-assert.match(pageConversationResetSource, /resetTransientConversation\(\)/, '切换到其他页面时必须清空临时会话');
-assert.match(pageConversationResetSource, /focusTaskCard\(PRIMARY_ASSISTANT_THREAD, null\)/, '切换页面时不得把上一页待决定任务卡带到新页面');
+assert.doesNotMatch(pageConversationResetSource, /resetTransientConversation\(\)|focusTaskCard\(PRIMARY_ASSISTANT_THREAD, null\)/, '页面切换不得暗中清空用户的会话或任务引用');
 
 const transientConversationResetSource = sourceSection(
   'const resetTransientConversation = useCallback',
@@ -456,10 +454,9 @@ const samePageConversationExpirySource = sourceSection(
   'const presentActionResponse',
   '同页关闭会话过期规则',
 );
-assert.match(samePageConversationExpirySource, /closed\.page === page/, '只有同一页面关闭的会话才适用五分钟保留期');
-assert.match(samePageConversationExpirySource, /Date\.now\(\) - closed\.at >= ASSISTANT_CLOSED_CONVERSATION_TTL_MS/, '同页关闭满五分钟后重开必须过期');
-assert.match(samePageConversationExpirySource, /resetTransientConversation\(\)/, '过期后必须开启空会话');
-assert.match(source, /ASSISTANT_CLOSED_CONVERSATION_TTL_MS = 5 \* 60 \* 1000/, '同页会话关闭保留期必须是五分钟');
+assert.doesNotMatch(samePageConversationExpirySource, /resetTransientConversation\(\)|ASSISTANT_CLOSED_CONVERSATION_TTL_MS/, '关闭重开不得自动过期，清空必须显式确认');
+assert.match(source, /useAssistantConversationManagement\(\{/, '必须接入显式会话管理');
+assert.match(conversationPanelSource, /conversationControls/, '首页及浮层应展示同一会话管理入口');
 assert.match(panelControlsHookSource, /assistantClosedRef\.current = \{ page, at: Date\.now\(\) \}/, '关闭会话时必须记录当前页面和关闭时间');
 
 const quickExecutionSource = sourceSection(

@@ -746,6 +746,43 @@ test('assistant action endpoint preserves known client and service HTTP failures
   }
 });
 
+test('conversation lifecycle clears context, fences stale saves, isolates owners and preserves business records', async () => {
+  const dataStore = memoryStore();
+  const writes: string[] = [];
+  const originalCas = dataStore.compareAndSwap!;
+  dataStore.compareAndSwap = async (collection, ...args) => { writes.push(collection); return originalCas(collection, ...args); };
+  const app = express(); app.use(express.json());
+  app.use('/threads', createAssistantThreadsRouter({ dataStore, authMiddleware: (req, res, next) => {
+    res.locals.tenantId = req.headers['x-tenant'] || 'tenant-a'; res.locals.userId = req.headers['x-user'] || 'user-a'; next();
+  } }));
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/threads`;
+  const call = async (url: string, method = 'GET', body?: unknown, headers = {}) => {
+    const response = await fetch(base + url, { method, headers: { 'Content-Type': 'application/json', ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    return { status: response.status, body: await response.json() };
+  };
+  try {
+    const saved = await call('/business', 'PUT', { expectedVersion: 0, messages: [{ role: 'user', content: '保密的聊天上下文' }], draftInput: '未发草稿' });
+    assert.equal(saved.status, 200);
+    assert.equal((await call('/business/clear', 'POST', { expectedVersion: 1 }, { 'x-user': 'other' })).status, 404);
+    assert.equal((await call('/business', 'DELETE', { expectedVersion: 1 }, { 'x-tenant': 'other' })).status, 404);
+    assert.equal((await call('/business/clear', 'POST', {})).status, 428);
+    const cleared = await call('/business/clear', 'POST', { expectedVersion: 1 });
+    assert.equal(cleared.status, 200); assert.deepEqual(cleared.body.messages, []);
+    assert.equal(cleared.body.draftInput, ''); assert.equal(cleared.body.creationDraft, null);
+    assert.equal(cleared.body.title, saved.body.title); assert.equal(cleared.body.conversationResetVersion, 2);
+    const stale = await call('/business', 'PUT', { expectedVersion: 1, messages: saved.body.messages });
+    assert.equal(stale.status, 409); assert.deepEqual(stale.body.current.messages, []);
+    assert.equal((await call('/business', 'DELETE', { expectedVersion: 1 })).status, 409);
+    assert.equal((await call('/business', 'DELETE', { expectedVersion: 2 })).status, 200);
+    assert.equal((await call('/')).body.items.length, 0);
+    assert.equal((await call('/business', 'PUT', { expectedVersion: 3, messages: saved.body.messages })).status, 410);
+    assert.equal((await call('/conversation:new-test', 'PUT', { expectedVersion: 0, messages: [{ role: 'user', content: '新会话' }] })).status, 200);
+    assert.equal((await call('/')).body.items.length, 1);
+    assert.ok(writes.every(collection => collection === 'assistant_threads'), 'no task, material, memory or enterprise writes');
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
 test.after(() => {
   for (const [key, value] of Object.entries(previousEnvironment)) {
     if (value === undefined) delete process.env[key];

@@ -64,6 +64,10 @@ export type AssistantTaskCardInput = Omit<AssistantTaskCard, 'details' | 'items'
 };
 
 export interface AgentThreadState {
+  conversationKey?: string;
+  conversationResetVersion?: number;
+  deletedAt?: string;
+  title?: string;
   creationDraft?: CreationSelection | null;
   version: number;
   updatedAt: string;

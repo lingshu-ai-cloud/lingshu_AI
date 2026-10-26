@@ -53,14 +53,14 @@ export async function runAssistantProductionRequest(input: {
       ? currentPendingBinding
       : null;
     creationIdempotencyKey = priorPendingBinding?.idempotencyKey
-      || assistantContentTaskIdempotencyKey(createVersion, productionIntent.objective);
+      || `${assistantContentTaskIdempotencyKey(createVersion, productionIntent.objective)}${useAssistantStore.getState().threads[threadAgent].conversationKey?.startsWith('conversation:') ? `:${useAssistantStore.getState().threads[threadAgent].conversationKey}` : ''}`;
     observedContentTaskId = priorPendingBinding?.contentTaskId ?? null;
     const productionProduct = await resolveProduct(productionIntent.productQuery);
     if (!currentScope()) return;
     const createAtVersion = (version: number) => {
       creationAttempted = true;
       return createTask({
-        agentId: threadAgent, expectedThreadVersion: version,
+        agentId: useAssistantStore.getState().threads[threadAgent].conversationKey || threadAgent, expectedThreadVersion: version,
         // Keep the operation identity stable if a bind-pending response reveals
         // that the task exists or a later CAS conflict requires a newer thread.
         idempotencyKey: creationIdempotencyKey,

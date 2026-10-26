@@ -1,4 +1,5 @@
 import { creationSelectionSchema } from '../../shared/contracts/contentCreationDialogue.js';
+import { registerAssistantConversationLifecycle } from './assistantConversationLifecycle.js';
 import type { CreationSelection } from '../../shared/contracts/contentCreationDialogue.js';
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { store } from '../storage/index.js';
@@ -95,6 +96,9 @@ type AssistantThreadTaskCard = {
 };
 
 type AssistantThread = {
+  conversationResetVersion?: number;
+  deletedAt?: string;
+  title?: string;
   creationDraft?: CreationSelection | null;
   source?: string;
   id: string;
@@ -352,6 +356,9 @@ function parseThreadPayload(
   const creation = creationValue == null ? null : creationSelectionSchema.safeParse(creationValue);
   if (creation && !creation.success) return threadInputError('assistant_creation_invalid', '创作选择格式无效。');
   const payload = {
+    conversationResetVersion: prior?.conversationResetVersion ?? 0,
+    deletedAt: prior?.deletedAt ?? '',
+    title: prior?.title && prior.title !== '新会话' ? prior.title : String((messages.find(item => (item as { role?: string }).role === 'user') as { content?: string })?.content || '新会话').slice(0, 80),
     creationDraft: creation?.success ? creation.data : null,
     tenantId: identity.tenantId,
     userId: identity.userId,
@@ -419,6 +426,9 @@ function threadWithDefaults(thread: AssistantThread): AssistantThread {
   if (boundedSnapshotSize() > MAX_THREAD_BYTES) draftInput = '';
   return {
     id: typeof thread.id === 'string' ? thread.id : '',
+    conversationResetVersion: Number(thread.conversationResetVersion) || 0,
+    deletedAt: thread.deletedAt || '',
+    title: thread.title || '新会话',
     tenantId: typeof thread.tenantId === 'string' ? thread.tenantId : '',
     userId: typeof thread.userId === 'string' ? thread.userId : '',
     source: 'desktop',
@@ -500,22 +510,24 @@ export function createAssistantThreadsRouter(
     }
   };
   router.use(dependencies.authMiddleware ?? requireAuth, enforceSupportSessionReadOnly);
+  registerAssistantConversationLifecycle(router, dataStore);
 
-  router.get('/', async (_req: Request, res: Response) => {
+  router.get('/', async (req: Request, res: Response) => {
     const identity = res.locals as AuthLocals;
     const items: AssistantThread[] = [];
-    let page = 1;
+    let page = Number(req.query.page || 1);
+    if (!Number.isSafeInteger(page) || page < 1) { res.status(400).json({ error: 'invalid_page' }); return; }
     let totalPages = 1;
     do {
       const result = await dataStore.list<AssistantThread>('assistant_threads', {
         where: { tenantId: identity.tenantId, userId: identity.userId },
-        perPage: 20, page,
+        perPage: 20, page, sort: '-updatedAt',
       });
-      items.push(...result.items.filter(isDesktopThread));
+      items.push(...result.items.filter(item => isDesktopThread(item) && !item.deletedAt));
       totalPages = result.totalPages;
       page += 1;
-    } while (page <= totalPages && items.length < 20);
-    res.json({ items: items.slice(0,20).map(threadWithDefaults) });
+    } while (page <= totalPages && !items.length);
+    res.json({ items: items.map(threadWithDefaults), nextPage: page <= totalPages ? page : null });
   });
 
   router.get('/:agentId', async (req: Request, res: Response) => {
@@ -581,6 +593,9 @@ export function createAssistantThreadsRouter(
           perPage: 1,
         });
         current = existing.items.find(isDesktopThread);
+        if (current?.deletedAt) {
+          res.status(410).json({ error: 'assistant_conversation_deleted', message: '会话已删除，请新建会话。', current: threadWithDefaults(current) }); return;
+        }
         const actualVersion = current ? threadWithDefaults(current).version : 0;
         if (expectedVersion !== actualVersion) {
           res.status(409).json({
@@ -696,6 +711,7 @@ export function createAssistantThreadsRouter(
         const existing = await dataStore.list<AssistantThread>('assistant_threads', { where: owner, perPage: 1 });
         const current = existing.items.find(isDesktopThread);
         const prior = current ? threadWithDefaults(current) : null;
+        if (prior?.deletedAt) { res.status(410).json({ error: 'assistant_conversation_deleted', message: '会话已删除，请新建会话。' }); return; }
         if (expectedVersion !== (prior?.version ?? 0)) {
           res.status(409).json({ error: 'assistant_thread_version_conflict', message: '会话已在其他位置更新，请刷新后重试。', current: prior }); return;
         }

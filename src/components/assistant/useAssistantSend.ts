@@ -107,7 +107,7 @@ export function useAssistantSend(input: AssistantSendInput) {
     const referenceMedia = typeof creationActionOrReference === 'object' ? creationActionOrReference : undefined;
     const userText = text.trim();
     options = { ...options, businessScene: options.businessScene || (!uploadedAttachments.length && !creationActionOrReference && !options.companyReport ? businessSceneFollowup(userText, useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages.at(-1)) : undefined) };
-    if ((!userText && !uploadedAttachments.length) || loading || fileGenerating || replyStreaming) return;
+    if ((!userText && !uploadedAttachments.length) || loading || fileGenerating || replyStreaming || assistantAtomicMutationRef.current || useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].deletedAt) return;
     const creationDraft = options.companyReport || options.businessScene ? null : useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].creationDraft;
     if (page === 'strategy' && creationMode === 'free' && creationDraft && !uploadedAttachments.length && (creationAction || !creationDraft.evidenceVersion || !useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages.some(message => message.creation?.selection.referenceId === creationDraft.referenceId))) {
       const requestFence = persistenceFenceRef.current;
