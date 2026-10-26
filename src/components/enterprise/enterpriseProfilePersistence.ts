@@ -31,5 +31,16 @@ export async function saveEnterpriseProfileAndVerify(
   if (expectedProducts.length !== verifiedProducts.length || expectedProducts.some(item => !verifiedProductNames.has(item.name.trim()))) {
     throw new Error('产品资料保存后校验失败，请重试');
   }
+  for (const [index, product] of expectedProducts.entries()) {
+    const saved = product.id ? verifiedProducts.find(item => item.id === product.id) : verifiedProducts[index];
+    for (const field of ['samplePolicy', 'paymentTerms', 'leadTime', 'customization'] as const) {
+      if (product[field] !== undefined && saved?.[field] !== product[field]) throw new Error('产品合作条件保存后校验失败，请重试');
+    }
+  }
+  for (const field of ['capabilities', 'certifications', 'credentialEvidence', 'primaryBusiness'] as const) {
+    if (profileToSave.company[field] !== undefined && (verified.company?.[field] ?? '') !== profileToSave.company[field]) {
+      throw new Error('企业资料保存后校验失败，请重试；原草稿已保留');
+    }
+  }
   return normalizeEnterpriseProfile(verified as Profile);
 }

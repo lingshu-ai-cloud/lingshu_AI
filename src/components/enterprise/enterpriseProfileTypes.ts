@@ -23,6 +23,10 @@ export interface ProductItem {
   imageUrl?: string;
   priceRange?: string;
   moq?: string;
+  samplePolicy?: string;
+  paymentTerms?: string;
+  leadTime?: string;
+  customization?: string;
   certifications?: string;
   highlights?: string;
   images?: ProductAsset[];
@@ -124,7 +128,7 @@ export type SocialStrategy = { enabledRoutes: CooperationRoute[]; routeStrategie
 
 export interface Profile {
   factVersion?: { id: string; revision: number; contentHash: string; confirmedAt: string; confirmedBy: string };
-  company: { name: string; industry: string; companyType?: string; mainMarkets: string; primaryLanguages?: string; socialPlatformExperience?: string; founded: string; description: string };
+  company: { name: string; industry: string; companyType?: string; primaryBusiness?: string; capabilities?: string; certifications?: string; credentialEvidence?: string; mainMarkets: string; primaryLanguages?: string; socialPlatformExperience?: string; founded: string; description: string };
   socialStrategy?: SocialStrategy;
   products: { categories: string; searchKeywords?: string; priceRange: string; moq: string; certifications: string; highlights: string; items?: ProductItem[] };
   brand: { name?: string; tone: string; style: string; taboos: string; usp: string; preferredLanguages?: string };

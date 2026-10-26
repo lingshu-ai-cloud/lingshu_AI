@@ -206,15 +206,15 @@ export function OnboardingConfirmationStep({ busy, dismissible, onClose, onBack,
   const focusProducts = draft.focusProductIds.map(id => draft.products.find(product => product.id === id)).filter(Boolean) as EnterpriseOnboardingProduct[];
   return <OnboardingGuideFrame step={4} title="最后核对一次，确认后写入企业知识库"
     busy={busy} dismissible={dismissible} onClose={onClose} onBack={onBack}
-    primaryLabel="确认并进入工作台" primaryDisabled={!draft.companyIntro.trim() || !draft.brandTone.trim()}
+    primaryLabel="确认并进入工作台" primaryDisabled={false}
     onPrimary={onConfirm}>
     <div className="space-y-5">
       <p className="rounded-lg bg-blue-50 px-4 py-3 text-xs leading-5 text-blue-800">确认前仍是草稿。来源标签说明每项来自你的输入、系统识别或 AI 建议；只有点击下方确认后才会形成新的企业事实版本。</p>
       <section className="rounded-lg border border-border bg-surface px-4" aria-label="企业与品牌确认">
         <SummaryRow label="企业 / 品牌" value={`${draft.companyName} / ${draft.brandName}`} source={source('companyName')} />
         <SummaryRow label="行业与主营" value={`${draft.industry} · ${draft.primaryBusiness}`} source={source('primaryBusiness')} />
-        <div className="border-b border-border py-3"><div className="mb-2 flex items-center justify-between gap-3"><label className="text-xs text-text-muted" htmlFor="onboarding-company-intro">公司简介</label><SourceBadge source={source('companyIntro')} /></div><Input.TextArea id="onboarding-company-intro" rows={3} value={draft.companyIntro} onChange={event => onProposalChange('companyIntro', event.target.value)} /></div>
-        <div className="py-3"><div className="mb-2 flex items-center justify-between gap-3"><label className="text-xs text-text-muted" htmlFor="onboarding-brand-tone">品牌初始语气</label><SourceBadge source={source('brandTone')} /></div><Input.TextArea id="onboarding-brand-tone" rows={2} value={draft.brandTone} onChange={event => onProposalChange('brandTone', event.target.value)} /></div>
+        <div className="border-b border-border py-3"><div className="mb-2 flex items-center justify-between gap-3"><label className="text-xs text-text-muted" htmlFor="onboarding-company-intro">公司简介（选填）</label><SourceBadge source={source('companyIntro')} /></div><Input.TextArea id="onboarding-company-intro" rows={3} value={draft.companyIntro} onChange={event => onProposalChange('companyIntro', event.target.value)} /></div>
+        <div className="py-3"><div className="mb-2 flex items-center justify-between gap-3"><label className="text-xs text-text-muted" htmlFor="onboarding-brand-tone">品牌初始语气（选填）</label><SourceBadge source={source('brandTone')} /></div><Input.TextArea id="onboarding-brand-tone" rows={2} value={draft.brandTone} onChange={event => onProposalChange('brandTone', event.target.value)} /></div>
       </section>
       <section className="rounded-lg border border-border bg-surface px-4" aria-label="主推产品确认">
         <SummaryRow label="主推产品（最多 3 个）" value={<ul className="space-y-2">{focusProducts.map(product => {

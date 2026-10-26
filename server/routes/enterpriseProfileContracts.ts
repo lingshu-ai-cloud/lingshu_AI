@@ -139,6 +139,9 @@ export interface EnterpriseProfile {
     name: string;
     industry: string;
     primaryBusiness?: string;
+    capabilities?: string;
+    certifications?: string;
+    credentialEvidence?: string;
     companyType?: string;
     mainMarkets: string;
     primaryLanguages?: string;
@@ -179,6 +182,10 @@ export interface EnterpriseProfile {
       imageUrl?: string;
       priceRange?: string;
       moq?: string;
+      samplePolicy?: string;
+      paymentTerms?: string;
+      leadTime?: string;
+      customization?: string;
       certifications?: string;
       highlights?: string;
       attributes?: Record<string, unknown>;

@@ -21,9 +21,9 @@ export default function EnterpriseSalesStylePanel({ styleProfile, controller }: 
           <section className="rounded-lg border border-border bg-white p-5 ">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold text-text-primary">你的销售风格</p>
+                <p className="text-sm font-semibold text-text-primary">沟通偏好</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-text-muted">
-                  AI 从你 {styleProfile?.learnedFromCount ?? 0} 次真实回复中学到的风格，持续更新，生成回复时会参考。
+                  {styleProfile?.learnedFromCount ? `依据 ${styleProfile.learnedFromCount} 次真实回复整理的表达偏好，生成草稿时可参考。` : '目前没有已整理的真实回复样本。使用客服后可整理样本，也可手动设置表达偏好。'}
                 </p>
                 {styleMessage && <p className="mt-2 text-[11px] font-bold text-primary">{styleMessage}</p>}
               </div>
@@ -38,7 +38,7 @@ export default function EnterpriseSalesStylePanel({ styleProfile, controller }: 
                 </button>
               </div>
             </div>
-            <div className="mt-4 grid grid-cols-3 gap-3">
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
               {([
                 ['greeting_style', '开场称呼'],
                 ['quoting_stance', '报价姿态'],

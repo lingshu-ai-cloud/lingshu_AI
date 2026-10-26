@@ -44,7 +44,7 @@ export default function EnterpriseFaqPanel({
 }: Props) {
   return (
           <div data-enterprise-faq>
-          <KnowledgeCard icon={BookOpen} title="常见问答" purpose="客户问到这些，AI 直接用你的标准答案回复" completed={completed} stat={`${profile.faq?.length ?? 0} 条 · ${approvedFaqCount} 条已审批`}>
+          <KnowledgeCard icon={BookOpen} title="常见问答" purpose="从真实客户问题中逐步沉淀标准答案；是否自动发送由客服授权单独决定" completed={completed} stat={`${profile.faq?.length ?? 0} 条 · ${approvedFaqCount} 条已审批`}>
             {faqPacks.length > 0 && (
               <div data-lingshu-guide="enterprise-faq-pack" className="mb-4 rounded-lg border border-border bg-surface-2/40 p-3">
                 <div className="mb-3 flex items-center justify-between gap-3">

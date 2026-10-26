@@ -1,5 +1,5 @@
 import { type Dispatch, type SetStateAction } from 'react';
-import { Alert, Button, Input, Upload as AntUpload } from 'antd';
+import { Alert, Button, Input, Tabs, Upload as AntUpload } from 'antd';
 import { ChevronDown, FileSpreadsheet, FileText, Image, Package, Plus, Upload, X } from 'lucide-react';
 import { CATEGORY_OPTIONS, CERTIFICATION_OPTIONS } from './enterpriseProfileNormalization';
 import { productCreativeMaterialCount } from './enterpriseProfileCompleteness';
@@ -132,6 +132,8 @@ export default function EnterpriseProductPanel({
                   </summary>
                   <button type="button" onClick={() => removeProduct(index)} disabled={productDocumentUploading} aria-label={`删除产品 ${product.name || index + 1}`} className="absolute right-3 top-3 rounded-md p-1 text-text-muted hover:bg-white hover:text-red disabled:opacity-50" title="删除产品"><X size={13} /></button>
                   <div className="mt-4 border-t border-border pt-4">
+                  <Tabs defaultActiveKey="facts" items={[
+                    { key: 'facts', label: '基本资料', children: <>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="产品名称">
                       <Input className={inputCls} value={product.name} onChange={e => updateProduct(index, { name: e.target.value })} placeholder={`产品${index + 1}`} />
@@ -139,16 +141,25 @@ export default function EnterpriseProductPanel({
                     <Field label="产品类目">
                       <OptionSelector value={product.category ?? ''} options={CATEGORY_OPTIONS} multiple={false} onChange={value => updateProduct(index, { category: value })} placeholder="选择产品类目" />
                     </Field>
+                  </div>
+                  <div className="grid gap-x-4 md:grid-cols-2">{(['sku', 'material', 'size', 'color', 'brand'] as const).map((key, fieldIndex) => <Field key={key} label={['型号 / SKU', '材质', '规格 / 尺寸', '颜色', '所属品牌'][fieldIndex]!}><Input value={product[key] || ''} onChange={e => updateProduct(index, { [key]: e.target.value })} /></Field>)}</div>
+                  <Field label="产品卖点">
+                    <Input.TextArea className={textareaCls} rows={2} value={product.highlights ?? ''} onChange={e => updateProduct(index, { highlights: e.target.value })} placeholder="核心卖点、适用场景、可定制项、交付优势" />
+                  </Field>
+                    </> },
+                    { key: 'terms', label: '合作条件', forceRender: true, children: <>
+                      <p className="mb-4 text-xs text-text-secondary">产品参考价格仅用于内部核对，报价仍由人工确认。通用条件在“合作与服务”维护。</p>
+                      <div className="grid gap-x-4 md:grid-cols-2">
                     <div id={`enterprise-product-${index}-price`}><Field label="参考价或标签价">
                       <Input className={inputCls} value={product.priceRange ?? product.retailPrice ?? product.tagPrice ?? ''} onChange={e => updateProduct(index, { priceRange: e.target.value })} placeholder="$5 - $500 USD" />
                     </Field></div>
                     <Field label="起订量">
                       <Input className={inputCls} value={product.moq ?? ''} onChange={e => updateProduct(index, { moq: e.target.value })} placeholder="50 件起，支持混批" />
                     </Field>
-                  </div>
-                  <Field label="产品卖点">
-                    <Input.TextArea className={textareaCls} rows={2} value={product.highlights ?? ''} onChange={e => updateProduct(index, { highlights: e.target.value })} placeholder="核心卖点、适用场景、可定制项、交付优势" />
-                  </Field>
+                    {(['samplePolicy', 'paymentTerms', 'leadTime', 'customization'] as const).map((key, fieldIndex) => <Field key={key} label={['样品政策（产品例外）', '付款条件（产品例外）', '交期（产品例外）', '定制条件（产品例外）'][fieldIndex]!} hint="留空表示未记录产品例外，具体任务仍需核对公司政策。"><Input value={product[key] || ''} onChange={e => updateProduct(index, { [key]: e.target.value })} /></Field>)}
+                      </div>
+                    </> },
+                    { key: 'assets', label: '关联资料', forceRender: true, children: <>
                   <div className="mt-3 space-y-3 border-t border-border pt-3">
                     <div className="flex flex-col gap-3 rounded-lg border border-emerald-200 bg-emerald-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
                       <div>
@@ -180,6 +191,8 @@ export default function EnterpriseProductPanel({
                       </div>
                     </div>
                   </div>
+                    </> },
+                  ]} />
                   </div>
                 </details>
                 );
