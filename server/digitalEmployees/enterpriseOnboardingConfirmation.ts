@@ -72,14 +72,14 @@ export async function applyEnterpriseOnboardingConfirmation(input: {
         name: input.confirmation.companyName,
         industry: input.confirmation.industry,
         primaryBusiness: input.confirmation.primaryBusiness,
-        description: input.confirmation.companyIntro,
+        description: input.confirmation.companyIntro || current.company.description,
         mainMarkets: input.confirmation.targetMarket,
         primaryLanguages: input.confirmation.language,
       },
       brand: {
         ...current.brand,
         name: input.confirmation.brandName,
-        tone: input.confirmation.brandTone,
+        tone: input.confirmation.brandTone || current.brand.tone,
       },
       products: {
         ...current.products,

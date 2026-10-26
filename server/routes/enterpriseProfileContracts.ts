@@ -1,3 +1,4 @@
+import type { TenantFaqPackOverrides } from '../../shared/contracts/tenantFaqPacks.js';
 import type { OrderStatus, OrderAudit, AfterSales } from '../../shared/orderLifecycle.js';
 import type { ProductScenePreparationPlan } from '../../shared/contracts/productScenePreparation.js';
 import type { AutonomyLevel } from '../autonomy/actionRules.js';
@@ -114,6 +115,7 @@ export interface OrderRecord {
 }
 
 export interface EnterpriseProfile {
+  faqPackOverrides?: TenantFaqPackOverrides;
   /**
    * Immutable identity of the currently confirmed enterprise facts. Every
    * consumer receives this version together with the profile so content,
@@ -139,6 +141,9 @@ export interface EnterpriseProfile {
     name: string;
     industry: string;
     primaryBusiness?: string;
+    capabilities?: string;
+    certifications?: string;
+    credentialEvidence?: string;
     companyType?: string;
     mainMarkets: string;
     primaryLanguages?: string;
@@ -179,6 +184,10 @@ export interface EnterpriseProfile {
       imageUrl?: string;
       priceRange?: string;
       moq?: string;
+      samplePolicy?: string;
+      paymentTerms?: string;
+      leadTime?: string;
+      customization?: string;
       certifications?: string;
       highlights?: string;
       attributes?: Record<string, unknown>;

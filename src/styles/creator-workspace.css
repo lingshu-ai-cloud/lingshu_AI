@@ -253,6 +253,8 @@ html[data-lingshu-appearance='dark'] .ls-inspiration-watch-dialog [data-preview-
 .creator-home__canvas-card-content { position: relative; z-index: 1; display: flex; min-height: 195px; flex-direction: column; align-items: flex-start; gap: 8px; padding: 20px; }
 .creator-home__canvas-card-content svg { margin-bottom: auto; color: #a5cfff; }
 .creator-home__canvas-card-content strong { font-size: 18px; }
+.creator-home__canvas-card-content > .creator-home__canvas-card-action { display: inline-flex; align-items: center; gap: 6px; color: #8bc9ff; font-size: 12px; font-weight: 600; line-height: 18px; }
+.creator-home__canvas-card-action svg { margin: 0; color: currentColor; }
 .creator-home__canvas-card-content > span { display: -webkit-box; overflow: hidden; color: #aeb0b6; font-size: 13px; line-height: 20px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .creator-home__canvas-card--with-media .creator-home__canvas-card-content strong { color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.45); }
 .creator-home__canvas-card--with-media .creator-home__canvas-card-content > span { color: rgba(255,255,255,.82); }
@@ -331,6 +333,7 @@ html[data-lingshu-appearance='light'] .creator-home__prompt-card--primary { bord
 html[data-lingshu-appearance='light'] .creator-home__prompt-card-level { background: #f0f1f3; color: #656971; }
 html[data-lingshu-appearance='light'] .creator-home__canvas-card { background: #fff; border-color: #e2e4e8; color: #25262a; }
 html[data-lingshu-appearance='light'] .creator-home__canvas-card-content > span { color: #696b72; }
+html[data-lingshu-appearance='light'] .creator-home__canvas-card-content > .creator-home__canvas-card-action { color: var(--color-accent); }
 html[data-lingshu-appearance='light'] .creator-home__canvas-card--with-media .creator-home__canvas-card-content > span { color: rgba(255,255,255,.86); }
 html[data-lingshu-appearance='light'] .creator-home__canvas-card--primary { border-color: #89a7ff; background: linear-gradient(145deg,#f3f7ff,#f7f3ff); box-shadow: inset 0 0 0 1px rgba(70,104,255,.06); }
 html[data-lingshu-appearance='light'] .creator-home__work-label strong,

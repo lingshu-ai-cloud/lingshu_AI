@@ -26,11 +26,15 @@ export function collectedImageReferences(rows: unknown[]): ImageReplicationRefer
     const domain = domains[post.platform];
     if (source.protocol !== 'https:' || !(source.hostname === domain || source.hostname.endsWith(`.${domain}`))) return [];
     const analysis = parsedAnalysis.data;
-    // Use only the persisted full image, never a generated substitute or a remote thumbnail.
-    const route = `/api/overseas/videos/${encodeURIComponent(post.id)}/image/0`;
-    if (!analysis.imageUrls.includes(route)) return [];
-    return [{ url: route, title: post.title, sourceRecordId: post.id, sourceUrl: post.sourceUrl,
-      platform: post.platform, caption: analysis.caption || '', collectedAt: post.crawledAt }];
+    // Only expose original persisted image routes for this post. A carousel's
+    // later frames may have a usable composition when its cover does not.
+    return Array.from({ length: 10 }, (_, imageIndex) => ({
+      imageIndex, url: `/api/overseas/videos/${encodeURIComponent(post.id)}/image/${imageIndex}`,
+    })).filter(({ url }) => analysis.imageUrls.includes(url)).map(({ imageIndex, url }) => ({
+      url, imageIndex, title: analysis.imageUrls.length > 1 ? `${post.title} · 第 ${imageIndex + 1} 张` : post.title,
+      sourceRecordId: post.id, sourceUrl: post.sourceUrl,
+      platform: post.platform, caption: analysis.caption || '', collectedAt: post.crawledAt,
+    }));
   });
 }
 

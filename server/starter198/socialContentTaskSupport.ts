@@ -226,6 +226,8 @@ export function defaultBrief(value: CreateSocialContentTaskInput) {
     title: value.title,
     objective: value.objective,
     productId: value.productId ?? null,
+    ...(value.productIds !== undefined ? { productIds: value.productIds } : {}),
+    ...(value.productMaterialSelection ? { productMaterialSelection: value.productMaterialSelection } : {}),
     productRef: value.productRef ?? null,
     requestedPresenterName: value.requestedPresenterName ?? null,
     requestedPresenterAssetId: value.requestedPresenterAssetId ?? null,
@@ -271,7 +273,7 @@ export async function groundedScriptBaseline(input: {
   previous?: StoredSocialScriptBaseline | null;
 }): Promise<StoredSocialScriptBaseline> {
   const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
-  const verifiedContext = verifiedSocialScriptContext(profile, input.brief.productId || input.brief.productRef);
+  const verifiedContext = profile && input.brief.productIds?.length ? guidedEnterpriseContext(profile, input.brief.productIds) : verifiedSocialScriptContext(profile, input.brief.productId || input.brief.productRef);
   const inspiration = !input.brief.creationDialoguePlan && input.theme.themeId
     ? await resolveSocialInspirationScript({ tenantId: input.tenantId, themeId: input.theme.themeId, verifiedContext })
     : null;
@@ -308,7 +310,7 @@ export async function refreshSocialTaskReferenceOutputs(input: {
   // Never substitute a recommended source during that transient draft.
   if (summary.brief.creationDialoguePlan && !references.length) return task;
   const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
-  const verifiedContext = summary.brief.creationDialoguePlan ? guidedEnterpriseContext(profile!, summary.brief.creationDialoguePlan.selection.productIds) : verifiedSocialScriptContext(profile, summary.brief.productId || summary.brief.productRef);
+  const verifiedContext = profile && (summary.brief.creationDialoguePlan?.selection.productIds.length || summary.brief.productIds?.length) ? guidedEnterpriseContext(profile, summary.brief.creationDialoguePlan?.selection.productIds ?? summary.brief.productIds!) : verifiedSocialScriptContext(profile, summary.brief.productId || summary.brief.productRef);
   const planning = {
     targetDurationSeconds: summary.brief.targetDurationSeconds ?? null,
     budgetCny: productionBudgetMaximumCny(summary.brief),

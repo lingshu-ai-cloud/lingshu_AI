@@ -104,7 +104,7 @@ export function renderStudioStep(input: StudioStepViewInputs) {
               <div className="rounded-lg border border-border bg-surface-2 p-3">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-text-muted">任务产品</p>
                 <p className="mt-1 text-xs font-bold text-text-primary">{selectedProductOptions.map(option => option.label).join('、') || productInfo || '任务暂未绑定产品'}</p>
-                <p className="mt-2 text-[10px] leading-4 text-text-muted">产品绑定沿用已确认任务；我的素材仍可在下一生产节点逐镜查看和匹配。</p>
+                <p className="mt-2 text-[10px] leading-4 text-text-muted">产品绑定沿用已确认任务；系统按产品带入关联素材与文案，可在素材区取消或补充，制作前仍需逐镜核对。</p>
               </div>
             ) : (
               <div className="flex flex-wrap items-end gap-3">
@@ -215,6 +215,7 @@ export function renderStudioStep(input: StudioStepViewInputs) {
                 </div>
               </div>
             )}
+            {!socialContentTaskId && selectedProductOptions.length > 0 && <p className="text-xs text-text-muted">已按所选产品默认带入关联图片、视频和产品文案，可在素材区取消或补充；没有关联素材的产品需另行上传。</p>}
             {socialViralTask && referenceProducts.length > 0 && <section aria-label="原片产品位映射" className="rounded-lg border border-border bg-surface p-3">
               <p className="text-xs font-semibold text-text-primary">原片产品位映射 · {referenceProducts.length} 个</p>
               <p className="mt-1 text-[11px] text-text-muted">默认全部使用同一款企业产品；需要区别替换时，再逐项调整。</p>

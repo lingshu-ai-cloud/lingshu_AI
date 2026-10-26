@@ -6,6 +6,7 @@ import { hydrateEnterpriseProfile, profileSnapshot } from './enterpriseProfileSt
 import type { FaqPack, Profile } from './enterpriseProfileTypes';
 
 interface Options {
+  autoSave?: boolean;
   profile: Profile;
   setProfile: Dispatch<SetStateAction<Profile>>;
   saveError: string;
@@ -14,7 +15,7 @@ interface Options {
   acceptLoadedPacks: (data: { packs?: FaqPack[]; recommendedIndustry?: string }) => void;
 }
 
-export function useEnterpriseProfileLifecycle({ profile, setProfile, saveError, setSaveError, setSaved, acceptLoadedPacks }: Options) {
+export function useEnterpriseProfileLifecycle({ profile, setProfile, saveError, setSaveError, setSaved, acceptLoadedPacks, autoSave = true }: Options) {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [profileLoaded, setProfileLoaded] = useState(false);
@@ -102,6 +103,13 @@ export function useEnterpriseProfileLifecycle({ profile, setProfile, saveError, 
     };
   }, [profileLoaded]);
 
+  useEffect(() => {
+    if (autoSave || !hasUnsavedChanges) return;
+    const preventDraftLoss = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', preventDraftLoss);
+    return () => window.removeEventListener('beforeunload', preventDraftLoss);
+  }, [autoSave, hasUnsavedChanges]);
+
   const handleSave = async () => {
     if (!profileLoaded) {
       setSaveError('企业资料尚未成功加载，请刷新后重试');
@@ -124,10 +132,15 @@ export function useEnterpriseProfileLifecycle({ profile, setProfile, saveError, 
   };
 
   useEffect(() => {
-    if (loading || saving || !hasUnsavedChanges || saveError) return;
+    if (!autoSave || loading || saving || !hasUnsavedChanges || saveError) return;
     const timer = window.setTimeout(() => { void handleSave(); }, 900);
     return () => window.clearTimeout(timer);
-  }, [profile, loading, saving, hasUnsavedChanges, saveError]);
+  }, [profile, loading, saving, hasUnsavedChanges, saveError, autoSave]);
 
-  return { saving, loading, profileLoaded, apiStatus, hasUnsavedChanges, handleSave };
+  const acceptSavedPatch = (patch: Partial<Profile>) => {
+    const prior = JSON.parse(persistedProfileRef.current || '{}') as Profile;
+    persistedProfileRef.current = profileSnapshot({ ...prior, ...patch });
+    setProfile(current => ({ ...current, ...patch }));
+  };
+  return { saving, loading, profileLoaded, apiStatus, hasUnsavedChanges, handleSave, acceptSavedPatch };
 }

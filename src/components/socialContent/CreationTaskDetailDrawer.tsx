@@ -14,6 +14,7 @@ import { SocialDirectorG5ReviewPanel } from './SocialDirectorG5ReviewPanel';
 import { SocialSceneG4ReviewPanel } from './SocialSceneG4ReviewPanel';
 import { PresenterFirstFrameReviewPanel } from './PresenterFirstFrameReviewPanel';
 import CreationTaskArtifacts from './CreationTaskArtifacts';
+import ImageCreationTaskExecution from './ImageCreationTaskExecution';
 
 export const creationLocalTime = (value: string) => value.length===10 ? `${value} · 时刻待定`
   : Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}) : '待安排';
@@ -54,9 +55,9 @@ export default function CreationTaskDetailDrawer({ row, overview, onClose, onUpd
       {row.readError&&<Alert type="warning" showIcon title="历史任务资料需要核对" description="该任务的保存记录不完整，暂时无法读取制作进展。其他任务可以继续查看。"/>}
       {loading&&!task&&row.taskId?<Skeleton active/>:task?<>
         {card&&state?.category==='confirmation'&&<Alert type="warning" showIcon title="待确认项" description={<ul className="space-y-2">{card.blockingItems.length?card.blockingItems.map(item=><li key={item.key}>{item.value}</li>):<li>{card.currentNode.userFacingSummary}</li>}</ul>}/>}
-        <section aria-label="执行节点进度"><h3 className="mb-4 text-base font-semibold">制作进度</h3>
+        {task.brief.formats.includes('social_image') ? <ImageCreationTaskExecution contentTaskId={task.taskId}/> : <section aria-label="执行节点进度"><h3 className="mb-4 text-base font-semibold">制作进度</h3>
           <Timeline mode="start" titleSpan={0} items={nodes.map(node=>({content:<><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold">{node.label}</p><Tag color={node.state==='complete'?'success':node.state==='failed'||node.state==='blocked'?'warning':node.state==='active'?'processing':'default'}>{node.state==='complete'?'已完成':node.state==='active'?'进行中':node.state==='failed'||node.state==='blocked'?'待介入':'待执行'}</Tag></div><p className="mt-1 text-xs text-text-secondary">{node.owner} · {node.result}</p></>,color:node.state==='complete'?'green':node.state==='failed'||node.state==='blocked'?'red':node.state==='active'?'blue':'gray'}))}/>
-        </section>
+        </section>}
         {shots.length>0&&<section aria-label="逐镜制作结果"><h3 className="mb-3 font-semibold">逐镜进度</h3><ol className="divide-y divide-border">{shots.map(shot=><li key={shot.sceneId} className="space-y-1 py-3"><p className="text-sm font-semibold">镜头 {shot.order} · {shot.detail}</p><p className="text-xs text-text-secondary">{shot.speech}</p>{shot.previewUrl&&shot.previewMediaType==='video'&&<video controls preload="none" src={shot.previewUrl} aria-label={`镜头 ${shot.order} 预览`} className="max-h-60 w-full"/>}{shot.previewUrl&&shot.previewMediaType==='image'&&<img src={shot.previewUrl} alt={`镜头 ${shot.order}`} className="max-h-60 w-full object-contain"/>}</li>)}</ol></section>}
         {task.runId&&<><PresenterFirstFrameReviewPanel taskId={task.taskId} runId={task.runId}/>{task.artifacts.some(a=>a.kind==='short_video'&&a.origin==='agent')&&<><SocialSceneG4ReviewPanel task={task} onChanged={refresh}/><SocialDirectorG5ReviewPanel task={task} onChanged={refresh}/></>}</>}
         {task.artifacts.length>0&&<CreationTaskArtifacts task={task} onChanged={refresh}/>}

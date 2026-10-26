@@ -73,9 +73,24 @@ export function resolveEnterpriseProductSelection<T extends { id?: unknown; prod
   const selectedId = socialText(selection.productId), selectedName = socialText(selection.productRef).toLocaleLowerCase();
   const indexed = items.map((item, index) => ({ item, canonicalId: enterpriseProductIdentity(item, index) }));
   const idMatch = selectedId ? indexed.find(candidate => candidate.canonicalId === selectedId) : undefined;
-  if (idMatch) return idMatch;
+  if (selectedId) return idMatch ?? null;
   if (!selectedName) return null;
   const fallback = indexed.filter(({ item }) => [item.name, item.sku]
     .some(value => socialText(value).toLocaleLowerCase() === selectedName));
   return fallback.length === 1 ? fallback[0]! : null;
+}
+
+/** Validate explicit multi-product identities against the same tenant profile resolver. */
+export async function assertSocialTaskProductSelection(tenantId: string, selection: {
+  productId?: string | null; productIds?: string[];
+  productMaterialSelection?: import('../../shared/contracts/socialContentTaskContract.js').ProductMaterialSelectionState;
+}) {
+  if (selection.productIds === undefined) return;
+  const { readTenantEnterpriseProfile } = await import('../lib/socialContentLegacyPorts.js');
+  const profile = await readTenantEnterpriseProfile(tenantId);
+  if (selection.productIds.some(productId => !resolveEnterpriseProductSelection(profile?.products.items ?? [], { productId }))
+    || (selection.productId && !selection.productIds.includes(selection.productId))
+    || selection.productMaterialSelection?.productIds.some(id => !selection.productIds!.includes(id))) {
+    throw new SocialContentWorkflowError('social_content_product_not_found', 400);
+  }
 }

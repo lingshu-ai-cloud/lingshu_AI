@@ -1,3 +1,5 @@
+import {IMAGE_EXECUTION_TYPE} from '../socialImage/socialImageExecutionQueue.js';
+import {executePersistedImageProduction} from '../socialImage/socialImageExecution.js';
 import {readWeeklyReplicationAuthority} from './socialWeeklyReplicationAuthority.js';
 import {assertWeeklyProductionMaterialAdmission} from './socialWeeklyProductionMaterialGate.js';
 import type {WeeklyOwnedProductIdentityPorts} from '../runtime/weeklyOwnedProductIdentityDemand.js';
@@ -162,6 +164,7 @@ export async function wakeSocialSceneReworkJob(jobId: string): Promise<void> {
 }
 
 async function executePersistedProduction(job: ContentExecutionJob, dataStore:DataStore=store): Promise<void> {
+  if(job.taskType===IMAGE_EXECUTION_TYPE) { await executePersistedImageProduction(dataStore,job); return; }
   const repository = createStarter198Repository(dataStore);
   const runtime = createPresenterFirstFrameProductionRuntime(dataStore,createPresenterFirstFrameStaticExecutor(dataStore));
   if (job.taskType.startsWith('social_scene_rework:')) {
@@ -233,6 +236,7 @@ function createProductionWorker(allowedJobIds?: string[], workerStore:DataStore=
     dataStore: workerStore,
     execute: job=>executePersistedProduction(job,workerStore),
     async onSucceeded(job) {
+      if(job.taskType===IMAGE_EXECUTION_TYPE)return;
       if (isSocialSceneReworkJob(job)) await completeSocialSceneReworkRun(createStarter198Repository(workerStore), job);
       if (socialProductionExecutor(job) === 'langgraph') {
         await completeSocialContentGraphRun(createStarter198Repository(workerStore), job);
@@ -265,6 +269,7 @@ function createProductionWorker(allowedJobIds?: string[], workerStore:DataStore=
       }));
     },
     async onRetry(job, error, decision) {
+      if(job.taskType===IMAGE_EXECUTION_TYPE)return;
       const repository = createStarter198Repository(workerStore);
       await writeExecutionStage({
         repository, tenantId: job.tenantId, runId: job.runId,
@@ -280,6 +285,7 @@ function createProductionWorker(allowedJobIds?: string[], workerStore:DataStore=
       }).catch(() => undefined);
     },
     async onBlocked(job, error, decision) {
+      if(job.taskType===IMAGE_EXECUTION_TYPE)return;
       const repository = createStarter198Repository(workerStore);
       if (isSocialSceneReworkJob(job)) {
         // Repair failures belong to the independent run. The original reviewed

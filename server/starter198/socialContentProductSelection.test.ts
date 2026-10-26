@@ -2,19 +2,21 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resolveEnterpriseProductSelection } from './socialContentTasks.js';
 
-test('repairs a stale product id from one exact current name or SKU match', () => {
+test('unknown explicit IDs require confirmation; name-only legacy records resolve one exact current name or SKU', () => {
   const products = [
     { id: 'current-serum', sku: 'SERUM-01', name: '维C精华液' },
     { id: 'current-mask', sku: 'MASK-01', name: '树莓美白嫩肤面膜' },
   ];
   assert.deepEqual(
-    resolveEnterpriseProductSelection(products, { productId: 'retired-import-id', productRef: '树莓美白嫩肤面膜' }),
+    resolveEnterpriseProductSelection(products, { productRef: '树莓美白嫩肤面膜' }),
     { item: products[1], canonicalId: 'current-mask' },
   );
   assert.deepEqual(
-    resolveEnterpriseProductSelection(products, { productId: 'retired-import-id', productRef: 'serum-01' }),
+    resolveEnterpriseProductSelection(products, { productRef: 'serum-01' }),
     { item: products[0], canonicalId: 'current-serum' },
   );
+  assert.equal(resolveEnterpriseProductSelection(products, { productId: 'retired-import-id', productRef: '树莓美白嫩肤面膜' }), null);
+  assert.equal(resolveEnterpriseProductSelection(products, { productId: 'retired-import-id', productRef: 'serum-01' }), null);
 });
 
 test('keeps a valid canonical id and rejects ambiguous or invented fallbacks', () => {

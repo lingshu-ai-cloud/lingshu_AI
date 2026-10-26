@@ -29,7 +29,7 @@ test('profile lifecycle stays mounted and preserves bounded load, poll and autos
   assert.match(lifecycle, /fetch\('\/api\/overseas\/enterprise\/profile'/);
   assert.match(lifecycle, /controller\.abort\(\), 15_000/);
   assert.match(lifecycle, /controller\.abort\(\), 12_000/);
-  assert.match(lifecycle, /if \(loading \|\| saving \|\| !hasUnsavedChanges \|\| saveError\) return/);
+  assert.match(lifecycle, /if \(!autoSave \|\| loading \|\| saving \|\| !hasUnsavedChanges \|\| saveError\) return/);
   assert.match(lifecycle, /saveEnterpriseProfileAndVerify\(profile\)/);
   assert.match(lifecycle, /persistedProfileRef\.current = profileSnapshot\(confirmedProfile\)/);
 });

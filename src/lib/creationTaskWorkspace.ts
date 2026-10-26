@@ -33,6 +33,10 @@ export function creationTaskDetailSource(row:CreationTaskRow|null,task:{taskId:s
 export function creationTaskState(task: SocialContentTaskSummary): Pick<CreationTaskRow, 'category' | 'statusLabel'> {
   if (task.status === 'cancelled' || task.status === 'cancelling') return {category:'creating',statusLabel:'已取消'};
   if (['delivered','reviewed','awaiting_publish','awaiting_metrics'].includes(task.status)) return {category:'completed',statusLabel:'已完成'};
+  if (task.brief?.formats?.includes('social_image') && task.execution) {
+    const status=task.execution.status;
+    return {category:['blocked','paused','dead_letter','succeeded'].includes(status)?'confirmation':'creating',statusLabel:task.execution.label};
+  }
   if (task.executionAdmission?.state === 'blocked') return {category:'confirmation',statusLabel:'待介入'};
   if (!task.runId && task.executionAdmission?.state === 'preparing') return {category:'creating',statusLabel:'准备中'};
   if (!task.runId && task.executionAdmission?.state === 'queued') return {category:'creating',statusLabel:'已入队'};

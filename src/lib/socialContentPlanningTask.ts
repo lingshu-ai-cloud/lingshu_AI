@@ -11,6 +11,8 @@ export interface SocialPlanningTaskSeed {
   initialScript?: string;
   specialRequirements?: string;
   productId?: string;
+  productIds?: string[];
+  productMaterialSelection?: CreateSocialContentTaskInput['productMaterialSelection'];
   productName?: string;
   presenterAssetId?: string;
   callToAction?: string;
@@ -42,6 +44,8 @@ export function socialPlanningTaskInput(seed: SocialPlanningTaskSeed): CreateSoc
     title,
     objective,
     productId: productId || null,
+    ...(seed.productIds ? { productIds: [...new Set(seed.productIds.map(id => limited(id, 200)).filter(Boolean))] } : {}),
+    ...(seed.productMaterialSelection ? { productMaterialSelection: seed.productMaterialSelection } : {}),
     productRef: productName || null,
     requestedPresenterAssetId: presenterAssetId || null,
     presenterAssetId: presenterAssetId || null,
@@ -95,4 +99,42 @@ function fnv1a(value: string): string {
 /** Stable across retries of the same workbench submission. */
 export function socialPlanningOperationKey(seed: Pick<SocialPlanningTaskSeed, 'requestId' | 'draftProjectId' | 'title' | 'creationPath'>): string {
   return `planning:${fnv1a(JSON.stringify([seed.draftProjectId || seed.requestId, seed.title, seed.creationPath]))}`;
+}
+
+/** Reuse task source mutations; a confirmed selection replaces only workbench material links. */
+export async function syncPlanningTaskMaterials(input: {
+  task: import('../../shared/contracts/socialContentWorkflow').SocialContentTaskDetail;
+  materials: Array<{ id: string; name?: string; type: string }>;
+  operationKey: string;
+  previousProductMaterialSelection?: CreateSocialContentTaskInput['productMaterialSelection'];
+  selectionChanges?: Pick<CreateSocialContentTaskInput, 'productId' | 'productIds' | 'productRef' | 'productMaterialSelection'>;
+  isCurrent: () => boolean;
+  api: Pick<typeof import('./socialContentApi').socialContentApi, 'addSource' | 'removeSource' | 'updateTask'>;
+}): Promise<import('../../shared/contracts/socialContentWorkflow').SocialContentTaskDetail> {
+  let task = input.task;
+  const desired = [...new Map(input.materials.filter(item => item.type === 'image' || item.type === 'video')
+    .map(item => [item.id, socialPlanningMaterialSource(item)])).values()];
+  const refs = new Set(desired.map(item => item.sourceRef));
+  const managedIds = input.previousProductMaterialSelection ?? task.brief.productMaterialSelection;
+  const managedRefs = new Set([...(managedIds?.selectedIds || []), ...(managedIds?.automaticIds || []), ...(managedIds?.dismissedIds || [])]
+    .map(id => socialPlanningMaterialSource({ id }).sourceRef));
+  const revision = fnv1a(JSON.stringify([...refs].sort()));
+  for (const source of task.sources.filter(item => item.status === 'active' && item.kind === 'material'
+    && managedRefs.has(item.sourceRef) && !refs.has(item.sourceRef))) {
+    if (!input.isCurrent()) throw Error('当前账号或创作需求已变化，请重新打开任务。');
+    task = (await input.api.removeSource(task.taskId, source.sourceId, task.version,
+      `${input.operationKey}:${task.taskId}:${revision}:remove:${source.sourceId}:${task.version}`)).task;
+  }
+  for (const source of desired) {
+    if (!input.isCurrent()) throw Error('当前账号或创作需求已变化，请重新打开任务。');
+    if (task.sources.some(item => item.status === 'active' && item.kind === source.kind && item.sourceRef === source.sourceRef)) continue;
+    task = (await input.api.addSource(task.taskId, source,
+      `${input.operationKey}:${task.taskId}:${revision}:add:${fnv1a(source.sourceRef)}:${task.version}`)).task;
+  }
+  const availability = task.sources.some(source => source.status === 'active' && source.kind === 'material') ? 'ready' : 'none';
+  if (!input.isCurrent()) throw Error('当前账号或创作需求已变化，请重新打开任务。');
+  if (input.selectionChanges || task.brief.assetAvailability !== availability) task = await input.api.updateTask(task.taskId,
+    { expectedVersion: task.version, changes: { ...input.selectionChanges, assetAvailability: availability } },
+    `${input.operationKey}:${task.taskId}:${revision}:availability:${task.version}`);
+  return task;
 }

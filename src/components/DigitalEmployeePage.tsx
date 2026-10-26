@@ -6,6 +6,7 @@ import { presenterProductionGate, type PresenterProductionGate } from "../lib/sh
 import { Button } from 'antd';
 import { consumeBusinessPageContext, saveBusinessPageContext } from '../lib/businessPageNavigation';
 import { EMPTY_CONFIG } from './smartBusiness/digitalEmployeeConfigRules';
+import { HOME_INTRODUCTION_COMPLETE_EVENT } from '../lib/homeFirstRun';
 import { type GoalDraft, type BusinessLine, type ContentPlatform } from './smartBusiness/WeeklyGoalPanel';
 import { createDigitalEmployeeConfigurationAction } from './digitalEmployeeConfigurationAction';
 import { createDigitalEmployeeFactRecovery } from './digitalEmployeeFactRecovery';
@@ -192,6 +193,12 @@ export default function DigitalEmployeePage({
     window.addEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshFromAssistant);
     return () => window.removeEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshFromAssistant);
   }, [viewGoalId, data?.goal?.id]);
+
+  useEffect(() => {
+    const refreshOnboarding = () => { void load(); };
+    window.addEventListener(HOME_INTRODUCTION_COMPLETE_EVENT, refreshOnboarding);
+    return () => window.removeEventListener(HOME_INTRODUCTION_COMPLETE_EVENT, refreshOnboarding);
+  }, []);
 
   useEffect(()=>{let authorization=authHeader().Authorization;const clear=()=>{const next=authHeader().Authorization;if(next===authorization)return;authorization=next;overviewRequestVersionRef.current+=1;initialLoadRef.current=null;setData(null);setWeeklyStartConflict(null);setSelectedTaskId('');setSelectedContentItemId('');setSelectedAccountId('');setWeeklyPlanOpen(false);setPlanHistoryOpen(false);setWeeklyPlanDetailsOpen(false);setWorkspaceView('today');setBusinessLine('full_funnel');setContentPlatform('all');setViewGoalId('');productionRangeRef.current=undefined;setLoading(true);initialLoadRef.current=load('');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.addEventListener('storage',clear);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.removeEventListener('storage',clear);};},[]);
 

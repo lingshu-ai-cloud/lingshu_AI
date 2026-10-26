@@ -1,3 +1,4 @@
+import { normalizeTenantFaqPacks } from '../../shared/contracts/tenantFaqPacks.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -175,6 +176,9 @@ export function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile 
     name: text(companyInput.name),
     industry: text(companyInput.industry),
     ...(companyInput.primaryBusiness !== undefined ? { primaryBusiness: text(companyInput.primaryBusiness) } : {}),
+    ...(companyInput.capabilities !== undefined ? { capabilities: text(companyInput.capabilities) } : {}),
+    ...(companyInput.certifications !== undefined ? { certifications: text(companyInput.certifications) } : {}),
+    ...(companyInput.credentialEvidence !== undefined ? { credentialEvidence: text(companyInput.credentialEvidence) } : {}),
     companyType: text(companyInput.companyType),
     mainMarkets: text(companyInput.mainMarkets),
     primaryLanguages: text(companyInput.primaryLanguages),
@@ -281,6 +285,7 @@ export function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile 
     : undefined;
   return {
     ...profile,
+    ...(profile.faqPackOverrides !== undefined ? { faqPackOverrides: normalizeTenantFaqPacks(profile.faqPackOverrides) } : {}),
     company,
     brand,
     operations,

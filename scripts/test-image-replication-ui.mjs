@@ -12,10 +12,10 @@ import { neutralSocialImageCopy } from '../server/socialImage/socialImageLanguag
 
 // Isolated browser contract: API writes are intercepted; no database or supplier is contacted.
 const source = `import React,{useState,useEffect,StrictMode} from 'react';import{createRoot}from'react-dom/client';import LingshuProvider from '/src/components/ui/LingshuProvider.tsx';import ContentCreationHome from '/src/components/ContentCreationHome.tsx';import AssistantCreationPortalCard from '/src/components/assistant/AssistantCreationPortalCard.tsx';import{useAssistantStore}from'/src/stores/assistantStore.ts';
-import SocialContentPlanningPage from '/src/components/socialContent/SocialContentPlanningPage.tsx';import '/src/index.css';import '/src/styles/design-system.css';import '/src/styles/creator-workspace.css';
+import SocialContentPlanningPage from '/src/components/socialContent/SocialContentPlanningPage.tsx';import ImageCreationTaskExecution from '/src/components/socialContent/ImageCreationTaskExecution.tsx';import '/src/index.css';import '/src/styles/design-system.css';import '/src/styles/creator-workspace.css';
 const chat=new URLSearchParams(location.search).has('chat');
 const request={requestId:1,themeId:'product_value',mode:'instant',creationPath:'viral_replication',prefill:{platforms:['instagram']},sourceContext:{originLabel:chat?'来自灵小枢对话':'来自灵感中心',referenceContentType:'image',referenceTitle:'参考图文',...(chat?{referenceSourceRecordId:'reference-1'}:{referenceMediaUrl:'/api/overseas/videos/ref-1/image/0',referenceCaption:'原始参考配文'})}};
-function Fixture(){const[epoch,setEpoch]=useState(0);const messages=useAssistantStore(state=>state.threads.business.messages);const[selected,setSelected]=useState(new URLSearchParams(location.search).has('home')?null:request);useEffect(()=>{const handler=e=>setSelected(e.detail.contentCreationRequest);window.addEventListener('lingshu:navigate',handler);return()=>window.removeEventListener('lingshu:navigate',handler)},[]);return selected?<SocialContentPlanningPage initialCreateRequest={selected} onNavigate={()=>{}} onNavigateWithTask={()=>{}} onLaunchStudio={()=>{}}/>:<><ContentCreationHome/><button onClick={()=>setEpoch(value=>value+1)}>重新打开当前对话</button>{messages.map((msg,index)=>msg.creationPortal?<AssistantCreationPortalCard key={msg.creationPortal.id+epoch} portal={msg.creationPortal}/>:null)}</>;}
+function Fixture(){const[epoch,setEpoch]=useState(0);const messages=useAssistantStore(state=>state.threads.business.messages);const query=new URLSearchParams(location.search);const[selected,setSelected]=useState(query.has('imageTaskId')?null:query.has('home')?null:request);const[target,setTarget]=useState(query.has('imageTaskId')?'content-1':null);useEffect(()=>{const handler=e=>{if(e.detail.imageTaskId){setTarget(e.detail.socialContentTaskId);setSelected(null)}else if(e.detail.contentCreationRequest){setSelected(e.detail.contentCreationRequest);setTarget(null)}};window.addEventListener('lingshu:navigate',handler);return()=>window.removeEventListener('lingshu:navigate',handler)},[]);return target?<ImageCreationTaskExecution contentTaskId={target}/>:selected?<SocialContentPlanningPage initialCreateRequest={selected} onNavigate={()=>{}} onNavigateWithTask={()=>{}} onLaunchStudio={()=>{}}/>:<><ContentCreationHome sessionScope="image-ui-test"/><button onClick={()=>setEpoch(value=>value+1)}>重新打开当前对话</button>{messages.map((msg,index)=>msg.creationPortal?<AssistantCreationPortalCard key={msg.creationPortal.id+epoch} portal={msg.creationPortal}/>:null)}</>;}
 createRoot(document.getElementById('root')).render(<StrictMode><LingshuProvider><div style={{height:'100dvh'}}><Fixture/></div></LingshuProvider></StrictMode>);`;
 const evidenceDir = process.env.IMAGE_REPLICATION_EVIDENCE_DIR;
 let vite, browser;
@@ -44,13 +44,14 @@ try {
     }, mobile);
     const page = await context.newPage(); page.setDefaultTimeout(20000);
     const errors = [], unexpected = [], writes = [];
-    let content, run, failedOnce = false, brokenImageReads = 0, materialReads = 0;
+    let execution; let content, run, failedOnce = false, brokenImageReads = 0, materialReads = 0;
     page.on('pageerror', error => errors.push(error.message));
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
       if (url.origin !== origin) { unexpected.push(request.url()); return route.abort(); }
       if (!url.pathname.startsWith('/api/')) return route.continue();
       const path = url.pathname;
+      if (path === '/api/overseas/digital-employees/overview') return route.fulfill({ json: { config: {} } });
       if (path === '/api/overseas/videos/reference-extra-1/image/0') { brokenImageReads++; return route.fulfill({ status: 404 }); }
       if (request.method() === 'GET' && /\/image\/0$|\/reference\.png$/.test(path)) return route.fulfill({ body: png, contentType: 'image/png' });
       if (path === '/api/overseas/enterprise/profile') return route.fulfill({ json: { profile: { products: { items: [{ id: 'product-1', name: '企业测试产品', highlights: mode === 'missing_facts' ? '' : '已核验的产品特点' }] } } } });
@@ -71,6 +72,11 @@ try {
           productionRuntime: { binding: { contentTaskId: 'content-1', contentTaskVersion: 'v1' }, currentNode: 'business_context', nodes: [], events: [], nodeOutputs: [] } };
         return route.fulfill({ json: { ok: true, task: run, resumed: false } });
       }
+      if(path==='/api/overseas/social-images/tasks/image-1/execution') {
+        execution ||= {jobId:'queue-image-1',status:mode==='blocked'?'blocked':'queued',attempt:mode==='blocked'?1:0,lastError:mode==='blocked'?'social_image_required_asset_rights_unverified':null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+        return route.fulfill({status:202,json:{ok:true,task:run,execution}});
+      }
+      if(path==='/api/overseas/social-images/content-tasks/content-1/execution')return route.fulfill({json:{ok:true,task:run,execution}});
       if (path === '/api/overseas/social-images/tasks/image-1' && request.method() === 'GET') return route.fulfill({ json: { ok: true, task: run } });
       if (path === '/api/overseas/social-images/tasks/image-1') {
         const { expectedVersion, patch } = request.postDataJSON();
@@ -106,9 +112,9 @@ try {
     });
     await page.goto(`${origin}/image-replication-test${(mode === 'home' || mode === 'empty_sources') ? '?home=1' : mobile ? '?chat=1' : ''}`);
     if (mode === 'home' || mode === 'empty_sources') {
-      await page.getByRole('button', { name: '点击开始创作', exact: true }).click();
+      await page.locator('.creator-home__suggestions').getByRole('button', { name: '内容创作', exact: true }).click();
       const cards = page.locator('#creator-home-prompt-cards > button');
-      assert.equal(await cards.count(), 5); assert.match(await cards.nth(4).textContent(), /图文爆款复刻/);
+      assert.equal(await cards.count(), 5); assert.match(await cards.nth(4).textContent(), /借鉴一个爆款图文/);
       await page.waitForFunction(() => { const element = document.querySelector('.creator-home__canvas-stage'); return element && element.getBoundingClientRect().height > 100 && Number(getComputedStyle(element).opacity) > .99; });
       if (evidenceDir) { await mkdir(evidenceDir, { recursive: true }); await page.screenshot({ path: `${evidenceDir}/five-creation-scenarios.png`, fullPage: true }); }
       await cards.nth(4).click();
@@ -177,33 +183,34 @@ try {
     await page.getByText('连接中断，请恢复本次复刻任务', { exact: true }).waitFor();
     await page.getByRole('button', { name: /恢复本次复刻任务/ }).click();
     if (mode === 'blocked') {
-      await page.getByText('企业产品图片缺少可核验授权，请补充后继续', { exact: true }).waitFor();
+      await page.getByText('企业产品图片缺少可核验授权，请补充后继续。', { exact: true }).waitFor();
       assert.equal(writes.filter(item => item.path.endsWith('/fb-poster') || item.path.endsWith('/render-layered')).length, 0);
       assert.deepEqual(unexpected, []); assert.deepEqual(errors, []);
       console.log('blocked: missing product authorization stops before planning or rendering');
       await context.close(); continue;
     }
-    await page.getByText('首版已完成分层渲染和确定性预检。', { exact: true }).waitFor();
+    await page.getByText('已入队，等待调度领取', { exact: true }).first().waitFor();
     assert.equal(content.brief.languages[0], selectedLanguage[1]);
     assert.equal(run.deliverySpec.language, selectedLanguage[1]);
-    assert.equal(run.imageTextContract.caption, neutralSocialImageCopy(selectedLanguage[1]).caption);
+
     assert.equal(content.brief.formats[0], 'social_image'); assert.equal(content.brief.productId, 'product-1');
     assert.equal(content.brief.callToAction, '咨询产品详情');
     assert.equal(run.referenceSnapshot.imageUrls[0], (mode === 'home' || mode === 'chat') ? '/api/overseas/videos/reference-1/image/0' : '/api/overseas/videos/ref-1/image/0');
     assert.equal(writes.filter(item => item.path === '/api/overseas/social-images/tasks/image-1' && item.body.patch.referenceSnapshot).length, 1, 'lost response resumes persisted reference without resetting it');
-    for (const suffix of ['/evidence/prepare', '/fb-poster', '/compile-layered', '/render-layered', '/quality/preflight']) assert.equal(writes.filter(item => item.path.endsWith(suffix)).length, 1, 'confirmation starts each production step once even in StrictMode');
+    assert.equal(writes.filter(item=>item.path.endsWith('/execution')).length,1,'confirmation submits the durable admission once');
+    for(const suffix of ['/evidence/prepare','/fb-poster','/render-layered'])assert.equal(writes.filter(item=>item.path.endsWith(suffix)).length,0,'browser does not execute the server-owned pipeline');
     assert.equal(writes.filter(item => /\/decision$|\/delivery-packages$/.test(item.path)).length, 0, 'a candidate is never automatically accepted as final delivery');
-    assert.equal(run.outputs.length, 1); assert.equal(run.publishable, false);
+    assert.equal(run.outputs.length, 0); assert.equal(run.publishable, false);
     const taskWrites = writes.filter(item => item.path.endsWith('/social-content/tasks'));
     assert.equal(taskWrites.length, 2); assert.equal(taskWrites[0].key, taskWrites[1].key, 'retry retains idempotency identity');
     if (mode === 'home') {
       const before = writes.length;
-      await page.getByRole('button', { name: '重新打开当前对话', exact: true }).click();
-      await page.getByText('图文首版待审阅', { exact: true }).waitFor();
+      await page.reload();
+      await page.getByText('已入队，等待调度领取', { exact: true }).first().waitFor();
       assert.equal(writes.length, before, 'restoring saved task pointer never restarts generation');
     }
     assert.deepEqual(unexpected, []); assert.deepEqual(errors, []);
-    console.log(`${mode}: fifth-card navigation, task binding, retry recovery and automatic first-draft production passed with isolated APIs`);
+    console.log(`${mode}: fifth-card navigation, task binding, retry recovery and durable admission and read-only restoration passed with isolated APIs`);
     await context.close();
   }
 } finally { await browser?.close(); await vite?.close(); await rm(cacheDir, { recursive: true, force: true }); }

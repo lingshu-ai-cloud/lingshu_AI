@@ -5,7 +5,7 @@ import { imageLanguageSchema, type ImageLanguage } from '../../shared/contracts/
 
 export type ImageReplicationReference = {
   url: string; title: string; caption?: string; materialId?: string;
-  sourceRecordId?: string; sourceUrl?: string; platform?: string; collectedAt?: string;
+  sourceRecordId?: string; imageIndex?: number; sourceUrl?: string; platform?: string; collectedAt?: string;
   layerBlueprints?: SocialImageReferenceLayerBlueprint[];
 };
 export type ImageReplicationDraft = {

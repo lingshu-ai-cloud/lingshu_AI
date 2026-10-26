@@ -32,6 +32,7 @@ export interface SocialContentSourceContext {
   referenceContentType?: 'video' | 'image';
   referenceMaterialId?: string;
   referenceSourceRecordId?: string;
+  referenceImageIndex?: number;
   referenceCaption?: string;
   referenceLayerBlueprints?: SocialImageReferenceLayerBlueprint[];
   aspectRatio?: string;
@@ -39,6 +40,7 @@ export interface SocialContentSourceContext {
 }
 
 export interface SocialContentCreateRequest {
+  productMaterialSelection?: import('../../../shared/contracts/socialContentTaskContract').ProductMaterialSelectionState | null;
   assistantEntry?: import('../../../shared/contracts/assistantCreationPortal').AssistantCreationPortal;
   creationDialoguePlan?: import('../../../shared/contracts/contentCreationDialogue').CreationReply;
   requestId: number;

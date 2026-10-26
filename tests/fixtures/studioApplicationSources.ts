@@ -22,6 +22,7 @@ export function readStudioApplicationSources(): string {
     new URL('../../server/routes/studioScriptRoutes.ts', import.meta.url),
     new URL('../../server/routes/studioCoverTitleRoutes.ts', import.meta.url),
     new URL('../../server/routes/studioPosterPlanningRoutes.ts', import.meta.url),
+    new URL('../../server/socialImage/studioPosterPlanning.ts', import.meta.url),
     new URL('../../server/routes/studioLeadPackageRoutes.ts', import.meta.url),
     new URL('../../server/routes/studioPosterRenderRoutes.ts', import.meta.url),
     new URL('../../server/routes/studioCaptionRoutes.ts', import.meta.url),

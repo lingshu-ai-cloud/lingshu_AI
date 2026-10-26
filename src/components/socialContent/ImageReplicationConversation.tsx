@@ -3,7 +3,7 @@ import { Alert, Button, Input, Select, Spin } from 'antd';
 import LsPageHeader from '../ui/LsPageHeader';
 import ImageReplicationReferencePicker from './ImageReplicationReferencePicker';
 import { IMAGE_LANGUAGE_OPTIONS, imageLanguageLabel } from '../../../shared/contracts/imageLanguages';
-import SocialImageWorkbench from './SocialImageWorkbench';
+import { openImageCreationTask } from '../../lib/imageCreationTaskNavigation';
 import type { SocialContentCreateRequest } from './SocialContentWorkspace';
 import type { SocialImageCreationTask } from '../../../shared/contracts/socialImageCreation';
 import { readAssistantProductCatalog, type AssistantCatalogProduct } from '../../lib/assistantProductCatalog';
@@ -58,6 +58,7 @@ export default function ImageReplicationConversation({ request, onShowCreations,
   const [created, setCreated] = useState<SocialImageCreationTask>();
   const [submitted, setSubmitted] = useState(checkpoint?.submitted || false);
   const startNew = useRef(false);
+  const handedOff = useRef('');
   const checkpointWriter = useRef(onCheckpoint); checkpointWriter.current = onCheckpoint;
   const alive = useRef(true);
   const identity = useRef(productionNavigationIdentity());
@@ -77,7 +78,8 @@ export default function ImageReplicationConversation({ request, onShowCreations,
       if (restored) setCreated(restored.task);
       setReferences(collected);
       if (context?.referenceSourceRecordId) {
-        const item = collected.find(image => image.sourceRecordId === context.referenceSourceRecordId);
+        const item = collected.find(image => image.sourceRecordId === context.referenceSourceRecordId
+          && (image.imageIndex || 0) === (context.referenceImageIndex || 0));
         if (!item) { setReference(null); setStep(0); setLoadError('原帖参考已不可用，请重新选择已采集图文或上传图片。'); }
         else setReference(item);
       }
@@ -91,7 +93,7 @@ export default function ImageReplicationConversation({ request, onShowCreations,
     }).catch(cause => { if (active && isCurrent()) setLoadError(cause instanceof Error ? cause.message : '产品与参考图片读取失败'); })
       .finally(() => { if (active && isCurrent()) setLoading(false); });
     return () => { active = false; };
-  }, [reload, context?.referenceMaterialId, context?.referenceSourceRecordId]);
+  }, [reload, context?.referenceMaterialId, context?.referenceSourceRecordId, context?.referenceImageIndex]);
 
   useEffect(() => { bottom.current?.scrollIntoView({ block: 'nearest' }); }, [step, created]);
   const product = products.find(item => item.id === productId);
@@ -100,9 +102,11 @@ export default function ImageReplicationConversation({ request, onShowCreations,
   useEffect(() => {
     if (!isCurrent()) return;
     checkpointWriter.current?.({ step, productId, objective, audience, callToAction, platform, aspectRatio, language, submitted,
-      ...((created?.id || checkpoint?.imageTaskId) ? { imageTaskId: created?.id || checkpoint?.imageTaskId } : {}) }, reference?.sourceRecordId ? { sourceRecordId: reference.sourceRecordId, name: reference.title.slice(0, 200) }
+      ...((created?.id || checkpoint?.imageTaskId) ? { imageTaskId: created?.id || checkpoint?.imageTaskId } : {}) }, reference?.sourceRecordId ? { sourceRecordId: reference.sourceRecordId,
+        imageIndex: reference.imageIndex || 0, name: reference.title.slice(0, 200) }
       : reference?.materialId ? { materialId: reference.materialId, name: reference.title.slice(0, 200) } : loading ? undefined : null);
-  }, [step, productId, objective, audience, callToAction, platform, aspectRatio, language, submitted, created?.id, reference?.materialId, reference?.sourceRecordId, loading]);
+  }, [step, productId, objective, audience, callToAction, platform, aspectRatio, language, submitted, created?.id,
+    reference?.materialId, reference?.sourceRecordId, reference?.imageIndex, loading]);
   const answers = [reference ? `参考图：${reference.title || '已选图文'}` : '',
     product ? `推广产品：${product.name}\n${PLATFORM_LABELS[platform]} · ${aspectRatio} · ${imageLanguageLabel(language)}` : ''];
   const advance = () => {
@@ -142,16 +146,18 @@ export default function ImageReplicationConversation({ request, onShowCreations,
       const task = await createImageReplicationDraft({ draft: frozen.current, operationKey: key.current,
         entrySource: request?.assistantEntry ? 'assistant' : 'workspace', isCurrent,
         ports: { createTask: socialContentApi.createTask, createOrResumeRun: socialImageApi.createOrResumeRun, updateTask: socialImageApi.updateTask } });
-      if (isCurrent()) { startNew.current = true; setCreated(task); }
+      if (!isCurrent()) return;
+      const queued = await socialImageApi.enqueueExecution(task);
+      if (isCurrent()) { startNew.current = true; setCreated(queued.task); }
     } catch (cause) { if (isCurrent()) setError(cause instanceof Error ? cause.message : '复刻任务保存失败，请重试'); }
     finally { locked.current = false; if (isCurrent()) setBusy(false); }
   };
 
-  if (created) return <SocialImageWorkbench creationPath="viral_replication" initialTask={created} autoStart={startNew.current} compact
-    contentTaskId={created.productionRuntime?.binding?.contentTaskId} entrySource={request?.assistantEntry ? 'assistant' : 'workspace'}
-    referenceTitle={created.referenceSnapshot?.title} referenceMediaUrl={created.referenceSnapshot?.imageUrls[0]}
-    referenceCaption={created.referenceSnapshot?.caption} referenceLayerBlueprints={created.replicationRecipe?.referenceLayerBlueprints}
-    onShowCreations={onShowCreations}/>;
+  useEffect(() => {
+    if (!created || !startNew.current || handedOff.current === created.id || !isCurrent()) return;
+    handedOff.current = created.id; openImageCreationTask(created);
+  }, [created]);
+  if (created) return <Button onClick={() => openImageCreationTask(created)}>进入创作任务</Button>;
 
   return <div className={embedded ? "min-w-0 space-y-3" : "flex h-full min-h-0 flex-col bg-surface"} data-image-replication-conversation>
     {!embedded && <LsPageHeader title="图文爆款复刻" extra={<Button onClick={onShowCreations} disabled={busy}>我的创作</Button>}/>}

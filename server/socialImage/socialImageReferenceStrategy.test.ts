@@ -112,6 +112,7 @@ async function boundViralTask(imageType: 'product_poster' | 'carousel' = 'produc
     artifact_count: 0, approved_artifact_count: 0, delivery_package_count: 0, publication_count: 0,
     metric_submission_count: 0, created_at: now, updated_at: now,
   });
+  await store.create('tenant_profiles',{id:'profile-a',tenant_id:'tenant-a',profile:{factVersion:{id:'fixture-enterprise-v1',revision:1,contentHash:'f'.repeat(64),confirmedAt:now,confirmedBy:'owner'}}});
   const created = (await createOrResumeBoundSocialImageRun(store, 'tenant-a', {
     contentTaskId: 'content-a', expectedContentTaskVersion: '7', idempotencyKey: 'reference-offline-001',
     entrySource: 'assistant', imageType,

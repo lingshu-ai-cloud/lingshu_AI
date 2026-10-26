@@ -370,10 +370,13 @@ export function inferIndustry(profile: EnterpriseProfile): PackIndustry {
 
 export function buildPackPreview(profile: EnterpriseProfile, industry: PackIndustry, scenario: PackScenario) {
   const vars = packVars(profile);
-  const items = readPack(industry, scenario).map(entry => fillPackEntry(entry, vars));
+  const custom = profile.faqPackOverrides?.[`${industry}/${scenario}`];
+  const entries: PackEntry[] = custom ? custom.items.map(item => ({ ...item, vars: [...new Set([...item.a.matchAll(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g)].map(match => match[1]!))] })) : readPack(industry, scenario);
+  const items = entries.map(entry => fillPackEntry(entry, vars));
   const existing = new Set((profile.faq ?? []).map(item => text(item.question).toLowerCase()).filter(Boolean));
   return {
     id: `${industry}/${scenario}`,
+    customized: Boolean(custom),
     industry,
     industryLabel: INDUSTRY_LABELS[industry],
     scenario,

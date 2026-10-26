@@ -1,6 +1,6 @@
 import { socialAssistantAdmission } from './socialContentAssistantStart.js';
 import { creationReplySchema } from '../../shared/contracts/contentCreationDialogue.js';
-import {parseSocialReferenceReuse, parseIllustrativeSceneIds} from './socialContentValidation.js';
+import {parseProductMaterialSelection, parseSocialReferenceReuse, parseIllustrativeSceneIds} from './socialContentValidation.js';
 import { parseSocialReplicationContext } from './socialContentValidation.js';
 import {
   SOCIAL_ARTIFACT_STATUSES,
@@ -259,6 +259,8 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     ...(record.materialRoutingPolicyVersion === 'type-aware.v1' || record.materialRoutingPolicyVersion === 'type-aware.v2' ? { materialRoutingPolicyVersion: record.materialRoutingPolicyVersion } : {}),
     ...(record.illustrativeSceneIds !== undefined ? { illustrativeSceneIds: parseIllustrativeSceneIds(record.illustrativeSceneIds) } : {}),
     productId: nullable(record.productId),
+    ...(record.productIds !== undefined ? { productIds: strings(record.productIds, 'social_content_task_record_invalid') } : {}),
+    ...(record.productMaterialSelection !== undefined ? { productMaterialSelection: parseProductMaterialSelection(record.productMaterialSelection) } : {}),
     productRef: nullable(record.productRef),
     requestedPresenterName: nullable(record.requestedPresenterName),
     requestedPresenterAssetId: nullable(record.requestedPresenterAssetId),

@@ -1,3 +1,4 @@
+import ProductHighlightDialog from './enterprise/ProductHighlightDialog';
 import { Button, Modal } from 'antd';
 import {
   ArrowRight,
@@ -11,9 +12,18 @@ import {
   Megaphone,
   MessagesSquare,
   Newspaper,
+  CheckCircle2,
+  Compass,
+  UserRound,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Page } from '../pageRegistry';
+import { AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
+import { digitalEmployeeApi } from '../lib/digitalEmployeeApi';
+import type { DigitalEmployeeOverview } from '../lib/digitalEmployees';
+import { HOME_GROWTH_TOUR_COMPLETE_EVENT, HOME_GROWTH_TOUR_START_EVENT, HOME_INTRODUCTION_COMPLETE_EVENT, readHomeFirstRun, writeHomeFirstRun } from '../lib/homeFirstRun';
+import { EMPTY_CONFIG } from './smartBusiness/digitalEmployeeConfigRules';
+import HomeIntroduction from './HomeIntroduction';
 import {
   ASSISTANT_HOME_LEVEL_LABELS,
   ASSISTANT_HOME_QUICK_LAUNCHERS,
@@ -51,18 +61,62 @@ function resolveLauncherPrompts(launcher: AssistantHomeQuickLauncher | null): As
     .filter((entry): entry is AssistantHomePrompt => Boolean(entry));
 }
 
-export default function ContentCreationHome({ inspirationWorkspace }: { onNavigate?: (page: Page) => void; inspirationWorkspace?: ReactNode }) {
+export default function ContentCreationHome({ inspirationWorkspace, sessionScope }: { onNavigate?: (page: Page) => void; inspirationWorkspace?: ReactNode; sessionScope: string }) {
   const [activeLauncherId, setActiveLauncherId] = useState<AssistantHomeQuickLauncherId | null>(null);
   const [companyReportOpen, setCompanyReportOpen] = useState(false);
+  const [highlightOpen, setHighlightOpen] = useState(false);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [queryPrompt, setQueryPrompt] = useState<AssistantHomePrompt | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<AssistantHomePrompt | null>(null);
+  const [overview, setOverview] = useState<DigitalEmployeeOverview | null>(null);
+  const [firstRunLoaded, setFirstRunLoaded] = useState(false);
+  const [firstRunError, setFirstRunError] = useState('');
+  const [overviewRevision, setOverviewRevision] = useState(0);
+  const [firstRunProgress, setFirstRunProgress] = useState(() => readHomeFirstRun(sessionScope));
+  const [introductionOpen, setIntroductionOpen] = useState(false);
   const activeLauncher = useMemo(
     () => ASSISTANT_HOME_QUICK_LAUNCHERS.find(entry => entry.id === activeLauncherId) || null,
     [activeLauncherId],
   );
   const activePrompts = useMemo(() => resolveLauncherPrompts(activeLauncher), [activeLauncher]);
   const canvasCollapsed = activeLauncher === null;
+  const showFirstRun = firstRunLoaded && !firstRunError && firstRunProgress.entered && (!overview?.config || !firstRunProgress.growthCompleted);
+
+  useEffect(() => {
+    setHighlightOpen(false);
+    setFirstRunProgress(readHomeFirstRun(sessionScope));
+    setOverview(null);
+    setFirstRunLoaded(false);
+    setOverviewRevision(value => value + 1);
+  }, [sessionScope]);
+
+  useEffect(() => {
+    const refresh = () => setOverviewRevision(value => value + 1);
+    window.addEventListener(AUTH_TOKEN_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT, refresh);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void digitalEmployeeApi.overview().then(data => {
+      if (!active) return;
+      setOverview(data);
+      setFirstRunError('');
+      setFirstRunLoaded(true);
+      if (!data.config) setFirstRunProgress(writeHomeFirstRun(sessionScope, { entered: true }));
+    }).catch(error => {
+      if (!active) return;
+      setFirstRunError(error instanceof Error ? error.message : '新用户状态读取失败');
+      setFirstRunLoaded(true);
+    });
+    return () => { active = false; };
+  }, [overviewRevision, sessionScope]);
+
+  useEffect(() => {
+    const complete = () => setFirstRunProgress(writeHomeFirstRun(sessionScope, { growthCompleted: true }));
+    window.addEventListener(HOME_GROWTH_TOUR_COMPLETE_EVENT, complete);
+    return () => window.removeEventListener(HOME_GROWTH_TOUR_COMPLETE_EVENT, complete);
+  }, [sessionScope]);
 
   useEffect(() => {
     const onAssistantActivity = (event: Event) => {
@@ -87,6 +141,7 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
   };
 
   const choosePrompt = (entry: AssistantHomePrompt) => {
+    if (entry.id === 'CO-SPEECH-HIGHLIGHT') { setHighlightOpen(true); return; }
     if (entry.id === 'OP-LEADER') { setCompanyReportOpen(true); return; }
     setCompanyReportOpen(false);
     if (assistantQueryKind(entry.id)) { setQueryPrompt(entry); return; }
@@ -112,10 +167,10 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
   return <div className="creator-home creator-home--employee h-full overflow-y-auto">
     <div className="creator-home__inner">
       <header className="creator-home__hero text-center">
-        <h2>今天想让数字员工完成什么？</h2>
+        <h2>{showFirstRun ? '先认识灵枢，再让灵小枢认识你' : '今天想让数字员工完成什么？'}</h2>
       </header>
 
-      <div className={`creator-home__canvas-stage${canvasCollapsed ? ' is-collapsed' : ''}`} inert={canvasCollapsed ? true : undefined} aria-hidden={canvasCollapsed || undefined}>
+      {!showFirstRun && <div className={`creator-home__canvas-stage${canvasCollapsed ? ' is-collapsed' : ''}`} inert={canvasCollapsed ? true : undefined} aria-hidden={canvasCollapsed || undefined}>
         <section id="creator-home-operations" className="creator-home__canvas" aria-label={activeLauncher ? `${activeLauncher.label}快捷任务` : '快捷任务'}>
           {activeLauncher ? <div className="creator-home__quick-panel">
             <div id="creator-home-prompt-cards" className={`creator-home__prompt-grid${activeLauncher.id === 'viral-script' ? ' creator-home__prompt-grid--creation' : ''}`} aria-label={`${activeLauncher.label}：${activeLauncher.description}`}>
@@ -143,13 +198,39 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
               }}/></div>}
           </div> : null}
         </section>
-      </div>
+      </div>}
+
+      {showFirstRun && <div className="creator-home__canvas-stage">
+        <section className="creator-home__canvas" aria-label="新用户入门">
+          <div className="creator-home__canvas-grid creator-home__canvas-grid--onboarding">
+            <button type="button" className="creator-home__canvas-card" onClick={() => window.dispatchEvent(new CustomEvent(HOME_GROWTH_TOUR_START_EVENT))}>
+              <span className="creator-home__canvas-card-shade" aria-hidden="true"/>
+              <span className="creator-home__canvas-card-content">
+                <Compass size={28} aria-hidden="true"/>
+                <strong>灵枢如何助力海外增长</strong>
+                <span>亲手体验对话、业务页面、周任务包和创建任务。</span>
+                <span className="creator-home__canvas-card-action">{firstRunProgress.growthCompleted ? <><CheckCircle2 size={14} aria-hidden="true"/>已了解 · 再看一次</> : <>开始了解 · 约 2 分钟<ArrowRight size={14} aria-hidden="true"/></>}</span>
+              </span>
+            </button>
+            <button type="button" className="creator-home__canvas-card creator-home__canvas-card--primary" onClick={() => setIntroductionOpen(true)}>
+              <span className="creator-home__canvas-card-shade" aria-hidden="true"/>
+              <span className="creator-home__canvas-card-content">
+                <UserRound size={28} aria-hidden="true"/>
+                <strong>让灵小枢认识我</strong>
+                <span>通过问答确认企业、品牌、主推产品和目标市场。</span>
+                <span className="creator-home__canvas-card-action">{overview?.config ? <><CheckCircle2 size={14} aria-hidden="true"/>已确认 · 查看资料</> : <>开始介绍 · 可稍后继续<ArrowRight size={14} aria-hidden="true"/></>}</span>
+              </span>
+            </button>
+          </div>
+        </section>
+      </div>}
+      {firstRunError && <p role="alert" className="mb-4 text-sm text-warning">入门状态暂时无法读取：{firstRunError} <button type="button" className="underline" onClick={() => setOverviewRevision(value => value + 1)}>重试</button></p>}
 
       <section className="creator-home__conversation" aria-label="灵小枢对话">
         <div id="content-creation-assistant-anchor" className="creator-home__assistant-anchor"/>
       </section>
 
-      <div className="creator-home__suggestions" aria-label="快捷任务">
+      {!showFirstRun && <div className="creator-home__suggestions" aria-label="快捷任务">
         {ASSISTANT_HOME_QUICK_LAUNCHERS.map(launcher => {
           const active = activeLauncherId === launcher.id;
           return <button
@@ -165,12 +246,13 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
             {active ? <ChevronUp size={14} aria-hidden="true"/> : <ChevronDown size={14} aria-hidden="true"/>}
           </button>;
         })}
-      </div>
+      </div>}
 
       <section id="creator-home-library" className="creator-home__library" aria-label="爆款素材">
         {inspirationWorkspace}
       </section>
     </div>
+    <ProductHighlightDialog key={sessionScope} open={highlightOpen} onClose={() => setHighlightOpen(false)}/>
     {queryPrompt && assistantQueryKind(queryPrompt.id) && <AssistantQuickPromptDialog key={queryPrompt.id} kind={assistantQueryKind(queryPrompt.id)!}
       onClose={() => setQueryPrompt(null)} onPrompt={prompt => preparePrompt({ ...queryPrompt, prompt })}/>}
     <Modal open={Boolean(pendingPrompt)} title="输入框已有内容" width={480} closable={false} footer={[
@@ -180,5 +262,11 @@ export default function ContentCreationHome({ inspirationWorkspace }: { onNaviga
     ]}>
       <p>“{pendingPrompt?.label}”会填入灵小枢输入框。请选择追加或替换；系统不会自动发送。</p>
     </Modal>
+    <HomeIntroduction open={introductionOpen} initialConfig={overview?.config || EMPTY_CONFIG}
+      onClose={() => setIntroductionOpen(false)} onComplete={() => {
+        setIntroductionOpen(false);
+        setOverviewRevision(value => value + 1);
+        window.dispatchEvent(new CustomEvent(HOME_INTRODUCTION_COMPLETE_EVENT));
+      }} />
   </div>;
 }

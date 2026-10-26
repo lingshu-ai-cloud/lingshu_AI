@@ -45,3 +45,18 @@ test('failed write does not proceed to read-back', async () => {
   await assert.rejects(saveEnterpriseProfileAndVerify(profile, fetcher, () => ({})), /版本冲突/);
   assert.equal(calls, 1);
 });
+
+test('new company evidence cannot report saved when the backend drops it', async () => {
+  const input = { ...profile, company: { ...profile.company, capabilities: '真实能力', credentialEvidence: '证书索引' } };
+  let calls = 0;
+  const fetcher = (async () => Response.json(++calls === 1 ? { ok: true } : profile)) as typeof fetch;
+  await assert.rejects(saveEnterpriseProfileAndVerify(input, fetcher, () => ({})), /企业资料保存后校验失败/);
+});
+
+
+test('product exceptions cannot report saved when read-back loses the conditions', async () => {
+  const input = { ...profile, products: { ...profile.products, items: [{ ...profile.products.items![0]!, samplePolicy: '样品另议' }] } };
+  let calls = 0;
+  const fetcher = (async () => Response.json(++calls === 1 ? { ok: true } : profile)) as typeof fetch;
+  await assert.rejects(saveEnterpriseProfileAndVerify(input, fetcher, () => ({})), /产品合作条件保存后校验失败/);
+});

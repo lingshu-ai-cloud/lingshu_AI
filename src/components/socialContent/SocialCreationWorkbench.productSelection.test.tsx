@@ -70,5 +70,5 @@ assert.ok(multipleProductHtml.includes('产品映射 · 2 项'));
 const planningSource = fs.readFileSync(new URL('./SocialContentPlanningPage.tsx', import.meta.url), 'utf8');
 assert.match(planningSource, /const distinctProducts = request\.productMappings\.filter[\s\S]*?findIndex\(item => item\.productId === mapping\.productId\)/,
   'the studio handoff must de-duplicate product ids when one enterprise product replaces multiple source terms');
-assert.match(planningSource, /selectedProductIds: distinctProducts\.map[\s\S]*?selectedProductNames: distinctProducts\.map/,
+assert.match(planningSource, /selectedProductIds: taskSeed\.productIds[\s\S]*?selectedProductNames: taskSeed\.productIds\.map/,
   'de-duplicated product ids and names must stay index-aligned');

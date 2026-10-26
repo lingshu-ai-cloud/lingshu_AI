@@ -1,13 +1,13 @@
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { useState, useEffect } from 'react';
 import { Alert, Button, Tabs } from 'antd';
-import { LsGradientProgress } from './ui/LsExperiencePrimitives';
+import EnterpriseKnowledgeFields from './enterprise/EnterpriseKnowledgeFields';
+import { KNOWLEDGE_AREAS, KNOWLEDGE_VIEWS, enterpriseAreaForView, normalizeKnowledgeView, type KnowledgeView, type EnterpriseArea } from './enterprise/enterpriseKnowledgeNavigation';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import EnterpriseNotificationSettings from './enterprise/EnterpriseNotificationSettings';
 import EnterpriseFaqPanel from './enterprise/EnterpriseFaqPanel';
 import EnterpriseProductPanel from './enterprise/EnterpriseProductPanel';
 import EnterpriseProductImportReviewModal from './enterprise/EnterpriseProductImportReviewModal';
-import EnterpriseAdditionalSettings from './enterprise/EnterpriseAdditionalSettings';
 import EnterpriseBizRulesPanel from './enterprise/EnterpriseBizRulesPanel';
 import EnterpriseCompanyFactsPanel from './enterprise/EnterpriseCompanyFactsPanel';
 import EnterpriseSalesStylePanel from './enterprise/EnterpriseSalesStylePanel';
@@ -62,51 +62,13 @@ export function resolveEnterpriseProductsDeepLink(
 
 
 const PAGE_SIZE = 5;
-const SERVICE_INTAKE_AUTO_OPEN_KEY = 'lingshu:enterprise:service-intake-auto-opened';
-
-type KnowledgeView = 'products' | 'bizRules' | 'faq' | 'company' | 'materials' | 'salesStyle' | 'advanced' | 'presenters' | 'presenterRouting';
-type EnterpriseArea = 'facts' | 'appearance' | 'service';
 
 function advisorInitialEnterpriseView(): KnowledgeView {
   try {
     if (new URLSearchParams(window.location.search).get('arkVerification') === 'complete') return 'presenters';
-    const value = localStorage.getItem('lingshu:enterprise:initial-view');
-    if (value === 'materials') return 'products';
-    if (value === 'presenterRouting') return 'presenters';
-    if (value === 'socialStrategy') return 'company';
-    if (value && ['products', 'bizRules', 'faq', 'company', 'materials', 'salesStyle', 'advanced', 'presenters', 'presenterRouting'].includes(value)) return value as KnowledgeView;
-  } catch { /* ignore */ }
-  return 'company';
+    return normalizeKnowledgeView(localStorage.getItem('lingshu:enterprise:initial-view'));
+  } catch { return 'company'; }
 }
-
-const FACT_VIEWS: Array<{ id: KnowledgeView; label: string; hint: string }> = [
-  { id: 'company', label: '公司与市场', hint: '你是谁' },
-  { id: 'products', label: '产品资料', hint: '你卖什么' },
-];
-
-const SERVICE_VIEWS: Array<{ id: KnowledgeView; label: string; hint: string }> = [
-  { id: 'bizRules', label: '报价与业务规则', hint: '询价转人工' },
-  { id: 'faq', label: '常见问答', hint: '允许怎么答' },
-  { id: 'salesStyle', label: '销售风格', hint: '持续学习' },
-  { id: 'advanced', label: '接待与转人工', hint: '权限和提醒' },
-];
-function enterpriseAreaForView(view: KnowledgeView): EnterpriseArea {
-  if (['presenters', 'presenterRouting'].includes(view)) return 'appearance';
-  if (['bizRules', 'faq', 'salesStyle', 'advanced'].includes(view)) return 'service';
-  return 'facts';
-}
-
-const KNOWLEDGE_VIEW_ICONS: Record<KnowledgeView, LucideIcon> = {
-  company: Globe2,
-  products: Package,
-  materials: Image,
-  bizRules: ShieldCheck,
-  faq: BookOpen,
-  salesStyle: Megaphone,
-  advanced: Bell,
-  presenters: Users,
-  presenterRouting: Users,
-};
 
 
 const MAX_PRODUCT_DOCUMENTS = 3;
@@ -146,17 +108,17 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
     faqPacksOpen, setFaqPacksOpen, openPackId, setOpenPackId, packImporting,
     faqPage, setFaqPage, faqItems, visibleFaqs, acceptLoadedPacks,
     addFaq, updateFaq, removeFaq, structureLegacyFaq, importFaqPreview,
-    selectedQuestionsForPack, togglePackQuestion, importFaqPack,
+    selectedQuestionsForPack, togglePackQuestion, importFaqPack, reloadFaqPacks,
   } = useEnterpriseFaq({ profile, setProfile, setSaveError, pageSize: PAGE_SIZE });
-  const { saving, loading, profileLoaded, apiStatus, hasUnsavedChanges, handleSave } = useEnterpriseProfileLifecycle({
-    profile, setProfile, saveError, setSaveError, setSaved, acceptLoadedPacks,
+  const { saving, loading, profileLoaded, apiStatus, hasUnsavedChanges, handleSave, acceptSavedPatch } = useEnterpriseProfileLifecycle({
+    profile, setProfile, saveError, setSaveError, setSaved, acceptLoadedPacks, autoSave: false,
   });
 
   useEffect(() => {
     if (window.sessionStorage.getItem('lingshu:enterprise-focus') !== 'language-settings') return;
     window.sessionStorage.removeItem('lingshu:enterprise-focus');
-    setEnterpriseArea('facts');
-    setKnowledgeView('company');
+    setEnterpriseArea('market');
+    setKnowledgeView('market');
     setLanguageSettingsHighlight(true);
     const scrollTimer = window.setTimeout(() => {
       document.getElementById('enterprise-language-settings')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' });
@@ -194,7 +156,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
           },
         ],
       }));
-      setEnterpriseArea('service');
+      setEnterpriseArea('experience');
       setKnowledgeView('faq');
       window.setTimeout(() => {
         document.querySelector('[data-enterprise-faq]')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' });
@@ -243,7 +205,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
       return;
     }
     if (!profileLoaded || loading) return;
-    setEnterpriseArea('facts');
+    setEnterpriseArea('products');
     setKnowledgeView('products');
     const resolution = resolveEnterpriseProductsDeepLink(products, productsDeepLink);
     setProductsDeepLinkResolution(resolution);
@@ -302,13 +264,6 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
     }));
   };
 
-  const openKnowledgeIntakeOnce = () => {
-    try {
-      if (localStorage.getItem(SERVICE_INTAKE_AUTO_OPEN_KEY) === 'true') return;
-      localStorage.setItem(SERVICE_INTAKE_AUTO_OPEN_KEY, 'true');
-    } catch { /* 浏览器禁用存储时，本次仍正常打开。 */ }
-    openKnowledgeIntake();
-  };
 
   useEffect(() => {
     try { localStorage.removeItem('lingshu:enterprise:initial-view'); } catch { /* ignore */ }
@@ -317,9 +272,8 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   useEffect(() => {
     const handler = (event: Event) => {
       const view = (event as CustomEvent<{ view?: string }>).detail?.view;
-      if (view === 'socialStrategy') { setEnterpriseArea('facts'); setKnowledgeView('company'); return; }
-      if (!view || !['products', 'bizRules', 'faq', 'company', 'salesStyle', 'advanced', 'presenters', 'presenterRouting'].includes(view)) return;
-      const normalized = (view === 'presenterRouting' ? 'presenters' : view) as KnowledgeView;
+      if (!view) return;
+      const normalized = normalizeKnowledgeView(view);
       setKnowledgeView(normalized);
       setEnterpriseArea(enterpriseAreaForView(normalized));
     };
@@ -344,7 +298,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   useEffect(() => {
     if (localStorage.getItem('lingshu:enterprise:highlight-autonomy') !== 'auto') return;
     localStorage.removeItem('lingshu:enterprise:highlight-autonomy');
-    setEnterpriseArea('service');
+    setEnterpriseArea('settings');
     setKnowledgeView('advanced');
     setAutonomyHighlight(true);
     window.setTimeout(() => document.getElementById('ai-autonomy')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 80);
@@ -354,7 +308,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   useEffect(() => {
     if (localStorage.getItem('lingshu:enterprise:highlight-notifications') !== 'true') return;
     localStorage.removeItem('lingshu:enterprise:highlight-notifications');
-    setEnterpriseArea('service');
+    setEnterpriseArea('settings');
     setKnowledgeView('advanced');
     setNotificationsHighlight(true);
     window.setTimeout(() => document.getElementById('notifications')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 120);
@@ -558,7 +512,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   };
 
   const openCompletenessTodo = (todo: EnterpriseCompletenessTodo) => {
-    setEnterpriseArea('facts');
+    setEnterpriseArea(enterpriseAreaForView(todo.view));
     if (todo.kind === 'product_image' && todo.productIndex !== undefined && products[todo.productIndex]) {
       openProductMaterials(products[todo.productIndex]!);
       return;
@@ -589,61 +543,41 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
 
   return (
     <div className="flex h-full flex-col bg-white" data-lingshu-guide="enterprise-center">
-      {weeklyFactTarget&&<section id="weekly-enterprise-fact-target" tabIndex={-1} data-exception={weeklyFactTarget.exceptionId} data-consumer={weeklyFactTarget.consumerTaskId} data-package={weeklyFactTarget.packageId} data-version={weeklyFactTarget.packageVersion} className="mx-4 mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-xs text-emerald-950 sm:mx-6"><p className="font-black">本周任务需要补齐企业事实</p><p className="mt-1">补齐请求 {weeklyFactTarget.exceptionId} · 原任务 {weeklyFactTarget.consumerTaskId} · 发布项 {weeklyFactTarget.publicationTaskId} · 周包 {weeklyFactTarget.packageId} v{weeklyFactTarget.packageVersion}</p><p className="mt-1">冻结企业版本 {weeklyFactTarget.enterpriseProfileRef?`${weeklyFactTarget.enterpriseProfileRef.id} v${weeklyFactTarget.enterpriseProfileRef.version}`:'原周包未冻结企业资料版本'} · 事实版本 {weeklyFactTarget.factRefs.map(ref=>`${ref.id} v${ref.version}`).join('、')||'缺少冻结事实引用'}</p><p className="mt-1">需核对字段：公司名称、产品类目、具体产品名称。保存后仍由原周任务复核事实版本，不会在本页直接解锁生产。</p><button type="button" className="mt-2 rounded border border-emerald-400 bg-white px-3 py-1.5 font-bold" onClick={()=>{setEnterpriseArea('facts');setKnowledgeView('products');}}>查看并补齐产品字段</button></section>}
+      {weeklyFactTarget && <section className="mx-6 mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm" id="weekly-enterprise-fact-target">
+        <p className="font-semibold">一项周任务需要补充企业或产品资料</p><p className="mt-1 text-xs text-text-secondary">补齐并保存后，由原任务重新核对并继续执行。</p>
+        <Button className="mt-2" size="small" onClick={() => { setEnterpriseArea('products'); setKnowledgeView('products'); }}>查看产品档案</Button>
+      </section>}
+
       <div className="shrink-0 border-b border-border bg-surface px-4 pt-5 sm:px-6">
         <h1 className="sr-only">企业知识库</h1>
         <Tabs activeKey={enterpriseArea} onChange={key => {
           const area = key as EnterpriseArea;
           setEnterpriseArea(area);
-          setKnowledgeView(area === 'facts' ? 'company' : area === 'appearance' ? 'presenters' : 'bizRules');
-          if (area === 'service') openKnowledgeIntakeOnce();
-        }} tabBarExtraContent={enterpriseArea === 'appearance' ? undefined : { right: <Button type="primary" onClick={handleSave} loading={saving} disabled={!hasUnsavedChanges}
-          icon={saveError ? <X size={14} /> : !hasUnsavedChanges ? <CheckCircle2 size={14} /> : <Save size={14} />}>
-          {saveError ? '重试保存' : !hasUnsavedChanges ? '已保存' : '保存资料'}
-        </Button> }} items={[
-          { key: 'facts', label: '企业真实资料', icon: <Building2 size={16} /> },
-          { key: 'appearance', label: '人物与出镜', icon: <Users size={16} /> },
-          { key: 'service', label: '智能客服规范', icon: <MessageSquare size={16} /> },
-        ]} />
+          setKnowledgeView(KNOWLEDGE_VIEWS[area][0]!.id);
+        }} tabBarExtraContent={{ right: <div className="flex items-center gap-2">
+          <Button onClick={() => { setEnterpriseArea(enterpriseArea === 'settings' || enterpriseArea === 'appearance' ? 'facts' : 'settings'); setKnowledgeView(enterpriseArea === 'settings' || enterpriseArea === 'appearance' ? 'company' : 'advanced'); }}>
+            {enterpriseArea === 'settings' || enterpriseArea === 'appearance' ? '返回知识库' : '客服设置'}
+          </Button>
+          <Button type="primary" onClick={handleSave} loading={saving} disabled={!hasUnsavedChanges}
+            icon={saveError ? <X size={16} /> : !hasUnsavedChanges ? <CheckCircle2 size={16} /> : <Save size={16} />}>
+            {saveError ? '重试保存' : !hasUnsavedChanges ? '已保存' : '保存资料'}
+          </Button>
+        </div> }} items={KNOWLEDGE_AREAS.map(({key, label}) => ({key, label}))} />
+        {hasUnsavedChanges && <p className="pb-3 text-xs text-amber-700">有未保存的修改，确认后点击“保存资料”。切换分类会保留本页草稿。</p>}
         {saveError && <Alert className="mb-3" type="error" showIcon title={saveError} />}
       </div>
 
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1440px] space-y-5 px-4 py-5 sm:px-6">
-          {enterpriseArea === 'facts' && <section className="rounded-lg border border-emerald-200 bg-surface-2 p-4" aria-label="企业资料完整度">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl font-semibold tabular-nums text-accent">{profileCompleteness.percentage}%</span>
-                <div>
-                  <h2 className="text-sm font-semibold text-text-primary">企业资料完整度</h2>
-                  <p className="mt-1 text-xs text-text-muted">产品图、价格、证书和市场信息统一供内容、客服、报价、投放与数字员工使用。</p>
-                </div>
-              </div>
-              <span className="text-xs font-bold text-emerald-800">已完成 {profileCompleteness.completed}/{profileCompleteness.total}</span>
-            </div>
-            <LsGradientProgress percent={profileCompleteness.percentage} showInfo={false} className="mt-3" />
-            {profileCompleteness.todos.length > 0 ? <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              {profileCompleteness.todos.map(todo => <button key={todo.id} type="button" onClick={() => openCompletenessTodo(todo)} className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white px-3 py-2.5 text-left hover:border-amber-300 hover:bg-amber-50">
-                <span className="min-w-0"><span className="block text-xs font-semibold text-amber-900">{todo.label}</span><span className="mt-0.5 block truncate text-[11px] text-text-muted">{todo.description}</span></span><ArrowRight size={14} className="shrink-0 text-amber-700" />
-              </button>)}
-            </div> : <p className="mt-3 rounded-lg bg-emerald-100/70 px-3 py-2 text-xs font-bold text-emerald-800">关键资料已补齐，所有 Agent 将读取同一已确认版本。</p>}
-          </section>}
-          {enterpriseArea !== 'appearance' && <Tabs activeKey={knowledgeView} onChange={key => setKnowledgeView(key as KnowledgeView)}
-            items={(enterpriseArea === 'facts' ? FACT_VIEWS : SERVICE_VIEWS).map(item => {
-              const Icon = KNOWLEDGE_VIEW_ICONS[item.id];
-              return { key: item.id, label: item.label, icon: <Icon size={16} /> };
-            })} />}
-
-
-          {enterpriseArea === 'facts' && <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 p-4">
-            <div className="flex items-start gap-3">
-              <Building2 size={15} className="mt-0.5 shrink-0 text-emerald-700" />
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold text-text-primary">已保存资料可供 AI 使用</p>
-              </div>
-            </div>
-          </div>}
-
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-text-secondary">{KNOWLEDGE_AREAS.find(area => area.key === enterpriseArea)?.description || '保留原有功能与记录，完成后可返回企业知识库。'}</p>
+            {enterpriseArea === 'experience' && <Button size="small" onClick={openKnowledgeIntake}>整理已有资料</Button>}
+          </div>
+          {KNOWLEDGE_VIEWS[enterpriseArea].length > 1 && <Tabs activeKey={knowledgeView} onChange={key => setKnowledgeView(key as KnowledgeView)} items={KNOWLEDGE_VIEWS[enterpriseArea].map(item => ({ key: item.id, label: item.label }))} />}
+          <EnterpriseKnowledgeFields view={knowledgeView} profile={profile} onChange={(section, field, value) => {
+            if (field === '__knowledge') setProfile(prev => ({ ...prev, knowledge: value }));
+            else set(section)(field, value);
+          }} />
           {knowledgeView === 'company' && (
             <EnterpriseCompanyFactsPanel
               company={profile.company}
@@ -698,6 +632,8 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
 
           {knowledgeView === 'faq' && <EnterpriseFaqPanel
             profile={profile}
+            onPackSaved={acceptSavedPatch}
+            reloadFaqPacks={reloadFaqPacks}
             completed={completions.faq}
             approvedFaqCount={approvedFaqCount}
             faqPacks={faqPacks}
@@ -764,14 +700,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
               <SupportAccessControl />
             </div>
 
-            <EnterpriseAdditionalSettings
-              profile={profile}
-              orderImporting={orderImporting}
-              orderImportMessage={orderImportMessage}
-              onFieldChange={(section, field, value) => set(section)(field, value)}
-              onKnowledgeChange={value => setProfile(prev => ({ ...prev, knowledge: value }))}
-              onImportOrderCsv={importOrderCsv}
-            />
+
           </section>
           )}
 

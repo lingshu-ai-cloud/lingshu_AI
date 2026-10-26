@@ -259,6 +259,15 @@ export async function assertCurrentContentExecutionActive(): Promise<void> {
     ?? await current.dataStore.getById<Record<string, unknown>>(CONTENT_EXECUTION_JOB_COLLECTION, current.jobId);
   if (!job || job.id !== current.jobId || !compact(job.tenant_id) || !compact(job.run_id) || !['queued', 'running', 'retry_wait', 'reconciling'].includes(String(job.status))) throw new ContentExecutionStoppedError();
   await assertSocialContentOrderActive(current.dataStore, String(job.tenant_id), String(job.task_id));
+  if (job.task_type === 'social_image_replication') {
+    const project = await current.dataStore.getById<{tenant_id:string;spec?:{socialImageTask?:{id:string;productionRuntime?:{binding?:{contentTaskId:string;productionRunId:string}}}}}>('studio_projects',String(job.run_id));
+    const image=project?.spec?.socialImageTask, binding=image?.productionRuntime?.binding;
+    const confirmed=current.checkpoints['image.confirmed']?.payload as {imageTaskId?:string;contentTaskId?:string}|undefined;
+    if(!binding || !confirmed || project?.tenant_id!==job.tenant_id || image?.id!==job.run_id
+      || binding?.contentTaskId!==job.task_id || binding.productionRunId!==job.run_id
+      || confirmed?.imageTaskId!==job.run_id || confirmed.contentTaskId!==job.task_id)throw new ContentExecutionStoppedError();
+    return;
+  }
   const run = await current.dataStore.getById<Record<string, unknown>>('workflow_runs', String(job.run_id || ''));
   if (!run
     || run.id !== job.run_id

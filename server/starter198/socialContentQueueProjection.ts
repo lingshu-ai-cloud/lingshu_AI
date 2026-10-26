@@ -1,3 +1,4 @@
+import {socialImageRunId} from '../socialImage/socialImageProductionHash.js';
 import type { SocialContentTaskSummary } from '../../shared/contracts/socialContentWorkflow.js';
 import type { DataStore } from '../storage/datastore.js';
 import { listContentExecutionJobs } from '../contentExecution/durableQueue.js';
@@ -73,11 +74,13 @@ export function socialContentQueueProjection(job: ContentExecutionJob): SocialCo
 export async function hydrateSocialContentExecutionSummaries(input: {
   store?: DataStore; tenantId: string; items: SocialContentTaskSummary[];
 }): Promise<SocialContentTaskSummary[]> {
-  if (!input.store || !input.items.some(task => task.runId)) return input.items;
+  if (!input.store || !input.items.some(task => task.runId || task.brief?.formats?.includes('social_image'))) return input.items;
   const jobs = await listContentExecutionJobs(input.store, input.tenantId);
   return input.items.map(task => {
-    if (!task.runId) return task;
-    const matching = jobs.filter(job => job.tenantId === input.tenantId && job.taskId === task.taskId && job.runId === task.runId);
+    const image=task.brief?.formats?.includes('social_image');
+    if (!task.runId && !image) return task;
+    const runId=image?socialImageRunId(input.tenantId,task.taskId):task.runId;
+    const matching = jobs.filter(job => job.tenantId === input.tenantId && job.taskId === task.taskId && job.runId === runId);
     if (matching.length > 1) throw Error('content_execution_job_integrity_violation');
     return { ...task, execution: matching[0] ? socialContentQueueProjection(matching[0]) : null };
   });

@@ -199,6 +199,8 @@ export interface EnterpriseProfileLite {
     certifications?: string;
     highlights?: string;
     items?: Array<{
+      id?: string;
+      productId?: string;
       sku?: string;
       name?: string;
       category?: string;
@@ -229,7 +231,14 @@ export interface ExistingSourceDraftPrompt {
   poster: string;
 }
 
-export interface ProductOption { id: string; label: string; info: string; imageUrls?: string[] }
+export interface ProductOption {
+  id: string;
+  /** Persisted enterprise product identity; absent for unlinked kickoff or legacy text products. */
+  catalogProductId?: string;
+  label: string;
+  info: string;
+  imageUrls?: string[];
+}
 
 export interface ModeScriptOutput {
   id: string;

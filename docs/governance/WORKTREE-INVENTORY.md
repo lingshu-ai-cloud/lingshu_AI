@@ -3,6 +3,17 @@
 最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
+## 2026-10-26 企业知识库合入最新基线
+
+- 新增隔离树 `/Users/julia1/.codex/worktrees/enterprise-knowledge-integrated-20261026`，分支 `差图文创作加联调`，从a0d965ae合入企业知识库969665d7，源码ddd14683。该树仅软链已安装依赖，不迁入业务数据和凭据。
+- 统一基线仅快进至集成结果，原视频排序未提交补丁保留；原企业知识库功能树969665d7保留。没有清理、重置或归档其他工作树，没有推送或部署。详见[整合记录](ENTERPRISE-KNOWLEDGE-INTEGRATION-20261026.md)。
+
+## 2026-10-26 口播核心卖点安全合入
+
+- 新增本聊天隔离候选 `product-highlight-safe-merge-20261026/1025灵小枢外部信息`，分支 `integration/product-highlight-safe-20261026`，从321f6dcc迁入卖点必要文件并验证，源码提交e61c3b68。原已附加的assistant-scene-capabilities工作树有未提交内容，不复用、不清理。
+- 权威统一基线安全快进，原videoVisibilityMaintenance.ts未提交补丁前后不变；来源1025灵小枢外部信息的HEAD、index及16项未提交条目逐字保留。未操作保留的图片AIGC树。
+- 恢复点与验证见 [安全合入记录](PRODUCT-HIGHLIGHT-INTEGRATION-20261026.md)。未同步业务数据库或既有预览，未推送部署。
+
 ## 2026-10-26 首页卡片收尾纳入小程序基线
 
 - 复用托管隔离树assistant-home-integrated，源本会话3项未提交改动固定为4253dc2e；基于较新117933ac合并得到f4a95242，目标baseline/unified-20261026安全快进，原视频排序补丁哈希不变，未清理或覆盖源工作树。

@@ -9,7 +9,7 @@ import {
 import { mergeAssistantHomePrompt, normalizeAssistantHomePromptDetail } from '../components/assistant/useAssistantHomeAnchor';
 
 test('home prompt catalog exposes every approved capability with stable unique ids', () => {
-  assert.equal(ASSISTANT_HOME_PROMPTS.length, 67);
+  assert.equal(ASSISTANT_HOME_PROMPTS.length, 68);
   assert.equal(new Set(ASSISTANT_HOME_PROMPTS.map(entry => entry.id)).size, ASSISTANT_HOME_PROMPTS.length);
   assert.deepEqual(ASSISTANT_HOME_PROMPT_GROUPS.map(group => group.id), [
     'operations', 'inspiration', 'content', 'publishing', 'ads', 'customer', 'enterprise',
@@ -54,9 +54,9 @@ test('the remaining launcher labels are concrete tasks rather than abstract doma
   );
 });
 
-test('creation retains four scenarios after removing the campaign card', () => {
+test('creation retains existing four scenarios and appends the confirmed speech selling point flow', () => {
   const creation = ASSISTANT_HOME_QUICK_LAUNCHERS.find(entry => entry.id === 'viral-script')!;
-  assert.deepEqual(creation.promptIds, ['CO-REPLICATE', 'CO-HOOK', 'CO-07', 'CO-13']);
+  assert.deepEqual(creation.promptIds, ['CO-REPLICATE', 'CO-HOOK', 'CO-07', 'CO-13', 'CO-SPEECH-HIGHLIGHT']);
   assert.equal(assistantHomePromptById(creation.promptIds[3])?.label, '借鉴一个爆款图文');
 });
 
@@ -76,7 +76,7 @@ test('PRD scenarios live in their intended launcher and keep legacy prompts acce
   assert.ok(assistantHomePromptById('CO-01'));
 });
 
-test('selling point entry is removed and content progress uses the original read-only prompt', () => {
+test('legacy standalone selling point launcher stays removed while speech flow and read-only progress are retained', () => {
   assert.ok(!ASSISTANT_HOME_QUICK_LAUNCHERS.some(item => item.id === ('selling-points' as string)));
   assert.equal(assistantHomePromptById('CO-03'), undefined);
   assert.ok(ASSISTANT_HOME_QUICK_LAUNCHERS.find(item => item.id === 'weekly-plan')!.promptIds.includes('CO-11'));

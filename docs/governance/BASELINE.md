@@ -9,6 +9,40 @@
 - 实际通过 `pnpm run test:assistant`、`pnpm run test:assistant-quality`（145 项：144 通过、1 项按环境条件跳过）、`AssistantMascot.test.tsx`（3/3）、4 GB Node 堆上限 TypeScript、相对 `181868f3` 的架构/ratchet（2,955 个生产 TypeScript 文件）、204 项迁移清单只读检查、迁移 checksum guard 及 `git diff --check`。远端来源已经记录更大范围的分段质量、构建和领域证据；本轮没有重复执行全仓 `quality` / `verify` 或真实 E2E，不能据此声明真实供应商、运行数据或发布就绪。
 - 第二个来源工作树存在 14 项未提交草稿，本轮仅合入其已提交分支 `236d17bf`，未读取为基线、未清理、未覆盖。未推送、部署、执行目标数据库迁移、真实付费调用或生产写入；源码基线与当前预览进程/本地数据仍是独立状态。
 
+<!-- 以下四节为“差图文创作加联调”来源分支的历史验证记录，不改变上方本机会话基线声明。 -->
+
+## 当前统一开发基线：差图文创作加联调（2026-10-26）
+
+- 本节覆盖下方历史“当前”声明。默认分支继续为 `baseline/unified-20261026`，权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`；同名版本分支 `差图文创作加联调` 保留合并结果。起点 `a0d965ae9af64ef2a6229198b496fa7a168f3374`，来源 `feature/enterprise-knowledge-20261026` / `969665d7aa4bb37610ed6220d9be3cf4c4a9e000`，源码合并 `ddd146831e25d0ee3fc269fe63b2140c9ed43a3f`；后续治理提交不改变生产源码。
+- 合入分层企业知识库、租户专属场景知识包编辑、产品稳定ID与素材默认选择及任务/草稿恢复修复；保留最新首页、卖点及图文持久调度。仅两处冲突按双方新增规则和字段最小合并，没有新增迁移、依赖或平行业务链路。
+- 领域组合66/66、图文24/24、V4 75/75、TypeScript、2982文件架构/相对a0d965ae棘轮、204项迁移只读/guard、主站与账号中心构建及diff检查通过。助手150/151，原基线复现相同卡片顺序断言失败；quality从测试PB路径配置错误续跑后遇到原已记录M1受控外网禁止失败，不宣称全仓quality/verify通过。
+- 权威树原视频排序未提交补丁保持SHA-256 `ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`，不纳入提交。没有推送、部署、真实供应商调用或目标库迁移，预览运行版本与供应商Ready独立核验。
+- 完整命令、已知限制、恢复点和证据见 [本轮整合记录](ENTERPRISE-KNOWLEDGE-INTEGRATION-20261026.md)。
+
+## 当前统一开发基线：图文任务持久化调度（2026-10-26）
+
+- 后续修复基线：`7d493ca4ecc06abfc8906884dc9a4027789fe378`。已采集图文帖子逐张显示原始图片，选择和对话恢复保留具体张数；解决封面版式不可用而后续张可用时无法选取的问题。来源隔离提交 `789f5d63b0bbbdbf9bbfd45a31da4c0b2ded84d9`。`pnpm run test:image-replication`（24/24）、`pnpm run test:image-replication-ui`（6 场景）、`pnpm run lint`、`pnpm run check:architecture`、`pnpm run check:digital-employee-migrations`（204 项只读）、`pnpm run build` 与 `git diff --check` 已通过；浏览器确认同帖第 2 张可独立选中。仍未完成真实供应商 E2E，运行数据与 5 元预算准入须独立核验；未推送、部署或发布。
+- 唯一默认源码基线为 `baseline/unified-20261026`，工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`。从 `240676bea03ccc67e2c83192bc1778bc96565e81` 快进到已验证源码 `d9c0805457d2613796645127152f59c10d79883b`；此节覆盖下方历史“当前”声明。隔离集成分支 `codex/image-paid-integration-20261026` 保留为恢复点，来源功能提交 `1fbda8a7c743cc98a8bb27911390c1d729f756ac`。
+- 图文复刻确认后写入统一内容任务和图文子任务，再持久化入队；worker 读取原任务并记录节点与回执。统一基线的首页、任务详情和对话入口同时保留，首页图文卡为第五张。参考图 OCR 读取区域证据，并在首次付费策划前检查参考画幅与版式；失败明确阻断。图文进度在“内容创作→创作任务”读取同一调度回执。
+- 合成源码实际通过：`pnpm run test:social-image-pipeline`（85/85 主用例及 HTTP/合同/治理）、图文 OCR/调度定向测试（12/12）、`pnpm run test:image-replication-ui`（6 场景）、`pnpm run test:content-production-v4`、`pnpm run test:assistant-production`（36/36）、`pnpm run lint`、`pnpm run check:architecture`（2972 个生产 TS 文件，相对 `240676be` 棘轮）、`pnpm run check:digital-employee-migrations`（204 项，只读）、`pnpm run build`、`git diff --check`。未运行全仓 `quality`/`verify`。
+- 这些结果是源码与隔离浏览器验证，不是真实供应商 E2E。当前本地预览的 `socialtask_ad1a31f88b3736e23ca2cce2` / `img21b450831da3` 在旧实例中因付费开关关闭而阻断，所选方形参考与已确认 4:5 画幅不匹配；不能把该旧回执当作新基线执行成功。图文计划的实际供应商路径为 Qwen 策划/质检与本地图层合成，不等于任务字段声明的 OpenAI 出图；现有 5 元配置不是图文模型成本的强制上限。仍须独立核对预算、素材和同版本 web/worker/store 后才能进行真实付费联调。本次没有真实供应商调用、推送、部署、发布或数据迁移。
+- 原权威树未提交的 `server/videos/videoVisibilityMaintenance.ts` 在快进前后补丁 SHA-256 均为 `ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`，未纳入本次提交。完整决策与实现边界见 [图文持久调度记录](IMAGE-TEXT-DISPATCH-20261026.md)。
+
+## 当前统一开发基线：口播核心卖点能力安全合入（2026-10-26）
+
+- 唯一默认基线继续为 `baseline/unified-20261026`，工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`。由 `321f6dcc` 快进至验证源码 `e61c3b688dcbc6bb945780650744e2513e7d6cfa`；本节为独立治理补记，覆盖下方历史“当前”声明。恢复分支 `backup/pre-product-highlight-20261026-321f6dcc` 保留。
+- 用户授权合入此前独有的产品卖点提炼及回填。保留六组首页与原四张创作卡，追加“提炼口播核心卖点”；复用知识库模型与原企业资料PATCH/If-Match/GET读回，不自动改写冻结口播或启动制作。原功能树全部未提交内容、HEAD和index保留。
+- 助手质量149/149、完整助手脚本、企业/首页领域13/13、最终TypeScript、2962文件架构/相对321f6dcc棘轮、204项迁移只读/guard、主站与账号中心构建及diff检查通过。浏览器采用离线候选与旧预览资料GET适配，仅证明新增入口与确认页交互，不是同版本真实E2E或模型质量验收；未运行全仓quality/verify。
+- 基线原 `server/videos/videoVisibilityMaintenance.ts` 未提交补丁SHA-256前后一致（`ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`），不纳入本次提交。原M1及问答路由/业务数据衔接缺口仍保留。未推送、部署、付费或目标数据库迁移。
+- 完整范围、命令、证据和限制见 [安全合入记录](PRODUCT-HIGHLIGHT-INTEGRATION-20261026.md)。
+
+## 当前统一开发基线：新人首页双卡与实景导览（2026-10-26）
+
+- 唯一默认基线仍为 `baseline/unified-20261026`，权威树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`。从 `7cb757c10c9857ed7c0fbbda2b84396021e6bcd0` 快进到已验证源码 `71c5cecba007b211133d876154198683fd9c33f8`；本节取代下方历史“当前”声明。恢复分支 `backup/pre-home-first-run-20261026-7cb757c1` 保留。
+- 仅纳入本会话尚未提交的新人首页功能：两张旧版外观入门卡、复用既有企业入门表单的问答引导、靠近高亮目标的小气泡实景导览及 Enter/Esc 键盘流程。保留原基线报告、图文复刻、快捷任务及日历实现；未复制旧版首页整文件、平行后端链路或运行数据。
+- 实际通过：新人状态/导览几何与首页合同定向测试 4/4，`pnpm run lint`，`pnpm run check:architecture`（2957 个生产 TypeScript 文件），`pnpm run check:digital-employee-migrations`（204 项只读），`pnpm run build`，`git diff --check`。未运行全仓 quality/verify、真实浏览器回归、真实供应商或发布验收；源码检查不能替代这些结论。
+- 权威树原有 `server/videos/videoVisibilityMaintenance.ts` 未提交视频排序改动不纳入提交，快进前后补丁 SHA-256 均为 `ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`，工作树仍非干净。原功能树 `feature/assistant-home-dialogue-20261026` 的其他未提交内容未触碰。本轮没有推送、部署、目标数据库迁移或真实付费调用。详见[新人首页合并记录](HOME-FIRST-RUN-INTEGRATION-20261026.md)。
+
 ## 当前统一开发基线：小程序与首页卡片收尾（2026-10-26）
 
 - 唯一默认基线仍为`baseline/unified-20261026`，权威树`/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`。从用户指定的`117933ac8f5059f6782c0dc1b742c3ae13d50e24`快进到验证源码`f4a95242aa28fac1b66dfdc7bd64d9b20d25eef1`，后续仅治理提交；本节取代下方历史“当前”声明。恢复分支`backup/pre-home-card-final-20261026-117933ac`保留。
