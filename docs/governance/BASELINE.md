@@ -2,6 +2,14 @@
 
 更新时间：2026-10-26（Asia/Shanghai）
 
+## 当前统一开发基线：图文任务成片身份与文字修复（2026-10-26）
+
+- 权威树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `f71a4aaed8c169dbeee8a964ba353aa2cd11fb3f` 合入隔离功能提交 `923292ad9d6909e88fe458cf9ccb0874955d6d60`，源码提交 `f2fa748320bd9b6c5d766641b2981eedc7ae77de`。原失败任务与运行数据没有重写；原未提交视频文件补丁 SHA-256 保持 `ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`。
+- 真实联调任务 `socialtask_3b51abf46eac93ba47d5d4bf` / 图片任务 `img341321fdf7c2` / 队列作业 `4e7bf3cb5980f9c` 已完成 Qwen 策划、一次 GPT Image 2 出图及一次视觉质检，但停在 `review_required` / `social_image_quality_requires_review`。成片素材 `631b31a3-6d99-4678-887d-2c4c76b591d5`：产品盒写 `Cleansing Honey`，生成标题写 `Cleansing Mousse`，且有未经证实的临床/商业文案；同时旧质检把英文图中的中文事实误作逐字必现。该任务不重试或改判通过。供应商费用没有准确账单回执，不宣称花费为 0 或预算仍有确定余额。
+- 新源码令持久单图 worker 只向 GPT Image 2 购买无产品、无文字的背景底图，先持久保存底图，再用已有固定合成器叠加原企业产品完整像素与三处短文案。策划前本地读取已绑定主图的包装 OCR 提示并拦截明显不同的英文品类词；未确认临床声明被剔除；质检按选定语言理解已核实事实，仍拦截包装名称矛盾。手动 Studio 路由及 GIF 路线保持原实现。决定见 [单图固定身份合成 ADR](../architecture/adr/2026-10-26-social-image-fixed-identity-composition.md)。
+- 隔离开发树验证：图文定向 19/19、`pnpm run test:social-image-pipeline` 86/86 主用例及 HTTP/路由/工作台/治理合同通过，`pnpm run lint`、相对 `f71a4aa` 的 `pnpm run check:architecture`（3001 个生产 TS）、204 项迁移清单只读检查、`pnpm run build`、`git diff --check` 通过。权威树合入后图文定向 19/19、同一图文管线、TypeScript、相对 `f71a4aa` 的架构棘轮、204 项迁移清单只读检查与 diff 检查通过。没有运行全仓 `quality` / `verify`，没有迁移目标数据库、推送、部署或发布。
+- 源码修复尚未取得新版本的真实付费成片验收；当前预览后端也须重启才会加载新源码。早前一次新任务预算上限为 5 元、仅一张图片及必要策划/质检，已经实际发生一张图与质检，准确费用和再次付费范围未核实。复验须在同版本 web/worker/store 下另建冻结任务，先核对新预算和唯一提交权，再只执行一个作业。安全恢复点为 `f71a4aa` 与保留的原任务/供应商回执。
+
 ## 当前统一开发基线：对标文案归因修复（2026-10-26）
 
 - 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`，分支 `baseline/unified-20261026`；从 `3ca75fdc17ac25ce6b885353d614a03b2074db61` 合入隔离提交 `3a327a48132f7dcace8b2d548f376083fb53fa9c`，源码 HEAD `ae5d3bb8df4e0debc26a037298c2c589f03cd4b8`。
