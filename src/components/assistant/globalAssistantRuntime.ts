@@ -277,7 +277,7 @@ export function persistedAssistantThread(value: unknown, fallback: AgentThreadSt
     isFollowingLatest: typeof source.isFollowingLatest === 'boolean' ? source.isFollowingLatest : true,
     paused: typeof source.paused === 'boolean' ? source.paused : false,
     taskCards: source.taskCards && typeof source.taskCards === 'object' ? source.taskCards : {},
-    focusedTaskId: typeof source.focusedTaskId === 'string' || source.focusedTaskId === null
+    focusedTaskId: source.focusedTaskId === '' ? null : typeof source.focusedTaskId === 'string' || source.focusedTaskId === null
       ? source.focusedTaskId
       : fallback.focusedTaskId,
     pendingContentTaskBinding: source.pendingContentTaskBinding === null

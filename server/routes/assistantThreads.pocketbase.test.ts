@@ -82,6 +82,7 @@ test('real PocketBase preserves assistant saves, clear/delete and pending receip
     await request('PUT', { expectedVersion: 4, draftInput: 'stale write' }, '', 409);
     const undone = await request('POST', { expectedVersion: 5 }, '/restore');
     assert.equal(undone.draftInput, 'second save');
+    assert.equal(undone.focusedTaskId, null);
     assert.equal(undone.conversationResetVersion, 6);
     await request('POST', { expectedVersion: 6 }, '/clear');
     const deleted = await request('DELETE', { expectedVersion: 7 });
@@ -90,6 +91,17 @@ test('real PocketBase preserves assistant saves, clear/delete and pending receip
     const restored = await request('POST', { expectedVersion: 8 }, '/restore');
     assert.equal(restored.deletedAt, ''); assert.equal(restored.version, 9);
     await request('POST', { expectedVersion: 8 }, '/restore', 409);
+    assert.equal(restored.focusedTaskId, null);
+    const resaved = await request('PUT', { ...restored, expectedVersion: 9 });
+    assert.equal(resaved.version, 10);
+    await request('POST', { expectedVersion: 10 }, '/clear');
+    const clearUndone = await request('POST', { expectedVersion: 11 }, '/restore');
+    assert.equal(clearUndone.focusedTaskId, null);
+    const savedAfterUndo = await request('PUT', { ...clearUndone, expectedVersion: 12 });
+    assert.equal(savedAfterUndo.version, 13);
+    const deletedAfterUndo = await request('DELETE', { expectedVersion: 13 });
+    assert.ok(deletedAfterUndo.deletedAt);
+
     assert.equal((await pbListStrict('datastore_cas_claims')).totalItems, 0, 'Successful writes must release every claim');
     // Reproduce the pre-fix committed-but-locked state, then exercise the
     // guarded recovery against the real database, including its dry run.

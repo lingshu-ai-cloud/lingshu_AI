@@ -50,7 +50,10 @@ export function registerAssistantConversationLifecycle(router: Router, store: Da
         if (!await store.compareAndSwap?.('assistant_threads', current.id, { ...owner, version: expectedVersion }, patch)) {
           res.status(409).json({ error: 'assistant_thread_version_conflict', message: '会话状态已变化，请重新打开后操作。' }); return;
         }
-        res.json({ ...current, ...patch });
+        const next = { ...current, ...patch };
+        // PocketBase stores an optional text value as ''. Keep lifecycle
+        // responses compatible with the normal GET/PUT conversation contract.
+        res.json({ ...next, focusedTaskId: next.focusedTaskId || null });
       } catch {
         res.status(503).json({ error: 'assistant_conversation_unavailable', message: '会话暂时无法更新，请稍后重试。' });
       }

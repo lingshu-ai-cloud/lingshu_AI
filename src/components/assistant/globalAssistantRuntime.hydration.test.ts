@@ -57,3 +57,9 @@ test('a company report artifact retains its scoped dialogue on refresh while ord
   thread.messages = [{ role: 'assistant', content: '研究草稿', companyReport: { id: 'cr_test' } as NonNullable<import('../../appSession').Message['companyReport']> }];
   assert.deepEqual(withoutPersistedConversation(thread).messages, thread.messages);
 });
+
+
+test('lifecycle snapshots normalize PocketBase empty focus before another save', () => {
+  const restored = persistedAssistantThread({ ...emptyAssistantThread(), focusedTaskId: '', version: 9 }, emptyAssistantThread())!;
+  assert.equal(restored.focusedTaskId, null);
+});
