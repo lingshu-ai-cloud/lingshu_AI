@@ -25,7 +25,7 @@ import { assistantAttachmentKind } from './AssistantComposer';
 import { buildAssistantChatMessages, type UploadedAssistantAttachment } from './assistantChatPrompt';
 import { assistantProductionIntent, assistantCreationPortal } from './assistantProductionIntake';
 import { assistantImageReplicationPortal } from './assistantImageReplicationIntent';
-import { ASSISTANT_HOME_PROMPTS, isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
+import { ASSISTANT_HOME_PROMPTS, assistantReplyPresentationForPromptId, assistantReplyPresentationForText, isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
 import { runAssistantProductionRequest } from './assistantProductionRequest';
 import type { useContentTaskIntake } from './useContentTaskIntake';
 import type { AssistantHomePendingSubmission } from './useAssistantHomeAnchor';
@@ -183,6 +183,9 @@ export function useAssistantSend(input: AssistantSendInput) {
       : '';
     const visibleMessage = `${visibleText}${visibleAttachmentSummary}`;
     const responseMode = options.businessScene || isAssistantHomeQuickTaskText(visibleText) ? 'quick_task' : undefined;
+    const replyPresentation = responseMode
+      ? assistantReplyPresentationForText(visibleText) || (options.businessScene ? assistantReplyPresentationForPromptId(options.businessScene.sceneId) : undefined)
+      : undefined;
 
     const threadAgent = PRIMARY_ASSISTANT_THREAD;
     const thread = useAssistantStore.getState().threads[threadAgent];
@@ -387,6 +390,7 @@ export function useAssistantSend(input: AssistantSendInput) {
               retainedUserInstructions: conversationContext.retainedUserInstructions,
             },
             ...(responseMode ? { responseMode } : {}),
+            ...(replyPresentation ? { replyPresentation } : {}),
           } : {}),
         },
         controller,

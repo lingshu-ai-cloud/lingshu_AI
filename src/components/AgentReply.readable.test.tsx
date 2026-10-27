@@ -37,6 +37,24 @@ test('source footer and legacy source cards are quietly collapsed, independently
   assert.match(legacy, /数据和信息来源/); assert.doesNotMatch(legacy, /每日参考汇率/);
 });
 
+test('query scenes keep decision-critical text visible and personalize details, sources, and navigation', () => {
+  const longOperations = Array.from({ length: 8 }, (_, index) => `第${index + 1}项：当前状态与下一步动作。`).join('\n\n');
+  const operations = renderToStaticMarkup(createElement(AgentReply, { content: longOperations, compact: true, presentation: 'operations' }));
+  assert.doesNotMatch(operations, /详细分析/);
+  assert.match(operations, /第8项/);
+  assert.match(operations, /查看经营总览/);
+
+  const news = renderToStaticMarkup(createElement(AgentReply, {
+    content: '本周平台规则有一项变化。\n```details\n检索范围与次要背景。\n```',
+    presentation: 'news',
+    sources: [{ title: '平台官方公告', uri: 'https://example.com/notice' }],
+  }));
+  assert.match(news, /更多背景与来源/);
+  assert.match(news, /已核验来源 · 1/);
+  assert.match(news, /平台官方公告/);
+  assert.doesNotMatch(news, />详细分析</);
+});
+
 test('source-like text in code is preserved; no-source replies do not gain an empty disclosure', async () => {
   const { splitReplySourceFooter } = await import('./AgentReply');
   const code = '```copy\n信息来源（查询时间：示例）：\n正文示例\n```';

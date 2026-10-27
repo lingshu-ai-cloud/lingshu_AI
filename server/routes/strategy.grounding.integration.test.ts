@@ -144,12 +144,13 @@ test('strategy chat grounds actual local records with tenant/user/role isolation
 
     const sceneBefore = captured.length;
     const sceneSelection = { sceneId: 'OP-04', from: '2026-10-01', to: '2026-10-26' };
-    const sceneResponse = await api(adminToken, '/chat', { messages: [{ role: 'user', content: '请分析当前经营数据' }], businessScene: sceneSelection, responseMode: 'quick_task' });
+    const sceneResponse = await api(adminToken, '/chat', { messages: [{ role: 'user', content: '请分析当前经营数据' }], businessScene: sceneSelection, responseMode: 'quick_task', replyPresentation: 'analytics' });
     assert.equal(sceneResponse.status, 200); assert.match(await sceneResponse.text(), /\[DONE\]/);
     assert.equal(captured.length, sceneBefore + 1);
     const sceneSystem = captured.at(-1)!.messages.find(message => message.role === 'system')!.content;
     assert.match(sceneSystem, /recordsInPeriod/); assert.match(sceneSystem, /actual-blocked-task/); assert.doesNotMatch(sceneSystem, /FOREIGN_/);
-    assert.match(sceneSystem, /快捷任务回复/); assert.match(sceneSystem, /最多 4 个关键结果/);
+    assert.match(sceneSystem, /快捷任务回复/); assert.match(sceneSystem, /不同功能套进同一份固定模板/);
+    assert.match(sceneSystem, /最重要的指标变化、异常和影响/); assert.match(sceneSystem, /计算口径、完整明细和次要维度放 details/);
     const deniedScene = await api(memberToken, '/chat', { messages: [{ role: 'user', content: '查看经营数据' }], businessScene: sceneSelection });
     assert.match(await deniedScene.text(), /scene_forbidden/); assert.equal(captured.length, sceneBefore + 1);
     const invalidScene = await api(adminToken, '/chat', { messages: [{ role: 'user', content: '查看经营数据' }], businessScene: { ...sceneSelection, tenantId: foreignTenantId } });

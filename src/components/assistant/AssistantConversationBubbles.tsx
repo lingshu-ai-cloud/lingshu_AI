@@ -15,7 +15,7 @@ import { SocialPlatformIcon } from '../SocialPlatformIcon';
 import { ThumbnailImage, VideoThumbnail } from '../inspiration/InspirationMedia';
 import AssistantMascot from './AssistantMascot';
 import CompanyReportCard from './CompanyReportCard';
-import { isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
+import { assistantReplyPresentationForPromptId, assistantReplyPresentationForText, isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
 import AssistantBusinessSceneChoice from './AssistantBusinessSceneChoice';
 
 interface Props {
@@ -100,6 +100,8 @@ export default function AssistantConversationBubbles(props: Props) {
           </div> : <div className={inlineHome ? 'ls-assistant-flow__answer' : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
             {msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction}
               compact={inlineHome && isAssistantHomeQuickTaskText(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
+              presentation={inlineHome ? assistantReplyPresentationForText(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')
+                || (msg.businessScene ? assistantReplyPresentationForPromptId(msg.businessScene.sceneId) : undefined) : undefined}
               detailExpanded={assistantWantsDetailedReply(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
               onSuggest={onSuggest} /> : <span className="opacity-40">...</span>}
             {msg.creationPortal && <AssistantCreationPortalCard key={msg.creationPortal.id} portal={msg.creationPortal} />}

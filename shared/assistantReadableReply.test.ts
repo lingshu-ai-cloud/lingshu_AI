@@ -49,6 +49,17 @@ test('customer reply translates internal statuses and removes raw evidence witho
   assert.match(result, /行动：重试采集，或提供2～3个竞品链接/);
 });
 
+test('common query states and provider failures are translated for customer-facing replies', () => {
+  const result = readableAssistantReply('账号状态 unavailable；任务 attention；执行 blocked。\n模型 doubao-seedance-2-0-fast-260128 not activated；no formal assets uploaded；image size must be ≥3686400 pixels。');
+  assert.match(result, /账号状态\s*暂未核验/);
+  assert.match(result, /任务\s*需要关注/);
+  assert.match(result, /执行\s*已阻塞/);
+  assert.match(result, /Seedance 视频能力尚未开通/);
+  assert.match(result, /尚未上传可用于正式制作的素材/);
+  assert.match(result, /图片像素需至少达到 3686400/);
+  assert.doesNotMatch(result, /unavailable|attention|blocked|doubao-seedance|not activated|no formal assets uploaded|image size must be/);
+});
+
 test('technical-only details are hidden, failures and budget/approval limits remain honest', () => {
   const result = readableAssistantReply('内部：taskId=abc，expectedVersion=v1。\n错误：presenter_stack_blocked，生产失败。\n需要先确认费用200元，尚未批准发布。\n```json\n{"runId":"abc"}\n```');
   assert.doesNotMatch(result, /taskId|expectedVersion|presenter_stack|runId|json/);

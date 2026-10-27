@@ -11,20 +11,21 @@ export const ASSISTANT_READABLE_POLICY = `【面向客户的表达规则】
 export const ASSISTANT_DETAILS_POLICY = '【网页交互格式】当前网页支持折叠分析。可选详细依据用独立的三反引号details块，结束时使用独立三反引号。块内仅使用自然段或列表，不嵌套代码块；图表与交付文案使用各自的正文专用块。正文须先交代足以判断的结果、理由和风险。无需补充时不要输出空块；普通聊天不使用copy块包装解释。';
 
 export const ASSISTANT_QUICK_TASK_POLICY = `【快捷任务回复 · 必须遵守】
-这是用户从快捷任务卡片发起的工作查询。目标是帮助用户立即判断和处理，不写成长篇报告。
-- 首屏先给一句明确结论；随后只保留最多 4 个关键结果、异常或待办，每项写清“状态/发现 + 建议动作”。
-- 默认可见正文控制在约 360 个中文字符内，段落不超过 2 句；不复述用户问题、企业背景或分析过程。
+这是用户从快捷任务卡片发起的工作查询。目标是让用户快速看懂现状并作出判断，不写成长篇报告，也不把不同功能套进同一份固定模板。
+- 先给本题最重要的结论或状态；随后只呈现影响判断的重点，默认一屏内读完。不复述用户问题、企业背景或分析过程。
+- 标题、列表、短表格、图表和自然段按场景选用，不要求每轮都有相同标题或相同条数；同一回答内也不要把每项写成等长模板。
+- 关键数字、异常、失败、风险、审批条件和建议动作始终留在可见正文。details 只放逐项明细、方法口径、补充证据或次要方案，不能承担正文续写。
 - 缺少关键数据时只说明真正阻塞结论的缺口，并给一个可执行的补充动作；不要罗列所有未接入字段。
-- 需要用户选择时一次只问 1 个关键问题；可继续处理的动作使用 next 块，最多 2 个短选项。
-- 统计口径、来源说明、逐项证据和备选方案放入 details 块；费用、失败、风险、审批和授权条件必须留在可见正文。
-- 用户明确要求的可复制话术、脚本或文案可完整放在 copy 块，不计入首屏摘要长度。`;
+- 有已核验来源时，让来源靠近对应事实；不要只在末尾堆一长串链接。需要用户选择时一次只问 1 个关键问题。
+- 可继续处理的动作使用 next 块，最多 2 个短选项；用户明确要求的可复制话术、脚本或文案可完整放在 copy 块。`;
 
 const TERMS: Record<string, string> = {
   scheduled_source_collection: '平台热点采集', workflow_tasks: '任务',
   plan_review: '等待方案确认', needs_input: '等待补充资料', waiting_human: '等待人工确认',
   user_input_required: '需要补充资料', capability_mismatch: '当前生产条件不满足',
   source_failed: '采集失败', no_valid_results: '未采集到可用内容',
-  failed: '失败', completed: '已完成', producing: '制作中', queued: '排队中',
+  unavailable: '暂未核验', available: '已读取', empty: '暂无记录', attention: '需要关注',
+  failed: '失败', blocked: '已阻塞', complete: '已完成', completed: '已完成', success: '已完成', producing: '制作中', queued: '排队中',
   paused: '已暂停', delivered: '已交付', pending: '待处理', running: '执行中',
   CTA: '行动引导', MOQ: '起订量', TTS: '配音', QA: '质量检查',
   cost_limit: '费用上限', budget_limit: '预算上限', requires_approval: '需要审批',
@@ -50,7 +51,10 @@ export function readableAssistantReply(content: string): string {
       .replace(/\/api\/[A-Za-z0-9_/?=&.%:-]+/g, '')
       .replace(/(?:workflow_tasks|studio_projects|social_content_tasks|agent_runs)\/[A-Za-z0-9_./-]+/g, '')
       .replace(/\b[0-9a-f]{24,}\b/gi, '')
-      .replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi, '');
+      .replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi, '')
+      .replace(/\bdoubao-seedance-[\w-]+(?:\s+not activated)?\b/giu, 'Seedance 视频能力尚未开通')
+      .replace(/\bno formal assets uploaded\b/giu, '尚未上传可用于正式制作的素材')
+      .replace(/\bimage size must be\s*≥?\s*(\d+)\s*pixels\b/giu, '图片像素需至少达到 $1');
     for (const [token, label] of Object.entries(TERMS)) {
       line = line.replace(new RegExp(`(?<![\\w])${token}(?![\\w])`, 'g'), label);
     }

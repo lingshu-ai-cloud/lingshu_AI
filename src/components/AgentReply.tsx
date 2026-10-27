@@ -12,6 +12,10 @@ import { extractAssistantFiles } from '../../shared/assistantFileIntent';
 import AssistantFileCard from './assistant/AssistantFileCard';
 import AssistantSourceLink from './assistant/AssistantSourceLink';
 import type { ReplySource } from '../lib/assistantSourceLinks';
+import {
+  ASSISTANT_REPLY_PRESENTATIONS,
+  type AssistantReplyPresentationKind,
+} from '../../shared/assistantReplyPresentation';
 
 /* 渲染灵小枢回复的轻量 Markdown：
    ## / ### 分级加粗标题，**加粗**强调结论，- / 1. 列表，[文字](链接) 可点跳转。
@@ -179,7 +183,44 @@ export function splitReplySourceFooter(content: string): { body: string; footer:
   return { body: lines.slice(0, boundary).join('\n').trimEnd(), footer: lines.slice(boundary).join('\n') };
 }
 
-export default function AgentReply({ content, sources, onSuggest, detailExpanded = false, allowDetails = true, allowSources = true, compact = false }: {
+type ReplyNavigation = { label: string; page: string; view?: string };
+
+const REPLY_NAVIGATION: Partial<Record<AssistantReplyPresentationKind, ReplyNavigation[]>> = {
+  operations: [
+    { label: '查看经营总览', page: 'digitalEmployees' },
+    { label: '查看内容任务', page: 'smartAssets' },
+  ],
+  analytics: [{ label: '打开经营总览', page: 'digitalEmployees' }],
+  inspiration: [{ label: '打开灵感集市', page: 'inspirationMarket' }],
+  content: [{ label: '打开内容制作', page: 'smartAssets' }],
+  publishing: [
+    { label: '查看发布与渠道', page: 'traffic' },
+    { label: '查看内容监控', page: 'socialMonitoring' },
+  ],
+  ads: [
+    { label: '打开计划管理', page: 'adsPlans' },
+    { label: '查看素材表现', page: 'adsCreatives' },
+  ],
+  customer: [{ label: '打开智能客服', page: 'conversion' }],
+  enterprise: [
+    { label: '打开企业知识库', page: 'enterprise' },
+    { label: '检查渠道连接', page: 'channels' },
+  ],
+};
+
+function ReplyNavigationLinks({ kind }: { kind: AssistantReplyPresentationKind }) {
+  const links = REPLY_NAVIGATION[kind] ?? [];
+  if (!links.length) return null;
+  return <nav className="my-2 flex flex-wrap gap-2" aria-label="相关工作区">
+    {links.map(link => <button key={`${link.page}:${link.view || ''}`} type="button"
+      onClick={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: link }))}
+      className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-accent/40 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+      {link.label}<ArrowRight size={12} aria-hidden="true"/>
+    </button>)}
+  </nav>;
+}
+
+export default function AgentReply({ content, sources, onSuggest, detailExpanded = false, allowDetails = true, allowSources = true, compact = false, presentation }: {
   content: string;
   sources?: { title: string; uri: string }[];
   onAction?: (agent: AgentType, task: string) => void;
@@ -188,12 +229,13 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
   allowDetails?: boolean;
   allowSources?: boolean;
   compact?: boolean;
+  presentation?: AssistantReplyPresentationKind;
 }) {
   const inline = (text: string, key: string) => renderInline(text, key, sources);
   const files = extractAssistantFiles(content);
   const sourcePresentation = allowSources ? splitReplySourceFooter(files.text) : { body: files.text, footer: '' };
-  const presentation = allowDetails ? splitAssistantReply(sourcePresentation.body, { compact }) : { summary: sourcePresentation.body, details: [] };
-  const lines = readableAssistantReply(presentation.summary).split('\n');
+  const replyParts = allowDetails ? splitAssistantReply(sourcePresentation.body, { compact: compact && !presentation }) : { summary: sourcePresentation.body, details: [] };
+  const lines = readableAssistantReply(replyParts.summary).split('\n');
   const blocks: ReactNode[] = [];
   let list: { type: 'ul' | 'ol'; items: string[] } | null = null;
 
@@ -356,14 +398,27 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
   }
   flush();
 
+  const presentationMeta = presentation ? ASSISTANT_REPLY_PRESENTATIONS[presentation] : undefined;
+  const visibleSources = allowSources && presentationMeta?.showSources && (sourcePresentation.footer || sources?.length);
+  const sourceLinks = sources?.slice(0, 3) ?? [];
+  const remainingSources = sources?.slice(3) ?? [];
+
   return (
-    <div data-agent-reply="true" className="text-sm text-text-primary [&>*:first-child]:mt-0">
+    <div data-agent-reply="true" data-reply-presentation={presentation} className="text-sm text-text-primary [&>*:first-child]:mt-0">
       {blocks}
-      {presentation.details.some(value => value.trim()) && <Collapse ghost size="small" defaultActiveKey={detailExpanded || !presentation.summary.trim() ? ['analysis'] : []} items={[{
-        key: 'analysis', label: '详细分析', children: <AgentReply content={presentation.details.join('\n\n')} sources={sources} allowDetails={false} allowSources={false} />,
+      {visibleSources ? <aside className="my-2 rounded-lg border border-border/80 bg-surface px-3 py-2" aria-label="已核验来源">
+        <p className="mb-1.5 text-[11px] font-semibold text-text-muted">已核验来源{sources?.length ? ` · ${sources.length}` : ''}</p>
+        {sourceLinks.length ? <div className="flex flex-wrap gap-x-3 gap-y-1">
+          {sourceLinks.map((source, index) => <AssistantSourceLink key={source.uri} url={source.uri} label={source.title || `来源 ${index + 1}`} sources={sources}/>) }
+        </div> : <AgentReply content={sourcePresentation.footer} sources={sources} allowDetails={false} allowSources={false}/>}
+        {remainingSources.length ? <Collapse ghost size="small" items={[{ key: 'more-sources', label: `其余 ${remainingSources.length} 个来源`, children: <div className="flex flex-col gap-1">{remainingSources.map((source, index) => <AssistantSourceLink key={source.uri} url={source.uri} label={`${index + 4}. ${source.title}`} sources={sources}/>)}</div> }]} /> : null}
+      </aside> : null}
+      {presentation ? <ReplyNavigationLinks kind={presentation}/> : null}
+      {replyParts.details.some(value => value.trim()) && <Collapse ghost size="small" className="mt-1" defaultActiveKey={detailExpanded || !replyParts.summary.trim() ? ['analysis'] : []} items={[{
+        key: 'analysis', label: presentationMeta?.detailLabel || '补充依据与更多方案', children: <AgentReply content={replyParts.details.join('\n\n')} sources={sources} allowDetails={false} allowSources={false} />,
       }]} />}
       {files.ids.map(id => <AssistantFileCard key={id} id={id} />)}
-      {allowSources && (sourcePresentation.footer || sources?.length) ? (
+      {allowSources && !visibleSources && (sourcePresentation.footer || sources?.length) ? (
         <Collapse ghost size="small" className="mt-2 text-text-muted" defaultActiveKey={[]} items={[{
           key: 'sources', label: '数据和信息来源', children: sourcePresentation.footer
             ? <AgentReply content={sourcePresentation.footer} sources={sources} allowDetails={false} allowSources={false} />

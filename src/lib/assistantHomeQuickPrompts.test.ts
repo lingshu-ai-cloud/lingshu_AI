@@ -5,6 +5,8 @@ import {
   ASSISTANT_HOME_PROMPTS,
   ASSISTANT_HOME_QUICK_LAUNCHERS,
   assistantHomePromptById,
+  assistantReplyPresentationForPromptId,
+  assistantReplyPresentationForText,
   isAssistantHomeQuickTaskText,
 } from './assistantHomeQuickPrompts';
 import { mergeAssistantHomePrompt, normalizeAssistantHomePromptDetail } from '../components/assistant/useAssistantHomeAnchor';
@@ -80,6 +82,14 @@ test('quick task presentation recognizes fixed cards and parameterized query dia
   assert.equal(isAssistantHomeQuickTaskText('查询美元兑人民币的最新参考汇率，并标注数据日期。'), true);
   assert.equal(isAssistantHomeQuickTaskText('行业资讯：行业：美妆原料，目标市场：欧盟。查询最近30天相关变化。'), true);
   assert.equal(isAssistantHomeQuickTaskText('我想随便聊聊今天的工作。'), false);
+  assert.equal(assistantReplyPresentationForText(assistantHomePromptById('OP-01')!.prompt), 'operations');
+  assert.equal(assistantReplyPresentationForText('行业资讯：行业：美妆原料，目标市场：欧盟。查询最近30天相关变化。'), 'news');
+  assert.equal(assistantReplyPresentationForText('查询美元兑人民币的最新参考汇率，并标注数据日期。'), 'reference');
+  assert.equal(assistantReplyPresentationForPromptId('AD-01'), 'ads');
+  assert.equal(assistantReplyPresentationForPromptId('CS-02'), 'customer');
+  for (const entry of ASSISTANT_HOME_PROMPTS) {
+    assert.ok(assistantReplyPresentationForPromptId(entry.id), `${entry.id} must have a scene-specific reply presentation`);
+  }
 });
 
 
