@@ -31,7 +31,8 @@ function verifiedHeadline(product: Product, language: ImageLanguage, category: s
     const endings = product.category === '面霜' ? ['CREAM']
       : product.category === '护肤喷雾' ? ['MIST', 'SPRAY'] : [];
     const brand = String(product.brand || '').toUpperCase();
-    for (const rawLine of packagingHint.split(/\r?\n/)) {
+    const confirmedEnglishName = String(product.attributes?.['英文名称'] || '').trim();
+    for (const rawLine of [confirmedEnglishName, ...packagingHint.split(/\r?\n/)]) {
       const tokens = rawLine.toUpperCase().match(/[A-Z]{2,}/g) || [];
       const end = tokens.findIndex(token => endings.includes(token));
       if (end < 1) continue;
@@ -81,6 +82,7 @@ export function socialImageBuyerCopy(profile: EnterpriseProfile, selectedId: str
     auditEvidence: [`已确认产品SKU：${sku}`, netContent ? `已确认产品净含量：${netContent}` : '',
       category ? `已确认产品类目：${product.category}` : '', eveningUse ? `已确认产品核心场景：${product.attributes?.['核心场景']}` : '',
       brand ? `已确认产品品牌：${brand}` : '',
+      product.attributes?.['英文名称'] ? `已确认产品英文名称：${String(product.attributes['英文名称']).slice(0, 120)}` : '',
       oemInquiry ? `已确认OEM/ODM资料询盘入口：${oemCta}` : ''].filter(Boolean).join('\n'),
   };
 }

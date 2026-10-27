@@ -58,15 +58,18 @@ test('confirmed OEM/ODM inquiry route becomes buyer copy for a different product
     oem_odm: { primaryCta: '私信获取美妆产品目录与 OEM/ODM 合作资料' },
   } }, products: { items: [{ ...profile.products.items![0],
     id: 'GUIANFA-RS-003', sku: 'GUIANFA-RS-003', name: '深海冰川舒缓喷雾', category: '护肤喷雾',
-    attributes: { 净含量: '180ml' } }] } } as unknown as EnterpriseProfile;
-  const result = socialImageBuyerCopy(mist, 'GUIANFA-RS-003', 'en', 'DEEP SEA GLACIER SOOTHING MIST');
+    attributes: { 净含量: '180ml', 英文名称: 'Deep Sea Glacier Soothing Mist' } }] } } as unknown as EnterpriseProfile;
+  const result = socialImageBuyerCopy(mist, 'GUIANFA-RS-003', 'en', 'unreadable package OCR');
   assert.equal(result?.poster.headline, 'DEEP SEA MIST');
   assert.equal(result?.poster.bottomBar[1], 'OEM / ODM');
   assert.deepEqual(result?.poster.sellingPoints,
     ['Facial mist', 'Request OEM/ODM info', 'SKU: GUIANFA-RS-003']);
   assert.match(result?.auditEvidence || '', /已确认OEM\/ODM资料询盘入口/);
+  assert.match(result?.auditEvidence || '', /已确认产品英文名称/);
   assert.doesNotMatch(JSON.stringify(result), /MOQ|lead time|factory|manufacturing capacity/);
   const withoutRoute = { ...mist, socialStrategy: { routeStrategies: {} } } as EnterpriseProfile;
   assert.equal(socialImageBuyerCopy(withoutRoute, 'GUIANFA-RS-003', 'en', null)?.poster.bottomBar[1], 'B2B SOURCING');
-  assert.equal(socialImageBuyerCopy(withoutRoute, 'GUIANFA-RS-003', 'en', null)?.poster.headline, 'FACIAL MIST');
+  const withoutEnglish = { ...withoutRoute, products: { items: [{ ...mist.products.items![0],
+    attributes: { 净含量: '180ml' } }] } } as unknown as EnterpriseProfile;
+  assert.equal(socialImageBuyerCopy(withoutEnglish, 'GUIANFA-RS-003', 'en', null)?.poster.headline, 'FACIAL MIST');
 });
