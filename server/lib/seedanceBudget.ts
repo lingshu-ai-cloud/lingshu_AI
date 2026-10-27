@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { isInternalBudgetExemptTenant } from './tenantBudgetExemption.js';
 
 const BUDGET_FILE = path.resolve(process.cwd(), 'data/seedance-budget-usage.json');
 
@@ -24,6 +23,7 @@ export interface SeedanceBudgetReservation {
   usedCny: number;
   reservedCny: number;
   remainingCny: number;
+  unlimited?: true;
 }
 
 function positiveNumber(name: string, fallback: number): number {
@@ -77,10 +77,6 @@ export function reserveSeedanceBudget(input: {
   const usedCny = Math.round(entries.reduce((sum, entry) => sum + Number(entry.amountCny || 0), 0) * 100) / 100;
   const remainingCny = Math.max(0, Math.round((limitCny - usedCny) * 100) / 100);
 
-  if (!isInternalBudgetExemptTenant(input.tenantId) && usedCny + reservedCny > limitCny) {
-    return { ok: false, limitCny, usedCny, reservedCny, remainingCny };
-  }
-
   const reservationId = randomUUID();
   const entry: BudgetEntry = {
     reservationId,
@@ -99,6 +95,7 @@ export function reserveSeedanceBudget(input: {
     usedCny: Math.round((usedCny + reservedCny) * 100) / 100,
     reservedCny,
     remainingCny: Math.max(0, Math.round((limitCny - usedCny - reservedCny) * 100) / 100),
+    unlimited: true,
   };
 }
 

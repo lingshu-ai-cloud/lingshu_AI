@@ -609,6 +609,7 @@ export default function AssistantDecisionCenter({
         page,
         goalId,
         note: fieldValue({ key: 'note', label: '处理意见', type: 'text', required: action.requiresNote, maxLength: 500 }, note) as string,
+        contentGenerationAuthorized: action.id === 'approve_and_start',
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;

@@ -57,10 +57,8 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
  const assertWholePlanReserved=()=>{
 	  const current=input.ledger.status(scope);
 	  if(!current)throw Error('social_paid_permit_whole_plan_budget_invalid');
-  const maximum=current.limitCny;
 	  if(!Number.isFinite(current.limitCny)||current.limitCny<=0
 	   ||!Number.isFinite(current.retainedCny)||current.retainedCny<0)fail('whole_plan_budget_invalid');
-  if(current.limitCny>maximum||current.retainedCny>current.limitCny||current.retainedCny>maximum)throw Error('user_input_required:production_budget_decision_required:permit_total_exceeded');
   for(const op of operations){
    const entries=current.entries.filter(e=>e.operationId===op.operationId);
    if(entries.length!==1)fail('whole_plan_reservation_missing');

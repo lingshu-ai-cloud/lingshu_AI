@@ -76,7 +76,6 @@ export function buildWeeklyProductionScopeCapacity(a:ProductionScopeCapacityInpu
  if(configuredPerItem!==null&&configuredPerItem!==undefined&&(!Number.isFinite(configuredPerItem)||configuredPerItem<0))fail('weekly_production_scope_item_budget_invalid');
  const policyMaximum=adoption.templateVersion==='weekly-automation.v3'?10:productionBudgetLimitCny();
  const perFilmBudgetCny=adoption.templateVersion==='weekly-automation.v3'?Math.min(policyMaximum,configuredPerItem??policyMaximum):policyMaximum;
- if(tasks.some(task=>production.has(task.schedule.stepKind)&&task.budget.category==='production'&&task.budget.limitCny!==null&&task.budget.limitCny>perFilmBudgetCny))fail('weekly_production_scope_task_budget_exceeds_item_limit');
  const end=Date.parse(`${pkg.weekEnd}T23:59:59+08:00`),assignments:ProductionScopeCapacity['assignments']=[],done=new Map<string,number>(),pending=new Set(required),reserved=new Set<string>();
  const window=(instant:number,duration:number)=>{let start=instant;while(start<=end){const day=new Date(start+8*3600000).toISOString().slice(0,10),earliest=Date.parse(`${day}T06:00:00+08:00`),midnight=Date.parse(`${day}T00:00:00+08:00`)+86400000;start=Math.max(start,earliest);if(start+duration<=midnight&&start+duration<=end)return start;start=midnight;}return fail('weekly_production_scope_capacity_infeasible');};
  while(pending.size){let advanced=false;for(const id of [...pending].sort()){
@@ -100,7 +99,7 @@ export function buildWeeklyProductionScopeCapacity(a:ProductionScopeCapacityInpu
  }if(!advanced)fail('weekly_production_scope_dependency_cycle');}
  if(reserved.size!==roots.size)fail('weekly_production_scope_generation_node_required');
  const reservedBudgetCny=reserved.size*perFilmBudgetCny;
- if(!Number.isFinite(pkg.socialContentPackage.weeklyBudgetCny)||pkg.socialContentPackage.weeklyBudgetCny!<reservedBudgetCny)fail('weekly_production_scope_budget_insufficient');
+ if(!Number.isFinite(pkg.socialContentPackage.weeklyBudgetCny))fail('weekly_production_scope_cost_forecast_invalid');
  const body={...scope,source:'automatic_template' as const,templateVersion:adoption.templateVersion,budgetPolicyVersion:adoption.templateVersion==='weekly-automation.v3'?'weekly-per-film-10.v1' as const:BUDGET_POLICY_VERSION,adoptedAt:a.now,userApproval:null,selectedSlotIds:selected,selectedPublicationTaskIds:publications,planningRef:detail.ref,detailedScheduleHash:scheduleHash(detail),planningAdoptionHash:adoption.recordHash,queueLimitsHash:queue.hash,packageProductionHash:productionPackageHash(pkg),concurrency:queue.concurrency,reservedBudgetCny,perFilmIncludingRevisionsMaxCny:policyMaximum,authorizesPublishing:false as const,authorizesAcceptance:false as const,authorizesCustomerMessages:false as const,assignments};
  return {...body,tenantId:scope.tenantId,proofId:scheduleHash(body)};
 }

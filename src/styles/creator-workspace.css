@@ -310,7 +310,7 @@ html[data-lingshu-appearance='dark'] .ls-inspiration-watch-dialog [data-preview-
 .ls-assistant-home-root .ls-assistant-composer__input { min-height: 40px; max-height: 88px; padding: 4px 0 8px; background: transparent !important; color: var(--color-text-primary); font-family: var(--font-sans); font-size: var(--ls-type-body-large-size); line-height: var(--ls-type-body-large-line); }
 .ls-assistant-home-root .ls-assistant-composer__input::placeholder { color: var(--color-text-muted); }
 .ls-assistant-home-root .ls-assistant-composer__surface > .flex:last-child { min-height: 44px; padding: 0 8px 6px; }
-.ls-assistant-home-root .ls-assistant-composer__tools { display: flex; align-items: center; gap: 8px; }
+.ls-assistant-home-root .ls-assistant-composer__tools { position: relative; top: 4px; display: flex; align-items: center; gap: 8px; }
 .ls-assistant-home-root .ls-assistant-composer__tools button { color: var(--color-text-secondary); font-size: 13px; }
 .ls-assistant-home-root .ls-assistant-composer__surface > .flex:last-child > button { width: 40px; height: 40px; background: var(--ls-action-gradient); color: white; }
 .ls-assistant-home-root .ls-assistant-composer__surface > .flex:last-child > button:disabled { opacity: .4; }

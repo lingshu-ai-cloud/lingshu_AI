@@ -16,7 +16,7 @@ test('normalization does not accept browser readiness claims and clears contact 
   });
 });
 
-test('preflight reports exact presenter, voice, local-material and budget blockers without route substitution', () => {
+test('preflight reports presenter, voice and local-material blockers without a creative budget gate', () => {
   const preferences = normalizeProductionOnboardingPreferences({
     contact: { kind: 'whatsapp', value: '', primaryCta: '' },
     presenterPolicy: 'digital_presenter', output: {}, includeOneRevision: true,
@@ -30,7 +30,7 @@ test('preflight reports exact presenter, voice, local-material and budget blocke
   assert.equal(result.ready, false);
   assert.deepEqual(result.blockers.map(item => [item.code, item.archetypeId ?? null]), [
     ['public_contact_missing', null], ['primary_cta_missing', null], ['voice_missing', null],
-    ['local_material_missing', 'P3B_MACHINE_CLOSEUP'], ['budget_unconfirmed', null],
+    ['local_material_missing', 'P3B_MACHINE_CLOSEUP'],
   ]);
 });
 

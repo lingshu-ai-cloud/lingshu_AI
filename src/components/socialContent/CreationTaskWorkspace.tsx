@@ -17,13 +17,23 @@ import { beijingDay } from '../../lib/assistantScheduleProjection';
 
 const selectedTask = () => readSocialContentNavigationQueryTaskId('socialInspiration',window.location.search)
   || readSocialContentNavigationTaskId('socialInspiration',window.history.state);
+const selectedFilter = (): CreationTaskCategory|'all' => {
+  const value = new URLSearchParams(window.location.search).get('taskFilter');
+  return value === 'completed' || value === 'creating' || value === 'confirmation' ? value : 'all';
+};
+type TaskMetric = 'all'|'planned'|'producing'|'waiting_review'|'completed'|'scheduled';
+const selectedMetric = ():TaskMetric => {
+  const value=new URLSearchParams(window.location.search).get('taskMetric');
+  return value==='planned'||value==='producing'||value==='waiting_review'||value==='completed'||value==='scheduled'?value:'all';
+};
 
 export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalendar = false }:{data:DigitalEmployeeOverview;onRefresh:()=>void;embeddedCalendar?:boolean}) {
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [tasks,setTasks]=useState<SocialContentTaskSummary[]>([]),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
   const [view,setView]=useState<'calendar'|'tasks'>(()=>!embeddedCalendar&&(selectedTask()||new URLSearchParams(window.location.search).get('view')==='tasks')?'tasks':'calendar');
   const [calendarPortalRevision,setCalendarPortalRevision]=useState(0);
-  const [filter,setFilter]=useState<CreationTaskCategory|'all'>('all'),[taskId,setTaskId]=useState<string|null>(()=>embeddedCalendar?null:selectedTask()),[rowKey,setRowKey]=useState<string|null>(null);
+  const [filter,setFilter]=useState<CreationTaskCategory|'all'>(()=>embeddedCalendar?'all':selectedFilter()),[taskId,setTaskId]=useState<string|null>(()=>embeddedCalendar?null:selectedTask()),[rowKey,setRowKey]=useState<string|null>(null);
+  const [metric,setMetric]=useState<TaskMetric>(()=>embeddedCalendar?'all':selectedMetric());
   const [exact,setExact]=useState<SocialContentTaskSummary|null>(null),[identity,setIdentity]=useState(productionNavigationIdentity);
   const loadedIdentity=useRef(identity);
   const reading=useRef(false),readGeneration=useRef(0);
@@ -34,9 +44,12 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
     const navigation=()=>{if(embeddedCalendar)return;const target=selectedTask();setTaskId(target);setRowKey(null);if(target){setView('tasks');setFilter('all');}};
     const calendarPortal=(event:Event)=>{
       if(embeddedCalendar)return;
-      const detail=(event as CustomEvent<{page?:string;view?:string;navigationIdentity?:string}>).detail;
-      if(detail?.page!=='socialInspiration'||detail.view!=='calendar'||detail.navigationIdentity&&detail.navigationIdentity!==productionNavigationIdentity())return;
-      setView('calendar');setTaskId(null);setRowKey(null);setFilter('all');setCalendarPortalRevision(value=>value+1);
+      const detail=(event as CustomEvent<{page?:string;view?:string;taskFilter?:string;taskMetric?:string;navigationIdentity?:string}>).detail;
+      if(detail?.page!=='socialInspiration'||detail.navigationIdentity&&detail.navigationIdentity!==productionNavigationIdentity())return;
+      const nextFilter:CreationTaskCategory|'all'=detail.taskFilter==='completed'||detail.taskFilter==='creating'||detail.taskFilter==='confirmation'?detail.taskFilter:'all';
+      const nextMetric:TaskMetric=detail.taskMetric==='planned'||detail.taskMetric==='producing'||detail.taskMetric==='waiting_review'||detail.taskMetric==='completed'||detail.taskMetric==='scheduled'?detail.taskMetric:'all';
+      if(detail.view==='tasks'){setView('tasks');setTaskId(null);setRowKey(null);setFilter(nextFilter);setMetric(nextMetric);return;}
+      if(detail.view==='calendar'){setView('calendar');setTaskId(null);setRowKey(null);setFilter('all');setMetric(nextMetric);setCalendarPortalRevision(value=>value+1);}
     };
     const reset=()=>{setTasks([]);setUnavailable([]);setProducts([]);setExact(null);setTaskId(null);setRowKey(null);setIdentity(productionNavigationIdentity());setRevision(v=>v+1);};
     const changed=()=>setRevision(v=>v+1);
@@ -71,10 +84,13 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
   },[taskId,identity]);
   const rows=useMemo(()=>creationTaskRows(loadedIdentity.current===identity?[...tasks,...(exact&&!tasks.some(t=>t.taskId===exact.taskId)?[exact]:[])]:[],(data.contentQueue?.items||[]).filter(item=>item.origin==='weekly_plan'||tasks.some(task=>task.taskId===item.socialContentTaskId)||item.socialContentTaskId===exact?.taskId),products,unavailable),[tasks,exact,data,identity,products,unavailable]);
   const events=useMemo(()=>creationTaskCalendar(rows),[rows]);
+  const metricRows=useMemo(()=>rows.filter(row=>metric==='all'||metric==='scheduled'?metric==='all'||Boolean(row.publishAt):metric==='planned'?['planned','queued'].includes(row.weekly?.status||'')||row.statusLabel==='待调度':metric==='producing'?row.weekly?.status==='producing'||row.statusLabel==='创作中':metric==='waiting_review'?row.weekly?.status==='waiting_review'||row.category==='confirmation':row.weekly?.status==='completed'||row.category==='completed'),[rows,metric]);
   const selected=rows.find(row=>taskId?row.taskId===taskId:row.key===rowKey)||null;
   const updateLocation=(next:'calendar'|'tasks',row?:CreationTaskRow)=>{
     if(embeddedCalendar)return;
     const url=new URL(window.location.href);url.searchParams.set('view',next);url.searchParams.delete('taskId');
+    if(next==='tasks'&&filter!=='all')url.searchParams.set('taskFilter',filter);else url.searchParams.delete('taskFilter');
+    if(metric!=='all')url.searchParams.set('taskMetric',metric);else url.searchParams.delete('taskMetric');
     if(row?.taskId)url.searchParams.set('socialContentTaskId',row.taskId);else url.searchParams.delete('socialContentTaskId');
     const state={...window.history.state};delete state.socialContentTaskId;delete state.socialContentPage;
     const detail={...state.productionDetail};delete detail.socialContentTaskId;delete detail.socialContentPage;
@@ -90,8 +106,8 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
     {error&&<Alert className="m-4" type="warning" showIcon title={error}/>}
     {data.contentQueue?.sourceStatus!=='available'&&<Alert className="m-4" type="warning" title={data.contentQueue?.sourceNote||'周任务包暂时不可用，以下保留已读取的内容任务。'}/>}
     {view==='tasks'?<>
-      <div className="px-5 py-4"><Segmented aria-label="创作任务状态筛选" value={filter} options={[{label:'全部',value:'all'},{label:'已完成',value:'completed'},{label:'创作中',value:'creating'},{label:'待确认',value:'confirmation'}]} onChange={setFilter}/></div>
-      <Table<CreationTaskRow> rowKey="key" loading={loading} onRow={row=>({onClick:()=>open(row),style:{cursor:'pointer'}})} dataSource={rows.filter(row=>filter==='all'||row.category===filter)} size="middle" scroll={{x:960}} pagination={{defaultPageSize:20,showSizeChanger:true,showTotal:total=>`共 ${total} 条`}} columns={[
+      <div className="flex flex-wrap items-center gap-3 px-5 py-4"><Segmented aria-label="创作任务状态筛选" value={filter} options={[{label:'全部',value:'all'},{label:'已完成',value:'completed'},{label:'创作中',value:'creating'},{label:'待确认',value:'confirmation'}]} onChange={value=>{const next=value as CreationTaskCategory|'all';setFilter(next);setMetric('all');const url=new URL(window.location.href);url.searchParams.delete('taskMetric');if(next==='all')url.searchParams.delete('taskFilter');else url.searchParams.set('taskFilter',next);window.history.replaceState(window.history.state,'',url);}}/>{metric!=='all'&&<Tag closable onClose={()=>setMetric('all')}>来自计划数据：{{planned:'待制作',producing:'制作中',waiting_review:'待验收成片',completed:'已完成成片',scheduled:'已排期发布'}[metric]}</Tag>}</div>
+      <Table<CreationTaskRow> rowKey="key" loading={loading} onRow={row=>({onClick:()=>open(row),style:{cursor:'pointer'}})} dataSource={metricRows.filter(row=>filter==='all'||row.category===filter)} size="middle" scroll={{x:960}} pagination={{defaultPageSize:20,showSizeChanger:true,showTotal:total=>`共 ${total} 条`}} columns={[
         {title:'视频封面',key:'cover',width:106,render:(_,row)=><button aria-label={`查看任务：${row.title}`} onClick={()=>open(row)} className="flex h-16 w-20 items-center justify-center overflow-hidden rounded-md bg-surface-2 text-text-muted"><CreationTaskCover key={row.cover} row={row}/></button>},
         {title:'创作任务',key:'title',width:280,render:(_,row)=><button className="text-left font-semibold text-text-primary hover:text-accent" onClick={()=>open(row)}>{row.title}</button>},
         {title:'状态',key:'status',width:110,render:(_,row)=><Tag color={row.category==='confirmation'?'warning':row.category==='completed'?'success':'processing'}>{row.statusLabel}</Tag>},

@@ -20,6 +20,8 @@ import { AssistantAnalysisWork, AssistantReportExport } from './AssistantAnalysi
 import AssistantBusinessSceneChoice from './AssistantBusinessSceneChoice';
 import AssistantNavigationPortalCard from './AssistantNavigationPortalCard';
 import { navigationPortalForAnswer } from '../../lib/assistantNavigationPortal';
+import { AssistantWeeklyPlanCard } from './AssistantWeeklyPlanExperience';
+import type { AssistantWeeklyPlanExperience } from './useAssistantWeeklyPlanExperience';
 
 interface Props {
   inlineHome?: boolean;
@@ -44,6 +46,7 @@ interface Props {
   onOpenTaskDetail: (trigger: HTMLButtonElement, taskId: string) => void;
   weeklyPlanKickoffAvailable: boolean;
   onOpenWeeklyPlan: () => void;
+  weeklyPlanExperience: AssistantWeeklyPlanExperience;
 }
 
 /** The conversation's visual sequence; all mutations remain in the parent. */
@@ -53,7 +56,7 @@ export default function AssistantConversationBubbles(props: Props) {
     welcomeBubbleVisible, activeAgentLabel, messages, onAction, onSuggest,
     reduceMotion,
     contentIntakeNode, loading, focusedTaskCard, onOpenTaskDetail,
-    weeklyPlanKickoffAvailable, onOpenWeeklyPlan } = props;
+    weeklyPlanKickoffAvailable, onOpenWeeklyPlan, weeklyPlanExperience } = props;
   return (
     <div className={inlineHome ? 'ls-assistant-flow' : 'space-y-4'}>
       {!inlineHome && <div key={`decision-feed-${decisionFeedRevision}`}
@@ -118,6 +121,8 @@ export default function AssistantConversationBubbles(props: Props) {
       ))}
 
       {contentIntakeNode}
+
+      <AssistantWeeklyPlanCard experience={weeklyPlanExperience}/>
 
       {loading && (
         <div role="status" aria-live="polite" data-assistant-bubble="loading" className={`ls-assistant-bubble-enter flex gap-2 ${inlineHome ? 'ls-assistant-flow__turn ls-assistant-flow__turn--assistant' : ''}`}

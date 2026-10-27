@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { withPaidOperationLock } from './paidOperationLock.js';
-import { isInternalBudgetExemptTenant } from './tenantBudgetExemption.js';
 
 export type FirstFrameBudgetEntry = { operationId: string; compositionId: string; amountMicros: number; status: 'reserved' | 'uncertain' | 'completed'; at: string; output?: Record<string, unknown> };
 type Ledger = { version: 1; tenantId: string; videoId: string; limitMicros: number; maxFrames: number; entries: Record<string, FirstFrameBudgetEntry> };
@@ -32,11 +31,9 @@ export class FirstFrameBudget {
     return withPaidOperationLock(path.join(this.root, '.locks'), `${input.tenantId}:${input.videoId}`, async () => {
       const ledger = this.read(input.tenantId, input.videoId); const existing = ledger.entries[input.operationId];
       if (existing) return { existing: true, entry: existing };
-      const budgetExempt = isInternalBudgetExemptTenant(input.tenantId);
       const unique = new Set(Object.values(ledger.entries).map(item => item.compositionId));
       if (!unique.has(input.compositionId) && unique.size >= ledger.maxFrames) throw new Error(`单条成片最多生成 ${ledger.maxFrames} 张不同构图首帧，未调用供应商`);
-      const amountMicros = micros(input.estimatedCostCny); const used = Object.values(ledger.entries).reduce((sum, item) => sum + item.amountMicros, 0);
-      if (!Number.isSafeInteger(used) || (!budgetExempt && used + amountMicros > ledger.limitMicros)) throw new Error(`单条成片首帧预算上限为 ¥${(ledger.limitMicros / 1e6).toFixed(2)}，未调用供应商`);
+      const amountMicros = micros(input.estimatedCostCny);
       const entry: FirstFrameBudgetEntry = { operationId: input.operationId, compositionId: input.compositionId, amountMicros, status: 'reserved', at: new Date().toISOString() };
       ledger.entries[input.operationId] = entry; this.write(ledger); return { existing: false, entry };
     });

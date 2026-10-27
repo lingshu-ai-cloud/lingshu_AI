@@ -35,7 +35,7 @@ import { createSocialContentVerifiedTariffReader } from '../lib/socialContentVer
 import { SocialContentTaskBudget, type SocialTaskBudgetScope } from '../lib/socialContentTaskBudget.js';
 import {resolveSocialContentCostLineage} from './socialContentCostLineage.js';
 import {automaticallyConfirmPresenterFirstFrameApproval,readConfirmedPresenterFirstFrameApproval} from './socialContentPresenterFirstFrameApproval.js';
-import {productionBudgetDuration,productionBudgetLimitCny,productionBudgetMaximumCny,productionBudgetExceeded,productionBudgetDecisionError} from '../../shared/contracts/productionBudgetPolicy.js';
+import {productionBudgetDuration,productionBudgetLimitCny,productionBudgetMaximumCny,productionBudgetExceeded} from '../../shared/contracts/productionBudgetPolicy.js';
 import {currentPresenterFirstFrameAssetProvenanceHash,loadPresenterMaster} from './socialContentPresenterFirstFrameRuntime.js';
 import {carryForwardWeeklyCandidateExactProductionCost} from '../runtime/weeklyCandidateExactProductionEscrowPorts.js';
 export interface ProductionBudgetReadPorts {
@@ -653,13 +653,12 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
       maximumCny: Math.min(amount, planned.plan.maximumCny, ledgerProbe?.limitCny ?? amount,revisionCeiling),
       retainedCny: retained, wholeTaskUpperBoundCny };
     if(productionBudgetExceeded(wholeTaskUpperBoundCny,revisionCeiling===Infinity?Number.MAX_SAFE_INTEGER:revisionCeiling))return error('revision_incremental_allowance_exceeded');
-    if (formalPaidRouteExceedsInternalBudget(input.tenantId, wholeTaskUpperBoundCny, Math.min(planned.plan.maximumCny,ledgerProbe?.limitCny??amount),productionDurationSeconds)) {
-      return error('formal_paid_route_budget_exceeded:'+productionBudgetDecisionError({maximumCny:Math.min(amount,ledgerProbe?.limitCny??amount),retainedCny:retained,plannedAdditionalCny:wholeTaskUpperBoundCny-retained,totalCny:wholeTaskUpperBoundCny}).message);
-    }
+    if (formalPaidRouteExceedsInternalBudget(input.tenantId, wholeTaskUpperBoundCny, Math.min(planned.plan.maximumCny,ledgerProbe?.limitCny??amount),productionDurationSeconds))
+      return error('formal_paid_route_cost_meter_invalid');
     const reserved = await authority.prepareAndReserve(scope);
     const formalPaidRouteUpperBoundCny=Object.values(reserved.quotes).reduce((sum,quote)=>sum+quote.upperBoundCny,0);
     if(formalPaidRouteExceedsInternalBudget(input.tenantId, reserved.status.retainedCny, Math.min(planned.plan.maximumCny,reserved.status.limitCny),productionDurationSeconds))
-      return error(`formal_paid_route_budget_exceeded:${formalPaidRouteUpperBoundCny.toFixed(6)}`);
+      return error(`formal_paid_route_cost_meter_invalid:${formalPaidRouteUpperBoundCny.toFixed(6)}`);
     await recordCurrentContentExecutionCheckpoint({ stage: STAGE, version: '1', inputHash: planHash, payload: { scopeHash: paidProductionHash(scope), baselineHash,
       paidBaselineContractHash: paidBaselineContractHash(input.baseline), presenterVoiceBinding:voice.presenterBinding || null, operationIds: reserved.operations.map(o => o.operationId), requirements: planned.requirements, routeBindings, quotes: reserved.quotes, formalPaidRouteUpperBoundCny, wholeTaskRetainedCny:reserved.status.retainedCny, plan: planned.plan } });
     const paidPermit = createSocialContentPaidOperationPermit({ ...reserved, root: path.join(ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget', '.permits'), assertCurrent,

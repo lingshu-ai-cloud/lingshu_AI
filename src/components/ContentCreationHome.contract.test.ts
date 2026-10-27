@@ -59,6 +59,8 @@ assert.match(creationOverview, /创作计划/, '内容创作页顶部必须使�
 for (const metric of ['计划内容', '待制作', '制作中', '待验收成片', '已完成成片', '已排期发布']) {
   assert.match(creationOverview, new RegExp(`label: '${metric}'`), `创作计划必须展示${metric}`);
 }
+assert.match(creationOverview, /openMetric[\s\S]{0,300}taskMetric/, '六项创作计划数据必须跳转到对应任务或日历视图');
+assert.doesNotMatch(creationOverview, /按已连接账号历史发布数据的播放量排序|点击“创建一条新计划”，填写本条内容/, '批注要求的说明小字不得保留');
 assert.match(creationOverview, /创建一条新计划/, '创作计划须保留新计划入口');
 assert.match(creationOverview, /loadConnectedSocialPerformance\(50\)/, '右侧必须读取已连接账号的真实历史发布表现');
 assert.match(creationOverview, /当前最火的 3 条视频/, '右侧必须展示历史发布表现前三');

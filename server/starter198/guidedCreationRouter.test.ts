@@ -38,3 +38,9 @@ test('native reference handoff uses the exact recorded URL and bounded label, re
   assert.equal(value.cachedReferenceRecordId, 'history-1'); assert.equal(value.label.length, 160);
   assert.throws(() => guidedReferenceSource({ sourceUrl: 'trendvideo:history-1' }, narration), /social_content_source_ref_invalid/);
 });
+
+test('supervised local runtime can dispatch only with the separate paid-generation process flag', async () => {
+  const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('./guidedCreationRouter.ts', import.meta.url), 'utf8'));
+  assert.match(source, /LINGSHU_LOCAL_PAID_GENERATION_ENABLED === '1'/);
+  assert.match(source, /localPreview && !localPaidGeneration/);
+});

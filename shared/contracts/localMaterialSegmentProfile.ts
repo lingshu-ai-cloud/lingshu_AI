@@ -228,8 +228,9 @@ export function buildLocalMaterialSegmentProfile(input: BuildLocalMaterialSegmen
   if (!segmentId) rejectionReasons.push('segment_identity_missing');
   if (!sourceRevision) rejectionReasons.push('source_revision_missing');
   if (input.currentSourceRevision && sourceRevision !== text(input.currentSourceRevision)) rejectionReasons.push('source_revision_mismatch');
-  if (!tenantId || sourceTenantId !== tenantId) rejectionReasons.push('tenant_mismatch');
-  if (input.origin !== 'my_materials') rejectionReasons.push('local_ownership_missing');
+  const sharedLibrary = input.origin === 'shared_library';
+  if (!tenantId || (!sharedLibrary && sourceTenantId !== tenantId)) rejectionReasons.push('tenant_mismatch');
+  if (!sharedLibrary && input.origin !== 'my_materials') rejectionReasons.push('local_ownership_missing');
   if (text(input.mediaType) !== 'video') rejectionReasons.push('non_video_source');
   if (input.synthetic) rejectionReasons.push('synthetic_source');
   if (startSeconds === null || endSeconds === null || startSeconds < 0 || endSeconds <= startSeconds) rejectionReasons.push('invalid_time_range');

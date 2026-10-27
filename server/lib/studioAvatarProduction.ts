@@ -118,8 +118,7 @@ export function seedanceReferenceReadiness(input: { enabled?: string; apiKey?: s
   const positive = (value?: string) => Number.isFinite(Number(value)) && Number(value) > 0;
   const missing = [...(input.enabled === 'true' ? [] : ['SEEDANCE_REFERENCE_ENABLED=true']), ...(input.apiKey?.trim() ? [] : ['SEEDANCE_API_KEY']),
     ...(input.model?.trim() ? [] : ['SEEDANCE_MODEL']), ...(input.objectStorageEnabled ? [] : ['对象存储']),
-    ...(positive(input.estimatedCnyPerSecond) ? [] : ['SEEDANCE_REFERENCE_ESTIMATED_CNY_PER_SECOND']),
-    ...(positive(input.maxCnyPerShot) ? [] : ['DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT']), ...(positive(input.monthlyBudgetCny) ? [] : ['DIGITAL_HUMAN_REFERENCE_MONTHLY_BUDGET_CNY'])];
+    ...(positive(input.estimatedCnyPerSecond) ? [] : ['SEEDANCE_REFERENCE_ESTIMATED_CNY_PER_SECOND'])];
   return { ready: missing.length === 0, reason: missing.length ? `Seedance 参考人物尚不可执行，缺少：${missing.join('、')}` : '' };
 }
 
@@ -225,7 +224,7 @@ export function createStudioAvatarProductionRouter(store: DataStore) {
     };
     saveLocalMaterials([...materials.filter(item => !(item.id === id && item.tenantId === tenantId)), material]);
     return objectKey && objectEtag ? { materialId: id, objectKey, contentSha256, objectEtag } : { materialId: id, localFile: relativeFile, contentSha256 };
-  }, { adapters: [...(fastHead ? [fastHead] : []), ...(seedance ? [seedance] : []), ...(runway ? [runway] : [])], referenceBudgetLimitCny: Number.isFinite(Number(process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT)) ? Number(process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT) : undefined,
+  }, { adapters: [...(fastHead ? [fastHead] : []), ...(seedance ? [seedance] : []), ...(runway ? [runway] : [])],
     reserveReference: (tool, id, estimatedCostCny, tenantId) => referencePaidBudget.reserve(tool, id, estimatedCostCny, tenantId),
     releaseReference: (tool, id, tenantId) => referencePaidBudget.release(tool, id, tenantId),
     verifyCandidateOutput: verifyStoredCandidateOutput,

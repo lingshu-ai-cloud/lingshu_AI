@@ -102,7 +102,7 @@ export function createDigitalEmployeeWeeklyLaunch(context: WeeklyLaunchContext) 
     try {
       // Preparation is runtime work; only the server validates this revision.
       launchRequestSent = true;
-      const next = await api.approveGoal(goal.id, data.plan.businessPackage.revision);
+      const next = await api.approveGoal(goal.id, data.plan.businessPackage.revision, true);
       if (!presentConfirmedWeeklyExecution(next, goal.id)) {
         throw new Error('启动结果未返回可确认的真实运行；系统不会自动重复提交同一周计划。');
       }

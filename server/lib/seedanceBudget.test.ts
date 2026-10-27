@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-test('Seedance exemption matches one exact tenant while every other tenant keeps its monthly ceiling', async () => {
+test('Seedance records every tenant usage without enforcing a monthly creative ceiling', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'seedance-budget-exempt-'));
   const originalCwd = process.cwd();
   const previous = {
@@ -31,8 +31,9 @@ test('Seedance exemption matches one exact tenant while every other tenant keeps
 
     assert.equal(reserveSeedanceBudget({ tenantId: 'seedance-exempt-child', duration: 1, resolution: '720p' }).ok, true);
     const ordinaryOverLimit = reserveSeedanceBudget({ tenantId: 'seedance-exempt-child', duration: 1, resolution: '720p' });
-    assert.equal(ordinaryOverLimit.ok, false, 'a tenant prefix must not inherit the exact exemption');
-    assert.equal(ordinaryOverLimit.usedCny, 1);
+    assert.equal(ordinaryOverLimit.ok, true);
+    assert.equal(ordinaryOverLimit.usedCny, 2);
+    assert.equal(ordinaryOverLimit.unlimited, true);
   } finally {
     process.chdir(originalCwd);
     if (previous.exempt === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;

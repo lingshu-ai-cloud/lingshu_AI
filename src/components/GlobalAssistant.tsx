@@ -35,6 +35,8 @@ import { ASSISTANT_HOME_ACTIVITY_EVENT, useAssistantHomeAnchor, useAssistantHome
 import { useAssistantLauncherRetraction } from './assistant/useAssistantLauncherRetraction';
 import { useAssistantDecisionCount, useAssistantPageContextSignal } from './assistant/useAssistantPageSignals';
 import { useAssistantContentTaskCard } from './assistant/useAssistantContentTaskCard';
+import { AssistantWeeklyPlanOverlay } from './assistant/AssistantWeeklyPlanExperience';
+import { useAssistantWeeklyPlanExperience } from './assistant/useAssistantWeeklyPlanExperience';
 import type { AssistantQuickExecution } from '../lib/assistantQuickEntries';
 import AssistantDecisionDialog from './assistant/AssistantDecisionDialog';
 import {
@@ -100,6 +102,7 @@ export default function GlobalAssistant({
 }: Props) {
   const { modal, message: uiMessage } = AntApp.useApp();
   const reduceMotion = usePrefersReducedMotion();
+  const weeklyPlanExperience = useAssistantWeeklyPlanExperience();
   const [mode, setMode] = useState<'breathing' | 'chat'>('breathing');
   const inlineHome = page === 'strategy';
   const creationMode = useCreationMode();
@@ -480,8 +483,8 @@ export default function GlobalAssistant({
     setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, focusTaskCard, hydrateThread, setLoading,
     setFileGenerating, setReplyStreaming, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
     activeAgent, draftInput: activeThread.draftInput, pendingAttachments, attachmentUploading,
-    weeklyPlanKickoffAvailable, uploadedAttachmentCacheRef, setAttachmentError,
-    setAttachmentUploading, setPendingAttachments, openWeeklyPlanFromAssistant,
+    uploadedAttachmentCacheRef, setAttachmentError, setAttachmentUploading, setPendingAttachments,
+    prepareWeeklyPlan: weeklyPlanExperience.prepare,
   });
 
   const runQuickExecution = useAssistantQuickExecution({
@@ -738,7 +741,7 @@ export default function GlobalAssistant({
         loading={loading} fileGenerating={fileGenerating} replyStreaming={replyStreaming}
         attachmentUploading={attachmentUploading} attachmentError={attachmentError}
         pendingAttachments={pendingAttachments} weeklyActionBusy={weeklyActionBusy}
-        weeklyPlanKickoffAvailable={weeklyPlanKickoffAvailable} pipelineEntries={pipelineEntries}
+        weeklyPlanKickoffAvailable={weeklyPlanKickoffAvailable} weeklyPlanExperience={weeklyPlanExperience} pipelineEntries={pipelineEntries}
         pendingCount={pendingCount} contentIntake={contentIntake}
         messageScrollRef={messageScrollRef} assistantInputRef={assistantInputRef}
         onAction={onAction} onSessionRefresh={onSessionRefresh} closeAssistant={closeAssistant}
@@ -775,11 +778,14 @@ export default function GlobalAssistant({
         handleContentDeliveryDownload={handleContentDeliveryDownload}
       />
 
+      <AssistantWeeklyPlanOverlay experience={weeklyPlanExperience} reduceMotion={reduceMotion}/>
+
       {!inlineHome && <AssistantLauncher
         retracted={launcherRetracted}
         chatOpen={mode === 'chat'}
         badgeCount={decisionTotal ?? pendingCount}
         reduceMotion={reduceMotion}
+        weeklyPlanOperating={weeklyPlanExperience.weeklyPlanOperating}
         launcherButtonRef={launcherButtonRef}
         edgeLauncherButtonRef={edgeLauncherButtonRef}
         onLauncherClick={handleLauncherClick}

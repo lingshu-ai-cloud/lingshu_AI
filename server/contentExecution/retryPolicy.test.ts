@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyContentExecutionFailure } from './retryPolicy';
+import { classifyContentExecutionFailure, contentProviderApiFailureMessage } from './retryPolicy';
+
+test('provider API failures name the concrete integration without exposing raw responses',()=>{
+ assert.equal(contentProviderApiFailureMessage(Error('Seedance HTTP 403: account secret-123 not activated')), 'Seedance API 账号无权限或模型尚未开通');
+ assert.equal(contentProviderApiFailureMessage(Error('Qwen TTS HTTP 429: request failed')), 'Qwen TTS API 请求频率、额度或余额不足');
+ assert.equal(contentProviderApiFailureMessage(Error('unexpected local crash')), null);
+ assert.equal(classifyContentExecutionFailure(Error('DashScope fetch failed ETIMEDOUT'),{attempt:1}).publicReason,'Qwen API 网络连接或响应超时');
+});
 test('narration capability gap neither retries paid speech nor invalidates the selected avatar',()=>{
  const result=classifyContentExecutionFailure(new Error('user_input_required:presenter_narration_capability_unavailable:heygen:starfish'),{attempt:1});
  assert.equal(result.disposition,'block');assert.equal(result.failureClass,'input_required');assert.equal(result.retryDelayMs,null);assert.match(result.publicReason,/人物授权仍有效/);assert.match(result.publicReason,/试听确认/);

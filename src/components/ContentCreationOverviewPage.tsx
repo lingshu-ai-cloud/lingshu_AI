@@ -30,13 +30,14 @@ function CreationPlan({ data, onCreate }: { data: DigitalEmployeeOverview; onCre
   const queue = data.contentQueue?.items || [];
   const displayStatus = statusLabel[data.run?.status || data.goal?.status || ''] || { text: data.goal ? '待启动' : '待创建', color: data.goal ? 'warning' : 'default' };
   const metrics = [
-    { label: '计划内容', value: `${queue.length} 条` },
-    { label: '待制作', value: `${countStatuses(data, ['planned', 'queued'])} 条` },
-    { label: '制作中', value: `${countStatuses(data, ['producing'])} 条` },
-    { label: '待验收成片', value: `${countStatuses(data, ['waiting_review'])} 条` },
-    { label: '已完成成片', value: `${countStatuses(data, ['completed'])} 条` },
-    { label: '已排期发布', value: `${queue.filter(item => Boolean(item.plannedPublishDate)).length} 条` },
+    { label: '计划内容', value: `${queue.length} 条`, view: 'tasks', metric: 'all' },
+    { label: '待制作', value: `${countStatuses(data, ['planned', 'queued'])} 条`, view: 'tasks', metric: 'planned' },
+    { label: '制作中', value: `${countStatuses(data, ['producing'])} 条`, view: 'tasks', metric: 'producing' },
+    { label: '待验收成片', value: `${countStatuses(data, ['waiting_review'])} 条`, view: 'tasks', metric: 'waiting_review' },
+    { label: '已完成成片', value: `${countStatuses(data, ['completed'])} 条`, view: 'tasks', metric: 'completed' },
+    { label: '已排期发布', value: `${queue.filter(item => Boolean(item.plannedPublishDate)).length} 条`, view: 'calendar', metric: 'scheduled' },
   ];
+  const openMetric = (metric: typeof metrics[number]) => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'socialInspiration', view: metric.view, taskMetric: metric.metric } }));
 
 
   return <section aria-labelledby="creation-plan-title" className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface">
@@ -47,14 +48,15 @@ function CreationPlan({ data, onCreate }: { data: DigitalEmployeeOverview; onCre
           <Tag color={displayStatus.color}>{displayStatus.text}</Tag>
           {data.goal && <Tag>{data.goal.startsAt.slice(5)} — {data.goal.endsAt.slice(5)}</Tag>}
         </div>
-        <p className="mt-2 text-sm text-text-secondary">{data.plan?.strategy || data.goal?.objective || '点击“创建一条新计划”，填写本条内容的产品、创作方向与预计发布时间。'}</p>
+        {(data.plan?.strategy || data.goal?.objective) && <p className="mt-2 text-sm text-text-secondary">{data.plan?.strategy || data.goal?.objective}</p>}
       </div>
       <Button type="primary" icon={<CalendarPlus size={16}/>} onClick={onCreate}>创建一条新计划</Button>
     </header>
     <div className="grid gap-x-6 gap-y-4 px-6 py-5 sm:grid-cols-3">
-      {metrics.map(metric => <div key={metric.label} className="min-w-0 rounded-lg px-1 py-3">
+      {metrics.map(metric => <button type="button" key={metric.label} onClick={() => openMetric(metric)} aria-label={`查看${metric.label}，${metric.value}`} className="group min-w-0 rounded-lg px-1 py-3 text-left outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent">
         <Statistic title={metric.label} value={metric.value} styles={{ title: { color: 'var(--color-text-secondary)', fontSize: 14, marginBottom: 8 }, content: { color: 'var(--color-text-primary)', fontSize: 26, fontWeight: 600 } }}/>
-      </div>)}
+        <span className="mt-2 inline-flex items-center gap-1 text-xs text-text-muted group-hover:text-accent">查看详情 <ArrowRight size={12}/></span>
+      </button>)}
     </div>
   </section>;
 }
@@ -67,7 +69,7 @@ function TopPublishedVideos({ performance, loading, error }: { performance: Conn
 
   return <section aria-labelledby="top-published-videos-title" className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface">
     <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
-      <div><h2 id="top-published-videos-title" className="ls-type-title-medium text-text-primary">当前最火的 3 条视频</h2><p className="mt-1 text-xs text-text-secondary">按已连接账号历史发布数据的播放量排序</p></div>
+      <h2 id="top-published-videos-title" className="ls-type-title-medium text-text-primary">当前最火的 3 条视频</h2>
       <Eye size={18} className="text-accent" aria-hidden="true"/>
     </header>
     <div className="p-4">

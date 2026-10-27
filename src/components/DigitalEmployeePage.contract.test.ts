@@ -444,7 +444,7 @@ assert.match(smartBusinessFeatureSource, /function inspirationReferenceForPlan[\
 assert.match(publishingCalendarSource, /detailsTitle="内容制作进度"[\s\S]{0,600}WeeklyContentProgressPanel/, 'the Digital Employee publishing calendar must open read-only content progress in the shared drawer');
 assert.match(publishingCalendarSource, /onOpenReference[\s\S]{0,350}inspirationReferenceNavigationDetail/, 'the drawer must retain the exact persisted inspiration reference as a secondary action');
 assert.doesNotMatch(confirmWeeklyPlanSource, /approvalBlocked|missingProducts|missingReferences|generatePackageDetails|readiness\.canStart/, 'launch must not duplicate production preparation or publishing readiness gates in the UI');
-assert.match(confirmWeeklyPlanSource, /api\.approveGoal\(goal\.id, data\.plan\.businessPackage\.revision\)/, 'launch must submit the exact plan revision to authoritative server validation');
+assert.match(confirmWeeklyPlanSource, /api\.approveGoal\(goal\.id, data\.plan\.businessPackage\.revision, true\)/, 'launch must submit the exact plan revision with explicit generation authorization');
 assert.match(digitalEmployeeApiSource, /approveGoal:[\s\S]{0,900}AbortSignal\.timeout\(12_000\)/, 'weekly launch must stop indefinite loading and hand unknown results to read-only reconciliation');
 assert.match(inspirationSource, /receiveReference[\s\S]{0,2200}resolveInspirationReference\([\s\S]{0,900}setSelectedVideo\(resolved\.video\)/, 'Inspiration Center must resolve and open the requested viral-video detail');
 assert.match(inspirationReferenceResolverSource, /videoMatchesReference\(video, target\)[\s\S]{0,1500}recordsToVideos[\s\S]{0,1500}videoMatchesReference\(video, target\)/, 'reference resolver must match inventory and read-only search candidates against the requested reference');
@@ -900,8 +900,10 @@ try {
 }
 
 assert.match(pageSource, /title="确认开始本周生产"/, 'weekly production must show a final confirmation before starting');
-assert.match(pageSource, /okButtonProps=\{\{ disabled: weeklyPresenterLoading \|\| !weeklyPresenterGate\.ready \}\}/, 'weekly production must stay blocked until a presenter appearance is ready');
-assert.match(pageSource, /没有形象，无法进入生产/, 'the weekly confirmation must explain the hard presenter gate');
+assert.match(pageSource, /okText="确认周计划"/, 'weekly production must expose one direct plan confirmation action');
+assert.doesNotMatch(pageSource, /generationAuthorized|我授权数字员工开始本周内容生成任务/, 'weekly production must not show a separate generation authorization control');
+assert.match(pageSource, /纯产品内容不要求数字人形象/, 'the weekly confirmation must not impose a presenter gate on product-only plans');
+assert.match(confirmWeeklyPlanSource, /approveGoal\(goal\.id, data\.plan\.businessPackage\.revision, true\)/, 'confirming the weekly plan must implicitly record generation authorization');
 
 console.log('DigitalEmployeePage contract tests passed');
 

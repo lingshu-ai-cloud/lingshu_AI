@@ -106,6 +106,7 @@ const services = [
     // tasks edit unrelated files, leaving Vite with a temporary 502 upstream.
     args: [path.join(runtimeRoot, 'node_modules/tsx/dist/cli.mjs'), 'server/index.ts'],
     env: {
+      NODE_ENV: 'development',
       PORT: backendPort,
       LINGSHU_LOCAL_PORT: backendPort,
       NODE_USE_ENV_PROXY: '1',
@@ -116,6 +117,21 @@ const services = [
       // queue/scheduler migration makes a split local worker safe.
       PROCESS_ROLE: 'all',
       ENABLE_LOCAL_DEV_FALLBACK: 'true',
+      // Opening the supervised app also opens its local background runtime.
+      // There is no front-end setup switch: readiness below proves that the
+      // weekly scanner really started before this process is kept healthy.
+      DIGITAL_EMPLOYEE_RUNTIME_ENABLED: 'true',
+      STARTER_198_ORCHESTRATOR_WORKER_ENABLED: 'true',
+      STARTER_PUBLICATION_PACKAGE_WORKER_ENABLED: 'true',
+      STARTER_QUOTE_ARTIFACT_WORKER_ENABLED: 'true',
+      SOCIAL_WEEKLY_EXECUTION_WORKER_ENABLED: 'true',
+      CONTENT_WORKER_SELF_HEAL_ENABLED: 'true',
+      LINGSHU_LOCAL_PRODUCTION_RUNTIME: '1',
+      LINGSHU_LOCAL_PAID_GENERATION_ENABLED: '1',
+      // A worktree preview must migrate with the files from the exact source
+      // revision it is running. A machine-level .env.local may point at a
+      // different checkout and silently skip or misapply migrations.
+      PB_MIGRATIONS_DIR: path.join(runtimeRoot, 'pb_migrations'),
       // Local preview sessions must survive backend hot restarts. The server's
       // secure default is intentionally process-ephemeral, so the supervisor
       // supplies a private, machine-local secret only for this dev service.
@@ -125,10 +141,9 @@ const services = [
       // accepts it only in the supervised, non-production preview process.
       LINGSHU_PREVIEW_AUTH_EMAIL: localPreviewAuthEmail,
     },
-    // Health monitoring must stay cheap and independent of business data.
-    // Business queries can be temporarily slow while background jobs are busy;
-    // treating that as a process failure can kill a healthy backend and leave a white UI.
-    probe: { url: `${backendOrigin}/api/overseas/health`, expectText: '"status":"ok"' },
+    // A live HTTP socket is insufficient: the app is usable only after its
+    // storage and the in-process content workers have passed readiness.
+    probe: { url: `${backendOrigin}/api/overseas/ready`, expectText: '"status":"ready"' },
   },
   {
     name: 'frontend',

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { withPaidOperationLock } from './paidOperationLock.js';
-import {validProductionBudgetMaximum,productionBudgetLimitCny,productionBudgetDecisionError} from '../../shared/contracts/productionBudgetPolicy.js';
+import {validProductionBudgetMaximum} from '../../shared/contracts/productionBudgetPolicy.js';
 export interface SocialTaskBudgetScope {
     tenantId: string;
     taskId: string;
@@ -123,9 +123,10 @@ function operationCheck(o: SocialTaskBudgetOperation) { if (![o.operationId, o.p
     fail('operation_invalid'); }
 function used(l: Ledger) { const n = Object.values(l.entries).reduce((v, e) => v + (e.status === 'rejected' || e.preproductionBinding ? 0 : e.reservedMicros), 0); if (!Number.isSafeInteger(n))
     fail('ledger_corrupt'); return n; }
-/** A task, including replacement runs and retries, owns ONE ceiling. All paid stages
- * must reserve here before provider submission. Unknown billing retains the upper
- * bound. This is a shared-volume ledger; crashed locks require reconciliation. */
+/** A task, including replacement runs and retries, owns one durable usage ledger.
+ * All paid stages are quoted and recorded here before provider submission. The
+ * legacy limit remains as a forecast field for compatibility, but it is not an
+ * admission ceiling. Unknown billing retains its quoted amount for reconciliation. */
 export class SocialContentTaskBudget {
     constructor(private readonly root = path.resolve(process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget'), private readonly ports: SocialTaskBudgetPorts) { }
     private file(s: SocialTaskBudgetScope) { return path.join(this.root, hash(JSON.stringify([s.tenantId, s.budgetTaskId??s.taskId])) + '.json'); }
@@ -221,8 +222,7 @@ export class SocialContentTaskBudget {
         scopeCheck(scope); const l=this.read(scope); if(!l)return null;
         const retainedMicros=used(l),correction=l.correctionAuthorization;
         const correctionMatches=correction?.runId===scope.runId&&correction.planHash===scope.planHash;
-        const limitMicros=Math.min(l.limitMicros,correction?productionBudgetLimitCny(l.productionDurationSeconds)*1e6:Infinity,
-            correction&&!correctionMatches?correction.previousMaximumCny*1e6:Infinity);
+        const limitMicros=l.limitMicros;
         const acquisitionCny=Object.values(l.entries).filter(e=>e.preproductionBinding).reduce((sum,e)=>sum+e.reservedMicros,0)/1e6;
         return {limitCny:limitMicros/1e6,authorizedLimitCny:l.limitMicros/1e6,
             productionDurationSeconds:l.productionDurationSeconds,acquisitionCny,
@@ -320,14 +320,8 @@ export class SocialContentTaskBudget {
               const limits=(l.executionLimitMicros??={}),key=hash(scope.taskId);
               limits[key]=Math.min(limits[key]??ceiling,ceiling);
             }
-            const correction = l.correctionAuthorization;
-            const correctionMatches = correction?.tenantId === scope.tenantId && correction.taskId === scope.taskId
-                && correction.runId === scope.runId && correction.planHash === scope.planHash;
-            const cap = Math.min(l.limitMicros,correctionMatches?l.limitMicros:baseCap,correction?productionBudgetLimitCny(l.productionDurationSeconds)*1e6:Infinity);
-            if (!correctionMatches) l.limitMicros = Math.min(l.limitMicros, baseCap);
             if (!l.authorizationRefs.includes(a.authorizationRef))
                 l.authorizationRefs.push(a.authorizationRef);
-            const retainedBefore=used(l);
             for (const o of operations) {
                 const id = hash(o.operationId), prior = l.entries[id];
                 if (prior) {
@@ -342,10 +336,10 @@ export class SocialContentTaskBudget {
                     fail('quote_missing_or_expired');
                 l.entries[id] = { ...o, executionTaskId:scope.taskId, authorizationRef:a.authorizationRef, runId: scope.runId, planHash: scope.planHash, quoteRef: q.quoteRef, reservedMicros: micros(q.upperBoundCny), status: 'reserved', receiptRef: null };
             }
-            if (used(l) > cap)
-                throw productionBudgetDecisionError({maximumCny:cap/1e6,retainedCny:retainedBefore/1e6,plannedAdditionalCny:(used(l)-retainedBefore)/1e6,totalCny:used(l)/1e6});
-            const executionLimit=l.executionLimitMicros?.[hash(scope.taskId)];
-            if(executionLimit!==undefined&&Object.values(l.entries).filter(e=>(e.executionTaskId??l.taskId)===scope.taskId&&e.status!=='rejected').reduce((sum,e)=>sum+e.reservedMicros,0)>executionLimit)fail('execution_allowance_exceeded');
+            // Monetary values are metering forecasts, not creative admission
+            // limits. Identity, tariff freshness, idempotency and receipt
+            // reconciliation remain strict, while any valid quoted total may be
+            // recorded and submitted after task-level generation authorization.
             await this.ports.assertCurrent(scope);
             this.write(scope, l);
             return this.status(scope)!;
@@ -385,7 +379,6 @@ export class SocialContentTaskBudget {
                 reservedMicros:retainedMicros,status:'completed',receiptRef:`weekly-exact:${binding.sourceReceiptHash}`,
                 preproductionBinding:sealed};
             if(!ledger.authorizationRefs.includes(authorization.authorizationRef))ledger.authorizationRefs.push(authorization.authorizationRef);
-            if(used(ledger)>ledger.limitMicros)fail('exceeded');
             await this.ports.assertCurrent(scope);this.write(scope,ledger);return {status:this.status(scope)!,contentLedgerRef};
         });
     }

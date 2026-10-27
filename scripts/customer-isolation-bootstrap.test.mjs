@@ -10,3 +10,9 @@ test('local preview installs isolation by default without NODE_OPTIONS or a guar
  const siblings=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',"import './server/runtime/localCustomerPreviewIsolation.ts';import './scripts/fixtures/customer-isolation-startup-observer.mjs';"],{env:{NODE_ENV:'development',LINGSHU_LOCAL_PREVIEW:'1',CUSTOMER_ISOLATION_CANARY:'1'},encoding:'utf8',timeout:15000});assert.equal(siblings.status,0,siblings.stderr);assert.match(siblings.stdout,/adapter-observed-default-deny/);
  assert.match(fs.readFileSync('server/index.ts','utf8'),/^import '\.\/runtime\/localCustomerPreviewIsolation\.js';/,'isolation must run before adapter imports');
 });
+
+test('only the explicit supervised production preview keeps the real background role and provider network',()=>{
+ const code=`Object.assign(process.env,{NODE_ENV:'development',LINGSHU_LOCAL_PREVIEW:'1',LINGSHU_LOCAL_PRODUCTION_RUNTIME:'1',LINGSHU_LOCAL_PAID_GENERATION_ENABLED:'1'});await import('./server/runtime/localCustomerPreviewIsolation.ts');console.log(JSON.stringify({installed:typeof globalThis[Symbol.for('lingshu.customerIsolationStatus')]==='function',role:process.env.PROCESS_ROLE,host:process.env.LINGSHU_LISTEN_HOST}));`;
+ const r=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',code],{env:{},encoding:'utf8',timeout:15000});assert.equal(r.status,0,r.stderr);
+ assert.deepEqual(JSON.parse(r.stdout.trim().split('\n').at(-1)),{installed:false,role:'all',host:'127.0.0.1'});
+});

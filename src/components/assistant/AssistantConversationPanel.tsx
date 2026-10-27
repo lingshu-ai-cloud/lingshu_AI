@@ -25,6 +25,7 @@ import type { useAssistantQuickExecution } from './useAssistantQuickExecution';
 import type { useAssistantSend } from './useAssistantSend';
 import type { AssistantHomeBounds } from './useAssistantHomeAnchor';
 import type { useContentTaskIntake } from './useContentTaskIntake';
+import type { AssistantWeeklyPlanExperience } from './useAssistantWeeklyPlanExperience';
 
 
 type StoreActions = ReturnType<typeof useAssistantStore.getState>;
@@ -55,6 +56,7 @@ type Props = {
   pendingAttachments: File[];
   weeklyActionBusy: boolean;
   weeklyPlanKickoffAvailable: boolean;
+  weeklyPlanExperience: AssistantWeeklyPlanExperience;
   pipelineEntries: AssistantQuickExecution[];
   pendingCount: number;
   contentIntake: ReturnType<typeof useContentTaskIntake>;
@@ -90,7 +92,7 @@ export default function AssistantConversationPanel(props: Props) {
     assistantTool, viewport, reduceMotion, productionDecisionContext, decisionFeedRevision,
     persistenceScopeKey, welcomeBubbleVisible, loading, fileGenerating, replyStreaming,
     attachmentUploading, attachmentError, pendingAttachments, weeklyActionBusy,
-    weeklyPlanKickoffAvailable, pipelineEntries, pendingCount, contentIntake,
+    weeklyPlanKickoffAvailable, weeklyPlanExperience, pipelineEntries, pendingCount, contentIntake,
     messageScrollRef, assistantInputRef, onAction, onSessionRefresh, closeAssistant,
     returnToConversation, openDecisionDialog, handleDecisionFeedChange,
     openWeeklyPlanFromAssistant, send, sendComposerMessage, runQuickExecution,
@@ -235,6 +237,7 @@ export default function AssistantConversationPanel(props: Props) {
                 }}
                 weeklyPlanKickoffAvailable={weeklyPlanKickoffAvailable}
                 onOpenWeeklyPlan={openWeeklyPlanFromAssistant}
+                weeklyPlanExperience={weeklyPlanExperience}
               />
               {inlineHome && creationMode === 'free' && activeThread.creationDraft?.guided && <GuidedCreationChoices key={activeThread.creationDraft.referenceId} reply={creationReply}/>}
               {inlineHome && creationMode === 'free' && !activeThread.creationDraft?.guided && creationReply && <ContentCreationChoices reply={creationReply} busy={loading || replyStreaming}

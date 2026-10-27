@@ -4,9 +4,8 @@ import { normalizeContinuationPolicy } from '../../shared/contracts/continuation
 import { findOperatingGoalConflict } from './operatingGoalConflicts.js';
 import { repairCollapsedWeeklyVideoProduction, validatePackageForStart, compilePackage, packageTaskForKey } from './weeklyPackage.js';
 import { type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
-import { presenterProductionGate, type ProductionDefaults } from '../../src/lib/shotProduction.js';
 import { store } from '../storage/index.js';
-import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
+import { newContentGenerationAuthorization, type ContentGenerationAuthorization } from '../../shared/contracts/contentGenerationAuthorization.js';
 import { type EnterpriseProfile } from '../routes/enterprise.js';
 import { readServerProductionOnboardingReadiness } from './productionOnboardingPreflight.js';
 import { configurationSnapshot, enterpriseProfileFromKnowledgeBinding } from './configuration.js';
@@ -92,7 +91,7 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
     }
   }
 
-  async function approveGoalForReview(tenantId: string, userId: string, goalId: string, packageRevision: number | undefined, members: Array<{id: string}>) {
+  async function approveGoalForReview(tenantId: string, userId: string, goalId: string, packageRevision: number | undefined, members: Array<{id: string}>, authorization?: ContentGenerationAuthorization) {
     return withLocalQueue(goalApprovalQueues, `${tenantId}:activate`, async () => {
       if (!store.compareAndSwap) return { status: 503, body: { error: 'goal_atomic_store_required', message: '当前存储不支持安全启动周目标。' } };
       const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, goalId, tenantId);
@@ -169,17 +168,6 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
       const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
       const currentConfig = resolvedConfiguration?.config || null;
       if (!currentConfig || !resolvedConfiguration) { return { status: 409, body: { error: 'onboarding_required' } }; }
-      const productionDefaultsRecord = (await store.list<{ id: string; tenant_id: string; payload?: ProductionDefaults }>('studio_production_defaults', {
-        where: { tenant_id: tenantId }, perPage: 1,
-      })).items[0];
-      const presenterGate = presenterProductionGate(productionDefaultsRecord?.payload);
-      if (!presenterGate.ready) {
-        return { status: 409, body: {
-            error: 'presenter_required',
-            reason: presenterGate.reason,
-            message: presenterGate.message,
-          } };
-      }
       const savedBody = existingPlan ? jsonObject<Record<string, unknown>>(existingPlan.plan, {}) : {};
       if (existingPlan && (existingPlan.status !== 'draft' || hasWeeklyGoalFactRebuildPlanFence(savedBody))) {
         return { status: 409, body: { error: 'package_locked', message: '计划已启动或正在重建，请刷新后重试。' } };
@@ -221,25 +209,6 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
               blockers,
             } };
         }
-        const cloneWithoutVerifiedBudget = masterPlans.find(item => item.route === 'clone'
-          && item.estimatedCostRange?.basis !== 'verified_storyboard_provider_envelope');
-        if (cloneWithoutVerifiedBudget) {
-          return { status: 409, body: { error: 'production_budget_forecast_required', message: '本周逐镜制作尚未完成可靠预算预计，请先生成并核对周计划详情，未启动生产。' } };
-        }
-        const protectedBudget = pack.directorPlan?.productionBudgetMode !== 'economy';
-        const selectedCaps = masterPlans.map(item => Number(protectedBudget
-          ? item.estimatedCostRange?.maxCny || item.estimatedCost
-          : item.estimatedCostRange?.minCny || item.estimatedCost));
-        const approvedTotal = Math.round(selectedCaps.reduce((sum, value) => sum + value, 0) * 100) / 100;
-        if (pack.directorPlan && (approvedTotal <= 0 || Math.abs(pack.directorPlan.productionBudget - approvedTotal) > 0.009)) {
-          return { status: 409, body: { error: 'production_budget_approval_stale', message: '开工预算与当前分镜预计不一致，请重新核对并选择预算方案，未启动生产。' } };
-        }
-        const installationCeiling = process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY === undefined
-          ? null : Number(process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY);
-        if (!isInternalBudgetExemptTenant(tenantId) && installationCeiling !== null && (!Number.isFinite(installationCeiling) || installationCeiling <= 0
-          || selectedCaps.some(value => value > installationCeiling + 0.000001))) {
-          return { status: 409, body: { error: 'production_budget_installation_ceiling', message: `系统单条制作上限不足以执行已选方案（当前上限 ¥${Number.isFinite(installationCeiling) ? installationCeiling.toFixed(2) : '0.00'}），请在开工前调整系统额度或选择精简预算。` } };
-        }
         if (masterPlans.length) {
           const productionProfile = frozenEnterpriseProfileForPlan(existingPlan, false)
             || enterpriseProfileFromKnowledgeBinding(resolvedConfiguration.knowledgeBinding) as EnterpriseProfile | null;
@@ -253,7 +222,7 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
               profile: productionProfile,
               preferences: config.productionOnboarding,
               plans: masterPlans,
-              budgetConfirmed: Boolean(pack.directorPlan && approvedTotal > 0),
+              budgetConfirmed: true,
             });
             if (!readiness.ready) return { status: 409, body: {
                 error: 'production_onboarding_preflight_blocked',
@@ -278,7 +247,13 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
       const frozenPlanMetadata = existingPlan
         ? { ...savedBody, ...(needsFrozenFactSnapshot ? { knowledgeBinding: resolvedConfiguration.knowledgeBinding } : {}) }
         : configurationSnapshot(resolvedConfiguration);
-      const approvedPlanBody = { ...frozenPlanMetadata, ...planDraft, ...(managedPublishingGrantId ? { managedPublishingGrantId } : {}), ...(pack ? { packageApprovedBy: userId, packageApprovedAt: now } : {}) };
+      const approvedPlanBody = {
+        ...frozenPlanMetadata,
+        ...planDraft,
+        contentGenerationAuthorization: { ...(authorization || newContentGenerationAuthorization()), authorizedBy: userId, authorizedAt: now },
+        ...(managedPublishingGrantId ? { managedPublishingGrantId } : {}),
+        ...(pack ? { packageApprovedBy: userId, packageApprovedAt: now } : {}),
+      };
       let plan: PlanRecord;
       if (existingPlan) {
         const updated = await store.compareAndSwap?.(COLLECTION.plans, existingPlan.id, {

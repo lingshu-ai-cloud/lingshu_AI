@@ -24,6 +24,37 @@ function delay(schedule: number[], attempt: number): number {
   return schedule[Math.min(Math.max(attempt - 1, 0), schedule.length - 1)]!;
 }
 
+/** Public, credential-safe provider attribution for task cards and notices. */
+export function contentProviderApiFailureMessage(error: unknown): string | null {
+  const raw = String(error instanceof Error ? error.message : error || '');
+  const lower = raw.toLocaleLowerCase();
+  const provider = /seedance/.test(lower) ? 'Seedance API'
+    : /seedream/.test(lower) ? 'Seedream API'
+      : /qwen|dashscope|qianwen/.test(lower) ? (/\btts\b|speech|audio/.test(lower) ? 'Qwen TTS API' : 'Qwen API')
+        : /minimax/.test(lower) ? 'MiniMax TTS API'
+          : /heygen/.test(lower) ? 'HeyGen API'
+            : /gemini/.test(lower) ? 'Gemini API'
+              : /openai|gpt-image/.test(lower) ? 'OpenAI Image API'
+                : null;
+  if (!provider) return null;
+  const reason = /401|unauthori[sz]ed|invalid api.?key|api.?key.*(?:invalid|missing|not set)|未配置.*api.?key|鉴权/.test(lower)
+    ? '鉴权失败，请检查密钥'
+    : /403|forbidden|not activated|do not have access|model or endpoint|permission|未开通|无权限/.test(lower)
+      ? '账号无权限或模型尚未开通'
+      : /429|rate.?limit|too many requests|quota|insufficient.*(?:balance|credit)|余额不足|额度不足/.test(lower)
+        ? '请求频率、额度或余额不足'
+        : /timed?\s*out|timeout|etimedout|econnreset|econnrefused|enotfound|eai_again|fetch failed|network|socket/.test(lower)
+          ? '网络连接或响应超时'
+          : /\b5\d\d\b|service unavailable|bad gateway/.test(lower)
+            ? '供应商服务暂时不可用'
+            : /rejected|moderation|policy violation|blocked prompt|内容.*(?:拒绝|违规|不合规)/.test(lower)
+              ? '内容被供应商拒绝'
+              : /no media|no image|no video|no audio|没有.*(?:视频|图片|音频)|invalid.*(?:output|response)|返回格式|returned.*(?:empty|invalid|unsupported)/.test(lower)
+                ? '供应商返回的结果无效'
+                : '调用失败';
+  return `${provider} ${reason}`;
+}
+
 export function classifyContentExecutionFailure(error: unknown, input: {
   attempt: number;
   hasUnsettledProviderReceipt?: boolean;
@@ -32,6 +63,7 @@ export function classifyContentExecutionFailure(error: unknown, input: {
   const env = input.env ?? process.env;
   const raw = String(error instanceof Error ? error.message : error || 'content_execution_failed');
   const lower = raw.toLocaleLowerCase();
+  const providerFailure = contentProviderApiFailureMessage(error);
   const networkAttempts = boundedInteger(env.CONTENT_NETWORK_MAX_ATTEMPTS, 4, 1, 10);
   const systemAttempts = boundedInteger(env.CONTENT_SYSTEM_MAX_ATTEMPTS, 3, 1, 10);
   const reconciliationAttempts = boundedInteger(env.CONTENT_RECONCILIATION_MAX_ATTEMPTS, 12, 1, 100);
@@ -100,13 +132,13 @@ export function classifyContentExecutionFailure(error: unknown, input: {
   if (/insufficient[_\s-]*(?:balance|credit)|余额不足|quota[_\s-]*(?:exceeded|insufficient)|monthly_budget_exceeded|budget_denied|budget_unavailable|预算不足/i.test(lower)) {
     return {
       failureClass: 'insufficient_balance', disposition: 'block', retryDelayMs: null,
-      maxAttempts: 1, publicReason: '余额或预算不足，补充后可恢复',
+      maxAttempts: 1, publicReason: providerFailure || '余额或预算不足，补充后可恢复',
     };
   }
   if (/content[_\s-]*(?:rejected|moderation)|内容(?:拒绝|违规|不合规)|safety|policy violation|blocked prompt|providerrejected|qwen image (?:400|403|422)|seedance (?:400|403|422)/i.test(lower)) {
     return {
       failureClass: 'content_rejected', disposition: 'block', retryDelayMs: null,
-      maxAttempts: 1, publicReason: '内容被模型拒绝，需要修改后恢复',
+      maxAttempts: 1, publicReason: providerFailure || '内容被模型拒绝，需要修改后恢复',
     };
   }
   // A product-footage finding is bound to the frozen shot plan and exact
@@ -124,7 +156,7 @@ export function classifyContentExecutionFailure(error: unknown, input: {
       disposition: input.attempt >= networkAttempts ? 'block' : 'retry',
       retryDelayMs: input.attempt >= networkAttempts ? null : delay([15_000, 60_000, 300_000, 900_000], input.attempt),
       maxAttempts: networkAttempts,
-      publicReason: input.attempt >= networkAttempts ? '网络重试已用尽' : '网络异常，正在分级重试',
+      publicReason: providerFailure || (input.attempt >= networkAttempts ? '网络重试已用尽' : '网络异常，正在分级重试'),
     };
   }
   return {
@@ -132,6 +164,6 @@ export function classifyContentExecutionFailure(error: unknown, input: {
     disposition: input.attempt >= systemAttempts ? 'block' : 'retry',
     retryDelayMs: input.attempt >= systemAttempts ? null : delay([30_000, 120_000, 600_000], input.attempt),
     maxAttempts: systemAttempts,
-    publicReason: input.attempt >= systemAttempts ? '系统重试已用尽' : '系统异常，正在延迟重试',
+    publicReason: providerFailure || (input.attempt >= systemAttempts ? '系统重试已用尽' : '系统异常，正在延迟重试'),
   };
 }

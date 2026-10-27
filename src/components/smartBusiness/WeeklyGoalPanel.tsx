@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { Button } from 'antd';
 import { Check, CheckCircle2, Loader2, Target, X } from 'lucide-react';
-import { day as shanghaiDay } from '../../../shared/mobile-domain.mjs';
 import { socialOperatingProfile } from '../../../shared/contracts/socialOperatingProfile';
 import { weeklyPublishingPlatforms } from '../../../shared/contracts/weeklyPublishingTargets';
 import { scheduleWeeklyVideos } from '../../lib/weeklyGoalSchedule';
 import { videoSchedulingErrors } from '../../lib/videoCreationPlan';
 import { buildPresetMatrixVideoPlans, WEEKLY_TASK_PACKAGE_PRESETS, weeklyTaskPackagePreset, type WeeklyTaskPackagePresetId } from '../../lib/weeklyTaskPackagePresets';
 import { defaultMatrixPlan } from '../../lib/weeklyMatrix';
-import type { DigitalEmployeeConfig, WeeklyGoal } from '../../lib/digitalEmployees';
+import type { DigitalEmployeeConfig } from '../../lib/digitalEmployees';
+import { defaultWeeklyGoal, EMPTY_GOAL, isoDay, type GoalDraft } from '../../lib/defaultWeeklyGoal';
 import WeeklyPlanConfirmationCard from '../WeeklyPlanConfirmationCard';
 import VideoPlanEditor from '../VideoPlanEditor';
 import { Field, inputClass } from './DigitalEmployeeFormField';
@@ -25,31 +25,8 @@ export const contentPlatformLabel: Record<ContentPlatform, string> = {
   linkedin: "LinkedIn",
 };
 
-export function isoDay(offset: number): string {
-  const date = new Date(Date.now() + offset * 86_400_000);
-  return shanghaiDay(date.toISOString());
-}
-
-export const EMPTY_GOAL = {
-  businessLine: "full_funnel" as BusinessLine,
-  contentPlatforms: ["facebook", "instagram", "tiktok", "youtube", "linkedin"] as Array<Exclude<ContentPlatform, "all">>,
-  title: "本周内容增长目标",
-  objective: "形成一组面向目标市场、证据充分且可进入审批的内容执行包",
-  metric: "approved_content_packages",
-  baseline: 0,
-  target: 5,
-  unit: "项",
-  startsAt: isoDay(0),
-  endsAt: isoDay(6),
-  scope: "",
-  // Compatibility field only. The current product does not support paid-media spend.
-  constraints: ["对外发布必须审批"],
-};
-
-export type GoalDraft = Omit<
-  WeeklyGoal,
-  "id" | "status" | "version" | "createdAt" | "updatedAt"
->;
+export { EMPTY_GOAL, isoDay } from '../../lib/defaultWeeklyGoal';
+export type { GoalDraft } from '../../lib/defaultWeeklyGoal';
 
 export function GoalPanel({
   config,
@@ -66,6 +43,7 @@ export function GoalPanel({
   contentPlatform: ContentPlatform;
   onOpenSettings?: () => void;
 }) {
+  const defaults = defaultWeeklyGoal(config, businessLine, contentPlatform);
   const configuredTargetPlatforms = weeklyPublishingPlatforms(config.publishingTargets, config.socialCadence);
   const configuredPlatforms = configuredTargetPlatforms.length
     ? configuredTargetPlatforms
@@ -73,7 +51,7 @@ export function GoalPanel({
   const initialPlatforms = contentPlatform !== "all" && configuredPlatforms.includes(contentPlatform)
     ? [contentPlatform]
     : config.enabledWorkflows.includes("content_publish") ? configuredPlatforms : [configuredPlatforms[0]];
-  const initialPresetId: WeeklyTaskPackagePresetId = config.operatingMaturity === 'starting' ? 'b2b_starting' : 'b2b_growing';
+  const initialPresetId: WeeklyTaskPackagePresetId = defaults.presetId;
   const initialPreset = weeklyTaskPackagePreset(initialPresetId);
   const presetPlatforms = (presetId: WeeklyTaskPackagePresetId) => {
     const preset = weeklyTaskPackagePreset(presetId);
@@ -92,24 +70,11 @@ export function GoalPanel({
   });
   const targetFor = (preset: ReturnType<typeof weeklyTaskPackagePreset>, videoCount: number) =>
     ['approved_content_packages', 'published_posts'].includes(preset.metric) ? videoCount : preset.weeklyOutput;
-  const initialVideoPlans = businessLine === 'customer_conversion' ? [] : buildPlans(initialPreset, initialPresetPlatforms);
+  const initialVideoPlans = defaults.draft.videoPlans || [];
   const [selectedPresetId, setSelectedPresetId] = useState<WeeklyTaskPackagePresetId>(initialPresetId);
   const [weeklyFocus, setWeeklyFocus] = useState('');
   const [goalEditorOpen, setGoalEditorOpen] = useState(false);
-  const [form, setForm] = useState<GoalDraft>(() => ({
-    ...EMPTY_GOAL,
-    startsAt: isoDay(0),
-    endsAt: isoDay(6),
-    businessLine,
-    videoPlans: initialVideoPlans,
-    contentPlatforms: businessLine === 'customer_conversion' ? initialPlatforms : initialPresetPlatforms,
-    title: businessLine === "customer_conversion" ? "本周客户转化目标" : `${initialPreset.label}周任务包`,
-    objective: businessLine === "customer_conversion" ? "提升高意向客户的报价、跟进与成交转化" : initialPreset.objective,
-    metric: businessLine === 'customer_conversion' ? 'qualified_inquiries' : initialPreset.metric,
-    target: businessLine === 'customer_conversion' ? 1 : targetFor(initialPreset, initialVideoPlans.length),
-    unit: businessLine === 'customer_conversion' ? '位' : '条',
-    scope: config.targetMarkets,
-  }));
+  const [form, setForm] = useState<GoalDraft>(() => defaults.draft);
   const [submitted, setSubmitted] = useState(false);
   const estimatedPlanCost = (form.videoPlans || []).reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0);
   const set = <K extends keyof GoalDraft>(key: K, value: GoalDraft[K]) =>
