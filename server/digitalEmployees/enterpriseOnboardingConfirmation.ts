@@ -81,7 +81,7 @@ export async function applyEnterpriseOnboardingConfirmation(input: {
         name: input.confirmation.brandName,
         tone: input.confirmation.brandTone || current.brand.tone,
       },
-      products: {
+      products: input.confirmation.productsDeferred ? current.products : {
         ...current.products,
         items: input.confirmation.products,
         categories: [...new Set(focusProducts.map(product => product.category).filter(Boolean))].join('、'),
@@ -89,7 +89,7 @@ export async function applyEnterpriseOnboardingConfirmation(input: {
       },
       strategy: {
         ...current.strategy,
-        focusProducts: focusProducts.map(product => product.name).join('、'),
+        focusProducts: input.confirmation.productsDeferred ? current.strategy?.focusProducts : focusProducts.map(product => product.name).join('、'),
         focusMarkets: input.confirmation.targetMarket,
       },
       customers: {
@@ -109,8 +109,8 @@ export async function applyEnterpriseOnboardingConfirmation(input: {
       digitalEmployeeOnboarding: {
         ...current.digitalEmployeeOnboarding,
         profileConfirmedAt: now,
-        productSelectionConfirmedAt: now,
-        continuedWithoutProducts: false,
+        ...(input.confirmation.productsDeferred ? {} : { productSelectionConfirmedAt: now }),
+        continuedWithoutProducts: input.confirmation.productsDeferred === true && !(current.products.items?.length),
         confirmationId: input.confirmation.confirmationId,
         confirmationDigest: digest,
         completedAt: now,

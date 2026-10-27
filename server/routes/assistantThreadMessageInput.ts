@@ -2,6 +2,7 @@ import { assistantCreationPortalSchema } from '../../shared/contracts/assistantC
 import { assistantTaskPortalSchema } from '../../shared/contracts/assistantTaskPortal.js';
 import { assistantSourcePortalSchema } from '../../shared/contracts/assistantSourcePortal.js';
 import { companyReportSchema } from '../../shared/contracts/companyReport.js';
+import { sceneSelectionSchema, businessScenePromptSchema } from '../../shared/contracts/assistantBusinessScene.js';
 import { AssistantActionError } from '../assistant/actionRouting.js';
 import { creationReplySchema } from '../../shared/contracts/contentCreationDialogue.js';
 import { parseAssistantReferenceMedia } from './assistantThreadReferenceMedia.js';
@@ -71,7 +72,10 @@ export function parseMessages(value: unknown): unknown[] {
     const sourcePortal = source.sourcePortal === undefined ? undefined : assistantSourcePortalSchema.safeParse(source.sourcePortal);
     if (sourcePortal && (!sourcePortal.success || source.role !== 'assistant')) return threadInputError('assistant_source_portal_invalid', '原文入口格式无效。');
     const companyReport = source.companyReport === undefined ? undefined : companyReportSchema.safeParse(source.companyReport);
+    const businessScene = source.businessScene === undefined ? undefined : sceneSelectionSchema.safeParse(source.businessScene);
+    const businessScenePrompt = source.businessScenePrompt === undefined ? undefined : businessScenePromptSchema.safeParse(source.businessScenePrompt);
+    if (businessScene && (!businessScene.success || source.role !== 'assistant') || businessScenePrompt && (!businessScenePrompt.success || source.role !== 'assistant')) return threadInputError('assistant_scene_invalid', '对话对象格式无效。');
     if (companyReport && (!companyReport.success || source.role !== 'assistant' || byteLength(JSON.stringify(source.companyReport)) > 100_000)) return threadInputError('assistant_company_report_invalid', '企业报告格式或大小无效。');
-    return { role: source.role, content, ...(sources ? { sources } : {}), ...(creation?.success ? { creation: creation.data } : {}), ...(referenceMedia ? { referenceMedia } : {}), ...(portal?.success ? { creationPortal: portal.data } : {}), ...(taskPortal?.success ? { taskPortal: taskPortal.data } : {}), ...(sourcePortal?.success ? { sourcePortal: sourcePortal.data } : {}), ...(companyReport?.success ? { companyReport: companyReport.data } : {}) };
+    return { role: source.role, content, ...(businessScene?.success ? { businessScene: businessScene.data } : {}), ...(businessScenePrompt?.success ? { businessScenePrompt: businessScenePrompt.data } : {}), ...(sources ? { sources } : {}), ...(creation?.success ? { creation: creation.data } : {}), ...(referenceMedia ? { referenceMedia } : {}), ...(portal?.success ? { creationPortal: portal.data } : {}), ...(taskPortal?.success ? { taskPortal: taskPortal.data } : {}), ...(sourcePortal?.success ? { sourcePortal: sourcePortal.data } : {}), ...(companyReport?.success ? { companyReport: companyReport.data } : {}) };
   });
 }

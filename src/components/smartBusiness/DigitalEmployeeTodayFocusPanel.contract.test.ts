@@ -13,8 +13,8 @@ assert.match(workspace, /<SmartBusinessDashboard data=\{data\} view=\{dashboardV
   'task state and intervention must remain on the real content workflow');
 assert.match(workspace, /onRetryTask=\{async taskId => Boolean\(await act\(`retry:\$\{taskId\}`,[\s\S]{0,120}digitalEmployeeApi\.retryTask\(taskId\)\)\)\}/,
   'the real task retry action must remain reachable from the workflow');
-assert.match(workspace, /workspaceView === "today" && <BusinessOverviewTabs data=\{data\} onNavigate=\{onNavigate\}/,
-  'the current overview must expose its three business tabs');
+assert.doesNotMatch(workspace, /<BusinessOverviewTabs\b/,
+  'the current overview must not duplicate publishing, ads, and inquiry workspaces below the business dashboard');
 assert.match(tabs, /key: 'calendar'[\s\S]*key: 'ads'[\s\S]*key: 'inquiries'/,
   'the overview tabs must remain calendar, ads, then inquiries');
 assert.doesNotMatch(workspace, /<TodayFocusPanel\b/,

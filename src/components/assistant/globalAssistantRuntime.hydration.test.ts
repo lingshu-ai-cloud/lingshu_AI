@@ -1,11 +1,31 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { useAssistantStore } from '../../stores/assistantStore';
 import {
   emptyAssistantThread,
   mergeAssistantThread,
   persistedAssistantThread,
   withoutPersistedConversation,
 } from './globalAssistantRuntime';
+
+test('starting a new conversation clears the previous tombstone and reset metadata', () => {
+  const store = useAssistantStore.getState();
+  store.hydrateThread('business', { ...emptyAssistantThread(), conversationKey: 'conversation:old', deletedAt: 'deleted', conversationResetVersion: 9, title: '旧会话' });
+  store.hydrateThread('business', { ...emptyAssistantThread(), conversationKey: 'conversation:new' });
+  assert.equal(useAssistantStore.getState().threads.business.deletedAt, '');
+  assert.equal(useAssistantStore.getState().threads.business.conversationResetVersion, 0);
+  assert.equal(useAssistantStore.getState().threads.business.title, '');
+});
+
+test('a cleared or deleted remote conversation never merges stale local messages or references', () => {
+  const stale = { ...emptyAssistantThread(), version: 5, messages: [{ role: 'user' as const, content: 'old private context' }], draftInput: 'stale input' };
+  const cleared = { ...emptyAssistantThread(), version: 6, conversationResetVersion: 6, conversationKey: 'business' };
+  assert.deepEqual(mergeAssistantThread(cleared, stale), cleared);
+  assert.deepEqual(mergeAssistantThread({ ...cleared, deletedAt: '2026-10-27T00:00:00Z' }, stale).messages, []);
+  const restored = persistedAssistantThread({ ...cleared, agentId: 'conversation:next', title: '下一次会话' }, stale)!;
+  assert.equal(restored.conversationKey, 'conversation:next');
+  assert.equal(restored.conversationResetVersion, 6);
+});
 
 test('restored thread keeps server CAS metadata but does not reopen old conversation text', () => {
   const remote = persistedAssistantThread({

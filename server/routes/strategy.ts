@@ -3,6 +3,7 @@ import { registerAssistantBusinessScenes } from './assistantBusinessScenes.js';
 import { sceneSelectionSchema } from '../../shared/contracts/assistantBusinessScene.js';
 import { businessSceneGrounding } from '../assistantContext/businessScenes/service.js';
 import { prepareExternalNewsScope } from '../assistantContext/externalNewsScope.js';
+import { authoritativeNewsAnswer } from '../externalInformation/authoritativeNews.js';
 import { CreationDialogueError } from '../assistantContext/contentCreationDialogue.js';
 import { registerContentCreationDialogue, readCreationChatGrounding } from './contentCreationDialogue.js';
 import {readAuthorizedWhatsAppCustomers} from '../whatsapp/authorizedCustomerRead.js';
@@ -22,7 +23,7 @@ import { answerExternalData } from '../assistantContext/externalAnswer.js';
 import { ExternalInformationError } from '../externalInformation/http.js';
 import { appendInformationSources } from '../externalInformation/sourceFooter.js';
 import { previewInformationScope } from '../assistantContext/previewInformationScope.js';
-import { ASSISTANT_DETAILS_POLICY } from '../../shared/assistantReadableReply.js';
+import { ASSISTANT_DETAILS_POLICY, ASSISTANT_QUICK_TASK_POLICY } from '../../shared/assistantReadableReply.js';
 import { companyReportIntent, generateCompanyReport, companyReportSummary } from '../externalInformation/companyReport.js';
 import { companyFilingsIntent, companyReportOptions, queryCompanyFilings, renderCompanyFilings, resolveHalfYearReport } from '../externalInformation/companyFilingsDelivery.js';
 import { DecisionMemoryError, recordDecisionMemory, updateDecisionMemory, revokeDecisionMemory, listDecisionMemories, type DecisionMemory } from '../assistantContext/decisionMemory.js';
@@ -303,15 +304,17 @@ async function loadMarketContext(tenantId: string, profile: any, force: boolean)
 function formatStreamError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   if (/RESOURCE_EXHAUSTED|Too Many Requests|code['"]?:429|quota|rate limit/i.test(raw)) {
-    return 'Gemini 返回 429/RESOURCE_EXHAUSTED，通常是模型或联网搜索工具临时限流、项目配额限制，或当前 API Key 未开通对应模型/搜索能力；不一定是账户余额不足。请稍后重试，或先关闭联网检索再生成。';
+    return '模型服务暂时限流，请稍后再试。已收到的内容会保留。';
   }
   if (/fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND/i.test(raw)) {
     return '模型服务网络连接失败，请检查代理或稍后重试。';
   }
-  if (/API key|GEMINI_API_KEY/i.test(raw)) {
-    return 'Gemini API Key 未配置或不可用。';
+  if (/API key|GEMINI_API_KEY|DASHSCOPE_API_KEY|401|Unauthorized/i.test(raw)) {
+    return '模型连接凭据未通过验证，请在模型设置中检查连接。';
   }
-  return raw.slice(0, 300);
+  if (/timed? ?out|timeout|abort/i.test(raw)) return '本次查询超时，已收到的内容会保留；可以缩小问题范围后继续。';
+  if (/QWEN_MAX_TOKENS|未完整结束/u.test(raw)) return '模型本次输出未完整结束，已保留收到的内容，可以继续提问。';
+  return '本次回答暂未完成，请稍后再试。';
 }
 
 strategyRouter.post('/advisor', async (req, res) => {
@@ -410,6 +413,7 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
   const scene = req.body?.businessScene === undefined ? undefined : sceneSelectionSchema.safeParse(req.body.businessScene);
   if (scene && !scene.success) { res.status(400).json({ error: 'scene_input_invalid', message: '请选择有效业务对象及日期范围。' }); return; }
   const businessScene = scene?.success ? scene.data : undefined;
+  const quickTaskReply = req.body?.responseMode === 'quick_task';
   const deepThinking = req.body?.deepThinking === true;
   if (!await consumeDemoQuota(req, res, 'aiChat')) return;
 
@@ -418,10 +422,7 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const newsScope = businessScene ? null : await prepareExternalNewsScope(messages, tenantId);
-  const question = newsScope?.question ?? latestAssistantQuestion(messages);
-  const externalPlan = businessScene ? { kind: 'internal' as const, mixed: false, domains: [] as string[], freshnessDays: undefined } : planExternalQuestion(question);
-  const requireSources = externalPlan.kind === 'web';
+  let requireSources = false;
   const cancellation = new AbortController();
   const onClose = () => cancellation.abort(new Error('assistant_client_disconnected'));
   res.on('close', onClose);
@@ -429,8 +430,18 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
   heartbeat.unref();
   const timeRule = currentTimeRule();
   try {
+    const newsScope = businessScene ? null : await prepareExternalNewsScope(messages, tenantId);
+    const question = newsScope?.question ?? latestAssistantQuestion(messages);
+    const externalPlan = businessScene ? { kind: 'internal' as const, mixed: false, domains: [] as string[], freshnessDays: undefined } : planExternalQuestion(question);
+    requireSources = externalPlan.kind === 'web';
     if (newsScope?.clarification) {
       res.write(`data: ${JSON.stringify({ text: newsScope.clarification })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      return;
+    }
+    if (newsScope) {
+      const result = await authoritativeNewsAnswer(question, cancellation.signal);
+      res.write(`data: ${JSON.stringify({ sources: result.sources, text: result.text })}\n\n`);
       res.write('data: [DONE]\n\n');
       return;
     }
@@ -483,9 +494,10 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
     const sourceRule = requireSources ? '\n\n【联网来源硬规则】本轮涉及联网搜索/公开信息核验，必须使用联网检索结果，并通过 sources 事件返回可点击来源；如果无法取得来源，不要给出联网结论，改为说明需要重新检索。'
       : externalPlan.kind === 'offline' ? '\n本轮用户明确禁止联网。只回答已有证据和一般方法，不列未核验的具体认证/监管要求、法律义务、技术极限或行业精确阈值，也不提供未核验的当前汇率、行情、贸易数字或最新政策。需要此类信息时明确另行核验。' : '';
     const generalMethod = externalPlan.kind === 'offline' && !needsGrounding && !creationGrounding;
-    const systemPrompt = generalMethod ? `${GENERAL_METHOD_PROMPT}\n${grounding.text}`
-      : `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${sourceRule}\n\n${grounding.text}\n${creationGrounding}\n${EXTERNAL_SOURCE_RULES}\n${externalEvidence}\n${ASSISTANT_CONTEXT_RULES}`;
-    for await (const ev of callLLMChatStream(newsScope ? [...messages.slice(0, -1), { role: 'user', content: question }] : messages, { systemPrompt, deepThinking, requireConclusion: true, searchEvidenceFirst: Boolean(newsScope), validateAnswer: generalMethod ? assertGeneralMethodAnswer : undefined, requireSources, webSearch: requireSources, searchDomains: requireSources ? externalPlan.domains : undefined, searchFreshnessDays: externalPlan.freshnessDays, signal: cancellation.signal })) {
+    const replyPolicy = quickTaskReply ? `\n\n${ASSISTANT_QUICK_TASK_POLICY}` : '';
+    const systemPrompt = generalMethod ? `${GENERAL_METHOD_PROMPT}\n${grounding.text}${replyPolicy}`
+      : `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${sourceRule}\n\n${grounding.text}\n${creationGrounding}\n${EXTERNAL_SOURCE_RULES}\n${externalEvidence}\n${ASSISTANT_CONTEXT_RULES}${replyPolicy}`;
+    for await (const ev of callLLMChatStream(messages, { systemPrompt, deepThinking, requireConclusion: requireSources, validateAnswer: generalMethod ? assertGeneralMethodAnswer : undefined, requireSources, webSearch: requireSources, searchDomains: requireSources ? externalPlan.domains : undefined, searchFreshnessDays: externalPlan.freshnessDays, signal: cancellation.signal })) {
       res.write(`data: ${JSON.stringify(ev)}\n\n`);
     }
     if (externalAnswer?.sources.length) res.write(`data: ${JSON.stringify({ text: appendInformationSources('', externalAnswer.sources) })}\n\n`);
@@ -493,12 +505,14 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
   } catch (err: any) {
     if (cancellation.signal.aborted) return;
     if (err instanceof ExternalInformationError && err.sources?.length) res.write(`data: ${JSON.stringify({ sources: err.sources })}\n\n`);
-    const rawError = err instanceof ExternalInformationError ? err.message : requireSources
+    const rawError = err instanceof ExternalInformationError || err instanceof BusinessSceneError ? err.message : requireSources
       ? `联网检索失败，未能取得可跳转信息来源：${formatStreamError(err)}`
       : formatStreamError(err);
     const error = requireSources && !rawError.includes('信息来源') && !(err instanceof ExternalInformationError && err.code.startsWith('company_report_'))
       ? `总体结论：${rawError}\n\n信息来源：本轮未取得通过核验的资料。` : rawError;
-    res.write(`data: ${JSON.stringify({ error, ...(err instanceof ExternalInformationError || err instanceof BusinessSceneError ? { code: err.code, publicMessage: error } : {}) })}\n\n`);
+    const code = err instanceof ExternalInformationError || err instanceof BusinessSceneError ? err.code : 'assistant_provider_unavailable';
+    console.warn('[assistant-chat-failure]', JSON.stringify({ code, requestId: res.getHeader('X-Request-Id'), sceneId: businessScene?.sceneId, reason: err instanceof Error ? err.name : 'unknown' }));
+    res.write(`data: ${JSON.stringify({ error, code, publicMessage: error })}\n\n`);
     res.write('data: [DONE]\n\n');
   } finally {
     clearInterval(heartbeat);

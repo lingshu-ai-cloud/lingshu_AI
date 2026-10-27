@@ -52,7 +52,11 @@ export default function CompanyReportScene({ busy, onCancel, onConfirm }: {
           {report && <span>统计期间：一至六月 · 原文披露 {report.publishedAt}</span>}
         </> : <span>请先选择目标企业</span>}
       </div>
-      {company && !company.reports.length && <Alert type="info" title="尚未取得该企业的可用半年报，请先刷新其财报目录。"/>}
+      {company && !company.reports.length && <section className="space-y-2"><p>{company.name}（{company.code}）· {company.segment}</p>
+        <p className="text-sm text-text-secondary">本地还没有可核验的半年报全文。可以先看企业公开信息，或读取官方财报目录。</p>
+        <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => { onCancel(); window.dispatchEvent(new CustomEvent('lingshu-assistant-open', { detail: { text: `请查询${company.name}（${company.code}）的企业公开信息，介绍主营业务、产品和海外布局，优先引用官网及公开披露；缺少半年报不影响呈现已核验的信息，不推算财务数字。`, preserveDraft: true } })); }}>查看企业公开信息</Button>
+          <Button disabled={busy} onClick={() => { onCancel(); window.dispatchEvent(new CustomEvent('lingshu-assistant-open', { detail: { text: `刷新${company.name}历史财报目录`, preserveDraft: true } })); }}>刷新官方财报目录</Button></div>
+      </section>}
       {report?.status === 'needs_review' && <Alert type="warning" title="该期间有更正或版本变化，核对前暂不生成报告。"/>}
     </>}
     <div className="company-report-scene__footer"><p>{busy ? '当前回复完成后即可生成。' : '基于所选期间的财报原文生成研究草稿，附数字对照、业务解读及来源页码。'}</p>

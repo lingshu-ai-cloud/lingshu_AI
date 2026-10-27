@@ -21,6 +21,7 @@ import AssistantLauncher from './assistant/AssistantLauncher';
 import { actionCardToTaskCard, actionResponseCardId, notificationReasonFromResponse, responseWithoutCrossObjectActions } from './assistant/assistantActionProjection';
 import { useContentTaskIntake } from './assistant/useContentTaskIntake';
 import { useAssistantThreadSaveQueue } from './assistant/useAssistantThreadSaveQueue';
+import { useAssistantConversationManagement } from './assistant/useAssistantConversationManagement';
 import { useAssistantThreadHydration } from './assistant/useAssistantThreadHydration';
 import type { UploadedAssistantAttachment } from './assistant/assistantChatPrompt';
 import { useAssistantFeatureGuides } from './assistant/useAssistantFeatureGuides';
@@ -64,7 +65,6 @@ type AssistantTool = 'knowledge-intake';
 const ASSISTANT_CONVERSATION_WELCOME_SEEN_KEY = 'lingshu-assistant-conversation-welcome-seen-v1';
 
 const ASSISTANT_UI_WATCHDOG_TIMEOUT_MS = 25_000;
-const ASSISTANT_CLOSED_CONVERSATION_TTL_MS = 5 * 60 * 1000;
 
 type AssistantPanelView = 'todo' | 'chat';
 
@@ -161,6 +161,7 @@ export default function GlobalAssistant({
     }
     return () => {
       fence.active = false;
+      persistenceFenceRef.current.active = false;
       abortRef.current?.abort();
       abortRef.current = null;
       for (const queue of assistantThreadSaveQueuesRef.current.values()) {
@@ -341,6 +342,7 @@ export default function GlobalAssistant({
   }, [welcomeBubbleStorageKey]);
 
   const resetTransientConversation = useCallback(() => {
+    setFileGenerating(false); setReplyStreaming(false); setWelcomeBubbleVisible(false);
     pendingMapFileRef.current = false;
     setContentIntakeEpoch(value => value + 1);
     abortRef.current?.abort();
@@ -367,12 +369,6 @@ export default function GlobalAssistant({
   }, [persistThread, setUnreadCount]);
 
   const openCurrentPageAgent = useCallback(() => {
-    const closed = assistantClosedRef.current;
-    if (
-      closed
-      && closed.page === page
-      && Date.now() - closed.at >= ASSISTANT_CLOSED_CONVERSATION_TTL_MS
-    ) resetTransientConversation();
     assistantClosedRef.current = null;
     openAgent(currentPageAgent, 'chat');
   }, [currentPageAgent, openAgent, page, resetTransientConversation]);
@@ -504,6 +500,13 @@ export default function GlobalAssistant({
   const assistantThreadHydrated = useAssistantThreadHydration({
     page, stablePersistenceScope, persistThread, hydrateThread,
     executeAssistantAction, upsertTaskCard, focusTaskCard, requestId,
+  });
+  const conversationControls = useAssistantConversationManagement({
+    scope: stablePersistenceScope, fence: persistenceFenceRef, pause: assistantAtomicMutationRef,
+    queues: assistantThreadSaveQueuesRef, abort: abortRef, wait: waitForInFlightThreadSave,
+    reset: resetTransientConversation, ready: assistantThreadHydrated,
+    stop: () => { setLoading(false); setReplyStreaming(false); setFileGenerating(false); },
+    blocked: attachmentUploading || contentIntake.busy || weeklyActionBusy || pipelineInFlightRef.current,
   });
 
   useEffect(() => {
@@ -655,14 +658,8 @@ export default function GlobalAssistant({
     if (previousPage === page) return;
     conversationPageRef.current = page;
 
-    // Scoped creation drafts retain their dialogue across evidence and studio navigation.
-    if (restore || kickoff) return;
-    const thread = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
-    if (thread.creationDraft || thread.messages.some(message =>
-      message.companyReport || message.creationPortal?.scenario === 'viral_replication' || message.taskPortal?.action === 'view_production')) return;
+    // Navigation preserves named conversations; clearing is an explicit user action.
     assistantClosedRef.current = null;
-    resetTransientConversation();
-    focusTaskCard(PRIMARY_ASSISTANT_THREAD, null);
   }, [focusTaskCard, kickoff, page, resetTransientConversation, restore]);
 
   useEffect(() => {
@@ -730,6 +727,8 @@ export default function GlobalAssistant({
       />}
 
       <AssistantConversationPanel
+        conversationControls={conversationControls}
+        conversationLocked={assistantAtomicMutationRef.current}
         page={page} pageContext={pageContext} currentPageAgent={currentPageAgent}
         inlineHome={inlineHome} inlineHomeBounds={inlineHomeBounds}
         activeAgent={activeAgent} activeThread={activeThread} mode={mode} panelView={panelView}
@@ -780,6 +779,7 @@ export default function GlobalAssistant({
         retracted={launcherRetracted}
         chatOpen={mode === 'chat'}
         badgeCount={decisionTotal ?? pendingCount}
+        reduceMotion={reduceMotion}
         launcherButtonRef={launcherButtonRef}
         edgeLauncherButtonRef={edgeLauncherButtonRef}
         onLauncherClick={handleLauncherClick}

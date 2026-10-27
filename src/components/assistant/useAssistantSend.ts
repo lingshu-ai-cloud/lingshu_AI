@@ -1,4 +1,4 @@
-import { businessSceneFollowup, type BusinessSceneSelection } from '../../../shared/contracts/assistantBusinessScene';
+import { businessSceneFollowup, defaultBusinessPeriod, isBusinessScene, type BusinessSceneSelection } from '../../../shared/contracts/assistantBusinessScene';
 import { requestCreationReply } from './contentCreationRequest';
 import { assistantScenarioIntake } from '../../lib/assistantScenarioIntake';
 import type { CreationTurn } from '../../../shared/contracts/contentCreationDialogue';
@@ -25,6 +25,7 @@ import { assistantAttachmentKind } from './AssistantComposer';
 import { buildAssistantChatMessages, type UploadedAssistantAttachment } from './assistantChatPrompt';
 import { assistantProductionIntent, assistantCreationPortal } from './assistantProductionIntake';
 import { assistantImageReplicationPortal } from './assistantImageReplicationIntent';
+import { ASSISTANT_HOME_PROMPTS, isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
 import { runAssistantProductionRequest } from './assistantProductionRequest';
 import type { useContentTaskIntake } from './useContentTaskIntake';
 import { agentForOrbit, compactText, contextForOrbit, loadLiveIntegrationFacts,
@@ -103,11 +104,29 @@ export function useAssistantSend(input: AssistantSendInput) {
     creationActionOrReference?: CreationTurn['action'] | AssistantReferenceMedia,
     options: { preserveDraft?: boolean; companyReport?: boolean; businessScene?: BusinessSceneSelection } = {},
   ) => {
+    if (!persistenceFenceRef.current.active) return;
     const creationAction = typeof creationActionOrReference === 'string' ? creationActionOrReference : undefined;
     const referenceMedia = typeof creationActionOrReference === 'object' ? creationActionOrReference : undefined;
     const userText = text.trim();
+    const quickScene = ASSISTANT_HOME_PROMPTS.find(entry => entry.prompt === userText && isBusinessScene(entry.id));
+    if (!options.businessScene && quickScene && isBusinessScene(quickScene.id) && quickScene.id !== 'CO-07') {
+      const sceneId = quickScene.id;
+      const thread = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
+      if (loading || fileGenerating || replyStreaming) return;
+      if (['CS-02', 'CS-03', 'CS-07', 'CS-09', 'AD-01', 'AD-06', 'AD-02'].includes(sceneId)) {
+        const customer = sceneId.startsWith('CS-');
+        const lastScope = [...thread.messages].reverse().find(message => customer ? message.businessScene?.customerId : message.businessScene?.adTaskId)?.businessScene;
+        const preferredId = customer ? lastScope?.customerId : lastScope?.adTaskId;
+        setMessages(PRIMARY_ASSISTANT_THREAD, [...thread.messages, { role: 'user', content: userText }, { role: 'assistant',
+          content: sceneId === 'AD-02' ? '我们来创建一条新投流计划。我会带入企业资料，一次确认一项，最后保存草稿。' : customer ? preferredId ? '你还想再看看这位客户的其他信息吗？也可以换一位。' : '你想先关注谁？' : '你想查看哪条投放计划？我会分析近一周的数据。',
+          businessScenePrompt: { sceneId, ...(preferredId ? { preferredId } : {}) } }]);
+        if (!options.preserveDraft) setDraftInput(PRIMARY_ASSISTANT_THREAD, '');
+        setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true); openAgent(routeAgent, 'chat'); persistThread(PRIMARY_ASSISTANT_THREAD); return;
+      }
+      options = { ...options, businessScene: { sceneId, ...defaultBusinessPeriod(sceneId) } };
+    }
     options = { ...options, businessScene: options.businessScene || (!uploadedAttachments.length && !creationActionOrReference && !options.companyReport ? businessSceneFollowup(userText, useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages.at(-1)) : undefined) };
-    if ((!userText && !uploadedAttachments.length) || loading || fileGenerating || replyStreaming) return;
+    if ((!userText && !uploadedAttachments.length) || loading || fileGenerating || replyStreaming || assistantAtomicMutationRef.current || useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].deletedAt) return;
     const creationDraft = options.companyReport || options.businessScene ? null : useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].creationDraft;
     if (page === 'strategy' && creationMode === 'free' && creationDraft && !uploadedAttachments.length && (creationAction || !creationDraft.evidenceVersion || !useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages.some(message => message.creation?.selection.referenceId === creationDraft.referenceId))) {
       const requestFence = persistenceFenceRef.current;
@@ -161,6 +180,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       ? `\n\n附件（已保存到我的素材）：${uploadedAttachments.map(item => item.name).join('、')}`
       : '';
     const visibleMessage = `${visibleText}${visibleAttachmentSummary}`;
+    const responseMode = options.businessScene || isAssistantHomeQuickTaskText(visibleText) ? 'quick_task' : undefined;
 
     const threadAgent = PRIMARY_ASSISTANT_THREAD;
     const thread = useAssistantStore.getState().threads[threadAgent];
@@ -364,6 +384,7 @@ export function useAssistantSend(input: AssistantSendInput) {
               omittedTurns: conversationContext.omittedTurns,
               retainedUserInstructions: conversationContext.retainedUserInstructions,
             },
+            ...(responseMode ? { responseMode } : {}),
           } : {}),
         },
         controller,

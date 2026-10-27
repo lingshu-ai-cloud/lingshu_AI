@@ -103,7 +103,7 @@ export function OnboardingPanel({
   const [confirmationId, setConfirmationId] = useState(newOnboardingConfirmationId);
   const [companyIntro, setCompanyIntro] = useState("");
   const [brandTone, setBrandTone] = useState("");
-  const [focusProductIds, setFocusProductIds] = useState<string[]>([]);
+  const [focusProductIds, setFocusProductIds] = useState<string[]>([]); const [productsDeferred, setProductsDeferred] = useState(false);
   const [targetBuyer, setTargetBuyer] = useState("");
   const [primaryPlatform, setPrimaryPlatform] = useState("");
   const [primaryCta, setPrimaryCta] = useState("");
@@ -272,7 +272,7 @@ export function OnboardingPanel({
         setCompanyIntro(draft?.companyIntro || profileValues.companyIntro);
         setBrandTone(draft?.brandTone || profileValues.brandTone);
         setKnowledgeProducts(draft?.products || profileValues.products);
-        setFocusProductIds(draft?.focusProductIds || profileValues.focusProductIds);
+        setFocusProductIds(draft?.focusProductIds || profileValues.focusProductIds); setProductsDeferred(draft?.productsDeferred === true);
         setTargetBuyer(draft?.targetBuyer || profileValues.targetBuyer);
         setPrimaryPlatform(draft?.primaryPlatform || profileValues.primaryPlatform);
         setPrimaryCta(draft?.primaryCta || profileValues.primaryCta);
@@ -446,24 +446,24 @@ export function OnboardingPanel({
     setCollectionKeywords(`${subject}、买家痛点、应用场景、选型对比、行业趋势`);
     setRecommendationApplied(true);
   };
-  const missingProfileFields = [["企业名称", form.companyName], ["品牌名称", brandName],
-    ["行业/主营分类", form.industry], ["主要业务", form.primaryBusiness],
-  ].filter(([, value]) => !String(value || '').trim()).map(([label]) => label);
+  const missingProfileFields = [["企业名称", form.companyName], ["品牌名称", brandName], ["行业/主营分类", form.industry]]
+    .filter(([, value]) => !String(value || '').trim()).map(([label]) => label);
   const setDraftSource = (key: EnterpriseOnboardingFieldKey, source: EnterpriseOnboardingSource = 'user_provided') => {
     if (source === 'user_provided') setProposalSet(undefined);
     setDraftSources(current => ({ ...current, [key]: source }));
   };
-  const buildOnboardingDraft = (currentStep: EnterpriseOnboardingStep): EnterpriseOnboardingDraft => ({
+  const fallbackPrimaryBusiness = form.primaryBusiness.trim() || form.industry.trim(); const effectivePrimaryBusiness = focusProductIds.map(id => knowledgeProducts.find(product => product.id === id)?.name).filter(Boolean).join('、') || fallbackPrimaryBusiness;
+  const buildOnboardingDraft = (currentStep: EnterpriseOnboardingStep, productDeferredOverride?: boolean): EnterpriseOnboardingDraft => ({
     schemaVersion: ENTERPRISE_ONBOARDING_SCHEMA_VERSION,
     revision: draftRevision,
     currentStep,
     confirmationId,
     baseFactVersion,
     companyName: form.companyName.trim(), brandName: brandName.trim(),
-    industry: form.industry.trim(), primaryBusiness: form.primaryBusiness.trim(),
-    companyIntro: companyIntro.trim() || onboardingCompanyIntro(form.companyName, form.industry, form.primaryBusiness),
+    industry: form.industry.trim(), primaryBusiness: (productDeferredOverride ?? productsDeferred) ? fallbackPrimaryBusiness : effectivePrimaryBusiness,
+    companyIntro: companyIntro.trim() || onboardingCompanyIntro(form.companyName, form.industry, (productDeferredOverride ?? productsDeferred) ? fallbackPrimaryBusiness : effectivePrimaryBusiness),
     brandTone: brandTone.trim() || onboardingBrandTone(),
-    products: knowledgeProducts, focusProductIds,
+    products: knowledgeProducts, focusProductIds, ...((productDeferredOverride ?? productsDeferred) ? { productsDeferred: true } : {}),
     targetMarket: form.targetMarkets.trim(), targetBuyer: targetBuyer.trim(),
     primaryPlatform: primaryPlatform.trim(), language: collectionLanguage.trim(),
     ...(contentStage ? { contentStage } : {}), primaryCta: primaryCta.trim(),
@@ -475,11 +475,11 @@ export function OnboardingPanel({
     },
     updatedAt: new Date().toISOString(),
   });
-  const persistOnboardingDraft = async (nextStep: EnterpriseOnboardingStep): Promise<EnterpriseOnboardingDraft | null> => {
+  const persistOnboardingDraft = async (nextStep: EnterpriseOnboardingStep, productDeferredOverride?: boolean): Promise<EnterpriseOnboardingDraft | null> => {
     if (!baseFactVersion || profileSaving) { if (!baseFactVersion) setProfileError('企业资料尚未载入，无法保存当前草稿；请稍后重试。'); return null; }
     setProfileSaving(true); setProfileError(''); setProductError(''); setStageError('');
     try {
-      const saved = await saveEnterpriseOnboardingDraft(buildOnboardingDraft(nextStep), draftRevision);
+      const saved = await saveEnterpriseOnboardingDraft(buildOnboardingDraft(nextStep, productDeferredOverride), draftRevision);
       setDraftRevision(saved.revision); setGuideStep(saved.currentStep);
       setCompanyIntro(saved.companyIntro); setBrandTone(saved.brandTone);
       return saved;
@@ -552,11 +552,11 @@ export function OnboardingPanel({
       setDraftRevision(savedDraft.revision);
       const parsed = validateEnterpriseOnboardingConfirmation({ ...savedDraft, draftRevision: savedDraft.revision });
       if (!parsed.confirmation) throw new Error(`还需确认：${parsed.missing.join('、')}`);
-      const focusProducts = savedDraft.focusProductIds.map(id => savedDraft.products.find(product => product.id === id)).filter(Boolean) as EnterpriseOnboardingProduct[];
+      const focusProducts = savedDraft.productsDeferred ? [] : savedDraft.focusProductIds.map(id => savedDraft.products.find(product => product.id === id)).filter(Boolean) as EnterpriseOnboardingProduct[];
       const completed = await onSave({
         ...form,
         companyName: form.companyName.trim(),
-        industry: form.industry.trim(), primaryBusiness: form.primaryBusiness.trim(),
+        industry: form.industry.trim(), primaryBusiness: savedDraft.primaryBusiness,
         focusProducts: focusProducts.map(product => product.name).join('、'),
         targetMarkets: savedDraft.targetMarket, customerProfile: savedDraft.targetBuyer,
         videoLanguages: [savedDraft.language],
@@ -630,7 +630,7 @@ export function OnboardingPanel({
     busy={busy || profileLoading || profileSaving || proposalLoading} profileLoading={profileLoading} dismissible={dismissible}
     onClose={() => void saveDraftAndClose()} onConfirm={() => void confirmEnterpriseDraft()}
     missingFields={missingProfileFields} companyName={form.companyName} brandName={brandName}
-    industry={form.industry} primaryBusiness={form.primaryBusiness} error={profileError}
+    industry={form.industry} error={profileError}
     onChange={(field, value) => {
       if (field === 'brandName') setBrandName(value); else set(field, value);
       setDraftSource(field, 'user_provided');
@@ -639,7 +639,7 @@ export function OnboardingPanel({
   if (mode === 'first' && guideStep === 2) return <OnboardingProductsStep
     busy={busy || profileSaving || proposalLoading} productsLoading={productsLoading} productImporting={productImporting}
     dismissible={dismissible} onClose={() => void saveDraftAndClose()} onBack={() => setGuideStep(1)}
-    onConfirm={() => void persistOnboardingDraft(3)} onImport={file => void importProductFile(file)}
+    onDefer={() => { setProductsDeferred(true); void persistOnboardingDraft(3, true); }} onConfirm={() => { setProductsDeferred(false); void persistOnboardingDraft(3, false); }} onImport={file => void importProductFile(file)}
     onAddProduct={name => {
       const id = `manual-${newOnboardingConfirmationId()}`;
       setKnowledgeProducts(current => [...current, { id, name, category: '', highlights: '' }]);

@@ -6,7 +6,7 @@ import {
   type DragEvent,
   type KeyboardEvent,
 } from 'react';
-import { ArrowUp, FileAudio2, FileImage, FileVideo2, Loader2, Paperclip, Sparkles, X } from 'lucide-react';
+import { ArrowUp, FileAudio2, FileImage, FileVideo2, Loader2, Paperclip, X } from 'lucide-react';
 
 export type AssistantAttachmentKind = 'image' | 'video' | 'audio';
 
@@ -178,7 +178,6 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
         {suggestion && !draft && !files.length && <p id="assistant-follow-up-hint" className="px-3 pb-1 text-xs text-text-muted">回车填入建议，再次回车发送</p>}
         <div className="flex items-center justify-between gap-2 px-2 pb-2">
           <div className="ls-assistant-composer__tools min-w-0">
-            {variant === 'home' && <span className="ls-assistant-composer__mode"><Sparkles size={16} aria-hidden="true"/>Agent 模式</span>}
             <input
               ref={fileInputRef}
               type="file"

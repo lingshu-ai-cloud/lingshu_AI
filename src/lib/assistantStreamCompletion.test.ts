@@ -31,6 +31,13 @@ test('external information failures show a bounded public explanation and remain
   stream.accept('[DONE]');
   assert.throws(() => stream.assertComplete(), /可核验来源/);
 });
+test('business scene and provider errors retain the actionable public explanation',()=>{
+ for(const code of ['scene_enterprise_unavailable','assistant_provider_unavailable']){
+  const stream=new AssistantStreamCompletion();
+  stream.accept(JSON.stringify({error:'internal',code,publicMessage:'资料暂时无法核验，请稍后重试。'}));
+  stream.accept('[DONE]');assert.throws(()=>stream.assertComplete(),/资料暂时无法核验/);
+ }
+});
 
 {
   const stream = new AssistantStreamCompletion();

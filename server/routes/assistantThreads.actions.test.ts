@@ -402,9 +402,13 @@ test('assistant thread state persists bounded task cards and rejects malformed o
   };
   const creationDraft = { referenceId: 'ref-one', productIds: ['product-one'], shotIds: [], evidenceVersion: 'a'.repeat(64) };
   const creation = { stage: 'products', selection: creationDraft, referenceTitle: '参考 A', products: [{ id: 'product-one', name: '产品 A' }], shots: [], narrations: [], gaps: [], presenterIds: [] };
+  const businessScenePrompt = { sceneId: 'CS-02', preferredId: 'customer-one' };
+  const businessScene = { sceneId: 'CS-02', customerId: 'customer-one', from: '2026-10-21', to: '2026-10-27' };
   const valid = {
     creationDraft,
-    messages: [{ role: 'user', content: '请规划本周内容', referenceMedia: { kind: 'video', title: '爆款参考视频', platform: 'tiktok', referenceId: 'video-1', duration: 18, thumbnailUrl: '/api/overseas/videos/video-1/thumbnail', sourceUrl: 'https://video.example.test/watch/1' } }, { role: 'assistant', content: '请确认计划。', creation }],
+    messages: [{ role: 'user', content: '请规划本周内容', referenceMedia: { kind: 'video', title: '爆款参考视频', platform: 'tiktok', referenceId: 'video-1', duration: 18, thumbnailUrl: '/api/overseas/videos/video-1/thumbnail', sourceUrl: 'https://video.example.test/watch/1' } }, { role: 'assistant', content: '请确认计划。', creation },
+      { role: 'assistant', content: '你还想再看看这位客户的其他信息吗？', businessScenePrompt },
+      { role: 'assistant', content: '这位客户的会话摘要。', businessScene }],
     draftInput: '我想先调整预算',
     scrollPosition: 288,
     unreadCount: 2,
@@ -443,6 +447,8 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     const loaded = await fetch(`${base}/business`, { headers }).then(response => response.json());
     assert.deepEqual(loaded.creationDraft, creationDraft);
     assert.deepEqual(loaded.messages[1].creation, creation);
+    assert.deepEqual(loaded.messages[2].businessScenePrompt, businessScenePrompt, 'inline customer selection survives server reload');
+    assert.deepEqual(loaded.messages[3].businessScene, businessScene, 'the chosen customer remains available for the next question');
     assert.equal(loaded.draftInput, valid.draftInput);
     assert.equal(loaded.scrollPosition, 288);
     assert.equal(loaded.taskCards['run:one'].primaryAction.actionId, undefined,
@@ -496,6 +502,19 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     });
     assert.equal(invalidReferenceMedia.status, 400);
     assert.equal((await invalidReferenceMedia.json()).error, 'assistant_thread_message_invalid');
+
+    for (const message of [
+      { role: 'user', content: 'forged selector', businessScenePrompt },
+      { role: 'assistant', content: 'unknown scene', businessScenePrompt: { sceneId: 'CS-UNKNOWN' } },
+      { role: 'assistant', content: 'missing customer', businessScene: { ...businessScene, customerId: undefined } },
+      { role: 'assistant', content: 'forged scope', businessScene: { ...businessScene, tenantId: 'tenant-b' } },
+    ]) {
+      const invalidScene = await fetch(`${base}/business`, {
+        method: 'PUT', headers, body: JSON.stringify({ expectedVersion: 2, messages: [message] }),
+      });
+      assert.equal(invalidScene.status, 400);
+      assert.equal((await invalidScene.json()).error, 'assistant_scene_invalid');
+    }
 
     const invalidPending = await fetch(`${base}/business`, {
       method: 'PUT', headers,
@@ -744,6 +763,43 @@ test('assistant action endpoint preserves known client and service HTTP failures
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
+});
+
+test('conversation lifecycle clears context, fences stale saves, isolates owners and preserves business records', async () => {
+  const dataStore = memoryStore();
+  const writes: string[] = [];
+  const originalCas = dataStore.compareAndSwap!;
+  dataStore.compareAndSwap = async (collection, ...args) => { writes.push(collection); return originalCas(collection, ...args); };
+  const app = express(); app.use(express.json());
+  app.use('/threads', createAssistantThreadsRouter({ dataStore, authMiddleware: (req, res, next) => {
+    res.locals.tenantId = req.headers['x-tenant'] || 'tenant-a'; res.locals.userId = req.headers['x-user'] || 'user-a'; next();
+  } }));
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/threads`;
+  const call = async (url: string, method = 'GET', body?: unknown, headers = {}) => {
+    const response = await fetch(base + url, { method, headers: { 'Content-Type': 'application/json', ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    return { status: response.status, body: await response.json() };
+  };
+  try {
+    const saved = await call('/business', 'PUT', { expectedVersion: 0, messages: [{ role: 'user', content: '保密的聊天上下文' }], draftInput: '未发草稿' });
+    assert.equal(saved.status, 200);
+    assert.equal((await call('/business/clear', 'POST', { expectedVersion: 1 }, { 'x-user': 'other' })).status, 404);
+    assert.equal((await call('/business', 'DELETE', { expectedVersion: 1 }, { 'x-tenant': 'other' })).status, 404);
+    assert.equal((await call('/business/clear', 'POST', {})).status, 428);
+    const cleared = await call('/business/clear', 'POST', { expectedVersion: 1 });
+    assert.equal(cleared.status, 200); assert.deepEqual(cleared.body.messages, []);
+    assert.equal(cleared.body.draftInput, ''); assert.equal(cleared.body.creationDraft, null);
+    assert.equal(cleared.body.title, saved.body.title); assert.equal(cleared.body.conversationResetVersion, 2);
+    const stale = await call('/business', 'PUT', { expectedVersion: 1, messages: saved.body.messages });
+    assert.equal(stale.status, 409); assert.deepEqual(stale.body.current.messages, []);
+    assert.equal((await call('/business', 'DELETE', { expectedVersion: 1 })).status, 409);
+    assert.equal((await call('/business', 'DELETE', { expectedVersion: 2 })).status, 200);
+    assert.equal((await call('/')).body.items.length, 0);
+    assert.equal((await call('/business', 'PUT', { expectedVersion: 3, messages: saved.body.messages })).status, 410);
+    assert.equal((await call('/conversation:new-test', 'PUT', { expectedVersion: 0, messages: [{ role: 'user', content: '新会话' }] })).status, 200);
+    assert.equal((await call('/')).body.items.length, 1);
+    assert.ok(writes.every(collection => collection === 'assistant_threads'), 'no task, material, memory or enterprise writes');
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
 test.after(() => {

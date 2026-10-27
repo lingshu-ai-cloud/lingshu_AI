@@ -10,6 +10,8 @@ import { chartPalette } from './ui/LsDataChart';
 import { readableAssistantReply, splitAssistantReply } from '../../shared/assistantReadableReply';
 import { extractAssistantFiles } from '../../shared/assistantFileIntent';
 import AssistantFileCard from './assistant/AssistantFileCard';
+import AssistantSourceLink from './assistant/AssistantSourceLink';
+import type { ReplySource } from '../lib/assistantSourceLinks';
 
 /* 渲染灵小枢回复的轻量 Markdown：
    ## / ### 分级加粗标题，**加粗**强调结论，- / 1. 列表，[文字](链接) 可点跳转。
@@ -25,19 +27,6 @@ const NOTE_QUOTE_RE = /^(?:💡|⚠️?|📌|ℹ️?|❗|✅|🔔|🧭|🔍|📣
    正文里只有联网检索真实返回的来源域名（含 grounding 跳转域）才渲染成可点击链接，
    其余 markdown 链接一律降级为纯文本，避免用户点到死链。
    copy 块 / 引用重点块本身按纯文本渲染，不受影响。 */
-let trustedLinkHosts = new Set<string>(['vertexaisearch.cloud.google.com']);
-
-function setTrustedLinkHosts(sources?: { uri: string }[]) {
-  trustedLinkHosts = new Set(['vertexaisearch.cloud.google.com']);
-  for (const s of sources ?? []) {
-    try { trustedLinkHosts.add(new URL(s.uri).host); } catch { /* ignore */ }
-  }
-}
-
-function isTrustedUrl(url: string): boolean {
-  try { return trustedLinkHosts.has(new URL(url).host); } catch { return false; }
-}
-
 function cleanLooseMarkdown(text: string): string {
   let out = text.replace(/<br\s*\/?>/gi, '\n');
   const boldMarks = (out.match(/\*\*/g) ?? []).length;
@@ -53,23 +42,20 @@ function cleanLooseMarkdown(text: string): string {
   return out;
 }
 
-function inline(text: string, kb: string): ReactNode[] {
+function renderInline(text: string, kb: string, sources?: ReplySource[]): ReactNode[] {
   const safeText = cleanLooseMarkdown(text);
   const nodes: ReactNode[] = [];
-  const re = /\*\*([^*]+)\*\*|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+  const re = /\*\*([^*]+)\*\*|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s<>()、，；。！？]+)/g;
   let last = 0, idx = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(safeText)) !== null) {
     if (m.index > last) nodes.push(cleanLooseMarkdown(safeText.slice(last, m.index)));
     if (m[1] !== undefined) {
       nodes.push(<strong key={`${kb}b${idx}`} className="font-bold text-text-primary">{cleanLooseMarkdown(m[1])}</strong>);
-    } else if (isTrustedUrl(m[3])) {
-      nodes.push(
-        <a key={`${kb}l${idx}`} href={m[3]} target="_blank" rel="noopener noreferrer"
-          className="text-accent underline underline-offset-2 hover:opacity-80 break-all">{m[2]}</a>,
-      );
     } else {
-      nodes.push(cleanLooseMarkdown(m[2]));
+      const url = m[3] || m[4].replace(/[.,;!?]+$/, '');
+      nodes.push(<AssistantSourceLink key={`${kb}l${idx}`} url={url} label={m[2]} sources={sources} />);
+      if (m[4] && m[4].length > url.length) nodes.push(m[4].slice(url.length));
     }
     last = re.lastIndex; idx++;
   }
@@ -193,7 +179,7 @@ export function splitReplySourceFooter(content: string): { body: string; footer:
   return { body: lines.slice(0, boundary).join('\n').trimEnd(), footer: lines.slice(boundary).join('\n') };
 }
 
-export default function AgentReply({ content, sources, onSuggest, detailExpanded = false, allowDetails = true, allowSources = true }: {
+export default function AgentReply({ content, sources, onSuggest, detailExpanded = false, allowDetails = true, allowSources = true, compact = false }: {
   content: string;
   sources?: { title: string; uri: string }[];
   onAction?: (agent: AgentType, task: string) => void;
@@ -201,11 +187,12 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
   detailExpanded?: boolean;
   allowDetails?: boolean;
   allowSources?: boolean;
+  compact?: boolean;
 }) {
-  setTrustedLinkHosts(sources);
+  const inline = (text: string, key: string) => renderInline(text, key, sources);
   const files = extractAssistantFiles(content);
   const sourcePresentation = allowSources ? splitReplySourceFooter(files.text) : { body: files.text, footer: '' };
-  const presentation = allowDetails ? splitAssistantReply(sourcePresentation.body) : { summary: sourcePresentation.body, details: [] };
+  const presentation = allowDetails ? splitAssistantReply(sourcePresentation.body, { compact }) : { summary: sourcePresentation.body, details: [] };
   const lines = readableAssistantReply(presentation.summary).split('\n');
   const blocks: ReactNode[] = [];
   let list: { type: 'ul' | 'ol'; items: string[] } | null = null;
@@ -373,7 +360,7 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
     <div data-agent-reply="true" className="text-sm text-text-primary [&>*:first-child]:mt-0">
       {blocks}
       {presentation.details.some(value => value.trim()) && <Collapse ghost size="small" defaultActiveKey={detailExpanded || !presentation.summary.trim() ? ['analysis'] : []} items={[{
-        key: 'analysis', label: '详细分析', children: <AgentReply content={presentation.details.join('\n\n')} allowDetails={false} />,
+        key: 'analysis', label: '详细分析', children: <AgentReply content={presentation.details.join('\n\n')} sources={sources} allowDetails={false} allowSources={false} />,
       }]} />}
       {files.ids.map(id => <AssistantFileCard key={id} id={id} />)}
       {allowSources && (sourcePresentation.footer || sources?.length) ? (
@@ -382,10 +369,7 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
             ? <AgentReply content={sourcePresentation.footer} sources={sources} allowDetails={false} allowSources={false} />
             : <div className="flex flex-col gap-0.5">
             {sources?.map((s, i) => (
-              <a key={i} href={s.uri} target="_blank" rel="noopener noreferrer"
-                className="text-[11px] text-accent hover:underline truncate">
-                {i + 1}. {s.title}
-              </a>
+              <AssistantSourceLink key={i} url={s.uri} label={`${i + 1}. ${s.title}`} sources={sources} />
             ))}
           </div>,
         }]} />

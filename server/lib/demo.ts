@@ -29,6 +29,7 @@ export interface DemoUsageDay {
 }
 
 export interface DemoStatus {
+  tokenUnlimited?: boolean;
   enabled: boolean;
   trialDays: number;
   expiresAt: string | null;
@@ -61,6 +62,11 @@ export function demoQuotaExemptTenantIds(): ReadonlySet<string> {
 export function isDemoQuotaExemptTenant(tenantId: string | null | undefined): boolean {
   const normalizedTenantId = String(tenantId ?? '').trim();
   return !!normalizedTenantId && demoQuotaExemptTenantIds().has(normalizedTenantId);
+}
+
+export function isDemoTokenExemptIdentity(tenantId: string | null | undefined, userId: string | null | undefined): boolean {
+  const contains = (key: string, value: string | null | undefined) => !!value && String(process.env[key] || '').split(',').map(item => item.trim()).includes(value);
+  return contains('DEMO_TOKEN_EXEMPT_TENANT_IDS', tenantId) && contains('DEMO_TOKEN_EXEMPT_USER_IDS', userId);
 }
 
 function isTrialSubscription(sub: Subscription | null | undefined): boolean {
@@ -195,6 +201,7 @@ export async function buildDemoStatus(req: Request, tenantId?: string, expiresAt
 
   return {
     enabled: isDemoMode() || isTrialSubscription(subscription),
+    tokenUnlimited: isDemoTokenExemptIdentity(tenantId, userId),
     trialDays: limits.trialDays,
     expiresAt: resolvedExpiresAt,
     daysRemaining,
@@ -268,7 +275,7 @@ export async function consumeIdentityDemoQuota(id:{userId?:string;tenantId?:stri
 
   const usedTokensToday = tokenUsage.tokens ?? 0;
   const usedTokensTotal = totalTokenUsage(store, tokenKey);
-  if (quotaEnforced && (usedTokensToday + tokenCost > limits.tokenDaily || usedTokensTotal + tokenCost > limits.tokenTotal)) {
+  if (quotaEnforced && !isDemoTokenExemptIdentity(id.tenantId, id.userId) && (usedTokensToday + tokenCost > limits.tokenDaily || usedTokensTotal + tokenCost > limits.tokenTotal)) {
     return {ok:false,status:429,error:'demo_token_quota_exceeded',quota:'tokens',tokenCost};
   }
 

@@ -3,10 +3,15 @@ import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useAssistantStore } from '../../stores/assistantStore';
-import { emptyAssistantThread } from './globalAssistantRuntime';
+import { emptyAssistantThread, mergeConsecutiveAssistant } from './globalAssistantRuntime';
 import { useAssistantSend } from './useAssistantSend';
+import { assistantHomePromptById } from '../../lib/assistantHomeQuickPrompts';
 
 type SendInput = Parameters<typeof useAssistantSend>[0];
+test('inline business selectors and scoped replies are never merged away on hydration',()=>{
+ const messages=mergeConsecutiveAssistant([{role:'assistant',content:'前一条回答'}, {role:'assistant',content:'你想先关注谁？',businessScenePrompt:{sceneId:'CS-02'}}, {role:'assistant',content:'客户回复',businessScene:{sceneId:'CS-02',from:'2026-10-21',to:'2026-10-27',customerId:'owned'}}]);
+ assert.equal(messages.length,3);assert.equal(messages[1].businessScenePrompt?.sceneId,'CS-02');assert.equal(messages[2].businessScene?.customerId,'owned');
+});
 
 test('ordinary chat sends one scoped strategy request and stores its completed reply', async () => {
   const originalFetch = globalThis.fetch;
@@ -39,6 +44,7 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
     contentIntake: { active: false, answer: () => false, start: () => {} },
     uiMessage: { warning: () => {} }, modal: {},
     persistenceFenceRef: fence, stablePersistenceScope: { tenantId: 'tenant-a', userId: 'user-a' },
+    assistantAtomicMutationRef: { current: false }, waitForInFlightThreadSave: async () => {},
     pendingMapFileRef: { current: false }, pipelineModalOpenRef: { current: false }, abortRef: abort,
     openAgent: () => {}, presentActionResponse: () => {},
     setMessages: store.setMessages, setDraftInput: store.setDraftInput,
@@ -55,11 +61,20 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
   try {
     renderToStaticMarkup(createElement(() => { send = useAssistantSend(input).send; return null; }));
     assert.ok(send);
+    input.assistantAtomicMutationRef.current = true;
+    await send('切换会话期间不应发送');
+    assert.equal(requests, 0);
+    input.assistantAtomicMutationRef.current = false;
+    store.hydrateThread('business', { deletedAt: '2026-10-27T00:00:00Z' });
+    await send('已删除会话不应发送');
+    assert.equal(requests, 0);
+    store.hydrateThread('business', { deletedAt: '' });
     await send('请说明本周重点');
     assert.equal(requests, 1, JSON.stringify(useAssistantStore.getState().threads.business.messages));
     assert.equal(requestedUrl, '/api/overseas/strategy/chat');
     assert.match(authorization, /Bearer test-token/);
     assert.equal(requestedBody.userQuestion, '请说明本周重点');
+    assert.equal(requestedBody.responseMode, undefined, 'ordinary conversation keeps the full reply mode');
     assert.deepEqual(useAssistantStore.getState().threads.business.messages.map(message => message.content),
       ['请说明本周重点', '本周先核对计划。']);
     assert.equal(persisted, 1);
@@ -97,6 +112,7 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
     const scene = { sceneId: 'CS-02' as const, from: '2026-10-01', to: '2026-10-26', customerId: 'owned-customer' };
     await send('总结当前会话', 'business', undefined, [], undefined, { businessScene: scene, preserveDraft: true });
     assert.deepEqual(requestedBody.businessScene, scene);
+    assert.equal(requestedBody.responseMode, 'quick_task', 'home business cards request the compact actionable reply contract');
     assert.deepEqual(useAssistantStore.getState().threads.business.messages.at(-1)?.businessScene, scene);
     await send('继续分析这个客户的异议'); assert.deepEqual(requestedBody.businessScene, scene);
     store.hydrateThread('business', emptyAssistantThread());
@@ -110,7 +126,22 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
     assert.equal(requests, 6);
     assert.equal(requestedBody.creationSelection, undefined, 'a confirmed public report must not be routed into an existing creation draft');
     assert.deepEqual(useAssistantStore.getState().threads.business.creationDraft, creationSelection);
+    store.hydrateThread('business', emptyAssistantThread());
+    await send(assistantHomePromptById('CS-02')!.prompt);
+    assert.equal(requests,6,'customer selection is inline, with no model call');
+    assert.match(useAssistantStore.getState().threads.business.messages.at(-1)!.content,/你想先关注谁/);
+    assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.businessScenePrompt?.sceneId,'CS-02');
+    store.hydrateThread('business',{messages:[{role:'assistant',content:'已分析',businessScene:scene}]});
+    await send(assistantHomePromptById('CS-03')!.prompt);
+    assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.businessScenePrompt?.preferredId,'owned-customer');
+    assert.match(useAssistantStore.getState().threads.business.messages.at(-1)!.content,/还想再看看这位客户/);
+    await send(assistantHomePromptById('AD-02')!.prompt);
+    assert.equal(requests,6,'creating a draft starts a guided conversation, not a paid model or ad launch');
+    assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.businessScenePrompt?.sceneId,'AD-02');
     fence.current.active = false;
+    const messageCount=useAssistantStore.getState().threads.business.messages.length;
+    await send(assistantHomePromptById('CS-02')!.prompt);
+    assert.equal(useAssistantStore.getState().threads.business.messages.length,messageCount,'an old scope cannot append a customer selector');
     await send('身份已切换后的旧请求');
     assert.equal(requests, 6, '旧实例失效后不得再向模型发送请求');
   } finally {

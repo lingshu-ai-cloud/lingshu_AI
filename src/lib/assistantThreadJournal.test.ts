@@ -122,6 +122,10 @@ const scopedThread = sanitizeAssistantThreadForJournal({ ...thread, messages: [
   { role: 'user', content: '继续', businessScene: selectedScene },
   { role: 'assistant', content: '非法场景', businessScene: malformedScene },
 ] });
+const inlineChoice = sanitizeAssistantThreadForJournal({ ...thread, messages: [
+ {role:'assistant',content:'你想先关注谁？',businessScenePrompt:{sceneId:'CS-02',preferredId:'buyer-a'}},
+] });
+assert.deepEqual(inlineChoice.messages[0].businessScenePrompt,{sceneId:'CS-02',preferredId:'buyer-a'});
 assert.deepEqual(scopedThread.messages[0].businessScene, selectedScene);
 assert.equal(scopedThread.messages[1].businessScene, undefined);
 assert.equal(scopedThread.messages[2].businessScene, undefined);

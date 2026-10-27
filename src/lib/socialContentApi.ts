@@ -93,6 +93,8 @@ function friendlyFailure(status: number, code = ''): string {
   if (code.includes('source_option_version_conflict')) return '资料已更新，请重新选择';
   if (code.includes('not_startable') || code.includes('not_editable')) return '当前阶段无法进行这项操作，请刷新任务状态';
   if (code.includes('orchestrator_not_configured') || code.includes('queue_unavailable')) return '内容制作服务正在准备中，请稍后重试';
+  if (code.includes('social_content_orchestrator_unavailable')) return '任务已保留，但生产执行器暂时不可用；请先查看原任务状态，再重试未完成的启动步骤';
+  if (code.includes('social_content_unavailable')) return '内容任务服务没有返回保存回执；请先查看任务列表，确认没有新增任务后再按原确认重试';
   if (code.includes('social_content_reference_analysis_pending')) return '编导 Agent 正在逐镜分析参考视频，原任务已保留，可查看分析与制作进度';
   if (code.includes('social_content_reference_review_required')) return '逐镜复刻方案已准备好，原任务需要检查执行模式后继续制作';
   if (code.includes('social_content_execution_facts_required')) return '缺少最少必要事实。请补充企业资料、产品资料或已确认参数；无需补拍图片和视频';

@@ -2,6 +2,15 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前统一集成候选：快捷卡片回复优化 v2 与本地基线（2026-10-27）
+
+本节指定当前工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026` 为本次集成与部署来源；下方其他机器的“当前基线”段落保留为来源历史。
+
+- 用户明确要求合并远端 `快捷卡片回复优化v2` / `0cc3ebbcc25cb44ce42fb0f74f90208909136ef5` 与本地 `55aa6d8b`，并部署既有服务器。客服历史待办修复先提交为 `429b94c5`，一并纳入。
+- 源码自动合并；唯一冲突为本文件并行新增的检查记录，两侧内容均保留。其他会话尚未提交的 WorkBuddy 素材联调文件与原视频维护改动保留，不纳入本次提交或部署。
+- 本节提交时为待验证集成候选；将在独立干净源码副本运行定向回归、TypeScript、架构、迁移只读检查及生产构建。真实供应商与付费链路不在本次验收内。
+- 部署沿用交互式 SSH、GitHub HTTPS `git pull --ff-only` 与 `bash deploy/update.sh`，先核对当前服务与数据恢复点。尚未部署，尚未执行目标库迁移。
+
 ## 当前统一开发基线：小程序真机素材与选择器修复（2026-10-27）
 
 - 权威分支 `baseline/unified-20261026`，源码提交 `265134bd3da6d9f91bcf46103eed4073e47e494b`，前序 `1afac60e`。素材相册选择不再传非法的 `maxDuration:600`；两个拍摄入口使用兼容的 30 秒。四张助手快捷卡片收紧内边距、卡片间距及与输入栏的间距。
@@ -89,6 +98,88 @@
 - 隔离源码与合入后基线均通过图文执行定向测试 10/10、`pnpm run test:social-image-pipeline`（85/85 主用例及 HTTP/合同/治理）、`pnpm run lint`、`pnpm run check:architecture`（2999 个生产 TS 文件，相对 `9b5f5446` 棘轮）、`pnpm run check:digital-employee-migrations`（204 项只读）、`pnpm run build`、`git diff --check`；隔离源码另通过 `pnpm run test:image-replication`（24/24）与 `pnpm run test:image-replication-ui`（6 场景）。未运行全仓 `quality`/`verify`。
 - 这仅证明源码与本地无付费回归。原任务 `socialtask_0ac6dfaacc2900a069b28f02` / `img80093c5e51d9` 已有结果不明的 Qwen 策划检查点，不自动迁移或重试；真实供应商回执、累计费用与 5 元上限尚待核对，未执行本轮付费出图。下一步是在稳定基线、同版本 web/worker/store 和预算核对后创建新任务做一次真实验收。没有推送、部署、发布或目标库迁移。
 - 权威树原有未提交 `server/videos/videoVisibilityMaintenance.ts` 补丁 SHA-256 仍为 `ed50ec18853d813c6307d1c7dd9ff1c7d020ec37735282d44ea368ff334a289b`，未纳入本次源码提交。设计取舍见 [图文正式出图 ADR](../architecture/adr/2026-10-26-social-image-durable-provider-route.md)。
+
+## 当前本机集成基线：快捷卡片回复优化 v2（2026-10-27）
+
+本节覆盖下方旧基线声明。工作树 `/Users/jiejie/Documents/lingshu-AI`、本地基线分支 `节节1025服务器上传`，从 `e572161f1d7f2b77bb1ed50c1d6520e23cc3e7aa` 推进到源码封装提交 `f5486b4dd10f6b1e407381e5c2f0134d5905b98d`；本治理补记另行提交。用户指定本次 GitHub 新分支为 `快捷卡片回复优化v2`，旧版交付分支不移动。
+
+- 本次修改已位于基线工作树，按明确的 15 文件清单提交，不重复合并其他分支。包含新手引导目标市场/买家选项、首页输入文字上移、来源跳转按钮及按需视频预览；主要文件为 `DigitalEmployeeOnboardingSteps.tsx`、`onboardingMarketOptions.ts`、`creator-workspace.css`、`AgentReply.tsx`、`AssistantSourceLink.tsx`、`assistantSourceLinks.ts` 和共享固定资讯目录 `shared/authoritativeNewsSources.ts`，连同相关测试及 UI 规范。没有加入 `.env.local`、账号凭据、素材、运行缓存或数据库内容。
+- 上一轮对这份源码实际执行 `NODE_OPTIONS=--max-old-space-size=4096 pnpm run lint --pretty false`，退出 0；本轮核对修改范围没有变化，复用该 TypeScript 结果，不重复启动重型检查。
+- 本轮重新执行以下必要检查：定向回归 16/16，3009 个生产 TypeScript 文件架构及相对 `e572161f` 的预算 ratchet、205 项迁移清单只读检查、checksum guard 和 `git diff --cached --check` 全部通过。检查在提交前的同一暂存源码上运行；迁移与清单没有变更。
+
+```sh
+node --import tsx --test --test-concurrency=1 src/components/smartBusiness/onboardingMarketOptions.test.ts src/lib/assistantSourceLinks.test.ts src/components/AgentReply.readable.test.tsx src/components/ContentCreationHome.contract.test.ts src/components/DigitalEmployeePage.contract.test.ts server/externalInformation/authoritativeNews.test.ts src/lib/inspirationVideoPlayback.test.ts
+ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture
+pnpm run check:digital-employee-migrations
+pnpm run test:migration-guard
+git diff --cached --check
+```
+
+- 推送前已确认远端新分支不存在，规范 origin 为 `https://github.com/lingshu-ai-cloud/lingshu_AI.git`。工作流的部署/回滚仅手动触发，push 构建仅匹配 `v*` 标签，普通新分支推送不触发部署。未创建 PR、未执行部署、数据库迁移、真实供应商或付费调用，无外部 run/task 标识；未重复全仓 quality/verify 或构建。
+- 已知验证边界：普通资讯页面只跳转原文；视频直链和支持的平台链接提供点击后加载的预览，但本次未验证各真实平台的播放/嵌入限制。前轮新增的会话生命周期迁移仍未应用于目标数据库。源码封装不代表真实供应商 Ready 或生产发布就绪。
+- 安全恢复点为旧版分支 `快捷卡片回复优化` / `e572161f1d7f2b77bb1ed50c1d6520e23cc3e7aa`；其他工作树、其未提交现场以及图片 AIGC 保留树未触碰。下一步仅在另行授权后执行真实平台验收或部署。
+
+## 当前本机集成基线：快捷卡片回复优化（2026-10-27）
+
+本节覆盖下方阶段性“待确认”状态。工作树 `/Users/jiejie/Documents/lingshu-AI`，本地基线分支 `节节1025服务器上传`；用户指定本次 GitHub 交付新分支为 `快捷卡片回复优化`。以下为源码 SHA，本治理补记另行提交，随同一基线快照交付。
+
+- 本会话封装 `75b330e058afc1df93fae2ffbfbddd342a616b56` 保留；第一来源 `codex/assistant-conversation-management-20261027` / `eeb936f8025519dca1e1049d527381dec4e4a156` 已通过 `8d7ade7a7b484ab124a2b06696cbfe0d92c8d32b` 合入。
+- 用户确认兼容方案后，第二来源 `codex/session-ui-onboarding-20261027` / `7a1e2422b9d2a0a4b7644d84d3af9abef3c0c253` 合入为 `bc060fb8852c3d98d4f6ffcfda6e10bb491cdac1`。三处冲突保留现有 `strategy.ts` 内部简短回复与固定资讯来源分流、`AssistantConversationBubbles.tsx` 的对话内业务选择及 `useAssistantSend.ts` 的快捷任务分派；同时接入新手引导重启、产品稍后设置、草稿与确认契约变更，没有覆盖会话清空/删除隔离保护。
+- 合成后 TypeScript 找到新手引导跳过产品时可能访问空 `current.strategy`；以可选链修复，提交 `e7c9129b4497d8b38fffde386d5443568175f3cf` 为最终源码检查点。没有扩展业务流程或放宽产品确认/来源核验门禁。
+
+实际必要检查：
+
+```sh
+node --import tsx --test --test-concurrency=1 src/components/assistant/globalAssistantRuntime.hydration.test.ts src/components/assistant/useAssistantThreadSaveQueue.test.tsx server/routes/assistantThreads.actions.test.ts src/components/assistant/useAssistantSend.test.tsx src/components/HomeGrowthTour.test.ts shared/contracts/enterpriseOnboarding.test.ts src/components/ContentCreationHome.contract.test.ts src/components/DigitalEmployeePage.contract.test.ts server/routes/strategy.grounding.integration.test.ts shared/assistantReadableReply.test.ts
+node --import tsx --test --test-concurrency=1 shared/contracts/enterpriseOnboarding.test.ts server/routes/enterpriseOnboardingDraft.test.ts
+NODE_OPTIONS=--max-old-space-size=4096 pnpm run lint --pretty false
+ARCHITECTURE_BASE_REF=2276b7b14a8aea1a758df296e215c890c8b4ea36 pnpm run check:architecture
+pnpm run check:digital-employee-migrations
+pnpm run test:migration-guard
+git diff --check
+```
+
+- 首组 42/42 通过；空值修复后的新手引导合同/草稿 11/11 通过（含重复合同用例，不作为额外独立覆盖计数）；完整 TypeScript 复跑退出 0。3005 个生产 TypeScript 文件架构与相对 `2276b7b1` 的预算 ratchet 通过；205 项迁移清单及 checksum guard 通过，后续空值修复未改变迁移；diff 检查通过。
+- 本地前端 `http://127.0.0.1:5181/` 返回 200，后端已在最终源码以 `PROCESS_ROLE=web` / `backgroundJobs=false` 重启。`/api/overseas/health`、美妆预览账号的 `POST /api/overseas/auth/local-preview-session` 和 `GET /api/overseas/auth/me` 均返回 200，账号仍为 `local_user_customer_aurelia_beauty` / `local_tenant_customer_aurelia_beauty`。未复制或提交账号密钥、`.env.local`、素材或缓存；登录接口检查不等于浏览器视觉验收或真实供应商验收。
+- 推送前核对仓库工作流：部署/回滚为手工触发；构建推送仅匹配 `v*` 标签，普通新分支不触发部署。未创建 PR、未执行部署或数据库迁移，未做真实模型/渠道/付费调用，无外部 run/task 标识。遵照用户要求未重复全仓 `quality` / `verify`、构建或真实 E2E；新会话生命周期迁移尚未应用于目标数据库，不能声明生产发布就绪。
+- 安全恢复点：`codex/recovery-pre-quicktasks-integration-20261027-0c4fda22`、完整会话封装 `75b330e0` 和第二次合并前检查点 `2276b7b1`。两个来源工作树及其他未提交现场未改动，图片 AIGC 保留树未触碰。下一步如需发布，须另行授权并核验目标库迁移与真实供应商状态。
+
+## 当前本机会话阶段性基线：快捷任务封装与会话管理合入（2026-10-27）
+
+- 工作树 `/Users/jiejie/Documents/lingshu-AI`、分支 `节节1025服务器上传`。在 `0c4fda229bf564dbde2120e446aec5e9f6ba8397` 上封装本会话 53 个源码、测试及说明文件为 `75b330e058afc1df93fae2ffbfbddd342a616b56`；不包含忽略的 `.env.local`、账号资料、素材或运行缓存。
+- 第一条来源 `codex/assistant-conversation-management-20261027` / `eeb936f8025519dca1e1049d527381dec4e4a156` 已按用户顺序无冲突合入，合并提交 `8d7ade7a7b484ab124a2b06696cbfe0d92c8d32b`。新增会话清空/删除及隔离保护；带入迁移 `1793059200_assistant_conversation_lifecycle.js` 和校验和，但未执行任何数据库迁移。
+- 第二条来源 `codex/session-ui-onboarding-20261027` / `7a1e2422b9d2a0a4b7644d84d3af9abef3c0c253` 仅运行 `git merge-tree --write-tree` 预检，在 `server/routes/strategy.ts`、`src/components/assistant/AssistantConversationBubbles.tsx`、`src/components/assistant/useAssistantSend.ts` 发现三处冲突。按安全合并约定停止并等待用户决定；没有写入工作区、没有开启未完成的 merge，也没有自动选择任一侧覆盖。
+- 验证边界：封装快照此前实际通过 4 GB Node 堆 `pnpm run lint --pretty false`、对话接口 2/2、会话保存 12/12、布局合同 3/3、3002 文件架构及相对 HEAD 的预算 ratchet、`git diff --check`，详见 `docs/runbook/ASSISTANT-QUICK-TASK-20261027.md`。第一条分支合成后仅完成 Git 合并/差异检查；合成后的 TypeScript、受影响领域回归和 205 项迁移清单只读检查待第二条冲突确认后执行，不能把封装前结果写成合成后的整体验收。
+- 恢复分支 `codex/recovery-pre-quicktasks-integration-20261027-0c4fda22` 保留原起点；`75b330e0` 是包含本会话全部修改的合并前恢复锚点。两个来源工作树及其未提交现场均未改动，保留的图片 AIGC 工作树未触碰。未推送、部署、真实供应商/付费调用或生产写入，无外部 run/task 标识；源码推进不代表预览运行实例或真实供应商 Ready 已同步。
+
+## 当前本机会话基线：本地预览周计划递归修复（2026-10-26）
+
+- 当前工作树 `/Users/jiejie/Documents/lingshu-AI`、分支 `节节1025服务器上传` 在合并基线 `bc432cc2ac8dbc88efbc4fe89c176b318b550ddd` 上追加运行修复 `e69efa9ba1e21107021b5bf99e501df4b454c49b`。本地经营总览读取包含“已确认日期、未确认时间”的历史周计划时，`repairCollapsedWeeklyVideoProduction` 会对无变化的排期结果递归调用自身并导致后端栈溢出；现在仅在排期字段实际变化时继续修复，日期已确认但时间待定的业务语义保持不变。
+- 实际通过 `server/digitalEmployees/weeklyPackage.test.ts`、4 GB Node 堆上限 TypeScript、相对 `bc432cc2` 的架构/ratchet（2,998 个生产 TypeScript 文件）及 `git diff --check`。首次新增回归夹具因没有设置已确认日期而正确触发自动排期，修正为真实现场状态后通过；生产门禁未放宽。
+- 本次修复只为恢复当前本地预览可用性，不涉及迁移、真实供应商、付费、发布或部署。预览进程和登录后页面仍须在该提交启动后单独核验。
+
+## 当前本机会话基线：助手业务场景与平台改写兼容合并（2026-10-26）
+
+- 当前工作树 `/Users/jiejie/Documents/lingshu-AI`、分支 `节节1025服务器上传` 从干净检查点 `0f1424553666fb03a1a0616dbedecaebcb04a613` 合入远端 `xixi分工前本地合并` / `9b5f5446d858d1ea4aa9db401bc7e77d5e3d1213`，源码合并提交为 `8d23c0ace56a4a136d5e34a2bb4c02c5f12f8a93`。恢复分支 `backup/pre-xixi-local-merge-20261026-0f142455` 保留。
+- 唯一冲突是 `docs/governance/BASELINE.md` 顶部双方新增的治理记录；本机现状保持在最上方，来源的助手场景与平台改写验证证据完整保留为来源历史。双方都改动的 `src/components/GlobalAssistant.tsx` 自动合成，既保留当前 `reduceMotion`/灵小枢入口，也接入新的 `BusinessSceneSelection` 事件参数，无业务代码冲突。
+- 合成结果实际通过：业务场景与平台改写 14/14、图文复刻 24/24、完整 `pnpm run test:assistant`；4 GB Node 堆上限 TypeScript、相对 `0f142455` 的架构/ratchet（2,998 个生产 TypeScript 文件）、204 项迁移清单只读检查、迁移 checksum guard 和 `git diff --check` 通过。
+- 来源分支已记录产品素材、V4、投流和构建等更大范围证据，本轮未重复执行全仓 `quality` / `verify`、构建或真实 E2E。未推送、部署、执行目标数据库迁移、真实模型/渠道/付费调用或生产写入；本地预览版本仍与源码基线分开核验。
+
+## 当前本机会话基线：差图文创作加联调兼容合并（2026-10-26）
+
+- 当前工作树 `/Users/jiejie/Documents/lingshu-AI`、分支 `节节1025服务器上传` 从干净检查点 `c3addcd54e41ab07fc3f924feef1d6a6fa97c5e6` 合入远端 `差图文创作加联调` / `072c343baabc99da9a6ad975d438503740f33799`，源码合并提交为 `55be5c306aa5d65c727ca493b5a5712b110baf69`。恢复分支 `backup/pre-image-text-merge-20261026-c3addcd5` 保留。
+- 147 个来源源码、测试和产品文档文件均无冲突；唯一冲突为 `docs/governance/BASELINE.md` 顶部双方同时新增记录。解决时保留本机既有三路合并记录，并完整保留来源的企业知识、图文持久调度、口播卖点和新人首页验证证据，明确标注为来源历史，不把来源机器路径误写成本机事实。
+- 合成结果实际通过：图文复刻 24/24、持久化图文执行 7/7、企业知识/产品素材/首页首访组合 40/40、图文生产管线 85/85 及其 HTTP、路由合同与治理检查；4 GB Node 堆上限 TypeScript、相对 `c3addcd5` 的架构/ratchet（2,983 个生产 TypeScript 文件）、204 项迁移清单只读检查、迁移 checksum guard 和 `git diff --check` 通过。
+- 来源分支已经记录构建和更大领域测试；本次遵循非重复验证要求，没有重跑全仓 `quality` / `verify`、构建或真实 E2E。未执行目标数据库迁移、真实供应商/付费调用、推送、部署或生产写入；本地预览版本与源码基线仍须分别核对。
+
+## 当前本机会话基线：三路兼容合并（2026-10-26）
+
+- 当前工作树为 `/Users/jiejie/Documents/lingshu-AI`，分支 `节节1025服务器上传`。本轮从干净提交 `181868f3f9bad2ff437f124018e9decf5ababb59` 开始，依次合入 `灵小枢交互卡片基础修改` / `f2ea282c1ec60aedfab46569d1323ad49bbf2e7d`、`codex/lingxiaoshu-mascot-ui-20261025` / `236d17bfd2c4e306f494cafde74dabebf9ac1059`，再合入远端 `xixi全局ui+对话部分快捷键+生产联调未完成` / `7cb757c10c9857ed7c0fbbda2b84396021e6bcd0`；三个合并提交依次为 `7f4747f162b8bc16d0a4e7ba92f779dfa152607b`、`dd0036592d8777633c00e79dd69406d0b30d679a`、`17b290d9e22cee84efe863678d0ba601e0f2e07b`。恢复分支 `backup/pre-session-merges-20261026-181868f3` 保留。
+- 前两路无冲突；第三路只在 `src/components/assistant/AssistantConversationBubbles.tsx` 冲突。按用户确认的兼容方案，同时保留新版 `AssistantMascot` 与 `reduceMotion`，以及远端 `CompanyReportCard`、首页用户消息布局类；没有删除任一侧功能，也没有遗留冲突标记。
+- 实际通过 `pnpm run test:assistant`、`pnpm run test:assistant-quality`（145 项：144 通过、1 项按环境条件跳过）、`AssistantMascot.test.tsx`（3/3）、4 GB Node 堆上限 TypeScript、相对 `181868f3` 的架构/ratchet（2,955 个生产 TypeScript 文件）、204 项迁移清单只读检查、迁移 checksum guard 及 `git diff --check`。远端来源已经记录更大范围的分段质量、构建和领域证据；本轮没有重复执行全仓 `quality` / `verify` 或真实 E2E，不能据此声明真实供应商、运行数据或发布就绪。
+- 第二个来源工作树存在 14 项未提交草稿，本轮仅合入其已提交分支 `236d17bf`，未读取为基线、未清理、未覆盖。未推送、部署、执行目标数据库迁移、真实付费调用或生产写入；源码基线与当前预览进程/本地数据仍是独立状态。
+
+<!-- 以下为本次及此前来源分支的历史验证记录，不改变上方本机会话基线声明。 -->
 
 ## 当前统一开发基线：助手业务场景与多平台改写（2026-10-26 最终本地合并）
 

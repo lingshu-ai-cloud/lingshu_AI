@@ -237,8 +237,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
       {/* ── Left sidebar ─────────────────────────────── */}
       {page !== 'agentMonitor' && <motion.aside
         initial={false}
-        animate={{ width: sidebarWidth }}
-        style={{ minWidth: sidebarWidth, maxWidth: sidebarWidth }}
+        animate={{ width: sidebarWidth, minWidth: sidebarWidth, maxWidth: sidebarWidth }}
         transition={spatialTransition}
         className="app-sidebar relative z-40 flex flex-shrink-0 flex-col overflow-visible border-r border-border"
       >
@@ -334,7 +333,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
             {!sidebarCollapsed && <button onClick={() => { setQuotaOpen(false); setAccountMenuOpen(value => !value); }} aria-expanded={accountMenuOpen} aria-haspopup="menu" className="flex-1 min-w-0 text-left rounded-lg -my-1 py-1 hover:bg-black/5 transition-colors">
               <p className="text-xs font-semibold text-text-primary truncate">{tenantName}</p>
               <p className="ls-type-body-small text-text-muted truncate">
-                {starterMode ? '198 标准工作区' : demo && isTrialAccount ? `Token 剩余 ${tokenLabel}` : (SUB_LABEL[subStatus] ?? subStatus)}
+                {starterMode ? '198 标准工作区' : demo?.tokenUnlimited ? 'Token 不限额' : demo && isTrialAccount ? `Token 剩余 ${tokenLabel}` : (SUB_LABEL[subStatus] ?? subStatus)}
               </p>
             </button>}
             {!sidebarCollapsed && <ChevronRight size={14} className={`text-text-muted transition-transform ${accountMenuOpen ? '-rotate-90' : ''}`} />}

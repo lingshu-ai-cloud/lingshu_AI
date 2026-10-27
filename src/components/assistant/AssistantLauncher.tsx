@@ -1,11 +1,13 @@
 import type { RefObject } from 'react';
 import { Badge, Button } from 'antd';
-import { Bot, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
+import AssistantMascot from './AssistantMascot';
 
 interface Props {
   retracted: boolean;
   chatOpen: boolean;
   badgeCount: number;
+  reduceMotion: boolean;
   launcherButtonRef: RefObject<HTMLAnchorElement | HTMLButtonElement | null>;
   edgeLauncherButtonRef: RefObject<HTMLAnchorElement | HTMLButtonElement | null>;
   onLauncherClick: () => void;
@@ -15,7 +17,7 @@ interface Props {
 
 /** The launcher controls only; preference and focus handoff stay in GlobalAssistant. */
 export default function AssistantLauncher({
-  retracted, chatOpen, badgeCount, launcherButtonRef, edgeLauncherButtonRef,
+  retracted, chatOpen, badgeCount, reduceMotion, launcherButtonRef, edgeLauncherButtonRef,
   onLauncherClick, onRetract, onRestore,
 }: Props) {
   if (retracted && !chatOpen) {
@@ -29,7 +31,11 @@ export default function AssistantLauncher({
           data-global-assistant="edge-launcher"
           aria-label="展开灵小枢入口"
           onClick={onRestore}
-          icon={<ChevronLeft size={18} aria-hidden="true" />}
+          icon={(
+            <span className="inline-grid h-8 w-8 place-items-center rounded-full p-px" style={{ background: 'var(--ls-action-gradient)' }}>
+              <span className="inline-grid h-full w-full place-items-center rounded-full bg-surface"><AssistantMascot size="xs" interactive reduceMotion={reduceMotion} /></span>
+            </span>
+          )}
           className="!flex !h-11 !w-11 !items-center !justify-center !rounded-l-full !rounded-r-none !border-border !border-r-transparent !bg-surface !text-accent shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow active:!bg-surface focus-visible:!bg-surface focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2"
           title="展开灵小枢入口"
         />
@@ -52,8 +58,8 @@ export default function AssistantLauncher({
           aria-controls="global-assistant-panel"
           onClick={onLauncherClick}
           icon={(
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white shadow-sm" style={{ background: 'var(--ls-action-gradient)' }} aria-hidden="true">
-              <Bot size={15} />
+            <span className="inline-grid h-9 w-9 place-items-center rounded-full p-px" style={{ background: 'var(--ls-action-gradient)' }}>
+              <span className="inline-grid h-full w-full place-items-center rounded-full bg-surface"><AssistantMascot size="sm" interactive reduceMotion={reduceMotion} /></span>
             </span>
           )}
           className="!flex !h-11 !w-11 !gap-0 !border-border !bg-surface !px-2 !text-text-primary shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow active:!bg-surface focus-visible:!bg-surface focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2 sm:!w-auto sm:!gap-2 sm:!px-3.5"

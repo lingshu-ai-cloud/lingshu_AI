@@ -140,6 +140,10 @@ export const ASSISTANT_PERSIST_KEEPALIVE_MAX_BYTES = 60 * 1024;
 
 export function emptyAssistantThread(): AgentThreadState {
   return {
+    conversationKey: undefined,
+    conversationResetVersion: 0,
+    deletedAt: '',
+    title: '',
     creationDraft: null,
     version: 0,
     updatedAt: '',
@@ -221,6 +225,7 @@ export function cloneAssistantThread(thread: AgentThreadState): AgentThreadState
 }
 
 export function mergeAssistantThread(remote: AgentThreadState, local: AgentThreadState): AgentThreadState {
+  if (remote.deletedAt || (remote.conversationResetVersion ?? 0) > (local.conversationResetVersion ?? 0)) return remote;
   const cards = { ...remote.taskCards };
   for (const [taskId, card] of Object.entries(local.taskCards)) {
     const remoteCard = cards[taskId];
@@ -259,6 +264,10 @@ export function persistedAssistantThread(value: unknown, fallback: AgentThreadSt
   if (!Number.isSafeInteger(version) || version < 0) return null;
   return {
     creationDraft: source.creationDraft ?? null,
+    conversationKey: (source as Partial<AgentThreadState> & { agentId?: string }).agentId || source.conversationKey || fallback.conversationKey,
+    conversationResetVersion: source.conversationResetVersion ?? 0,
+    deletedAt: source.deletedAt || '',
+    title: source.title || '',
     version,
     updatedAt: typeof source.updatedAt === 'string' ? source.updatedAt : '',
     messages: Array.isArray(source.messages) ? source.messages : [],
@@ -397,7 +406,7 @@ export function mergeConsecutiveAssistant(list: Message[]): Message[] {
   const merged: Message[] = [];
   for (const msg of list) {
     const last = merged[merged.length - 1];
-    if (last?.role === 'assistant' && msg.role === 'assistant' && !last.creation && !msg.creation && !last.creationPortal && !msg.creationPortal && !last.taskPortal && !msg.taskPortal && !last.sourcePortal && !msg.sourcePortal && !last.companyReport && !msg.companyReport) {
+    if (last?.role === 'assistant' && msg.role === 'assistant' && !last.creation && !msg.creation && !last.creationPortal && !msg.creationPortal && !last.taskPortal && !msg.taskPortal && !last.sourcePortal && !msg.sourcePortal && !last.companyReport && !msg.companyReport && !last.businessScene && !msg.businessScene && !last.businessScenePrompt && !msg.businessScenePrompt) {
       last.content = [last.content, msg.content].filter(Boolean).join('\n\n');
       last.sources = msg.sources ?? last.sources;
     } else {

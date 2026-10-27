@@ -7,9 +7,9 @@ import type { Page } from './pageRegistry.js';
 
 const all = new Set<Page>(['strategy', 'socialInspiration', 'inspirationMarket', 'digitalEmployees', 'adsOverview', 'conversion']);
 assert.deepEqual(primaryProductNavigation('free', all, false).map(item => item.label),
-  ['hi，灵小枢', '内容创作', '灵感集市', '智能投流', '智能客服', '经营总览']);
+  ['hi，灵小枢', '灵感集市', '内容创作', '智能投流', '智能客服', '经营总览']);
 assert.deepEqual(primaryProductNavigation('employee', all, false).map(item => item.label),
-  ['hi，灵小枢', '内容创作', '灵感集市', '智能投流', '智能客服', '经营总览']);
+  ['hi，灵小枢', '灵感集市', '内容创作', '智能投流', '智能客服', '经营总览']);
 assert.equal(primaryProductNavigation('free', all, false)[3]?.disabled, true);
 assert.equal(primaryProductNavigation('free', all, true)[3]?.disabled, false);
 assert.deepEqual(primaryProductNavigation('free', new Set<Page>(['strategy', 'conversion']), false).map(item => item.label),

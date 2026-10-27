@@ -387,13 +387,13 @@ export async function* callLLMChatStream(messages: ChatMessage[], opts: LLMCallO
       : backend === 'qwen' ? streamQwenChat(messages, options) : null;
     if (!stream) throw new Error(`Unsupported backend: ${backend}`);
     if (!needsSources) {
-      if (!opts.requireConclusion) { yield* stream; return; }
+      if (!opts.requireConclusion && !opts.validateAnswer) { yield* stream; return; }
       let answer = '';
       for await (const event of stream) {
         if ('text' in event) answer += event.text;
         if (answer.length > 64_000) throw new ExternalInformationError('external_answer_too_large', '总体结论：本轮回答超过支持范围，请缩小问题后重新查询。');
       }
-      if (!hasOverallConclusion(answer)) throw new ExternalInformationError('external_answer_conclusion_missing', '总体结论：本轮回答未完整形成可交付的综合判断，请重新提问；暂不把不完整内容作为结果。');
+      if (opts.requireConclusion && !hasOverallConclusion(answer)) throw new ExternalInformationError('external_answer_conclusion_missing', '总体结论：本轮回答未完整形成可交付的综合判断，请重新提问；暂不把不完整内容作为结果。');
       opts.validateAnswer?.(answer);
       yield { text: answer };
       return;

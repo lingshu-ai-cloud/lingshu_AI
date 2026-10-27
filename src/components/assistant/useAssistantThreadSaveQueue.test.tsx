@@ -87,6 +87,23 @@ test('assistant save queue serializes updates and carries the latest CAS version
     requests[3]!.respond(new Response(JSON.stringify({ version: 4, updatedAt: 'merged' }), { status: 200 }));
     await nextTick();
     assert.equal(useAssistantStore.getState().threads.business.version, 4);
+    useAssistantStore.getState().setMessages('business', [{ role: 'assistant', content: 'late streamed answer' }]);
+    persistThread('business');
+    requests[4]!.respond(new Response(JSON.stringify({ current: {
+      ...emptyAssistantThread(), version: 5, conversationResetVersion: 5,
+    } }), { status: 409 }));
+    await nextTick();
+    assert.deepEqual(useAssistantStore.getState().threads.business.messages, []);
+    assert.equal(requests.length, 5, 'a clear conflict must not retry old messages');
+    assert.equal(queuesRef.current.get('business')?.pending, null);
+    useAssistantStore.getState().setMessages('business', [{ role: 'user', content: 'new after clear' }]);
+    persistThread('business');
+    requests[5]!.respond(new Response(JSON.stringify({ current: {
+      ...emptyAssistantThread(), version: 6, conversationResetVersion: 6, deletedAt: 'now',
+    } }), { status: 410 }));
+    await nextTick();
+    persistThread('business');
+    assert.equal(requests.length, 6, 'deleted conversations never silently recreate');
   } finally {
     globalThis.fetch = originalFetch;
     Object.assign(globalThis, { window: originalWindow, localStorage: originalStorage, document: originalDocument });

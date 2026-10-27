@@ -4,6 +4,7 @@ import fs from 'node:fs';
 const home = fs.readFileSync(new URL('./ContentCreationHome.tsx', import.meta.url), 'utf8');
 const assistant = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const assistantPanel = fs.readFileSync(new URL('./assistant/AssistantConversationPanel.tsx', import.meta.url), 'utf8');
+const assistantComposer = fs.readFileSync(new URL('./assistant/AssistantComposer.tsx', import.meta.url), 'utf8');
 const library = fs.readFileSync(new URL('./ContentLibrary.tsx', import.meta.url), 'utf8');
 const inspiration = fs.readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8');
 const layout = fs.readFileSync(new URL('./Layout.tsx', import.meta.url), 'utf8');
@@ -37,6 +38,7 @@ for (const newsType of ['行业资讯', '社交媒体资讯', '政策与平台�
   assert.match(promptCatalog, new RegExp(`label: '${newsType}'`), `今日资讯必须提供${newsType}卡片`);
 }
 assert.match(home, /useState<AssistantHomeQuickLauncherId \| null>\(null\)/, '首页默认不得展示任何大卡片');
+assert.match(home, /HOME_GROWTH_TOUR_START_EVENT, \{ detail: \{ restart: true \} \}/, '点击海外增长导览卡片必须从头开始，不能停留在旧进度');
 assert.match(home, /activeLauncher \? <div className="creator-home__quick-panel">[\s\S]{0,1600}activePrompts\.map/, '点击小按钮后才可显示其对应的大卡片');
 assert.doesNotMatch(home, /全部快捷任务/, '首页不应增加额外的全部快捷任务层级');
 assert.doesNotMatch(home, /onClick=\{\(\) => onNavigate\?\.\('digitalEmployees'\)\}/, '首页业务卡不得直接跳转经营总览');
@@ -65,12 +67,17 @@ assert.doesNotMatch(home, /到爆款库创作/, '首页不得保留旧的中转�
 assert.match(inspiration, /requestedReference\?\.startViralReplication[\s\S]{0,1600}startInspirationCreation\(selectedVideo\)/, '其他显式生产入口必须先核对精确引用，再进入既有爆款裂变生产函数');
 assert.match(inspiration, /selectedVideo\.id\.startsWith\('weekly-reference-'\)[\s\S]{0,700}const exactMatch =/, '只有实时库存精确引用可自动发起生产，周快照不得绕过门禁');
 assert.match(inspiration, /innerView === 'inspiration' && !embedded[\s\S]{0,1800}搜索爆款灵感/, '首页嵌入态必须隐藏爆款筛选栏');
+assert.match(inspiration, /className=\{embedded \? 'py-5 lg:py-6' : 'px-4 py-5 sm:px-6 lg:py-6'\}/, '首页爆款素材须去掉嵌入层横向内边距，与上方主内容等宽');
 assert.match(inspiration, /<InspirationWatchDialog[\s\S]{0,200}videos=\{filtered\}/, '爆款瀑布流点开后必须保留可连续浏览序列');
 assert.match(library, /<LsMasonryGallery layout="masonry" items=\{shown\.map/);
 assert.match(library, /<Modal open=\{Boolean\(previewItem\)\}/);
 assert.doesNotMatch(home, /fetch\('\/api\/overseas\/assistant-threads|createAssistantAction/, '首页不得创建平行会话/任务入口');
 assert.match(assistant, /data-home-empty=/);
 assert.match(assistantPanel, /variant=\{inlineHome \? 'home' : 'default'\}/);
+assert.doesNotMatch(assistantComposer, /Agent 模式|ls-assistant-composer__mode/, '首页输入区不得显示 Agent 模式装饰标签');
+assert.match(creatorStyles, /data-home-empty='true'\] \[data-assistant-conversation-controls\] \{ position: absolute;/, '空白会话的管理入口不得占一行挤压输入区');
+assert.match(creatorStyles, /data-home-empty='true'\] \.ls-assistant-composer \{ padding-top: 16px;/, '空白会话输入文字应从顶部开始');
+assert.match(creatorStyles, /data-home-empty='true'\] \.ls-assistant-composer__editing \{ padding-right: 56px;/, '输入文字必须避开右上角会话管理按钮');
 assert.match(creatorStyles, /\.ls-assistant-home-root \.ls-assistant-flow__answer/, '首页助手回复必须使用连续文本流，而不是通用消息气泡');
 assert.match(creatorStyles, /@keyframes ls-assistant-flow-reveal/, '首页助手文本须使用一次性分层进入动效');
 assert.match(layout, /Math\.round\(viewportWidth \* 0\.173\)/, '左侧栏按参考图桌面比例布局');
@@ -85,6 +92,7 @@ assert.match(creatorStyles, /\.creator-home--employee \.creator-home__canvas-sta
 assert.match(creatorStyles, /\.creator-home--employee \.creator-home__assistant-anchor:not\(\.creator-home__assistant-anchor--active\) \{ height: 156px/, '数字员工首页须使用原自由创作输入区高度');
 assert.match(creatorStyles, /\.creator-home__quick-panel \{ overflow: hidden; \}/, '能力卡外层不得再显示独立大方框');
 assert.match(creatorStyles, /\.creator-home__prompt-grid \{[^}]*grid-auto-flow: column[^}]*overflow-x: auto[^}]*scroll-snap-type: inline mandatory/, '能力卡须保持单行并支持横向翻阅');
+assert.match(creatorStyles, /\.creator-home__prompt-grid--creation \{[^}]*grid-auto-columns: minmax\(210px, calc\(\(100% - 30px\) \/ 4\)\)/, '内容创作能力桌面最多同时展示四张，其余卡片须横向翻阅');
 assert.match(promptCatalog, /没有可靠来源时明确说明，不要编造资讯/, '今日资讯固定提示词必须约束可追溯来源');
 assert.match(creatorStyles, /width: min\(100%, 1416px\)/, '主内容宽度须与参考图一致');
 assert.match(card, /ls-viral-card group/);

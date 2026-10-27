@@ -292,6 +292,9 @@ html[data-lingshu-appearance='dark'] .ls-inspiration-watch-dialog [data-preview-
 .creator-home--employee .creator-home__assistant-anchor:has(> .ls-assistant-home-root[data-home-empty='true']) { height: auto; min-height: 156px; }
 .ls-assistant-home-root[data-home-empty='true'] { position: relative; inset: auto; }
 .ls-assistant-home-root[data-home-empty='true'] > [data-global-assistant='panel'] { position: relative; height: auto !important; min-height: 154px; max-height: none !important; }
+.ls-assistant-home-root[data-home-empty='true'] [data-assistant-conversation-controls] { position: absolute; top: 12px; right: 12px; z-index: 1; padding: 0; }
+.ls-assistant-home-root[data-home-empty='true'] .ls-assistant-composer { padding-top: 16px; }
+.ls-assistant-home-root[data-home-empty='true'] .ls-assistant-composer__editing { padding-right: 56px; }
 .ls-assistant-home-root .ls-assistant-composer { display: flex; height: auto; min-height: 0; padding: 24px 16px 12px; background: transparent; }
 .ls-assistant-home-root .ls-assistant-composer__surface { position: relative; display: flex; width: 100%; min-height: 0; flex-direction: column; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 /* Keep the outer input card; the inner text field has no separate fill or boundary. */
@@ -308,7 +311,6 @@ html[data-lingshu-appearance='dark'] .ls-inspiration-watch-dialog [data-preview-
 .ls-assistant-home-root .ls-assistant-composer__input::placeholder { color: var(--color-text-muted); }
 .ls-assistant-home-root .ls-assistant-composer__surface > .flex:last-child { min-height: 44px; padding: 0 8px 6px; }
 .ls-assistant-home-root .ls-assistant-composer__tools { display: flex; align-items: center; gap: 8px; }
-.ls-assistant-home-root .ls-assistant-composer__mode { display: inline-flex; align-items: center; gap: 6px; color: var(--color-accent); white-space: nowrap; font-size: 14px; }
 .ls-assistant-home-root .ls-assistant-composer__tools button { color: var(--color-text-secondary); font-size: 13px; }
 .ls-assistant-home-root .ls-assistant-composer__surface > .flex:last-child > button { width: 40px; height: 40px; background: var(--ls-action-gradient); color: white; }
 .ls-assistant-home-root .ls-assistant-composer__surface > .flex:last-child > button:disabled { opacity: .4; }
@@ -448,5 +450,5 @@ html[data-lingshu-appearance='light'] .ls-assistant-home-root .ls-assistant-flow
 .business-work__all { margin-top: 10px; }
 @media (max-width: 1050px) { .business-work__grid { grid-template-columns: 1fr; } }
 
-/* Five creation scenarios share one row when space permits; narrow screens retain horizontal scrolling. */
-.creator-home__prompt-grid--creation { grid-auto-columns: minmax(210px, calc((100% - 40px) / 5)); }
+/* Keep all creation capabilities reachable, but never crowd more than four cards into the desktop viewport. */
+.creator-home__prompt-grid--creation { grid-auto-columns: minmax(210px, calc((100% - 30px) / 4)); }

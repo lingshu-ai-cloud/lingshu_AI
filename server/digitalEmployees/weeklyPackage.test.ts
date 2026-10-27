@@ -49,6 +49,12 @@ assert.equal(twoPlatformQuotaPackage.directorPlan?.platformVersionTarget, 2, 'th
 assert.ok((twoPlatformQuotaPackage.directorPlan?.productionBudgetMin || 0) >= 20, 'the displayed budget must cover both actual video productions');
 assert.equal(twoPlatformQuotaPackage.authorization.maxPublishItems, 2, 'publish authorization must use the same two-item quota');
 assert.deepEqual(twoPlatformQuotaPackage.operatingContext?.accounts.map(account => [account.platform, account.contentCount]), [['facebook', 1], ['tiktok', 1]]);
+const dateOnlyPackage = structuredClone(twoPlatformQuotaPackage);
+const dateOnlyPlan = dateOnlyPackage.tasks.find(task => task.templateId === 'production')!.videoPlans![0]!;
+dateOnlyPlan.plannedPublishDate = dateOnlyPackage.operatingContext!.cycle.startsAt;
+dateOnlyPlan.plannedPublishAt = '';
+const repairedDateOnlyPackage = repairCollapsedWeeklyVideoProduction(dateOnlyPackage);
+assert.equal(repairedDateOnlyPackage.tasks.find(task => task.templateId === 'production')!.videoPlans![0]!.plannedPublishAt, '', 'a confirmed date-only plan must remain time-undecided without recursively repairing forever');
 const collapsedHistoricPackage = structuredClone(twoPlatformQuotaPackage);
 const collapsedPlans = collapsedHistoricPackage.tasks.find(task => task.templateId === 'production')!.videoPlans!;
 collapsedPlans[1] = {

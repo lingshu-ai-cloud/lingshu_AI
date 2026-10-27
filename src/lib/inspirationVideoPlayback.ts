@@ -1,6 +1,6 @@
 import type { TrendVideo } from './inspirationTypes';
 
-export function sourceEmbedUrl(video: TrendVideo): string {
+export function sourceEmbedUrl(video: Pick<TrendVideo, 'sourceUrl' | 'platform'>): string {
   const source = String(video.sourceUrl || '').trim();
   if (!source) return '';
   try {
