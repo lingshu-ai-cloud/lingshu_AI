@@ -2,6 +2,27 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前本机集成基线：合入 xixi1027 部署 v0.5 来源（2026-10-27）
+
+本节指定本机工作树 `/Users/jiejie/Documents/lingshu-AI`、分支 `节节1025服务器上传`。下方其他机器的统一基线、部署状态和既往本机记录保留为来源历史，不改变本机工作树归属；本节只确认源码集成，不确认本机运行数据或真实供应商 Ready。
+
+- 合入前 HEAD 为 `0cc3ebbcc25cb44ce42fb0f74f90208909136ef5`，工作区干净，与原 v2 基线记录一致。规范 origin 为 `https://github.com/lingshu-ai-cloud/lingshu_AI.git`；精确拉取远端分支 `xixi1027部署v0.5、`，核对提交为 `bbe406a08c7fdf394b364794f993e179d299c7af`。
+- 来源已包含本机全部 v2 提交；merge-base 即原 HEAD，`git merge-tree --write-tree --name-only` 退出 0。通过 `git merge --ff-only bbe406a08c7fdf394b364794f993e179d299c7af` 无冲突快进，未做冲突取舍。合入后源码与来源提交完全一致；本治理记录另行提交。
+- 来源包含会话保存/清空/删除/撤销与恢复修复、输入栏收紧、账号配置及历史任务恢复入口、素材展示、小程序和图文生产链改动，共 92 个文件。新增 `1793062800_assistant_pending_content_binding.js`、`1793066400_assistant_conversation_recovery.js` 及对应清单只作为源码合入，没有执行数据库迁移或恢复脚本。
+- 本机实际检查：以下定向回归 48/48、TypeScript、3017 个生产 TypeScript 文件架构检查及相对原 HEAD 的预算 ratchet、207 项迁移清单只读检查、checksum guard、来源差异空白检查全部通过。
+
+```sh
+node --import tsx --test --test-concurrency=1 server/routes/assistantThreads.actions.test.ts src/components/assistant/globalAssistantRuntime.hydration.test.ts src/components/assistant/useAssistantThreadSaveQueue.test.tsx src/components/smartBusiness/DigitalEmployeeOnboardingPanel.accounts.test.tsx src/components/smartBusiness/onboardingMarketOptions.test.ts src/lib/assistantSourceLinks.test.ts src/lib/customerPriority.test.ts src/lib/mediaDuration.test.ts src/components/DigitalEmployeePage.contract.test.ts server/socialImage/socialImageExecution.test.ts
+NODE_OPTIONS=--max-old-space-size=4096 pnpm run lint --pretty false
+ARCHITECTURE_BASE_REF=0cc3ebbcc25cb44ce42fb0f74f90208909136ef5 pnpm run check:architecture
+pnpm run check:digital-employee-migrations
+pnpm run test:migration-guard
+git diff --check 0cc3ebbcc25cb44ce42fb0f74f90208909136ef5 HEAD
+```
+
+- 按用户要求只做必要检查，未执行全仓 quality/verify、构建、真实 PocketBase 生命周期回归、供应商或付费 E2E；未推送、部署、改广告状态或重启本地预览后端。来源提供的线上健康回执不是本机运行状态验证，本轮没有外部 run/task 标识。“仅草稿”命名广告实际投放中的问题沿用来源提醒，未在本轮核实或修改。
+- 安全恢复点：保留的本地分支 `快捷卡片回复优化v2` / `0cc3ebbcc25cb44ce42fb0f74f90208909136ef5`，以及来源提交 `bbe406a08c7fdf394b364794f993e179d299c7af`。未触碰其他工作树或图片 AIGC 保留树。后续如需本机运行验收，须单独核对本机数据库迁移状态并加载新后端源码，不能直接把源码合并等同于运行环境更新。
+
 ## 当前统一开发基线：前端冒烟问题修复候选（2026-10-27）
 
 - 权威分支仍为 `baseline/unified-20261026`，本批源码候选 `f55aebb70472b5c6e00429ada45824af61e01bfe`；用户要求按冒烟清单修复并部署，追加对话状态底部输入栏收紧。原有 WorkBuddy 素材准入和视频维护的未提交改动保持原样，未纳入候选。
