@@ -21,6 +21,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { assertLocalStoreWritable, withLocalCollectionFileLock } from './localCollectionLock.js';
+import { atomicWriteLocalCollection, compactLocalCollectionRecords } from './localCollectionPersistence.js';
 import type {
   AuthProvider,
   CompareExpected,
@@ -98,21 +99,10 @@ function readLocalCollection<T = Record_>(collection: string): T[] {
 }
 
 function writeLocalCollection(collection: string, records: unknown[]): void {
-  fs.mkdirSync(LOCAL_STORE_DIR, { recursive: true });
   const file = localCollectionPath(collection);
-  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
-  fs.writeFileSync(temporary, JSON.stringify(records, null, 2), { encoding: 'utf8', mode: 0o600 });
-  const descriptor = fs.openSync(temporary, 'r');
-  try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
-  fs.renameSync(temporary, file);
-  const directory = fs.openSync(LOCAL_STORE_DIR, 'r');
-  try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
-  try {
-    fs.chmodSync(file, 0o600);
-  } catch {
-    // Some platforms ignore POSIX file modes.
-  }
-  localCollectionCache.set(collection, { signature: localFileSignature(file), records });
+  const persistedRecords = compactLocalCollectionRecords(collection, records);
+  atomicWriteLocalCollection(file, persistedRecords);
+  localCollectionCache.set(collection, { signature: localFileSignature(file), records: persistedRecords });
 }
 
 function sortLocalRecords<T extends Record<string, unknown>>(items: T[], sort?: string): T[] {
@@ -144,7 +134,7 @@ async function localCreate<T = Record_>(collection: string, data: Record<string,
   return withLocalCollectionLock(collection, () => localCreateLocked<T>(collection, data));
 }
 function localCreateLocked<T>(collection: string, data: Record<string, unknown>): T | null {
-  const records = readLocalCollection<Record_>(collection);
+  const records = [...readLocalCollection<Record_>(collection)];
   const now = new Date().toISOString();
   const requestedId = String(data.id || '');
   if (requestedId && records.some(record => record.id === requestedId)) return null;
@@ -191,7 +181,7 @@ async function localUpdate(collection: string, id: string, data: Record<string, 
   return withLocalCollectionLock(collection, () => localUpdateLocked(collection, id, data));
 }
 function localUpdateLocked(collection: string, id: string, data: Record<string, unknown>): boolean {
-  const records = readLocalCollection<Record_>(collection);
+  const records = [...readLocalCollection<Record_>(collection)];
   const index = records.findIndex(record => record.id === id);
   if (index < 0) return false;
   records[index] = { ...records[index], ...data, updated: new Date().toISOString() };
@@ -212,7 +202,7 @@ async function localCompareAndSwap(
   return withLocalCollectionLock(collection, () => localCompareAndSwapLocked(collection, id, expected, data));
 }
 function localCompareAndSwapLocked(collection: string, id: string, expected: CompareExpected, data: Record<string, unknown>): boolean {
-  const records = readLocalCollection<Record_>(collection);
+  const records = [...readLocalCollection<Record_>(collection)];
   const index = records.findIndex(record => record.id === id);
   if (index < 0) return false;
   const current = records[index];
