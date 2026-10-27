@@ -2,6 +2,15 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前统一开发基线：智能问数版本安全合入（2026-10-27）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`。用户明确要求合入 GitHub `节节智能问数待优化`；拉取核对来源提交 `cdfbab8dac65cb8c01be5995aea98635f6dc0fa7`、代码树 `e78e96bc30f25979857b96769cffa7bea68d6af8`，均与用户提供前缀一致。
+- 本轮以实际最新 HEAD `1f0ca7e36d52db5736bc3dcc33fec501c6eb7124` 为起点，包含页面分页优化及后续 B2B 图文文案/可读布局改动；旧治理首节停在 `5b531400`，本节补齐该差异。独立候选 `/Users/julia1/Documents/ChatGPT/基线管理/analytics-safe-20261027`、分支 `integration/analytics-safe-20261027`，双亲源码合并 `ce83f310293e4c3df941ba5e10e315852e954cfd`；本治理补记另行提交。
+- 合入经营总览与明细、仅本地开发可启用的示例数据、客户目录、维护公告及环境配置、本地心跳集合保留上限和原子写入清理。源码无冲突；唯一冲突为本文件并行新增记录，两边完整保留。以下其他机器的“当前”章节仅作历史来源，不改变本机权威工作树。
+- 干净候选验证：功能定向 26/26、存储/CAS/锁/原基线分页与图文/账号配置回归 47/47；`pnpm run lint` 全量 TypeScript、`ARCHITECTURE_BASE_REF=1f0ca7e3 pnpm run check:architecture`（3030 个生产 TS）、`pnpm run test:architecture-ratchet`、`pnpm run check:digital-employee-migrations`（207 项）、`pnpm run test:migration-guard`、`pnpm run check:container-contract`、`pnpm run build`、`pnpm run build:account-hub`、`git diff --check 1f0ca7e3 HEAD` 全部通过。迁移及 checksum 清单相对起点无变化。构建仍有大 chunk 提示，Studio 预算 373271/485000 字节通过。
+- 未执行全仓 `quality/verify`、浏览器真实业务验收、付费供应商、推送、部署或数据库迁移；源码合并通过不代表这些项目已验收。原基线 26 项已跟踪改动及 15 个未跟踪文件不纳入本次提交；快进前后核对补丁与未跟踪字节哈希，保护开发现场。
+- 恢复分支 `backup/pre-analytics-20261027-1f0ca7e3`；证据和原补丁/未跟踪文件备份位于 `/Users/julia1/.codex/integration-evidence/20261027-analytics/`。来源分支保留；候选树保留供复核。具体命令和边界见 [本次合并记录](ANALYTICS-INTEGRATION-20261027.md)。
+
 ## 当前统一开发基线：页面大库存读取优化（2026-10-27）
 
 - 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `505afce8` 合入隔离提交 `2c8d164c`，源码提交 `5b531400c0c8d85b1e752ee479a619563b91f5e4`。原有 26 项已跟踪改动及未跟踪文件均保留；合入前后的已跟踪补丁与未跟踪路径清单哈希一致。

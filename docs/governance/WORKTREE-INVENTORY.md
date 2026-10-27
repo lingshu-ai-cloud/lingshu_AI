@@ -1,5 +1,10 @@
 # Git 工作树状态盘点
 
+## 2026-10-27 智能问数版本安全集成
+
+- 新建本聊天隔离候选 `/Users/julia1/Documents/ChatGPT/基线管理/analytics-safe-20261027` / `integration/analytics-safe-20261027`，以 `1f0ca7e3` 合入远端 `节节智能问数待优化` / `cdfbab8d`，源码合并 `ce83f310`。候选树保留；仅软链依赖，未复制业务数据库或凭据。
+- 权威工作树及基线分支不变；原 26 项已跟踪改动和 15 个未跟踪文件保留。恢复分支 `backup/pre-analytics-20261027-1f0ca7e3`；无推送、部署、迁移或其他工作树清理。详见 [合并记录](ANALYTICS-INTEGRATION-20261027.md)。
+
 最近盘点：2026-10-24（Asia/Shanghai）；下方旧章节保留当时的历史快照。
 来源：`git worktree list --porcelain`、对应工作树的 `git status --porcelain` 和祖先关系检查。以下按时间记录专项隔离及历史归档；未重新逐项复核的旧状态不视为当前状态。
 
