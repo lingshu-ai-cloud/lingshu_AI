@@ -2,6 +2,12 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前统一开发基线：图文身份保真与文字衬底自适应（2026-10-27）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `13e7c666217498dfce33c3da559e260be415cd3e` 快进至源码提交 `0ccec34b39a46be176b9b94c42ec2157a9faafc2`；原有 41 项未提交内容不纳入。快进前已跟踪补丁 SHA-256 `2f8bbbec2c100c85c6ae68916819b6ff08325f57490751a7bd8adde96c683d93`、未跟踪路径清单 SHA-256 `e94212b6b855e502add040c13fb47fee4aa3fe05ed4d2884b34e9740e6c58735`，合入后须再次核对。
+- B2B 单图只让 GPT Image 2 生成无产品、无包装、无文字的场景底图；冻结企业产品原图在本地羽化合成，模型不再接收产品与对标原始像素。左侧根据底图亮度和细节选无卡、局部衬底或实底，已确认文案、徽章和 CTA 仍由确定性合成器绘制。旧任务不变；决定记录在 [ADR](../architecture/adr/2026-10-27-social-image-identity-locked-composition.md)。
+- 图文主回归、HTTP 集成与合同、执行队列定向 20/20、`pnpm run lint`、相对 `13e7c666` 的架构检查（3041 个生产 TypeScript 文件）、207 项迁移清单只读检查和 `git diff --check` 均通过。RS-016 原图在隔离数据中已核对字节；免费本地排版预览为 `~/.lingshu-ai/image-b2b-e2e-20261027/rs016-identity-locked-free-layout.png`，仅说明静态合成版式，不是供应商或真实任务验收。本节记录时新 SKU 真实联调尚未开始；无新增迁移，未推送、部署、发布或运行全仓 `quality/verify`。
+
 ## 当前统一开发基线：智能经营与灵小枢周任务视图（2026-10-27）
 
 - 权威工作树与 `baseline/unified-20261026` 不变；实际起点 `40a35534`，功能来源 `feature/intelligent-analytics-page-20261027` / `4fcaed5d`，源码候选 `0b72de2c`，本治理补记另行提交。旧 `cd5222e6` 是祖先，后续图文修复完整保留。
