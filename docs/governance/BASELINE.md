@@ -9,7 +9,11 @@
 - 用户明确要求合并远端 `快捷卡片回复优化v2` / `0cc3ebbcc25cb44ce42fb0f74f90208909136ef5` 与本地 `55aa6d8b`，并部署既有服务器。客服历史待办修复先提交为 `429b94c5`，一并纳入。
 - 源码自动合并；唯一冲突为本文件并行新增的检查记录，两侧内容均保留。其他会话尚未提交的 WorkBuddy 素材联调文件与原视频维护改动保留，不纳入本次提交或部署。
 - 合并源码提交 `775a5f5871f0e81cda0f132f27cbbd05b93fe0fc`；在独立干净工作树 `/Users/julia1/.lingshu-ai/deployment-validation/quick-card-v2-20261027` 完成定向回归 67/67、图文主回归 90/90、HTTP 1/1、图文路由/界面合同与治理 2/2、`pnpm run lint`、相对 `55aa6d8b` 的架构预算检查（3015 个生产 TS）、205 项迁移只读检查、checksum guard、生产构建与 `git diff --check`，均通过。主站构建 5.34 秒，Studio chunk 373270/485000 字节。真实供应商与付费链路未执行。
-- 部署沿用交互式 SSH、GitHub HTTPS `git pull --ff-only` 与 `bash deploy/update.sh`，先核对当前服务与数据恢复点。尚未部署，尚未执行目标库迁移。
+- 已部署生产运行源码 `9b55428fd655cfb99d5a778bd34924686dc8f9ea`。用户在说明 SSH 认证失败、当前连接为腾讯云 TAT 后明确回复“继续部署”，授权本次连接方式例外；仍在既有 `/opt/lingshu_AI` 从规范 GitHub HTTPS `git pull --ff-only` 拉取，并执行 `bash deploy/update.sh`。本次记录提交仅更新本文件，不改变生产运行源码。
+- 使用原数据库镜像版本 PocketBase 0.39.5 在备份副本演练新增 `1793059200_assistant_conversation_lifecycle.js`，274 张既有表记录数一致、完整性检查通过；正式库新增会话清空/删除字段已核验，复用原 `lingshu_ai_pb_data_managed` 卷，未重置数据或轮换密钥。
+- 构建与视觉质检运行时自检通过。浏览器中断后先核对已有进程和镜像；新镜像已完成导出，通过关键源码哈希后复用缓存完成构建。PocketBase 冷启动约 119 秒，超过原健康检查窗口；初次脚本退出 1，回收 3.831 GB 临时构建缓存并确认数据库健康接口返回 200 后，从管理员校验检查点继续原脚本的剩余命令，`deploy-resume.exit` 为 0。原健康窗口偏短的问题已记录；后续更新须等待真实健康响应，不能把提前失败当作数据库损坏。
+- 应用、PocketBase、Redis 健康，worker、Caddy 运行，app/worker 重启计数为 0；容器角色分别为 web/worker，关键源码与目标提交一致。外网 `https://app.lingshu.site/api/overseas/ready` 实测 HTTP 200、`status=ready`、`role=web`、`issues=[]`；旧 worker 缺少配置导致的重启循环已随正确环境重建消除。真实供应商或付费链路未额外执行。
+- 素材登记文件 2383 条、目标账号历史客户 8 个/消息 50 条；素材及历史会话 JSON 的 SHA-256 与部署前完全一致。完整回执、迁移演练、部署日志和数据校验在服务器 `/opt/lingshu_AI/backups/quick-card-v2-20261027/`；原版 `21287c57` 的 app/worker/PocketBase 镜像以 `lingshu-recovery/*:21287c57` 保留。原环境和数据库/应用数据备份已校验；旧分支与其他未提交改动未清理。
 
 ## 当前统一开发基线：小程序真机素材与选择器修复（2026-10-27）
 
