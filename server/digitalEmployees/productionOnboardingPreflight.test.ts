@@ -98,14 +98,14 @@ test('reference and inventory classifiers produce exact fixed-yield archetypes w
   assert.deepEqual(inventoryFixedYieldArchetypes([ownedVideo()], { tenantId: 'tenant-a' }), ['P3B_MACHINE_CLOSEUP']);
 });
 
-test('inventory coverage rejects shared, synthetic, unreviewed and image-only records', () => {
+test('inventory coverage accepts licensed shared video and rejects synthetic, unreviewed and image-only records', () => {
   const invalid = [
     ownedVideo({ id: 'shared', source: 'licensed_shared_material', authorization: { status: 'licensed', scope: 'shared', evidence: 'license' } }),
     ownedVideo({ id: 'synthetic', synthetic: true }),
     ownedVideo({ id: 'unreviewed', segments: [{ start: 0, end: 3, action: '机器运行', needsReview: true }] }),
     ownedVideo({ id: 'image', type: 'image' }),
   ];
-  assert.deepEqual(inventoryFixedYieldArchetypes(invalid, { tenantId: 'tenant-a' }), []);
+  assert.deepEqual(inventoryFixedYieldArchetypes(invalid, { tenantId: 'tenant-a' }), ['P3B_MACHINE_CLOSEUP']);
 });
 
 test('inventory readiness validates V2 rights, source revision, edit bounds, duration, SKU and weekly non-reuse', () => {

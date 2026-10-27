@@ -60,14 +60,8 @@ export function useAssistantWeeklyPlanExperience() {
       return true;
     };
     try {
-      const [{ productionApi }, { presenterProductionGate }] = await Promise.all([
-        import('../../lib/productionApi'), import('../../lib/shotProduction'),
-      ]);
-      const defaults = await productionApi.defaults();
-      const gate = presenterProductionGate(defaults);
-      if (!gate.ready) throw new Error(gate.message);
       requestSent = true;
-      let next = await digitalEmployeeApi.approveGoal(current.goal.id, current.plan.businessPackage.revision);
+      let next = await digitalEmployeeApi.approveGoal(current.goal.id, current.plan.businessPackage.revision, true);
       let finished = finish(next);
       if (!finished) {
         reconciliationRead = true;

@@ -66,7 +66,11 @@ assert.throws(
 const qwenOnlyEnv = generateProductionEnv({ dashscopeKey: 'dashscope-contract-key' });
 assert.match(qwenOnlyEnv, /^OVERSEAS_LLM_BACKEND=qwen$/m, 'a DashScope-only install must select Qwen');
 assert.match(qwenOnlyEnv, /^DASHSCOPE_API_KEY=dashscope-contract-key$/m);
-assert.match(qwenOnlyEnv, /^REQUIRED_CAPABILITIES=text_generation,qwen_generation,platform_ads$/m);
+assert.match(qwenOnlyEnv, /^REQUIRED_CAPABILITIES=text_generation,qwen_generation,video_generation,starter_workers,platform_ads$/m);
+assert.match(qwenOnlyEnv, /^QUEUE_BACKEND=bullmq$/m);
+assert.match(qwenOnlyEnv, /^REDIS_URL=redis:\/\/redis:6379\/0$/m);
+assert.match(qwenOnlyEnv, /^STARTER_198_ORCHESTRATOR_WORKER_ENABLED=true$/m);
+assert.match(qwenOnlyEnv, /^SOCIAL_WEEKLY_EXECUTION_WORKER_ENABLED=true$/m);
 assert.match(qwenOnlyEnv, /^PB_DATA_VOLUME_OWNER=lingshu-install-[0-9a-f]{32}$/m, 'the installer must generate a unique owner identity');
 assert.match(start, /volume_mode="--require-existing"/, 'normal starts must never create a missing PB volume');
 assert.match(start, /--fresh-install\)[\s\S]{0,180}volume_mode="--create-if-missing"/, 'fresh volume creation must require an explicit install flag');

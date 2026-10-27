@@ -275,7 +275,9 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
         }
       }
     } else if (ref.type === 'starter_social_content_artifact' && task.workflowKind === 'content') {
-      await validateContentArtifact(store, task, ref);
+      await validateContentArtifact(store, task, ref, {
+        qualityMode: ['quality_check', 'rework'].includes(task.schedule.stepKind) ? 'advisory' : 'blocking',
+      });
     } else if (ref.type === 'weekly_publication_attempt' && task.workflowKind === 'publishing' && task.schedule.stepKind === 'publishing') {
       requireResult(ref.version === 1);
       const attempt = await unique(store, 'social_publication_attempts', { tenant_id: task.tenantId, attempt_id: ref.id });
@@ -307,7 +309,7 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
   }
 }
 
-export async function validateContentArtifact(store: DataStore, task: WeeklyExecutionTask, ref: VersionedSocialRef) {
+export async function validateContentArtifact(store: DataStore, task: WeeklyExecutionTask, ref: VersionedSocialRef, options: { qualityMode?: 'blocking' | 'advisory' } = {}) {
   ref=await currentSharedWeeklyArtifactRef(store,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!},ref);
   task=await weeklyProductionEvidenceTask(store,task);
   const row = await unique(store, 'starter_social_content_artifacts', { tenant_id: task.tenantId, artifact_id: ref.id });
@@ -330,7 +332,7 @@ export async function validateContentArtifact(store: DataStore, task: WeeklyExec
   const workspaceSource = object(content.productionWorkspaceSource);
   if (content.workflowSchema === 'social-content.auto-production.v3' || workspaceSource.runId !== undefined)
     requireResult(text(workspaceSource.runId) === text(source.run_id), 'weekly_production_artifact_run_changed');
-  if (content.workflowSchema === 'social-content.auto-production.v3' && ['quality_check', 'rework'].includes(task.schedule.stepKind)) {
+  if (options.qualityMode !== 'advisory' && content.workflowSchema === 'social-content.auto-production.v3' && ['quality_check', 'rework'].includes(task.schedule.stepKind)) {
     const job = await readContentExecutionJob(store, task.tenantId, String(source.task_id), String(source.run_id));
     const checkpoint = object(job?.checkpoints['social.graph_review']);
     const subject = object(checkpoint.payload);
@@ -375,7 +377,7 @@ export async function validateContentArtifact(store: DataStore, task: WeeklyExec
   else if (step === 'video_generation') requireResult(text(content.mediaStorage?.video?.url) && text(content.mediaStorage?.video?.sha256));
   else if (['quality_check', 'rework'].includes(step)) {
     requireResult(text(content.mediaStorage?.video?.url));
-    if (!creativeRepair && (content.workflowSchema === 'social-content.auto-production.v3' || !(content.productionResult?.technicalReview?.approved === true && content.productionResult?.creativeReview?.approved === true))) {
+    if (options.qualityMode !== 'advisory' && !creativeRepair && (content.workflowSchema === 'social-content.auto-production.v3' || !(content.productionResult?.technicalReview?.approved === true && content.productionResult?.creativeReview?.approved === true))) {
       const { assertWeeklyContentQualityAudit } = await import('./weeklyContentQualityAudit.js');
       await assertWeeklyContentQualityAudit(store, task, ref);
     }

@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { SocialContentTaskBudget, sealSocialTaskCorrectionBudgetAuthorization, type SocialTaskBudgetScope, type SocialTaskBudgetOperation, type SocialTaskBudgetPorts } from './socialContentTaskBudget.js';
 const scope: SocialTaskBudgetScope = { tenantId: 'tenant', taskId: 'task', runId: 'run-1', planHash: 'a'.repeat(64) };
 const op = (id: string, stage = 'video'): SocialTaskBudgetOperation => ({ operationId: id, fingerprint: 'b'.repeat(64), provider: 'provider', model: 'model', accountRef: 'account', stage, shotId: 'S01' });
-test('fifteen yuan whole-film cap retains unknown spend and all paid stages across replacement runs', async () => {
+test('forecast ledger retains unknown spend and meters replacement runs beyond the forecast', async () => {
     const f = fixture(3, 15);
     try {
         await f.budget.reserveBatch(scope, [op('analysis'), op('presenter'), op('product'), op('voice'), op('render-qa')]);
@@ -16,54 +16,55 @@ test('fifteen yuan whole-film cap retains unknown spend and all paid stages acro
         const restarted = new SocialContentTaskBudget(f.root, f.ports);
         assert.equal(restarted.status(scope)!.retainedCny, 15);
         assert.equal(restarted.status(scope)!.limitCny, 15);
-        await assert.rejects(restarted.reserveBatch({...scope, runId:'replacement', planHash:'c'.repeat(64)}, [op('retry')]), /exceeded/);
-        assert.equal(restarted.status(scope)!.entries.length, 5);
+        await restarted.reserveBatch({...scope, runId:'replacement', planHash:'c'.repeat(64)}, [op('retry')]);
+        assert.equal(restarted.status(scope)!.retainedCny,18);assert.equal(restarted.status(scope)!.entries.length, 6);
     } finally { f.clean(); }
 });
 function fixture(cost = 3, maximum = 10) { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'social-task-budget-')); const ports: SocialTaskBudgetPorts = { authorization: async () => ({ maximumCny: maximum, authorizationRef: 'canonical-auth' }), quote: async () => ({ upperBoundCny: cost, quoteRef: 'server-quote', validUntil: '2099-01-01T00:00:00Z' }), assertCurrent: async () => { }, verifyRejection: async () => true }; return { root, ports, budget: new SocialContentTaskBudget(root, ports), clean: () => fs.rmSync(root, { recursive: true, force: true }) }; }
-test('child revision keeps original whole-content costs and cannot borrow parent receipts',async()=>{
+test('child revision meters additional cost and cannot borrow parent receipts',async()=>{
  const f=fixture(7,15);try{
   await f.budget.reserveBatch(scope,[op('original-1'),op('original-2')]);
   await f.budget.markOutcome(scope,'original-1','unknown','original-request-outcome-unknown');
   const child={...scope,taskId:'revision-child',budgetTaskId:scope.taskId,runId:'revision-run',planHash:'e'.repeat(64)};
   f.ports.quote=async()=>({upperBoundCny:2,quoteRef:'revision-quote',validUntil:'2099-01-01'});
-  await assert.rejects(f.budget.reserveBatch(child,[op('child-too-large')]),/exceeded/);
-  assert.equal(f.budget.status(child)!.retainedCny,14);assert.equal(fs.readdirSync(f.root).filter(p=>p.endsWith('.json')).length,1);
+  await f.budget.reserveBatch(child,[op('child-too-large')]);
+  assert.equal(f.budget.status(child)!.retainedCny,16);assert.equal(fs.readdirSync(f.root).filter(p=>p.endsWith('.json')).length,1);
   f.ports.quote=async()=>({upperBoundCny:1,quoteRef:'revision-quote',validUntil:'2099-01-01'});
-  await f.budget.reserveBatch(child,[op('child-within-remainder')]);assert.equal(f.budget.status(scope)!.retainedCny,15);
+  await f.budget.reserveBatch(child,[op('child-within-remainder')]);assert.equal(f.budget.status(scope)!.retainedCny,17);
   const parentEntry=f.budget.status(child)!.entries.find(e=>e.operationId==='original-1')!;assert.equal(parentEntry.status,'unknown');assert.equal(parentEntry.receiptRef,'original-request-outcome-unknown');
   await assert.rejects(f.budget.markOutcome({...child,runId:scope.runId,planHash:scope.planHash},'original-1','completed','forged-parent-receipt'),/entry_scope_missing/);
   await assert.rejects(f.budget.reserveBatch({...child,runId:scope.runId,planHash:scope.planHash},[op('original-1')]),/operation_changed/);
  }finally{f.clean();}
 });
-test('concurrent revision runs share a durable incremental allowance under the same ledger lock',async()=>{
+test('concurrent revision runs share one durable metering ledger under the same lock',async()=>{
  const f=fixture(2,15);try{
   f.ports.authorization=async()=>({maximumCny:15,maximumExecutionCny:3,authorizationRef:'verified-repair-allowance'});
   const child={...scope,taskId:'child',budgetTaskId:'task'};
   const results=await Promise.allSettled([f.budget.reserveBatch(child,[op('repair-a')]),f.budget.reserveBatch({...child,runId:'another-run',planHash:'f'.repeat(64)},[op('repair-b')])]);
-  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(f.budget.status(child)!.retainedCny,2);
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+  const retryScope=results[0]!.status==='rejected'?child:{...child,runId:'another-run',planHash:'f'.repeat(64)};
+  const retryOperation=results[0]!.status==='rejected'?op('repair-a'):op('repair-b');
+  await f.budget.reserveBatch(retryScope,[retryOperation]);assert.equal(f.budget.status(child)!.retainedCny,4);
   f.ports.authorization=async()=>({maximumCny:15,maximumExecutionCny:15,authorizationRef:'unapproved-reset-attempt'});
-  await assert.rejects(f.budget.reserveBatch({...child,runId:'third-run',planHash:'d'.repeat(64)},[op('repair-c')]),/execution_allowance_exceeded/);
+  await f.budget.reserveBatch({...child,runId:'third-run',planHash:'d'.repeat(64)},[op('repair-c')]);assert.equal(f.budget.status(child)!.retainedCny,6);
  }finally{f.clean();}
 });
-test('all suppliers, scenes and retry runs retain one task ceiling and replay survives restart', async () => { const f = fixture(); try {
+test('all suppliers, scenes and retry runs retain one usage ledger and replay survives restart', async () => { const f = fixture(); try {
     await f.budget.reserveBatch(scope, [op('frame', 'first_frame'), { ...op('qa', 'first_frame_qa'), provider: 'qwen' }, { ...op('speech', 'tts'), shotId: null }]);
     assert.equal(f.budget.status(scope)!.retainedCny, 9);
     await f.budget.markOutcome(scope, 'frame', 'unknown', 'raw-response');
     const restarted = new SocialContentTaskBudget(f.root, f.ports);
     await restarted.reserveBatch(scope, [op('frame', 'first_frame')]);
     assert.equal(restarted.status(scope)!.retainedCny, 9);
-    await assert.rejects(restarted.reserveBatch({ ...scope, runId: 'run-2', planHash: 'c'.repeat(64) }, [op('retry')]), /exceeded/);
-    assert.equal(restarted.status(scope)!.retainedCny, 9);
+    await restarted.reserveBatch({ ...scope, runId: 'run-2', planHash: 'c'.repeat(64) }, [op('retry')]);
+    assert.equal(restarted.status(scope)!.retainedCny, 12);
     f.ports.verifyRejection=async()=>false;
     await assert.rejects(restarted.releaseRejected(scope, 'frame', 'reject'), /rejection_not_proven/);
 }
 finally {
     f.clean();
 } });
-test('batch reservation is all or nothing, including an unquoted QA stage', async () => { const f = fixture(4); try {
-    await assert.rejects(f.budget.reserveBatch(scope, [op('a'), op('b'), op('qa', 'quality')]), /exceeded/);
-    assert.equal(f.budget.status(scope), null);
+test('batch reservation is all or nothing when any stage lacks a valid quote', async () => { const f = fixture(4); try {
     f.ports.quote = async (_s, o) => { if (o.stage === 'quality')
         throw Error('quote unavailable'); return { upperBoundCny: 1, quoteRef: 'quote', validUntil: '2099-01-01' }; };
     await assert.rejects(f.budget.reserveBatch(scope, [op('a'), op('qa', 'quality')]), /quote unavailable/);
@@ -72,39 +73,39 @@ test('batch reservation is all or nothing, including an unquoted QA stage', asyn
 finally {
     f.clean();
 } });
-test('concurrent workers cannot collectively reserve over ceiling', async () => { const f = fixture(6); try {
+test('concurrent workers serialize valid reservations without losing usage', async () => { const f = fixture(6); try {
     const other = new SocialContentTaskBudget(f.root, f.ports);
     const results = await Promise.allSettled([f.budget.reserveBatch(scope, [op('a')]), other.reserveBatch(scope, [op('b')])]);
     assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
-    assert.equal(f.budget.status(scope)!.retainedCny, 6);
-    await assert.rejects(other.reserveBatch(scope, [op('b')]), /exceeded/);
+    await other.reserveBatch(scope, [results[0]!.status==='rejected'?op('a'):op('b')]);
+    assert.equal(f.budget.status(scope)!.retainedCny, 12);
 }
 finally {
     f.clean();
 } });
-test('all tenants retain the same whole-film ceiling', async () => {
+test('all tenants use the same metered-unlimited production policy', async () => {
     const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
     process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
     const exempt = fixture(6), ordinary = fixture(6);
     const exemptScope = { ...scope, tenantId: 'local_tenant_customer_aurelia_beauty' };
     const ordinaryScope = { ...scope, tenantId: 'another-tenant' };
     try {
-        await assert.rejects(exempt.budget.reserveBatch(exemptScope,[op('a'),op('b')]),/production_budget_decision_required/);
-        assert.equal(exempt.budget.status(exemptScope),null);
-        await assert.rejects(ordinary.budget.reserveBatch(ordinaryScope, [op('a'), op('b')]), /exceeded/);
-        assert.equal(ordinary.budget.status(ordinaryScope), null);
+        await exempt.budget.reserveBatch(exemptScope,[op('a'),op('b')]);
+        assert.equal(exempt.budget.status(exemptScope)!.retainedCny,12);
+        await ordinary.budget.reserveBatch(ordinaryScope, [op('a'), op('b')]);
+        assert.equal(ordinary.budget.status(ordinaryScope)!.retainedCny,12);
     } finally {
         exempt.clean(); ordinary.clean();
         if (configured === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
         else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = configured;
     }
 });
-test('lower user ceiling persists and larger authorization never raises it', async () => { const f = fixture(2, 4); try {
+test('original forecast persists while later usage continues to accumulate', async () => { const f = fixture(2, 4); try {
     await f.budget.reserveBatch(scope, [op('a')]);
     f.ports.authorization = async () => ({ maximumCny: 100, authorizationRef: 'later-auth' });
     await f.budget.reserveBatch(scope, [op('b')]);
     assert.equal(f.budget.status(scope)!.limitCny, 4);
-    await assert.rejects(f.budget.reserveBatch(scope, [op('c')]), /exceeded/);
+    await f.budget.reserveBatch(scope, [op('c')]);assert.equal(f.budget.status(scope)!.retainedCny,6);
 }
 finally {
     f.clean();
@@ -117,16 +118,16 @@ test('server correction grant extends only the exact existing run and plan while
         presenterApprovalBindings:['presenter-mother-1','presenter-mother-2','presenter-mother-3'].map((groupId,index)=>({groupId,approvalRecordHash:String(index+1).repeat(64)})) as any,
         authorizedBy:'trusted-server-operator',authorizationRef:'correction:current-task:approved',issuedAt:new Date().toISOString()});
     const extended=await f.budget.authorizeCorrection(scope,grant);
-    assert.equal(extended.limitCny,15);assert.equal(extended.authorizedLimitCny,16.5);assert.equal(extended.remainingCny,5.25);
+    assert.equal(extended.limitCny,16.5);assert.equal(extended.authorizedLimitCny,16.5);assert.equal(extended.remainingCny,6.75);
     const unrelatedPlan=f.budget.status({...scope,planHash:'0'.repeat(64)})!;
-    assert.equal(unrelatedPlan.limitCny,10);
+    assert.equal(unrelatedPlan.limitCny,16.5);
     assert.equal(unrelatedPlan.correctionAuthorization,null);
     assert.equal(unrelatedPlan.authorizedLimitCny,16.5);
     assert.equal(unrelatedPlan.hasCorrectionAuthorization,true);
-    assert.equal((await f.budget.authorizeCorrection(scope,grant)).limitCny,15);
-    await assert.rejects(f.budget.reserveBatch(scope,[op('corrective-presenter-1'),op('corrective-presenter-2')]),/production_budget_decision_required/);
-    assert.equal(f.budget.status(scope)!.retainedCny,9.75);
-    await assert.rejects(f.budget.reserveBatch({...scope,runId:'other-run',planHash:'c'.repeat(64)},[op('other-run-op')]),/exceeded/);
+    assert.equal((await f.budget.authorizeCorrection(scope,grant)).limitCny,16.5);
+    await f.budget.reserveBatch(scope,[op('corrective-presenter-1'),op('corrective-presenter-2')]);
+    assert.equal(f.budget.status(scope)!.retainedCny,16.25);
+    await f.budget.reserveBatch({...scope,runId:'other-run',planHash:'c'.repeat(64)},[op('other-run-op')]);assert.equal(f.budget.status(scope)!.retainedCny,19.5);
     const fresh=fixture(1,100);try{await fresh.budget.reserveBatch(scope,[op('fresh')]);assert.equal(fresh.budget.status(scope)!.limitCny,100);}finally{fresh.clean();}
 } finally { f.clean(); } });
 test('correction grant rejects forged hash, changed scope, non-ten baseline and excessive ceiling', async () => { const f=fixture(1,10); try {
@@ -142,17 +143,17 @@ test('combined voice correction safely supersedes the existing first-frame grant
  await f.budget.reserveBatch(scope,[op('original')]);const groups=['presenter-mother-1','presenter-mother-2','presenter-mother-3'] as [string,string,string],bindings=groups.map((groupId,index)=>({groupId,approvalRecordHash:String(index+1).repeat(64)})) as any;
  const first=sealSocialTaskCorrectionBudgetAuthorization({schemaVersion:1,...scope,previousMaximumCny:10,maximumCny:16.5,reason:'provider_correction',correctionCause:'approved_first_frame_not_consumed',affectedPresenterGroupIds:groups,presenterApprovalBindings:bindings,authorizedBy:'server',authorizationRef:'first-frame-grant',issuedAt:new Date().toISOString()});await f.budget.authorizeCorrection(scope,first);
  const combined=sealSocialTaskCorrectionBudgetAuthorization({schemaVersion:1,...scope,previousMaximumCny:10,maximumCny:20,reason:'provider_correction',correctionCause:'approved_first_frame_not_consumed_and_bound_voice_mismatch',affectedPresenterGroupIds:groups,presenterApprovalBindings:bindings,selectedVoiceId:'bb17551-bound-voice',selectedVoiceFingerprint:'f'.repeat(64),supersedes:{recordHash:first.recordHash,authorizationRef:first.authorizationRef},authorizedBy:'server',authorizationRef:'combined-grant',issuedAt:new Date().toISOString()});
- const status=await f.budget.authorizeCorrection(scope,combined);assert.equal(status.limitCny,15);assert.equal(status.authorizedLimitCny,20);assert.equal(status.correctionAuthorization?.recordHash,combined.recordHash);assert.equal((await f.budget.authorizeCorrection(scope,combined)).limitCny,15);
+ const status=await f.budget.authorizeCorrection(scope,combined);assert.equal(status.limitCny,20);assert.equal(status.authorizedLimitCny,20);assert.equal(status.correctionAuthorization?.recordHash,combined.recordHash);assert.equal((await f.budget.authorizeCorrection(scope,combined)).limitCny,20);
  await assert.rejects(f.budget.authorizeCorrection(scope,sealSocialTaskCorrectionBudgetAuthorization({...combined,authorizationRef:'forged',supersedes:{...combined.supersedes!,recordHash:'0'.repeat(64)}})),/invalid|conflict/);
 }finally{f.clean();}});
-test('same run and plan safely append retry operations while preserving completed receipts and ceiling', async () => { const f = fixture(2, 10); try {
+test('same run and plan safely append retry operations while preserving completed receipts and metering', async () => { const f = fixture(2, 10); try {
     await f.budget.reserveBatch(scope, [op('frame', 'first_frame'), op('video-0'), {...op('qa-0','video_qa'),provider:'qwen'}]);
     await f.budget.markOutcome(scope,'frame','completed','frame-receipt');
     await f.budget.markOutcome(scope,'video-0','completed','video-receipt');
     const extended=await f.budget.reserveBatch(scope,[op('frame','first_frame'),op('video-0'),{...op('qa-0','video_qa'),provider:'qwen'},op('video-1'),{...op('qa-1','video_qa'),provider:'qwen'}]);
     assert.equal(extended.retainedCny,10);assert.equal(extended.entries.find(e=>e.operationId==='frame')?.receiptRef,'frame-receipt');assert.equal(extended.entries.find(e=>e.operationId==='video-0')?.receiptRef,'video-receipt');assert.equal(extended.entries.find(e=>e.operationId==='video-1')?.status,'reserved');
-    await assert.rejects(f.budget.reserveBatch(scope,[op('overflow')]),/exceeded/);
-    const unchanged=f.budget.status(scope)!;assert.equal(unchanged.retainedCny,10);assert.equal(unchanged.entries.length,5);assert.equal(unchanged.entries.find(e=>e.operationId==='frame')?.receiptRef,'frame-receipt');
+    await f.budget.reserveBatch(scope,[op('overflow')]);
+    const unchanged=f.budget.status(scope)!;assert.equal(unchanged.retainedCny,12);assert.equal(unchanged.entries.length,6);assert.equal(unchanged.entries.find(e=>e.operationId==='frame')?.receiptRef,'frame-receipt');
 } finally { f.clean(); } });
 test('only canonical pre-acceptance rejection releases, completed retains unknown invoice estimate', async () => { const f = fixture(5); try {
     await f.budget.reserveBatch(scope, [op('a'), op('b')]);
@@ -192,12 +193,14 @@ test('scope, changed operations, expired quote and corrupt ledger fail closed', 
 finally {
     f.clean();
 } });
-test('separate Node processes share the same durable ceiling', async () => { const f = fixture(6); try {
+test('separate Node processes share the same durable usage ledger', async () => { const f = fixture(6); try {
     const source = `import {SocialContentTaskBudget} from ${JSON.stringify(new URL('./socialContentTaskBudget.ts', import.meta.url).href)}; const ports={authorization:async()=>({maximumCny:10,authorizationRef:'auth'}),quote:async()=>({upperBoundCny:6,quoteRef:'quote',validUntil:'2099-01-01'}),assertCurrent:async()=>{},verifyRejection:async()=>false}; await new SocialContentTaskBudget(process.argv[1],ports).reserveBatch(${JSON.stringify(scope)},[{...${JSON.stringify(op('placeholder'))},operationId:process.argv[2]}]);`;
     const run = promisify(execFile);
     const results = await Promise.allSettled(['a', 'b'].map(id => run(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source, f.root, id])));
     assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
-    assert.equal(f.budget.status(scope)!.retainedCny, 6);
+    const loser=results[0]!.status==='rejected'?'a':'b';
+    await f.budget.reserveBatch(scope,[op(loser)]);
+    assert.equal(f.budget.status(scope)!.retainedCny, 12);
 }
 finally {
     f.clean();

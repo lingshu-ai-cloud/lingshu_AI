@@ -15,6 +15,8 @@ const floatingRemindersSource = fs.readFileSync(new URL('./assistant/AssistantFl
 const launcherSource = fs.readFileSync(new URL('./assistant/AssistantLauncher.tsx', import.meta.url), 'utf8');
 const weeklyPlanSource = fs.readFileSync(new URL('./assistant/AssistantWeeklyPlanExperience.tsx', import.meta.url), 'utf8');
 const weeklyPlanHookSource = fs.readFileSync(new URL('./assistant/useAssistantWeeklyPlanExperience.ts', import.meta.url), 'utf8');
+const decisionCenterSource = fs.readFileSync(new URL('./assistant/AssistantDecisionCenter.tsx', import.meta.url), 'utf8');
+const decisionApiSource = fs.readFileSync(new URL('../lib/assistantDecisionApi.ts', import.meta.url), 'utf8');
 const launcherRetractionSource = fs.readFileSync(new URL('./assistant/useAssistantLauncherRetraction.ts', import.meta.url), 'utf8');
 const homeAnchorSource = fs.readFileSync(new URL('./assistant/useAssistantHomeAnchor.ts', import.meta.url), 'utf8');
 const conversationBubblesSource = fs.readFileSync(new URL('./assistant/AssistantConversationBubbles.tsx', import.meta.url), 'utf8');
@@ -75,8 +77,13 @@ assert.match(conversationPanelSource, /assistantUsesMobileClearance[\s\S]{0,240}
 assert.match(launcherSource, /const closedLabel = weeklyPlanOperating \? '周计划正在运营中' : '周计划待生成'/, '右下角入口必须根据真实周运行状态给出明确文案');
 assert.match(weeklyPlanHookSource, /digitalEmployeeApi\.createGoal\(defaultWeeklyGoal\(next\.config\)\.draft\)/, '提示词必须复用真实周计划生成接口');
 assert.match(weeklyPlanHookSource, /请先点击上方『让灵小枢认识我』完成基础资料/, '缺少初始资料时必须直接告知用户可操作的页面入口');
-assert.match(weeklyPlanSource, /确认无误，开始运行/, '完整周计划弹窗必须在用户确认后才启动');
+assert.match(weeklyPlanSource, /确认周计划/, '完整周计划弹窗必须只显示直接的计划确认动作');
+assert.doesNotMatch(weeklyPlanSource, /Checkbox|generationAuthorized|确认授权/, '周计划弹窗不得增加独立授权复选框或授权按钮');
 assert.match(weeklyPlanHookSource, /confirmedWeeklyExecution/, '启动成功必须由真实运行与任务回执确认');
+assert.match(weeklyPlanHookSource, /approveGoal\(current\.goal\.id, current\.plan\.businessPackage\.revision, true\)/, '周计划确认必须发送显式生成授权');
+assert.match(decisionCenterSource, /contentGenerationAuthorized: action\.id === 'approve_and_start'/, '助手待办点击计划确认动作时必须自动记录生成授权');
+assert.doesNotMatch(decisionCenterSource, /授权数字员工开始生成内容|确认授权并开始/, '助手待办不得增加独立生成授权确认');
+assert.match(decisionApiSource, /contentGenerationAuthorized[\s\S]*newContentGenerationAuthorization/, '助手待办接口必须发送显式生成授权合同');
 assert.match(weeklyPlanSource, /assistant-weekly-plan-celebration/, '确认成功后必须提供有限时长的庆祝与收束反馈');
 assert.match(launcherMarkup, /shape="round"/, '灵小枢入口必须采用紧凑胶囊形态');
 assert.match(launcherMarkup, /!h-11/, '灵小枢入口必须保留 44px 触控高度');

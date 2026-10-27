@@ -11,12 +11,13 @@ test('content worker heartbeat requires a fresh ready worker from the exact buil
   const sha = 'a'.repeat(40);
   const now = new Date('2026-10-20T00:01:00.000Z');
   assert.equal(await probeContentWorkerHeartbeat({ dataStore: heartbeatStore([
-    { role: 'worker', state: 'ready', last_seen_at: '2026-10-20T00:00:30.000Z', details: { build: { commitSha: sha } } },
+    { role: 'worker', state: 'ready', last_seen_at: '2026-10-20T00:00:30.000Z', details: { build: { commitSha: sha }, weeklyExecution: { configuredEnabled: true, started: true, state: 'idle' }, starterContentWorkers: { ready: true, issues: [] } } },
   ]), expectedBuildSha: sha, now }), true);
   for (const row of [
     { role: 'web', state: 'ready', last_seen_at: '2026-10-20T00:00:30.000Z', details: { build: { commitSha: sha } } },
     { role: 'worker', state: 'ready', last_seen_at: '2026-10-19T23:00:00.000Z', details: { build: { commitSha: sha } } },
     { role: 'worker', state: 'ready', last_seen_at: '2026-10-20T00:00:30.000Z', details: { build: { commitSha: 'b'.repeat(40) } } },
+    { role: 'worker', state: 'ready', last_seen_at: '2026-10-20T00:00:30.000Z', details: { build: { commitSha: sha }, weeklyExecution: { configuredEnabled: false, started: false, state: 'disabled' } } },
   ]) assert.equal(await probeContentWorkerHeartbeat({ dataStore: heartbeatStore([row]), expectedBuildSha: sha, now }), false);
   assert.equal(await probeContentWorkerHeartbeat({ dataStore: heartbeatStore([]), expectedBuildSha: 'unknown', now }), false);
 });

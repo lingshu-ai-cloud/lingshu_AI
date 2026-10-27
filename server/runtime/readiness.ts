@@ -116,8 +116,6 @@ export function digitalHumanProviderReadiness(
       ...(!objectStorageReady ? ['object_storage'] : []),
       ...(!positiveFinite(env, 'RUNWAY_ACT_TWO_CNY_PER_CREDIT') ? ['RUNWAY_ACT_TWO_CNY_PER_CREDIT'] : []),
       ...(!positiveFinite(env, 'RUNWAY_ACT_TWO_ESTIMATED_CNY_PER_SECOND') ? ['RUNWAY_ACT_TWO_ESTIMATED_CNY_PER_SECOND'] : []),
-      ...(!positiveFinite(env, 'DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT') ? ['DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT'] : []),
-      ...(!positiveFinite(env, 'DIGITAL_HUMAN_REFERENCE_MONTHLY_BUDGET_CNY') ? ['DIGITAL_HUMAN_REFERENCE_MONTHLY_BUDGET_CNY'] : []),
     ]),
     seedanceReference: state([
       ...(!envEnabled(env, 'SEEDANCE_REFERENCE_ENABLED') ? ['SEEDANCE_REFERENCE_ENABLED=true'] : []),
@@ -125,8 +123,6 @@ export function digitalHumanProviderReadiness(
       ...(!envPresent(env, 'SEEDANCE_MODEL') ? ['SEEDANCE_MODEL'] : []),
       ...(!objectStorageReady ? ['object_storage'] : []),
       ...(!positiveFinite(env, 'SEEDANCE_REFERENCE_ESTIMATED_CNY_PER_SECOND') ? ['SEEDANCE_REFERENCE_ESTIMATED_CNY_PER_SECOND'] : []),
-      ...(!positiveFinite(env, 'DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT') ? ['DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT'] : []),
-      ...(!positiveFinite(env, 'DIGITAL_HUMAN_REFERENCE_MONTHLY_BUDGET_CNY') ? ['DIGITAL_HUMAN_REFERENCE_MONTHLY_BUDGET_CNY'] : []),
     ]),
   };
 }
@@ -283,7 +279,8 @@ export function runtimeCapabilities(role: ProcessRole): Record<RuntimeCapability
   const starterWorkersReady = background
     && enabled('STARTER_PUBLICATION_PACKAGE_WORKER_ENABLED')
     && enabled('STARTER_QUOTE_ARTIFACT_WORKER_ENABLED')
-    && enabled('STARTER_198_ORCHESTRATOR_WORKER_ENABLED');
+    && enabled('STARTER_198_ORCHESTRATOR_WORKER_ENABLED')
+    && enabled('SOCIAL_WEEKLY_EXECUTION_WORKER_ENABLED');
 
   return {
     text_generation: textGeneration,
@@ -303,7 +300,7 @@ export function runtimeCapabilities(role: ProcessRole): Record<RuntimeCapability
 
 export function requiredCapabilityIssues(capabilities: Record<RuntimeCapability, CapabilityState>): string[] {
   const configured = String(process.env.REQUIRED_CAPABILITIES || '').trim();
-  const defaultProductionCapabilities = 'text_generation,qwen_generation,tts,video_generation,digital_human';
+  const defaultProductionCapabilities = 'text_generation,qwen_generation,tts,video_generation,digital_human,starter_workers';
   const required = String(configured || (process.env.NODE_ENV === 'production' ? defaultProductionCapabilities : ''))
     .split(/[\s,;]+/)
     .map(value => value.trim())
@@ -335,7 +332,7 @@ export async function runtimeReadiness(input: {
   capabilities.digital_human_quality = quality.localVisual;
   capabilities.digital_human_auto_release = quality.autoRelease;
   capabilities.material_cleanup = await (input.checkMaterialCleanup || (() => materialCleanupRuntimeReadiness()))();
-  const issues = [...(input.startupIssues || []), ...requiredCapabilityIssues(capabilities)];
+  const issues = [...(input.startupIssues || [])];
   let socialOperating: SocialOperatingSignals | null = null;
   try {
     if (input.checkPocketBase) {
@@ -375,9 +372,15 @@ export async function runtimeReadiness(input: {
     if (socialOperating && !socialOperating.worker.ready) {
       issues.push(`social_operating_worker_unready:${socialOperating.worker.source}:${socialOperating.worker.state}`);
     }
+    if (socialOperating) {
+      capabilities.starter_workers = socialOperating.worker.ready
+        ? { ready: true }
+        : { ready: false, reason: `content_worker_${socialOperating.worker.state}` };
+    }
   } catch (error) {
     issues.push(`social_operating_observability_unavailable:${error instanceof Error ? error.message : 'unknown'}`);
   }
+  issues.push(...requiredCapabilityIssues(capabilities));
   return {
     status: issues.length ? 'degraded' as const : 'ready' as const,
     build: runtimeBuildInfo(),

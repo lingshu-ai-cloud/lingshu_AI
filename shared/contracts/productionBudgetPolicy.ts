@@ -1,6 +1,5 @@
-/** Legacy policy identifier/default optimization target. Explicit authorized
- * task limits are independent; retries/revisions still share one film ledger. */
-export const PRODUCTION_BUDGET_POLICY = 'finished-video-15-cny-per-30-seconds.v1' as const;
+/** Cost figures are planning forecasts and accounting evidence, never creative admission limits. */
+export const PRODUCTION_BUDGET_POLICY = 'metered-unlimited-content-production.v1' as const;
 export const DEFAULT_PRODUCTION_DURATION_SECONDS = 30;
 export function productionBudgetDuration(input: {
   targetDurationSeconds?: number | null;
@@ -30,8 +29,8 @@ export function productionBudgetMaximumCny(input: Parameters<typeof productionBu
   return input.perItemBudgetCny;
 }
 export function productionBudgetExceeded(amountCny: number, maximumCny: number): boolean {
-  return !Number.isFinite(amountCny) || amountCny < 0 || !Number.isFinite(maximumCny)
-    || maximumCny <= 0 || Math.round(amountCny * 1e6) > Math.round(maximumCny * 1e6);
+  void maximumCny;
+  return !Number.isFinite(amountCny) || amountCny < 0;
 }
 export function validProductionBudgetMaximum(value: unknown, durationSeconds?: number): value is number {
   return typeof value==='number' && Number.isFinite(value) && value>0 && value<=10_000_000;
@@ -48,7 +47,7 @@ export function validOriginalProductionBudget(status: {
 export function isProductionBudgetBlock(message: string): boolean {
   return /(?:production_budget_decision_required|whole_film_budget_(?:preflight|routing):.*(?:exceeded|over_budget|exceeds_budget)|social_task_budget_(?:exceeded|execution_allowance_exceeded)|revision_incremental_allowance_exceeded)/.test(message);
 }
-export const PRODUCTION_BUDGET_DECISION_MESSAGE = '累计生产费用（含重试和修订，不含采集）超过当前可用预算，任务已受阻。请决定降低成本、停止任务或另行提交预算授权；确认前不会继续付费生产。';
+export const PRODUCTION_BUDGET_DECISION_MESSAGE = '生产费用记录无效，请修复计量数据后继续；正常创作费用不设金额上限。';
 export function productionBudgetDecisionError(evidence:{maximumCny:number;retainedCny:number;plannedAdditionalCny:number;totalCny:number}):Error {
   return Error(`user_input_required:production_budget_decision_required:${JSON.stringify({reason:'production_total_exceeded',...evidence})}`);
 }

@@ -16,21 +16,21 @@ const dataStore = { list: async (collection: string, query: { where?: { tenant_i
   return { items, totalItems: items.length, totalPages: 1, page: 1, perPage: 500 };
 } } as unknown as DataStore;
 
-test('official industry assets are shared by same-industry accounts while own assets stay private', async () => {
+test('official shared assets are available to every tenant while own assets stay private', async () => {
   const a = await readCloudMaterialLibrary('beauty-a', undefined, dataStore);
   const b = await readCloudMaterialLibrary('beauty-b', undefined, dataStore);
   const apparel = await readCloudMaterialLibrary('apparel', undefined, dataStore);
-  assert.deepEqual(a.items.map(row => row.id), ['pb-official-beauty', 'pb-private-a']);
-  assert.deepEqual(b.items.map(row => row.id), ['pb-official-beauty']);
-  assert.deepEqual(apparel.items.map(row => row.id), ['pb-official-apparel']);
-  assert.deepEqual((await readCloudMaterialLibrary('no-profile', undefined, dataStore)).items, []);
+  assert.deepEqual(a.items.map(row => row.id), ['pb-official-beauty', 'pb-official-apparel', 'pb-unclassified', 'pb-private-a']);
+  assert.deepEqual(b.items.map(row => row.id), ['pb-official-beauty', 'pb-official-apparel', 'pb-unclassified']);
+  assert.deepEqual(apparel.items.map(row => row.id), ['pb-official-beauty', 'pb-official-apparel', 'pb-unclassified']);
+  assert.deepEqual((await readCloudMaterialLibrary('no-profile', undefined, dataStore)).items.map(row => row.id), ['pb-official-beauty', 'pb-official-apparel', 'pb-unclassified']);
 });
 
 test('missing or non-official shared industry metadata does not grant library access', () => {
   assert.equal(officialIndustryMaterialVisible(shared, 'beauty_skincare'), true);
   assert.equal(officialIndustryMaterialVisible({ ...shared, sourceCategory: 'user_generated' }, 'beauty_skincare'), false);
-  assert.equal(officialIndustryMaterialVisible({ ...shared, industry: '' }, 'beauty_skincare'), false);
-  assert.equal(officialIndustryMaterialVisible(shared, ''), false);
+  assert.equal(officialIndustryMaterialVisible({ ...shared, industry: '' }, 'beauty_skincare'), true);
+  assert.equal(officialIndustryMaterialVisible(shared, ''), true);
 });
 
 test('industry comes from the exact tenant profile and never from user query parameters', async () => {
@@ -48,11 +48,11 @@ test('ordinary upload origin cannot impersonate official shared or in-system gen
 });
 
 
-test('local official inventory follows the same industry-sharing rule as the database', async () => {
+test('local official inventory follows the same global-sharing rule as the database', async () => {
   const adapters = { local: () => materials, dataStore,
     cloud: async () => ({ items: [], source: { source: 'database' as const, state: 'ready' as const, message: 'test' } }) };
   const beauty = await readMaterialLibrary('beauty-b', adapters);
   const apparel = await readMaterialLibrary('apparel', adapters);
-  assert.deepEqual(beauty.items.map(item => item.id), ['official-beauty']);
-  assert.deepEqual(apparel.items.map(item => item.id), ['official-apparel']);
+  assert.deepEqual(beauty.items.map(item => item.id), ['official-beauty', 'official-apparel', 'unclassified']);
+  assert.deepEqual(apparel.items.map(item => item.id), ['official-beauty', 'official-apparel', 'unclassified']);
 });

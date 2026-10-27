@@ -2,7 +2,6 @@ import BusinessHealthOverview from './smartBusiness/BusinessHealthOverview';
 import { labels as sharedTaskLabels } from '../../shared/mobile-domain.mjs';
 import { getScrollBehavior } from '../lib/usePrefersReducedMotion';
 import { PAGE_REGISTRY, type Page } from '../pageRegistry';
-import type { PresenterProductionGate } from '../lib/shotProduction';
 import { Alert, Button, Collapse, Modal, Tag } from 'antd';
 import { OnboardingPanel } from './smartBusiness/DigitalEmployeeOnboardingPanel';
 import { GoalPanel, type GoalDraft, type BusinessLine, type ContentPlatform } from './smartBusiness/WeeklyGoalPanel';
@@ -68,8 +67,6 @@ export interface ConfiguredDigitalEmployeeWorkspaceProps {
   applicationGuideOpen: boolean;
   applicationGuideEntry: 'start' | 'presenter';
   weeklyStartDialogOpen: boolean;
-  weeklyPresenterLoading: boolean;
-  weeklyPresenterGate: PresenterProductionGate;
   onboardingWelcomeOpen: boolean;
   setError: Setter<string>;
   setViewGoalId: Setter<string>;
@@ -111,8 +108,8 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
     businessLine, contentPlatform, selectedAccountId, selectedContentItemId,
     weeklyStudioContentId, weeklyStartConflict, weeklyPlanOpen, newGoal,
     planHistoryOpen, weeklyPlanDetailsOpen, applicationGuideOpen,
-    applicationGuideEntry, weeklyStartDialogOpen, weeklyPresenterLoading,
-    weeklyPresenterGate, onboardingWelcomeOpen, setError, setViewGoalId,
+    applicationGuideEntry, weeklyStartDialogOpen,
+    onboardingWelcomeOpen, setError, setViewGoalId,
     setWorkspaceView, setSelectedTaskId, setSelectedContentItemId,
     setWeeklyStudioContentId, setWeeklyPlanOpen, setNewGoal, setPlanHistoryOpen,
     setWeeklyPlanDetailsOpen, setApplicationGuideOpen, setApplicationGuideEntry,
@@ -350,29 +347,18 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
       <Modal
         open={weeklyStartDialogOpen}
         title="确认开始本周生产"
-        okText="确认并开始生产"
+        okText="确认周计划"
         cancelText="取消"
         confirmLoading={busy === "confirm-weekly-plan"}
-        okButtonProps={{ disabled: weeklyPresenterLoading || !weeklyPresenterGate.ready }}
         onCancel={() => setWeeklyStartDialogOpen(false)}
         onOk={() => {
-          if (!weeklyPresenterGate.ready) return;
           setWeeklyStartDialogOpen(false);
           void confirmWeeklyPlan();
         }}
       >
         <div className="space-y-4 py-2">
-          <p className="text-sm leading-6 text-text-secondary">启动后，编导与内容 Agent 将按本周计划进入真实生产。数字人形象是不可跳过的生产输入。</p>
-          {weeklyPresenterLoading ? <p role="status" className="rounded-lg bg-surface-2 px-4 py-3 text-sm text-text-muted">正在核验数字人形象…</p> : weeklyPresenterGate.ready ? (
-            <Alert type="success" showIcon title={`已选择：${weeklyPresenterGate.presenter?.name || '数字人形象'}`} description="生产会锁定该人物形象；不会切换为素材匹配或其他人物路线。" />
-          ) : (
-            <Alert type="warning" showIcon title="没有形象，无法进入生产" description={weeklyPresenterGate.message} />
-          )}
-          {!weeklyPresenterLoading && !weeklyPresenterGate.ready && <Button type="primary" onClick={() => {
-            setWeeklyStartDialogOpen(false);
-            setApplicationGuideEntry("presenter");
-            setApplicationGuideOpen(true);
-          }}>选择或录入数字人形象</Button>}
+          <p className="text-sm leading-6 text-text-secondary">启动后，编导与内容 Agent 将按本周计划调用已配置的模型生成内容。纯产品内容不要求数字人形象；只有计划中确实包含人物口播时才检查人物与声音。</p>
+          <p className="text-xs leading-5 text-text-muted">确认后系统会记录本次模型、Token 和实际费用；内容发布仍需单独确认。</p>
         </div>
       </Modal>
       {weeklyPlanOpen && (!goal || newGoal) && !activeRun && <div className="h-full overflow-y-auto bg-surface">

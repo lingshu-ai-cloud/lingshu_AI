@@ -22,7 +22,7 @@ export function AssistantWeeklyPlanOverlay({ experience, reduceMotion }: { exper
   const taskRows = useMemo(() => pack?.tasks || [], [pack]);
   return <>
     <Modal open={experience.modalOpen} onCancel={experience.close} width={820} title={<span className="flex items-center gap-2"><CalendarRange size={18} className="text-accent"/>确认本周运营计划</span>}
-      footer={[<Button key="cancel" onClick={experience.close} disabled={experience.busy}>{experience.weeklyPlanOperating ? '关闭' : '暂不开始'}</Button>, <Button key="confirm" type="primary" onClick={() => void experience.confirm()} disabled={!goal || !pack || experience.weeklyPlanOperating} loading={experience.busy} icon={!experience.busy ? <Check size={15}/> : undefined}>{experience.weeklyPlanOperating ? '周计划正在运行' : '确认无误，开始运行'}</Button>]}
+      footer={[<Button key="cancel" onClick={experience.close} disabled={experience.busy}>{experience.weeklyPlanOperating ? '关闭' : '暂不开始'}</Button>, <Button key="confirm" type="primary" onClick={() => void experience.confirm()} disabled={!goal || !pack || experience.weeklyPlanOperating} loading={experience.busy} icon={!experience.busy ? <Check size={15}/> : undefined}>{experience.weeklyPlanOperating ? '周计划正在运行' : '确认周计划'}</Button>]}
       destroyOnHidden mask={{ closable: !experience.busy }}>
       {experience.error && <Alert className="mb-4" type="warning" showIcon title="周计划尚未启动" description={experience.error}/>}
       {goal && pack ? <div className="space-y-5" data-weekly-plan-modal="details">
@@ -34,7 +34,7 @@ export function AssistantWeeklyPlanOverlay({ experience, reduceMotion }: { exper
           { key: 'outputs', label: '内容安排', children: `${goal.videoPlans?.length || pack.operatingContext?.outputs.count || 0} 条` },
         ]}/>
         <section><h3 className="text-sm font-semibold text-text-primary">本周全部任务</h3><ol className="mt-3 divide-y divide-border rounded-xl border border-border">{taskRows.map((task, index) => <li key={`${task.templateId}-${index}`} className="flex items-start justify-between gap-3 px-4 py-3"><span><strong className="text-sm text-text-primary">{task.title}</strong><span className="mt-1 block text-xs text-text-secondary">{task.notes || '按计划执行并保留可核验回执'}</span></span><Tag>{task.dueAt.slice(5)}</Tag></li>)}</ol></section>
-        <Alert type="info" showIcon title={experience.weeklyPlanOperating ? '本周计划已经开始运行，可关闭弹窗继续查看进度。' : '只有点击“确认无误，开始运行”后，数字员工才会正式执行；启动结果以真实运行回执为准。'}/>
+        <Alert type="info" showIcon title={experience.weeklyPlanOperating ? '本周计划已经开始运行，可关闭弹窗继续查看进度。' : '点击“确认周计划”后，数字员工才会正式执行；启动结果以真实运行回执为准。'}/>
       </div> : <div className="grid min-h-48 place-items-center text-text-muted"><Loader2 className="animate-spin"/></div>}
     </Modal>
     {experience.celebrating && <div className={`assistant-weekly-plan-celebration ${reduceMotion ? 'is-reduced' : ''}`} aria-live="polite"><span className="sr-only">周计划已开始运行</span>{!reduceMotion && Array.from({ length: 14 }, (_, index) => <i key={index} style={{ '--i': index } as React.CSSProperties}/>) }<div className="assistant-weekly-plan-collapse"><Sparkles size={18}/>周计划已开始运行</div></div>}

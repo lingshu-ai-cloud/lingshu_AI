@@ -19,7 +19,7 @@ export function guidedReferenceSource(reference: Record<string, unknown> | null,
     cachedReferenceRecordId: narration.sourceReferenceId, label: narration.sourceTitle.slice(0, 160), purpose: '用户确认的自由创作结构和原口播来源' });
 }
 export function createGuidedCreationRouter(input: { repository: Starter198Repository; authorize: Authorize; asyncRoute: AsyncRoute; now: () => Date; orchestratorQueue?: Starter198OrchestratorQueuePort;
-  evidence?: CreationEvidencePorts; localPreview?: () => boolean }) {
+  evidence?: CreationEvidencePorts; localPreview?: () => boolean; localPaidGeneration?: () => boolean }) {
   const router = Router();
   router.post('/guided-creation/submit', input.asyncRoute(async (req, res) => {
     const identity = await input.authorize(req, res, 'start');
@@ -29,8 +29,11 @@ export function createGuidedCreationRouter(input: { repository: Starter198Reposi
     const plan = await contentCreationTurn(identity.tenantId, { action: 'guided_review', selection: parsed.data.selection, instruction: '最终生成前重新核验当前方案' }, evidence);
     if (plan.guided?.fingerprint !== parsed.data.fingerprint) { res.status(409).json({ code: 'creation_evidence_stale', message: '方案证据已变化，请重新核验后确认。' }); return; }
     if (plan.guided.blockers.length) { res.status(422).json({ code: 'creation_dependencies_missing', message: '仍有真实素材或授权依赖待补齐。', blockers: plan.guided.blockers }); return; }
-    // Local acceptance never enters a supplier or a queue, even if someone clicks the final action.
-    if ((input.localPreview || (() => process.env.LINGSHU_LOCAL_PREVIEW === '1'))()) { res.status(409).json({ code: 'creation_local_preview_no_paid_generation', message: '方案已核验。本地验收不调用付费生成，尚未创建生产任务。' }); return; }
+    // Ad-hoc local servers stay non-paying. Only the supervised application
+    // supplies the separate machine-local execution flag at process startup.
+    const localPreview = (input.localPreview || (() => process.env.LINGSHU_LOCAL_PREVIEW === '1'))();
+    const localPaidGeneration = (input.localPaidGeneration || (() => process.env.LINGSHU_LOCAL_PAID_GENERATION_ENABLED === '1'))();
+    if (localPreview && !localPaidGeneration) { res.status(409).json({ code: 'creation_local_preview_no_paid_generation', message: '方案已核验。本地验收不调用付费生成，尚未创建生产任务。' }); return; }
     if (!input.orchestratorQueue) throw new SocialContentWorkflowError('social_content_orchestrator_not_configured', 503);
     const key = requireIdempotencyKey(req.headers['idempotency-key']);
     const guide = plan.selection.guided!;

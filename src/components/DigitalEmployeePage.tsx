@@ -1,8 +1,6 @@
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { type Page } from "../pageRegistry";
 import { readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../lib/agentCalendarReturnContext';
-import { productionApi } from "../lib/productionApi";
-import { presenterProductionGate, type PresenterProductionGate } from "../lib/shotProduction";
 import { Button } from 'antd';
 import { consumeBusinessPageContext, saveBusinessPageContext } from '../lib/businessPageNavigation';
 import { EMPTY_CONFIG } from './smartBusiness/digitalEmployeeConfigRules';
@@ -76,8 +74,6 @@ export default function DigitalEmployeePage({
   const [error, setError] = useState("");
   const [weeklyStartConflict, setWeeklyStartConflict] = useState<WeeklyStartConflict | null>(null);
   const [weeklyStartDialogOpen, setWeeklyStartDialogOpen] = useState(false);
-  const [weeklyPresenterLoading, setWeeklyPresenterLoading] = useState(false);
-  const [weeklyPresenterGate, setWeeklyPresenterGate] = useState<PresenterProductionGate>(() => presenterProductionGate(null));
   const [newGoal, setNewGoal] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [selectedContentItemId, setSelectedContentItemId] = useState("");
@@ -118,15 +114,6 @@ export default function DigitalEmployeePage({
 
   const openWeeklyStartConfirmation = async () => {
     setWeeklyStartDialogOpen(true);
-    setWeeklyPresenterLoading(true);
-    try {
-      const defaults = await productionApi.defaults();
-      setWeeklyPresenterGate(presenterProductionGate(defaults));
-    } catch (cause) {
-      setWeeklyPresenterGate({ ready: false, reason: 'selection_required', message: cause instanceof Error ? cause.message : '数字人形象状态读取失败，请稍后重试。' });
-    } finally {
-      setWeeklyPresenterLoading(false);
-    }
   };
 
   useEffect(() => {
@@ -637,8 +624,8 @@ export default function DigitalEmployeePage({
     businessLine, contentPlatform, selectedAccountId, selectedContentItemId,
     weeklyStudioContentId, weeklyStartConflict, weeklyPlanOpen, newGoal,
     planHistoryOpen, weeklyPlanDetailsOpen, applicationGuideOpen,
-    applicationGuideEntry, weeklyStartDialogOpen, weeklyPresenterLoading,
-    weeklyPresenterGate, onboardingWelcomeOpen, setError, setViewGoalId,
+    applicationGuideEntry, weeklyStartDialogOpen,
+    onboardingWelcomeOpen, setError, setViewGoalId,
     setWorkspaceView, setSelectedTaskId, setSelectedContentItemId,
     setWeeklyStudioContentId, setWeeklyPlanOpen, setNewGoal, setPlanHistoryOpen,
     setWeeklyPlanDetailsOpen, setApplicationGuideOpen, setApplicationGuideEntry,

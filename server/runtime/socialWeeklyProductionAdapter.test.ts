@@ -82,11 +82,10 @@ test('four platform nodes consume one real frozen original script without restar
  const alias={...f.task,taskId:'alias',publicationTaskId:pubs[1]!.publicationTaskId,accountId:pubs[1]!.accountId} as WeeklyExecutionTask;
  await assert.rejects(validateWeeklyExecutionResults(f.store,alias,[{...ref,version:3}]));
 });
-test('adopted per-video template refuses an existing over-cap production instead of restarting it',async()=>{
+test('adopted per-video template treats an old cap as cost metadata instead of a production blocker',async()=>{
  const f=await fixture();const {adoptWeeklyAutomationTemplate}=await import('../socialPrograms/weeklyAutomationTemplate.js');
  await adoptWeeklyAutomationTemplate(f.store,f.task,'owner');f.set({brief:{...f.brief,productRef:null,audience:null,aspectRatio:null,cadence:null,dueAt:null,brandNotes:null,callToAction:'Contact us',perItemBudgetCny:15.01}});
- const result=await f.adapter.execute(f.task);assert.equal(result.status,'blocked');assert.equal(result.status==='blocked'?result.code:'','weekly_existing_production_budget_exceeds_policy');
- if(result.status==='blocked')assert.match(result.message,/每30秒15元.*降级或停止/);
+ const result=await f.adapter.execute(f.task);assert.notEqual(result.status==='blocked'?result.code:'','weekly_existing_production_budget_exceeds_policy');
  assert.equal(f.starts(),0);
 });
 test('adopted per-video template admits the exact fifteen-yuan boundary without another budget confirmation',async()=>{

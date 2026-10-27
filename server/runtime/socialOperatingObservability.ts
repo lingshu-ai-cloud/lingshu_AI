@@ -3,8 +3,9 @@ import { dataBackend, store } from '../storage/index.js';
 import type { ListResult } from '../storage/datastore.js';
 import type { ProcessRole } from './processRole.js';
 import { processRoleStartsBackgroundJobs } from './processRole.js';
-import { backgroundJobRuntimeState, SOCIAL_OPERATING_WORKER_HEARTBEATS, type BackgroundJobRuntimeState } from './workerHeartbeat.js';
+import { backgroundJobRuntimeState, SOCIAL_OPERATING_WORKER_HEARTBEATS, starterContentWorkerState, type BackgroundJobRuntimeState } from './workerHeartbeat.js';
 import { runtimeBuildInfo } from './buildInfo.js';
+import { weeklyExecutionObservation, type WeeklyExecutionObservation } from './weeklyExecutionObservation.js';
 
 export const SOCIAL_OPERATING_REQUIRED_COLLECTIONS = [
   'social_programs',
@@ -36,6 +37,24 @@ type GapRow = {
 type PostRow = { stats?: unknown };
 type PackageRow = { status?: string; payload?: unknown };
 type HeartbeatRow = { state?: string; last_seen_at?: string; instance_id?: string; details?: unknown };
+
+function weeklyExecutionState(value: unknown): { ready: boolean; state: string } {
+  const weekly = object(value) as Partial<WeeklyExecutionObservation>;
+  if (weekly.configuredEnabled !== true) return { ready: false, state: 'weekly_execution_disabled' };
+  if (weekly.started !== true) return { ready: false, state: 'weekly_execution_not_started' };
+  if (weekly.state === 'failed') return { ready: false, state: 'weekly_execution_failed' };
+  if (!['waiting', 'scanning', 'idle'].includes(String(weekly.state || ''))) {
+    return { ready: false, state: 'weekly_execution_invalid_state' };
+  }
+  return { ready: true, state: 'ready' };
+}
+
+function starterWorkerState(value: unknown): { ready: boolean; state: string } {
+  const starter = object(value);
+  return starter.ready === true
+    ? { ready: true, state: 'ready' }
+    : { ready: false, state: 'starter_content_workers_unready' };
+}
 
 async function listOperatingRows<T>(
   collection: string,
@@ -131,7 +150,11 @@ export async function inspectSocialOperatingSignals(input: {
   const local = input.localWorker ?? backgroundJobRuntimeState();
   let worker: SocialOperatingSignals['worker'];
   if (processRoleStartsBackgroundJobs(input.role)) {
-    worker = { ready: local.state === 'ready', source: 'local', state: local.state, lastSeenAt: local.readyAt };
+    const weekly = weeklyExecutionState(weeklyExecutionObservation.read());
+    const starter = starterContentWorkerState();
+    const ready = local.state === 'ready' && weekly.ready && starter.ready;
+    const state = local.state !== 'ready' ? local.state : !weekly.ready ? weekly.state : starter.ready ? 'ready' : 'starter_content_workers_unready';
+    worker = { ready, source: 'local', state, lastSeenAt: local.readyAt };
   } else {
     const heartbeats = await listOperatingRows<HeartbeatRow>(SOCIAL_OPERATING_WORKER_HEARTBEATS, {
       where: { state: 'ready' }, pocketBaseFilter: 'state = "ready"', sort: '-last_seen_at', page: 1, perPage: 20,
@@ -145,9 +168,12 @@ export async function inspectSocialOperatingSignals(input: {
     const freshness = classifyWorkerHeartbeat(lastSeen, now);
     const latestBuildSha = String(object(object(latestHeartbeat?.details).build).commitSha || '') || null;
     const versionMismatch = !heartbeat && Boolean(latestHeartbeat) && expectedBuildSha !== 'unknown';
+    const weekly = weeklyExecutionState(object(heartbeat?.details).weeklyExecution);
+    const starter = starterWorkerState(object(heartbeat?.details).starterContentWorkers);
+    const state = versionMismatch ? 'version_mismatch' : !freshness.ready ? freshness.state : !weekly.ready ? weekly.state : starter.state;
     worker = {
-      ready: !versionMismatch && freshness.ready,
-      source: 'heartbeat', state: versionMismatch ? 'version_mismatch' : freshness.state, lastSeenAt: lastSeen,
+      ready: !versionMismatch && freshness.ready && weekly.ready && starter.ready,
+      source: 'heartbeat', state, lastSeenAt: lastSeen,
       buildSha: versionMismatch ? latestBuildSha : (expectedBuildSha === 'unknown' ? latestBuildSha : expectedBuildSha),
       expectedBuildSha,
     };

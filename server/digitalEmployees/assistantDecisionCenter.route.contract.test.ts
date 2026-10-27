@@ -48,6 +48,7 @@ assert.match(postRoute, /expectedVersion/, 'POST must require the optimistic con
 assert.match(postRoute, /AssistantDecisionValidationError/, 'stale versions must retain the typed 409 response');
 assert.match(postRoute, /executeAssistantDecisionCommand/, 'POST must dispatch through the allowlisted domain command');
 assert.match(postRoute, /approveGoalForReview/, 'plan approval must use the existing validated activation service');
+assert.match(postRoute, /contentGenerationAuthorization/, 'assistant plan start must require explicit content-generation authorization');
 assert.match(postRoute, /normalizeAssistantDecisionExecutionReceipt/, 'plan starts must return a compact persisted execution receipt');
 assert.match(postRoute, /run\?\.goal_id === goal\.id/, 'the execution receipt must belong to the selected goal');
 assert.match(postRoute, /started\.tasks\.filter\(task => task\.run_id === run\.id\)/, 'only persisted tasks of this run can confirm activation');
