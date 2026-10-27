@@ -10,6 +10,7 @@ const taskPreviewSource = readFileSync(new URL('./smartBusiness/TaskPreviewCards
 const start = source.indexOf('export function WeeklyCommandCenter');
 const end = source.indexOf('\n\nexport function WeeklyPlanDetailsDrawer', start);
 const commandCenter = source.slice(start, end);
+const commandMetricStrip = commandCenter.slice(commandCenter.indexOf('      {[\n'), commandCenter.indexOf('    {notice &&'));
 const detailsStart = source.indexOf('export function WeeklyPlanDetailsDrawer');
 const detailsEnd = source.length;
 const planDetails = source.slice(detailsStart, detailsEnd);
@@ -63,9 +64,10 @@ for (const label of ['待验收成片', '本周计划视频', '本周视频总�
   assert.match(commandCenter, new RegExp(`aria-label=\\{\`查看\\$\\{item\\.label\\}\`\\}`), `“${label}”所在指标必须提供可访问的详情入口`);
 }
 assert.match(commandCenter, /onMetricClick\?\.\(item\.id as WeeklyCommandMetricId\)/, '六项周计划指标必须把对应指标身份交给页面导航');
-assert.match(commandCenter, /const hasWeeklyPlan = Boolean\(data\.goal\)/, '无周计划时必须使用明确的空数据口径');
+assert.match(commandCenter, /const hasWeeklyPlan = Boolean\(data\.goal \|\| previewTotals\)/, '无周计划时必须使用明确的空数据口径，显式预览除外');
 for (const emptyValue of ['0 秒', '¥0–0', '¥0.00']) assert.match(commandCenter, new RegExp(emptyValue), `无周计划时必须显示可读的空数据“${emptyValue}”`);
-assert.match(commandCenter, /\{onMetricClick && <ArrowRight/, '无周计划的只读空指标不得显示虚假的详情箭头');
+assert.match(commandCenter, /disabled=\{!onMetricClick && !previewTotals\}/, '无周计划且无预览时的只读空指标不得可点');
+assert.match(commandCenter, /\{\(onMetricClick \|\| previewTotals\) && <ArrowRight/, '详情箭头只出现在真实入口或显式预览中');
 for (const label of ['计划视频', '爆款视频缩略图', '内容结构', '数字人形象', '预计制作成本', '发布计划', '投流计划']) {
   assert.match(planDetails, new RegExp(label), `详细周计划必须用可视化卡片展示“${label}”`);
 }
@@ -103,7 +105,7 @@ assert.match(planDetails, /status: index === 0 \? '计划中' : '待执行'/, '�
 assert.doesNotMatch(planDetails, /本周未配置投流预算或投流任务/, '没有投流数据时仍需提供可审核的完整规划视图');
 assert.doesNotMatch(planDetails, />[^<]*(?:模拟数据|示例数据|mock)[^<]*</i, '用户界面不得出现内部数据来源字样');
 assert.doesNotMatch(planDetails, /发布账号尚未就绪|发布准备状态暂时无法核验|配置发布账号/, '详细周计划不得重复展示发布账号准备警告');
-assert.doesNotMatch(commandCenter, /note:|item\.note|当前没有待验收成片|发布任务 ·|逐镜生成与重试费用待核算|按当前周计划与供应商报价估算|仅统计供应商对账回执/, '六项周计划指标不得保留解释性小字');
+assert.doesNotMatch(commandMetricStrip, /note:|item\.note|当前没有待验收成片|发布任务 ·|逐镜生成与重试费用待核算|按当前周计划与供应商报价估算|仅统计供应商对账回执/, '六项周计划指标不得保留解释性小字');
 assert.doesNotMatch(commandCenter, /已包含本周全部视频制作/, '费用未核算前不得承诺覆盖本周全部视频制作');
 assert.match(dashboardSource, /durationSeconds: contents\.reduce\(\(sum, item\) => sum \+ item\.duration, 0\)/, '视频总时长必须按本周全部计划视频合计');
 assert.match(dashboardSource, /operatingContext\?\.budget\.productionMinCny[\s\S]*operatingContext\?\.budget\.productionMaxCny[\s\S]*operatingContext\?\.budget\.productionCny/, '周计划统一展示模型必须只汇总制作预算');
