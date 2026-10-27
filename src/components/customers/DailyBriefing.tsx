@@ -1,4 +1,4 @@
-import { Button, Drawer } from "antd";
+import { Button, Drawer, Empty } from "antd";
 import { useEffect, useState } from 'react';
 import { BookOpen, X } from 'lucide-react';
 import type { CustomerProfile } from '../../types/customer';
@@ -107,6 +107,9 @@ export function DailyBriefing({ customers, onSelectCustomer, onClose }: Props) {
   return <Drawer open title={`${greeting()}，今天有 ${pending.length} 件事需要你`} size={560} onClose={onClose} footer={<div className="flex justify-end gap-2"><Button onClick={onClose}>稍后</Button><Button type="primary" onClick={() => first && select(first.id)} disabled={!first}>开始处理</Button></div>}>
         <div className="py-2">
           <div className="space-y-4">
+            {pending.length === 0 && completed.length === 0 && !publishingBriefing && !nightBriefing && missClusters.length === 0 && (
+              <Empty description="当前没有需要处理的客服待办，历史会话可在左侧查看。" />
+            )}
             {publishingBriefing && (
               <Button
                 htmlType="button"

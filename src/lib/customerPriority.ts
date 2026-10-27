@@ -205,12 +205,12 @@ export function isTodoCompleted(customer: CustomerProfile): boolean {
 }
 
 export function pendingCustomers(customers: CustomerProfile[]): CustomerProfile[] {
-  return sortCustomersByPriority(customers.filter(customer => !isTodoCompleted(customer) && (customer.handlingMode === 'human_needed' || customer.handlingMode === 'ai_draft')));
+  return sortCustomersByPriority(customers.filter(customer => !customer.isHistorical && !isTodoCompleted(customer) && (customer.handlingMode === 'human_needed' || customer.handlingMode === 'ai_draft')));
 }
 
 export function completedTodoCustomers(customers: CustomerProfile[]): CustomerProfile[] {
   return customers
-    .filter(isTodoCompleted)
+    .filter(customer => !customer.isHistorical && isTodoCompleted(customer))
     .sort((a, b) => String(b.todoCompletedAt || '').localeCompare(String(a.todoCompletedAt || '')));
 }
 
