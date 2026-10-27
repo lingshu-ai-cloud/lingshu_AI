@@ -2,6 +2,14 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前统一开发基线：图文参考画幅与局部文字复核（2026-10-27）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `a614c71053e73a2a6c58cc2b987826d3e2772f8d` 分两次快进至源码提交 `9fb7cb2e`；提交 `a970222e` 先修复会话参考图画幅，`9fb7cb2e` 再修复质检与排版。合入前后另一个开发现场的 44 项未提交内容均未纳入；已跟踪补丁 SHA-256 均为 `6276409689a978ab0578fe2c0f875f1cfad0a973c298288638ba8d6475fe85a3`，未跟踪路径清单 SHA-256 均为 `e94212b6b855e502add040c13fb47fee4aa3fe05ed4d2884b34e9740e6c58735`。
+- 第一条 RS-016 正常会话任务 `socialtask_b0fb7f7906110147b5418a64`、图像 `imgd140962eca0b`、作业 `f9074c9ce2e3cbb`：参考图实际 590×590，会话误用默认 4:5，免费预检以 `social_image_reference_ratio_unsupported` 阻塞，未进入出图。修复后会话读取选定参考图的真实尺寸并自动匹配 1:1，异常和手动改成不匹配画幅均在入队前提示。
+- 第二条在单任务 5 元上限内经同一产品入口入队：`socialtask_64d4f2f6a4589015934344b2`、`img714c8cebf174`、作业 `53fb0903764d1bd`，RS-016 御龄紧致青春面霜、历史采集参考 `history-image-4e4496cdadb6b43e8af7b695` 第 1 张、Facebook／英语／1:1。正常 worker 完成策划、一次 GPT Image 2 底图出图和一次本地文字修复后，因全图 OCR 漏读 `50 g` 自然停在 `blocked` / `user_input_required:social_image_quality_requires_review`；没有发布或人工推进生产节点。正式候选 `03fb9d45-dc52-529c-8690-8e6f39ba4fc1` 保留产品原包装与背景细节，但修复态有两块白卡接缝；不能视为合格成片。精确费用回执尚未取得，不推断剩余额度。
+- 在第二条任务停止后，源码将局部修复改为一块半透明文案衬底，净含量同时显示在 SKU 信息行；质检从最终候选像素分别读取全图与确定性左侧文案区域，不用策划文字代替实图证据。同一付费底图的离线副本 `~/.lingshu-ai/image-b2b-e2e-20261027/rs016-offline-v3.png` 已通过本地 OCR，仅为免费设计回归，不是新源码的真实调度验收。该任务保持原状态且未重试；新源码的再次付费 E2E 尚待独立预算确认。
+- 定向画幅测试 5/5、图文执行／合成／质量 39/39、完整图文管线 99/99 加 HTTP 1/1、合同／治理 2/2、`pnpm run lint`、相对 `13e7c666` 的架构检查（3042 个生产 TypeScript 文件）、207 项迁移清单只读检查和 `git diff --check` 通过。较大前端回归脚本 `test:social-content-frontend` 停在 `socialContentManualBridge.contract.test.ts:75` 的既有产品绑定断言，未把该脚本写为通过；未运行全仓 `quality/verify`。没有新增迁移、推送、部署或发布。
+
 ## 当前统一开发基线：图文身份保真与文字衬底自适应（2026-10-27）
 
 - 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `13e7c666217498dfce33c3da559e260be415cd3e` 快进至源码提交 `0ccec34b39a46be176b9b94c42ec2157a9faafc2`。快进前，另一开发现场新增一项未提交的经营总览 CSS，故实际为 42 项而非较早记录的 41 项；这些脏改动均未纳入提交。快进前后已跟踪补丁 SHA-256 均为 `ddac517c23ca19f9e9cf229234df2c334416d584acca71dace9d655002e7f580`，未跟踪路径清单 SHA-256 均为 `e94212b6b855e502add040c13fb47fee4aa3fe05ed4d2884b34e9740e6c58735`。
