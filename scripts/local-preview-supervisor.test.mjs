@@ -33,6 +33,7 @@ assert.match(source, /loadLocalPreviewProviderEnvironment\(\{ runtimeRoot \}\)/,
 assert.match(source, /providerEnvironmentForService\(service.name, providerConfiguration\)/, '共享 provider 凭据只能注入后端，不能注入 Vite');
 assert.match(source, /providerConfiguration.loadedKeys.join/, 'provider 配置日志只能记录白名单键名');
 assert.doesNotMatch(source, /(?:log|console\.[a-z]+)\([^\n]*providerConfiguration\.providerEnv/, '不能记录 provider 凭据值');
+assert.match(source, /NODE_USE_ENV_PROXY: '0'/, '隔离预览必须直连已授权供应商，不能把请求改道到未授权的本地代理');
 assert.doesNotMatch(source, /'0\.0\.0\.0'/, '受监督的本地预览不能监听局域网接口');
 assert.match(source, /'--host',\s*'127\.0\.0\.1'/, '受监督的本地预览必须只绑定 IPv4 回环地址');
 assert.match(viteSource, /process\.env\.LINGSHU_PREVIEW_FRONTEND_PORT \|\| process\.env\.DEV_PORT/, '受监督预览的缓存命名必须采用实际监听端口，不能回退到默认端口');

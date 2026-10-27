@@ -108,7 +108,10 @@ const services = [
     env: {
       PORT: backendPort,
       LINGSHU_LOCAL_PORT: backendPort,
-      NODE_USE_ENV_PROXY: '1',
+      // The customer-isolation guard authorizes the provider hostname itself.
+      // Routing that request through an ambient loopback proxy changes the
+      // socket target to the proxy and is correctly rejected by the guard.
+      NODE_USE_ENV_PROXY: '0',
       LINGSHU_LOCAL_PREVIEW: '1',
       LINGSHU_LOCAL_PREVIEW_ORIGINS: frontendOrigin,
       // The preview exercises the real task lifecycle, including queue recovery
