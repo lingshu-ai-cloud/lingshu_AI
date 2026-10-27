@@ -21,6 +21,8 @@ import {
 } from './socialImageProductionRun.js';
 import { projectSocialImageProductionSnapshot } from './socialImageProductionRuntime.js';
 import { continueSocialImageProduction } from './socialImageProductionContinuation.js';
+import { acceptSocialImageQualityByHuman } from './socialImageHumanAcceptance.js';
+import { socialImageCanvasForAspectRatio } from './referenceCanvas.js';
 import { socialImageV3PaidPrerequisiteIssue, socialImageV3ResolvedAssetIssue,
   socialImageV3SingleRenderInput } from './socialImagePaidPrerequisites.js';
 import { compileSocialImageV3PaidPlan, recordSocialImageV3DirectorBrief } from './socialImageFormalPlan.js';
@@ -503,6 +505,42 @@ test('V3 approval requires independent review, exact bytes and explicit user evi
     expectedVersion: delivered.task.version, now });
   assert.equal(replayedDelivery.task.version, delivered.task.version);
   assert.equal(replayedDelivery.deliveryPackage.packageId, delivered.deliveryPackage.packageId);
+});
+
+test('human quality acceptance can adopt an uncertain visual result, but cannot override file integrity', async () => {
+  const { store, now } = await fixture();
+  const created = (await createOrResumeBoundSocialImageRun(store, 'tenant-a', {
+    contentTaskId: 'content-a', expectedContentTaskVersion: '7', idempotencyKey: 'human-quality-001', entrySource: 'assistant',
+  }, now)).task;
+  const assetReady = await recordReadyAssetManifest(store, created, now);
+  const planned = await recordReadyProductionPlan(store, assetReady, now);
+  const canvas = socialImageCanvasForAspectRatio(planned.deliverySpec.aspectRatio);
+  const bytes = await sharp({ create: { width: canvas.width, height: canvas.height,
+    channels: 3, background: '#f0d8c0' } }).png().toBuffer();
+  const contentHash = createHash('sha256').update(bytes).digest('hex');
+  const output = { id: 'candidate-human', role: 'single' as const, label: '主视觉', state: 'repair_required' as const,
+    mediaUrl: '/api/overseas/social-images/renders/candidate-human.png', version: 1, contentHash,
+    qualityChecks: SOCIAL_IMAGE_HARD_CHECKS.map(key => ({ key, verdict: key === 'file_decode' || key === 'pixel_dimensions'
+      ? 'pass' as const : 'uncertain' as const, severity: 'hard' as const, checker: 'deterministic' as const, note: 'fixture' })),
+  };
+  const staged = await updateSocialImageTask(store, 'tenant-a', created.id, planned.version, {
+    outputs: [output], status: 'review_required', step: 'review',
+  });
+  assert.equal(staged.kind, 'updated');
+  if (staged.kind !== 'updated') return;
+  const input = { store, tenantId: 'tenant-a', userId: 'user-a', taskId: created.id,
+    expectedVersion: staged.task.version, candidateId: output.id, candidateVersion: 1, expectedContentHash: contentHash,
+    loadBytes: async () => ({ bytes }), now };
+  await assert.rejects(acceptSocialImageQualityByHuman({ ...input, expectedContentHash: '0'.repeat(64) }),
+    /social_image_approval_candidate_stale/);
+  await assert.rejects(acceptSocialImageQualityByHuman({ ...input, loadBytes: async () => ({ bytes: Buffer.from('tampered') }) }),
+    /social_image_candidate_hash_conflict/);
+  const accepted = await acceptSocialImageQualityByHuman(input);
+  assert.equal(accepted.task.status, 'approved');
+  assert.equal(accepted.task.outputs[0]?.humanQualityReview?.acceptedBy, 'user-a');
+  assert.equal(accepted.task.outputs[0]?.humanQualityReview?.priorChecks[2]?.verdict, 'uncertain');
+  assert.equal(accepted.task.outputs[0]?.qualityChecks[2]?.checker, 'human');
+  assert.equal(accepted.deliveryPackage?.status, 'ready');
 });
 
 async function multiOutputFixture(imageType: 'carousel' | 'gif_poster') {
