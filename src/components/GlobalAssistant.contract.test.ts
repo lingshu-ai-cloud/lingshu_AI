@@ -13,6 +13,8 @@ const actionRequestSource = fs.readFileSync(new URL('../lib/assistantActionReque
 const decisionDialogSource = fs.readFileSync(new URL('./assistant/AssistantDecisionDialog.tsx', import.meta.url), 'utf8');
 const floatingRemindersSource = fs.readFileSync(new URL('./assistant/AssistantFloatingReminders.tsx', import.meta.url), 'utf8');
 const launcherSource = fs.readFileSync(new URL('./assistant/AssistantLauncher.tsx', import.meta.url), 'utf8');
+const weeklyPlanSource = fs.readFileSync(new URL('./assistant/AssistantWeeklyPlanExperience.tsx', import.meta.url), 'utf8');
+const weeklyPlanHookSource = fs.readFileSync(new URL('./assistant/useAssistantWeeklyPlanExperience.ts', import.meta.url), 'utf8');
 const launcherRetractionSource = fs.readFileSync(new URL('./assistant/useAssistantLauncherRetraction.ts', import.meta.url), 'utf8');
 const homeAnchorSource = fs.readFileSync(new URL('./assistant/useAssistantHomeAnchor.ts', import.meta.url), 'utf8');
 const conversationBubblesSource = fs.readFileSync(new URL('./assistant/AssistantConversationBubbles.tsx', import.meta.url), 'utf8');
@@ -70,7 +72,11 @@ assert.match(assistantRootMarkup, /launcherRetracted && mode === 'breathing'[\s\
 assert.match(assistantRootMarkup, /bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\][\s\S]*md:bottom-5/, '灵小枢入口必须使用统一安全区基准，桌面端不得留下大块底部空白');
 assert.doesNotMatch(assistantRootMarkup, /5\.5rem/, '制作页不得通过额外抬高灵小枢入口制造底部空白');
 assert.match(conversationPanelSource, /assistantUsesMobileClearance[\s\S]{0,240}viewport\.height - \(assistantUsesMobileClearance \? 160 : 96\)/, '移动端抬高入口时必须同步收紧对话高度，不能把面板顶部裁掉');
-assert.match(launcherSource, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{chatOpen \? '收起灵小枢对话' : '询问灵小枢'\}/, '右下角入口必须以清晰文本直接打开或收起对话');
+assert.match(launcherSource, /const closedLabel = weeklyPlanOperating \? '周计划正在运营中' : '周计划待生成'/, '右下角入口必须根据真实周运行状态给出明确文案');
+assert.match(weeklyPlanHookSource, /digitalEmployeeApi\.createGoal\(defaultWeeklyGoal\(next\.config\)\.draft\)/, '提示词必须复用真实周计划生成接口');
+assert.match(weeklyPlanSource, /确认无误，开始运行/, '完整周计划弹窗必须在用户确认后才启动');
+assert.match(weeklyPlanHookSource, /confirmedWeeklyExecution/, '启动成功必须由真实运行与任务回执确认');
+assert.match(weeklyPlanSource, /assistant-weekly-plan-celebration/, '确认成功后必须提供有限时长的庆祝与收束反馈');
 assert.match(launcherMarkup, /shape="round"/, '灵小枢入口必须采用紧凑胶囊形态');
 assert.match(launcherMarkup, /!h-11/, '灵小枢入口必须保留 44px 触控高度');
 assert.match(launcherSource, /aria-expanded=\{chatOpen\}[\s\S]{0,80}aria-controls="global-assistant-panel"/, '入口必须暴露弹窗展开关系');
@@ -369,9 +375,9 @@ assert.match(chatPromptSource, /content: strategyRequest \? visibleText : \[/, '
 assert.match(sendSource, /buildAssistantChatMessages\(\{[\s\S]*historyForApi, conversationContext, strategyRequest, visibleText, context/, '发送主流程必须使用独立的问答上下文组装模块');
 assert.match(sendSource, /userQuestion: visibleText[\s\S]{0,700}retainedUserInstructions/, '经营主对话必须把当前问题、当前业务对象与有界历史约束交给服务端组装上下文');
 assert.match(sendSource, /requestFence\.active[\s\S]{0,100}persistenceFenceRef\.current === requestFence/, '租户或用户范围切换后旧请求的异步响应必须被丢弃');
-assert.match(actionProjectionSource, /function isWeeklyPlanKickoffRequest[\s\S]{0,500}开始\|启动\|制定\|生成\|创建[\s\S]{0,220}生产\|制作\|周计划\|计划\|周任务/, '空白周计划必须识别用户对灵小枢发出的明确开工或制定计划请求');
+assert.match(actionProjectionSource, /function isWeeklyPlanKickoffRequest[\s\S]{0,500}开始\|启动\|制定\|生成\|创建[\s\S]{0,220}运营计划\|周计划\|计划\|周任务/, '空白周计划必须识别用户对灵小枢发出的明确开工或制定计划请求');
 assert.match(source, /from '\.\/assistant\/assistantActionProjection'/, '助手页面必须接入独立的签名动作投影');
-assert.match(sendSource, /weeklyPlanKickoffAvailable && isWeeklyPlanKickoffRequest\(draft\)[\s\S]{0,650}可预览的周计划[\s\S]{0,400}openWeeklyPlanFromAssistant\(\)/, '灵小枢收到明确开工请求时必须先打开计划预览，不能绕过用户确认直接生产');
+assert.match(sendSource, /isWeeklyPlanKickoffRequest\(draft\)[\s\S]{0,650}await prepareWeeklyPlan\(\)[\s\S]{0,400}role: 'assistant'/, '灵小枢收到明确请求时必须先生成文字概览与计划卡，不能绕过用户确认直接生产');
 assert.match(sendSource, /sameAssistantRequestIdentity\(requestToken, getToken\(\), stablePersistenceScope\)/, '身份切换后丢弃旧响应，同身份令牌刷新不丢弃文字');
 
 assert.doesNotMatch(source, /AssistantDecisionMemoryPanel|AssistantDecisionSaveButton|useAssistantDecisionMemory/, '对话记忆由后台维护，灵小枢首屏不得暴露记忆管理工具');

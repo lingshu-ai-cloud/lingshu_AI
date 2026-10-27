@@ -33,9 +33,9 @@ function Metric({ label, value, note, onOpen }: { label: string; value: number |
   </div>;
 }
 
-function SectionHead({ title, detail, page, onNavigate }: { title: string; detail: string; page?: Page; onNavigate?: (page: Page) => void }) {
+function SectionHead({ title, detail, page, onNavigate }: { title: string; detail?: string; page?: Page; onNavigate?: (page: Page) => void }) {
   return <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
-    <div><h2 className="text-lg font-semibold text-text-primary">{title}</h2><p className="mt-1 text-xs text-text-secondary">{detail}</p></div>
+    <div><h2 className="text-lg font-semibold text-text-primary">{title}</h2>{detail && <p className="mt-1 text-xs text-text-secondary">{detail}</p>}</div>
     {page && <Button type="link" icon={<ArrowRight size={14}/>} iconPlacement="end" onClick={() => onNavigate?.(page)}>查看业务详情</Button>}
   </header>;
 }
@@ -126,7 +126,7 @@ function OverviewContent({ data, onRefresh, onNavigate, onOpenAccountHealth, wee
       <div className="grid min-w-0 border-t border-border xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.72fr)]">
       <section className="min-w-0 p-4 sm:p-6" aria-labelledby="today-business-title">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><div className="flex items-center gap-2"><h2 id="today-business-title" className="text-lg font-semibold text-text-primary">今日实时数据</h2>{sample && <Tag color="processing">界面预览</Tag>}</div><p className="mt-1 text-xs text-text-secondary">北京时间 {day} · {sample ? '预览时间' : '最近同步'} {stamp(snapshot?.generatedAt)} · {sample ? '仅用于查看界面布局' : '社媒为日级回传，非秒级实时'}</p></div>
+          <div className="flex items-center gap-2"><h2 id="today-business-title" className="text-lg font-semibold text-text-primary">今日实时数据</h2>{sample && <Tag color="processing">界面预览</Tag>}</div>
           <Button icon={<RefreshCcw size={14}/>} loading={!sample && plans.loading} onClick={refresh}>{sample ? '更新预览' : '刷新'}</Button>
         </div>
         <dl className="mt-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
@@ -164,7 +164,7 @@ function OverviewContent({ data, onRefresh, onNavigate, onOpenAccountHealth, wee
 
     <section className="rounded-2xl border border-border bg-surface p-4 sm:p-5" aria-label="爆款与流量">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
-        <div><h2 className="text-lg font-semibold text-text-primary">爆款与曝光</h2><p className="mt-1 text-xs text-text-secondary">{sample ? '切换查看自然流与商业流的数据布局' : '自然流来自已连接社媒账号；商业流只读取投放内容的平台回传'}</p></div>
+        <h2 className="text-lg font-semibold text-text-primary">爆款与曝光</h2>
         <Segmented aria-label="曝光流量来源" value={flow} onChange={value => setFlow(value as 'organic' | 'commercial')} options={[{ label: '自然流数据', value: 'organic' }, { label: '商业数据', value: 'commercial' }]}/>
       </div>
       {flow === 'organic' ? <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.8fr)]">
@@ -188,7 +188,7 @@ function OverviewContent({ data, onRefresh, onNavigate, onOpenAccountHealth, wee
     </section>
 
     <section className="rounded-2xl border border-border bg-surface p-4 sm:p-5" aria-label="投流数据">
-      <SectionHead title="投流" detail={`${sample ? '投放效果布局' : '平台成效与真实计划状态'} · ${sample ? '预览时间' : '最近回传'} ${stamp(ads?.latestReportedAt)}`} page={sample ? undefined : 'adsPlans'} onNavigate={onNavigate}/>
+      <SectionHead title="投流" page={sample ? undefined : 'adsPlans'} onNavigate={onNavigate}/>
       <div className="mt-4 grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(245px,0.31fr)]">
         <div className="min-w-0"><dl className="grid grid-cols-2 gap-2.5 sm:grid-cols-3"><Metric label="曝光" value={observedMetric(adsPerformance?.impressions)} onOpen={() => showMetric('投流曝光', observedMetric(adsPerformance?.impressions), '当前投放计划的平台曝光汇总。', visiblePlans.map(task => [task.name, number(operatingItems[task.id]?.metrics?.impressions)]), 'adsPlans')}/><Metric label="点击" value={observedMetric(adsPerformance?.clicks)} onOpen={() => showMetric('投流点击', observedMetric(adsPerformance?.clicks), '当前投放计划的平台点击汇总。', visiblePlans.map(task => [task.name, number(operatingItems[task.id]?.metrics?.clicks)]), 'adsPlans')}/><Metric label="转化" value={observedMetric(adsPerformance?.conversions)} onOpen={() => showMetric('投流转化', observedMetric(adsPerformance?.conversions), '平台报告的转化汇总，不等于客服侧成交。', [['投放点击', number(observedMetric(adsPerformance?.clicks))]], 'adsPlans')}/></dl>
           <h3 className="mb-2 mt-5 text-sm font-semibold text-text-primary">投放计划</h3>
@@ -201,15 +201,14 @@ function OverviewContent({ data, onRefresh, onNavigate, onOpenAccountHealth, wee
         </div>
         <aside className="rounded-xl border border-border bg-surface-2 p-4" aria-label="AI 投流建议"><h3 className="flex items-center gap-2 text-sm font-semibold text-text-primary"><Lightbulb size={16} className="text-accent"/>AI 投流建议</h3>
           {visiblePlans.length ? <div className="mt-4 space-y-4">{visiblePlans.slice(0, 2).map((task, index) => { const advice = sample ? { text: index === 0 ? '优先保留高意向人群' : '小幅测试质地类素材', detail: index === 0 ? '当前点击与询盘方向一致，先观察报价承接。' : '按已展示的曝光与点击结构，比较两组素材表现。' } : planAdvice(task, operatingItems[task.id]); return <button type="button" key={task.id} aria-haspopup="dialog" onClick={() => setDetail({ title: advice.text, summary: advice.detail, rows: [['关联计划', task.name], ['曝光', number(operatingItems[task.id]?.metrics?.impressions)], ['点击', number(operatingItems[task.id]?.metrics?.clicks)]], preview: Boolean(sample), page: sample ? undefined : 'adsPlans' })} className="group w-full rounded-lg text-left outline-none hover:text-accent focus-visible:ring-2 focus-visible:ring-accent"><p className="text-xs font-medium text-text-secondary">{task.name}</p><p className="mt-1 text-sm font-medium text-text-primary group-hover:text-accent">{advice.text} <ArrowUpRight size={13} className="inline text-text-muted" aria-hidden="true"/></p><p className="mt-1 text-xs leading-5 text-text-secondary">{advice.detail}</p></button>; })}</div>
-            : boost?.status === 'recommended_for_review' ? <p className="mt-3 text-sm leading-6 text-text-secondary">{boost.reason}</p>
-              : <p className="mt-3 text-sm leading-6 text-text-secondary">暂无基于真实计划与回执的投流建议。</p>}
+            : boost?.status === 'recommended_for_review' ? <p className="mt-3 text-sm leading-6 text-text-secondary">{boost.reason}</p> : null}
           {!sample && <Button className="mt-4" type="link" icon={<ArrowRight size={14}/>} iconPlacement="end" onClick={() => onNavigate?.('adsManaged')}>查看 AI 投手</Button>}
         </aside>
       </div>
     </section>
 
     <section className="rounded-2xl border border-border bg-surface p-4 sm:p-5" aria-label="询盘与人群">
-      <SectionHead title="询盘与人群" detail={sample ? '客户承接布局 · 当前展示累计客户数' : '来自客服侧真实客户目录与消息记录 · 当前展示累计客户数'} page={sample ? undefined : 'conversion'} onNavigate={onNavigate}/>
+      <SectionHead title="询盘与人群" page={sample ? undefined : 'conversion'} onNavigate={onNavigate}/>
       {!sample && customers.error && <Alert type="warning" className="mt-4" title={customers.error} description="已有同身份记录保留；读取失败不代表真实零值。"/>}
       <div className="mt-4 grid min-w-0 gap-5 lg:grid-cols-[minmax(0,0.78fr)_minmax(0,1fr)]">
         <div className="min-w-0 rounded-xl border border-border p-4">
@@ -219,9 +218,7 @@ function OverviewContent({ data, onRefresh, onNavigate, onOpenAccountHealth, wee
             <p className="mt-3 text-xs text-text-muted">{sample ? '人群结构预览；标签可重叠。' : '仅统计真实且可操作的客户；标签可重叠。'}</p>
           </div>
         </div>
-        <div className="min-w-0"><BusinessCustomerFunnel stages={funnelStages} description="从上到下呈现客户承接五个环节；点击查看统计口径" onStageClick={(stage, index) => setDetail({ title: stage.label, summary: funnelNotes[index] || '客户承接环节。', rows: [['本环节客户', stage.value === null ? '—' : `${number(stage.value)} 位`], ['客户进线', customerReady ? `${number(customer.inbound)} 位` : '—'], ['统计说明', '各环节有记录的人数，不强制互为子集']], preview: Boolean(sample), page: sample ? undefined : 'conversion' })}/>
-          <p className="mt-2 text-xs text-text-muted">{sample ? '客户承接五环节布局预览；具体口径以客服侧正式数据为准。' : '主动触达与二次触达只统计发送成功的消息；智能报价仅统计 AI 发出的报价回执。暂无连续转化率口径。'}</p>
-        </div>
+        <div className="min-w-0"><BusinessCustomerFunnel stages={funnelStages} onStageClick={(stage, index) => setDetail({ title: stage.label, summary: funnelNotes[index] || '客户承接环节。', rows: [['本环节客户', stage.value === null ? '—' : `${number(stage.value)} 位`], ['客户进线', customerReady ? `${number(customer.inbound)} 位` : '—'], ['统计说明', '各环节有记录的人数，不强制互为子集']], preview: Boolean(sample), page: sample ? undefined : 'conversion' })}/></div>
       </div>
     </section>
     <BusinessOverviewDetailDrawer detail={detail} onClose={() => setDetail(null)} onNavigate={onNavigate}/>

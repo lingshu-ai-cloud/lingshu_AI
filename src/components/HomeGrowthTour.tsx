@@ -5,7 +5,7 @@ import { PRIMARY_ASSISTANT_THREAD } from './assistant/globalAssistantRuntime';
 import { useAssistantStore } from '../stores/assistantStore';
 import { HOME_GROWTH_TOUR_COMPLETE_EVENT, HOME_GROWTH_TOUR_START_EVENT } from '../lib/homeFirstRun';
 
-const TASK_EXAMPLE = '为我的主推产品规划本周内容';
+const TASK_EXAMPLE = '为我生成本周运营计划';
 const steps = [
   { title: '和灵小枢对话', description: '这里可以直接说目标，补充产品、市场和期限。涉及执行时，灵小枢会先请你确认。', page: 'strategy', target: '[aria-label="给灵小枢发送消息"]' },
   { title: '进入内容创作', description: '下一步会打开真实的内容创作页面，任务与作品都在这里查看。', page: 'strategy', target: '[data-growth-tour-nav="socialInspiration"]' },

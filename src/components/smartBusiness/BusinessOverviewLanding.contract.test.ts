@@ -22,6 +22,8 @@ test('today workspace keeps the requested information hierarchy', () => {
   assert.match(source, /客户进线', '主动触达', '意图识别', '智能报价', '二次触达/);
   assert.match(source, /今日数据经营解读.*\{interpretation\}/, 'interpretation belongs beneath today charts');
   assert.match(source, /<BusinessCustomerFunnel stages=\{funnelStages\}/);
+  for (const removed of ['社媒为日级回传，非秒级实时', '自然流来自已连接社媒账号', '平台成效与真实计划状态', '暂无基于真实计划与回执的投流建议', '来自客服侧真实客户目录', '从上到下呈现客户承接五个环节']) assert.doesNotMatch(source, new RegExp(removed));
+  assert.doesNotMatch(funnel, /形状表示阶段人数递减/);
 });
 
 test('the overview prioritizes real signals and gives unavailable data an icon-backed state', () => {

@@ -76,7 +76,7 @@ assert.match(assistantUi, /openAgent\(currentPageAgent, 'chat'\)/, 'the confirme
 assert.match(assistantUi, /<AssistantConversationPanel[\s\S]*?page=\{page\}/, 'assistant must pass current page to the conversation panel');
 assert.match(assistantBubbles, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, 'the assistant decision feed must be scoped to the current page');
 assert.match(assistantUi, /<AssistantLauncher[\s\S]*?chatOpen=\{mode === 'chat'\}/, 'assistant must pass open state to the launcher');
-assert.match(assistantLauncher, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{chatOpen \? '收起灵小枢对话' : '询问灵小枢'\}/, 'the launcher must expose its direct open/close conversation behavior');
+assert.match(assistantLauncher, /const closedLabel = weeklyPlanOperating \? '周计划正在运营中' : '周计划待生成'/, 'the launcher must expose the persisted weekly-operation state');
 assert.doesNotMatch(assistantUi, /ASSISTANT_AUTO_RETRACT_MS|ASSISTANT_POSITION_KEY|assistantPosition|handlePointerDown/, 'the assistant must not restore the obsolete draggable or timer-driven auto-retract launcher');
 assert.match(assistantUi, /useAssistantNotifications\(/, 'assistant must mount generation notifications');
 assert.match(assistantNotifications, /lingshu-assistant-performance/, 'content generation must be able to wake the assistant for a waiting-time performance');

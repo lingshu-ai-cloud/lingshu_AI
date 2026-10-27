@@ -18,7 +18,7 @@ export function focusedNaturalLanguageActionId(text: string): AssistantActionId 
 
 export function isWeeklyPlanKickoffRequest(text: string): boolean {
   const normalized = text.trim().replace(/[。！!]+$/u, '').replace(/\s+/gu, '');
-  return /^(?:(?:请|请帮我|帮我|现在|立即|马上))*(?:开始|启动|制定|生成|创建)(?:(?:本周|这周|当前周))?(?:生产|制作|周计划|计划|周任务|任务)$/u.test(normalized);
+  return /^(?:(?:请|请帮我|帮我|为我|现在|立即|马上))*(?:开始|启动|制定|生成|创建)(?:(?:本周|这周|当前周))?(?:生产|制作|运营计划|周计划|计划|周任务|任务)$/u.test(normalized);
 }
 
 export function focusedNaturalLanguageActionInput(
