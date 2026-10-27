@@ -2,6 +2,13 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前统一开发基线：图文 B2B 构图与 RS-003 真实联调（2026-10-27）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `cd5222e6` 快进至源码提交 `53e8ba20cc86d23618e48a859a883140e77ce8c2`。原有 41 项未提交变更未纳入，合入前后已跟踪补丁 SHA-256 `2f8bbbec2c100c85c6ae68916819b6ff08325f57490751a7bd8adde96c683d93`、未跟踪路径清单 SHA-256 `e94212b6b855e502add040c13fb47fee4aa3fe05ed4d2884b34e9740e6c58735` 均不变。
+- 图文 B2B 版式在付费出图前由已确认文案计算左侧占位及产品目标位置；同一布局规则驱动确定性合成。右上徽章移到外角，避免遮住瓶盖；提示词用一句话约束产品与场景的光线、反射和接触阴影。隔离分支在最新基线上通过图文管线（93 项主用例及路由/合同/治理）、`pnpm run lint`、`ARCHITECTURE_BASE_REF=cd5222e6 pnpm run check:architecture`（3030 个生产 TS 文件）、207 项迁移清单只读检查和 `git diff --check`。未运行全仓 `quality/verify`。
+- 独立本地数据与同版 Web/worker 在先前源码 `1f0ca7e3` 下执行新产品 `GUIANFA-RS-003`：任务 `socialtask_af525e2eb8ddbb86d254ab72`、图像任务 `imgb4dd3cb203b4`、作业 `0d120eaff90b22d`。获批单任务上限 5 元；一次 Qwen 策划、一次 GPT Image 2 低质量出图、一次视觉质检均完成。成片 `1349a707-058d-5976-8c27-f740bce46ab9` 因视觉统一硬检查失败，停在 `review_required`，不视为合格成品；参考结构软检查为 uncertain，待用户验收。原作业与回执保留，未自动重试。用已付费底图做的徽章修复预览 `~/.lingshu-ai/image-b2b-e2e-20261027/rs003-revised-badge-local-preview.png` 未发生新付费请求，亦未取得正式质检。
+- 精确供应商账单及余额尚未核实，不能断言 5 元实际消费或再购买一张图。新构图规则 `53e8ba20` 尚未经过同版真实付费出图验收；源码验证、本地预览与真实供应商质量状态分别记录。未推送、部署、发布、采用成品或运行目标库迁移。
+
 ## 当前统一开发基线：智能问数版本安全合入（2026-10-27）
 
 - 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`。用户明确要求合入 GitHub `节节智能问数待优化`；拉取核对来源提交 `cdfbab8dac65cb8c01be5995aea98635f6dc0fa7`、代码树 `e78e96bc30f25979857b96769cffa7bea68d6af8`，均与用户提供前缀一致。
