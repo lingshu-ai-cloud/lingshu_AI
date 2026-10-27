@@ -49,7 +49,7 @@ const defineGroup = (group: AssistantHomePromptGroupId, entries: Array<Omit<Assi
 
 export const ASSISTANT_HOME_PROMPTS: AssistantHomePrompt[] = [
   ...defineGroup('operations', [
-    { id: 'OP-CALENDAR', label: '查看本周发布日历', summary: '只读查看本周已有发布安排与发布时间待定的内容', level: 'query', prompt: '帮我查看本周发布日历，看看哪些内容已发布、哪些待发布，以及哪些事项需要我处理。' },
+    { id: 'OP-CALENDAR', label: '查看周计划', summary: '查看本周任务、排期、预算和最新运行状态', level: 'query', prompt: '请读取当前企业的本周目标、周计划、任务排期、预算和最新运行回执，说明当前状态、待处理事项与阻塞；不要自动启动或修改任务。' },
     { id: 'OP-01', label: '周经营任务', summary: '查看本周进度、阻塞和今天最优先动作', level: 'query', prompt: '请读取当前企业本周目标、周计划、真实任务、依赖关系和最新运行回执，按“当前状态、已完成、待处理、阻塞项、今天最优先动作”总结本周经营任务。缺少数据时请明确指出；不要自动创建、启动或修改任务。如建议执行，请先给出可确认的计划摘要。' },
     { id: 'OP-02', label: '今日资讯', summary: '解读与企业和目标市场有关的真实信号', level: 'query', prompt: '请结合当前企业资料、主推产品、目标市场，并检索核验行业与平台公开原文，整理今天最值得关注的资讯。每条说明来源、与本企业的关系、机会或风险及建议动作；没有可靠来源时明确说明，不要编造资讯。' },
     { id: 'OP-03', label: '经营策略', summary: '判断经营重点并给出有依据的行动建议', level: 'plan', prompt: '请基于当前企业资料、主推产品、目标市场、本周任务、内容表现、询盘和投放数据，判断目前最重要的经营问题，并给出按优先级排列的策略建议。区分事实、推断和建议，说明依据、预期结果、风险与下一步；不要自动执行。' },

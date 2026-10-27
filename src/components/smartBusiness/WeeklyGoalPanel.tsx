@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, InputNumber, Select, Steps } from 'antd';
 import { Check, Megaphone, Plus, Trash2, Video } from 'lucide-react';
 import { day as shanghaiDay } from '../../../shared/mobile-domain.mjs';
@@ -8,6 +8,7 @@ import { MASTER_VIDEO_COST_MAX_CNY, MASTER_VIDEO_COST_MIN_CNY } from '../../../s
 import { scheduleWeeklyVideos } from '../../lib/weeklyGoalSchedule';
 import { buildPresetMatrixVideoPlans, WEEKLY_TASK_PACKAGE_PRESETS, weeklyTaskPackagePreset, type WeeklyTaskPackagePresetId } from '../../lib/weeklyTaskPackagePresets';
 import { defaultMatrixPlan } from '../../lib/weeklyMatrix';
+import { loadSocialContentStage, readSocialContentStage, type SocialContentStageProfile } from '../../lib/socialContentStage';
 import type { DigitalEmployeeConfig, WeeklyGoal, WeeklyPromotionPlan } from '../../lib/digitalEmployees';
 import WeeklyPlanConfirmationCard from '../WeeklyPlanConfirmationCard';
 
@@ -61,7 +62,9 @@ export function GoalPanel({
   const profilePlatforms = [...new Set(socialOperatingProfile(config.socialOperatingProfile).accounts.map(account => account.platform))];
   const configuredPlatforms = (configuredTargetPlatforms.length ? configuredTargetPlatforms : profilePlatforms.length ? profilePlatforms : ['youtube']) as PublishingPlatform[];
   const requestedPlatform = contentPlatform !== 'all' && configuredPlatforms.includes(contentPlatform) ? contentPlatform : null;
-  const initialPresetId: WeeklyTaskPackagePresetId = config.operatingMaturity === 'starting' ? 'b2b_starting' : 'b2b_growing';
+  const initialStageProfile = readSocialContentStage();
+  const initialPresetId: WeeklyTaskPackagePresetId = initialStageProfile?.presetId
+    ?? (config.operatingMaturity === 'starting' ? 'b2b_starting' : 'b2b_growing');
   const presetPlatforms = (presetId: WeeklyTaskPackagePresetId) => {
     const allowed = weeklyTaskPackagePreset(presetId).platforms.filter(platform => configuredPlatforms.includes(platform));
     return requestedPlatform ? [requestedPlatform] : allowed.length ? allowed : [configuredPlatforms[0]!];
@@ -83,6 +86,8 @@ export function GoalPanel({
   const [stage, setStage] = useState<'plan' | 'budget'>('plan');
   const [submitted, setSubmitted] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState<WeeklyTaskPackagePresetId>(initialPresetId);
+  const [onboardingStageProfile, setOnboardingStageProfile] = useState<SocialContentStageProfile | null>(initialStageProfile);
+  const presetManuallyChanged = useRef(false);
   const [form, setForm] = useState<GoalDraft>(() => ({
     ...EMPTY_GOAL,
     startsAt: isoDay(0), endsAt: isoDay(6), businessLine,
@@ -117,6 +122,16 @@ export function GoalPanel({
       promotionPlans: initialPromotionPlans(nextPlans),
     }));
   };
+
+  useEffect(() => {
+    let active = true;
+    void loadSocialContentStage().then(profile => {
+      if (!active || !profile) return;
+      setOnboardingStageProfile(profile);
+      if (!presetManuallyChanged.current && profile.presetId !== selectedPresetId) choosePreset(profile.presetId);
+    });
+    return () => { active = false; };
+  }, []);
 
   const updatePlatformCount = (platform: PublishingPlatform, requestedCount: number | null) => {
     setForm(current => {
@@ -195,12 +210,20 @@ export function GoalPanel({
               <div className="flex items-center gap-2"><Video size={18} className="text-accent" /><h3 id="weekly-scheme-title" className="text-base font-semibold text-text-primary">任务方案</h3></div>
               <Select
                 aria-label="选择本周任务方案"
-                className="mt-3 w-full"
+                className="mt-3 w-full [&_.ant-select-selection-item]:!font-medium [&_.ant-select-selection-item]:!text-text-primary [&_.ant-select-selection-search-input]:!bg-transparent [&_.ant-select-selection-search-input]:!shadow-none"
                 value={selectedPresetId}
-                onChange={value => choosePreset(value as WeeklyTaskPackagePresetId)}
+                onChange={value => {
+                  presetManuallyChanged.current = true;
+                  choosePreset(value as WeeklyTaskPackagePresetId);
+                }}
                 options={WEEKLY_TASK_PACKAGE_PRESETS.map(preset => ({ value: preset.id, label: preset.label }))}
               />
-              <p className="mt-2 text-sm text-text-secondary">{weeklyTaskPackagePreset(selectedPresetId).description}</p>
+              <p className="mt-2 text-sm text-text-secondary">
+                {onboardingStageProfile && onboardingStageProfile.presetId === selectedPresetId
+                  ? `默认采用新手引导中的“${onboardingStageProfile.name}”。`
+                  : ''}
+                {weeklyTaskPackagePreset(selectedPresetId).description}
+              </p>
             </section>
 
             {businessLine !== 'customer_conversion' && <section aria-labelledby="weekly-distribution-title" className="border-t border-border pt-5">

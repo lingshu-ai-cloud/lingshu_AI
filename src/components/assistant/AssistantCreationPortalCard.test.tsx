@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { assistantCreationPortal } from './assistantProductionIntake';
-import AssistantCreationPortalCard, { calendarPortalNavigation, creationPortalNavigation, AssistantTaskPortalCard, taskPortalNavigation } from './AssistantCreationPortalCard';
+import AssistantCreationPortalCard, { creationPortalNavigation, AssistantTaskPortalCard, taskPortalNavigation } from './AssistantCreationPortalCard';
 import { assistantScenarioIntake } from '../../lib/assistantScenarioIntake';
 import { confirmedTaskPortal } from '../../../shared/contracts/assistantTaskPortal';
 import { assistantCreationPortalSchema } from '../../../shared/contracts/assistantCreationPortal';
@@ -52,10 +52,9 @@ test('portal card is a navigation draft with the existing creation handoff, neve
   assert.throws(() => creationPortalNavigation({ ...portal, href: 'https://evil.example' } as typeof portal));
 });
 
-test('calendar intent offers a portal to the existing content-creation calendar', () => {
+test('calendar intent offers the shared content-generation queue calendar', () => {
   const portal = assistantScenarioIntake('打开发布日历');
   assert.equal(portal?.scenario, 'weekly_calendar');
-  assert.deepEqual(calendarPortalNavigation(), { page: 'socialInspiration', view: 'calendar' });
   const html = renderToStaticMarkup(createElement(AssistantCreationPortalCard, { portal: portal! }));
   assert.match(html, /打开内容创作 - 发布日历/);
   assert.doesNotMatch(html, /本周发布日历查询|完整发布日历|查看完整日历/);

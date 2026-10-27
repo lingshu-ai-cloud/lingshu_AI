@@ -74,6 +74,11 @@ const componentSource = readFileSync(fileURLToPath(new URL('./InspirationDashboa
   + readFileSync(new URL('./inspiration/useInspirationDiscoveryInventory.ts', import.meta.url), 'utf8')
   + readFileSync(new URL('./inspiration/inspirationDashboardContracts.ts', import.meta.url), 'utf8')
   + readFileSync(new URL('./inspiration/InspirationMaterialGallery.tsx', import.meta.url), 'utf8');
+const inspirationCreationSource = readFileSync(new URL('./inspiration/useInspirationCreation.ts', import.meta.url), 'utf8');
+const imageReplicationBranch = inspirationCreationSource.slice(
+  inspirationCreationSource.indexOf("if (video.contentFormat === 'image')"),
+  inspirationCreationSource.indexOf("if (video.id.startsWith('material-'))"),
+);
 const materialCardSource = readFileSync(fileURLToPath(new URL('./inspiration/MaterialLibraryCardMedia.tsx', import.meta.url)), 'utf8');
 const detailSource = readFileSync(fileURLToPath(new URL('./inspiration/DirectorVideoDetailPanel.tsx', import.meta.url)), 'utf8');
 const videoCardSource = readFileSync(fileURLToPath(new URL('./InspirationVideoCards.tsx', import.meta.url)), 'utf8');
@@ -123,6 +128,9 @@ for (const placeholderTag of ['来源待归类', '相关性待确认', '趋势�
 assert.doesNotMatch(videoCardSource.slice(videoCardSource.indexOf('export function VideoCard'), videoCardSource.indexOf('export function VideoListItem')), /<Tag|\{hasVisibleSignals &&/, '媒体卡不得保留独立的空分析 Tag 容器');
 assert.match(detailSource, /aria-label="内容标签"[^]*?video\.tags\.map/, '爆款 hashtag 必须集中展示在详情顶部');
 assert.match(componentSource, /startInspirationCreation[^]*?requestExactFullAnalysis/, '未完成详细分析的视频点击复刻时必须自动补齐分析');
+assert.match(imageReplicationBranch, /assistantImageReplicationPortal\(prompt\)[^]*?sourceRecordId[^]*?creationPortal: referencedPortal/, '图文爆款复刻必须把已选参考写入原灵小枢对话');
+assert.match(imageReplicationBranch, /page: 'strategy'[^]*?ASSISTANT_HOME_ACTIVITY_EVENT/, '图文爆款复刻必须回到 hi，灵小枢首页继续问答');
+assert.doesNotMatch(imageReplicationBranch, /page: 'smartAssets'|directStudio: false/, '图文爆款复刻的新入口不得再打开独立制作界面');
 assert.match(detailSource, /detailCreationReady =[^;]*exactQuality\.ready && !pending/, '详情复刻入口不能依赖可失败的交接状态读取');
 assert.match(componentSource, /const openTask = \(taskId: string\)[^]*?directStudio: true[^]*?continueTaskId: taskId/, '爆款复刻任务创建后必须直接进入生产工作台');
 assert.doesNotMatch(componentSource, /title: `\$\{video\.title \|\| '灵感视频'\} · 爆款裂变`/, '生产任务标题不得继续使用旧的“爆款裂变”名称');

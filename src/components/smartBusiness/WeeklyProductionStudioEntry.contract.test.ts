@@ -17,19 +17,17 @@ test('weekly progress opens verified Studio directly and old links redirect inst
   assert.doesNotMatch(entry, /item\.progress|item\.steps|estimatedMinutes|TaskPreviewCards|ProductionTaskScene|本条内容的真实制作详情/);
 });
 
-test('review and matrix weekly entries preserve their source view and clear navigation before entering Studio', () => {
-  const page = readFileSync(new URL('../DigitalEmployeePage.tsx', import.meta.url), 'utf8');
+test('review and matrix generation entries open the same global queue before any explicit Studio action', () => {
+  const workspace = readFileSync(new URL('../ConfiguredDigitalEmployeeWorkspace.tsx', import.meta.url), 'utf8');
   const review = readFileSync(new URL('./BusinessDataReview.tsx', import.meta.url), 'utf8');
   const matrix = readFileSync(new URL('./MatrixPublicationSchedule.tsx', import.meta.url), 'utf8');
-  const start = page.indexOf('const openProductionProgress =');
-  const end = page.indexOf('if (taskId) setSelectedTaskId', start);
-  const weeklyEntry = page.slice(start, end);
-  assert.match(weeklyEntry, /items.length === 1 && items\[0\]!\.origin === "weekly_plan"/);
-  assert.match(weeklyEntry, /setWeeklyStudioContentId\(items\[0\]!\.contentId\);\s*return;/);
-  assert.doesNotMatch(weeklyEntry, /setWorkspaceView|setSelectedContentItemId/);
-  assert.match(page, /contentId=\{weeklyStudioContentId\} autoOpen onOpened=\{\(\) => setWeeklyStudioContentId\(""\)\}/);
-  assert.match(review, /row.origin === 'weekly_plan' \? '进入内容制作' : '查看'/);
-  assert.match(matrix, /openProduction \? '进入内容制作 →'/);
+  const start = workspace.indexOf('const openProductionProgress =');
+  const end = workspace.indexOf('// Only explicit action failures', start);
+  const queueEntry = workspace.slice(start, end);
+  assert.match(queueEntry, /openContentGenerationQueue\(\{view:'tasks',taskId:item\?\.socialContentTaskId\|\|undefined,contentId:item\?\.contentId\|\|contentItemId\|\|undefined\}\)/);
+  assert.doesNotMatch(queueEntry, /setWorkspaceView|setSelectedContentItemId|setWeeklyStudioContentId/);
+  assert.match(review, /aria-label="查看内容生成任务"[\s\S]{0,160}>查看生成任务<\/Button>/);
+  assert.match(matrix, /openProduction \? '查看生成任务 →'/);
 });
 
 test('workbench entry uses fresh scoped reads, rejects stale auth and lets users choose multiple real versions', () => {

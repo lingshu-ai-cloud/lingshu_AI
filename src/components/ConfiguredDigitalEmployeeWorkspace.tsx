@@ -9,7 +9,7 @@ import type { OnboardingConfigurationInput } from './digitalEmployeeConfiguratio
 import WeeklyStartConflictAlert from './WeeklyStartConflictAlert';
 import WeeklyProductionStudioEntry from './smartBusiness/WeeklyProductionStudioEntry';
 import PlanHistoryDialog from './PlanHistoryDialog';
-import { Suspense, useState, type Dispatch, type SetStateAction } from 'react';
+import { Suspense, useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { SmartBusinessDashboard, WeeklyCommandCenter, WeeklyPlanDetailsDrawer, BusinessInterpretation, deferredWorkspaceFallback } from './digitalEmployeeDeferredViews';
 import BusinessOverviewLanding from './smartBusiness/BusinessOverviewLanding';
 import BusinessOverviewDetailDrawer from './smartBusiness/BusinessOverviewDetailDrawer';
@@ -19,6 +19,7 @@ import { CalendarRange, ChevronLeft, History, Pause, Play } from 'lucide-react';
 import { digitalEmployeeApi, buildTaskDeepLink, dispatchDigitalEmployeeDeepLink, type BusinessReadinessItem, type DigitalEmployeeOverview } from '../lib/digitalEmployees';
 import type { WeeklyStartConflict } from '../lib/weeklyStartValidation';
 import { weeklyWorkStatus } from '../lib/weeklyWorkStatus';
+import { AGENT_SETTINGS_OPEN_EVENT, openContentGenerationQueue } from '../lib/contentGenerationQueue';
 
 export type WorkspaceView = 'today' | 'matrix' | 'overview' | 'live' | 'review' | 'rules';
 type Setter<T> = Dispatch<SetStateAction<T>>;
@@ -118,6 +119,13 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
     changeOverviewDateRange, openReadiness, saveConfig, createWeeklyOutline,
     generateCurrentPlanDetails, confirmWeeklyPlan,
   } = props;
+  useEffect(() => {
+    const openSettings = () => {
+      setWeeklyPlanOpen(false);setWeeklyPlanDetailsOpen(false);setPlanHistoryOpen(false);setWorkspaceView('rules');
+    };
+    window.addEventListener(AGENT_SETTINGS_OPEN_EVENT, openSettings);
+    return () => window.removeEventListener(AGENT_SETTINGS_OPEN_EVENT, openSettings);
+  }, [setPlanHistoryOpen,setWeeklyPlanDetailsOpen,setWeeklyPlanOpen,setWorkspaceView]);
   if (!data.config) return null;
   const goal = data.goal;
     const dashboardView = workspaceView === "matrix"
@@ -244,15 +252,8 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
     };
     const openProductionProgress = (taskId: string, contentItemId: string, _projectId?: string) => {
       const items = (data.contentQueue?.items || []).filter(item => item.id === contentItemId && (!taskId || item.taskId === taskId));
-      if (items.length === 1 && items[0]!.origin === "weekly_plan") {
-        // Preserve the source tab. Returning from Studio must not reopen a redirect.
-        setWeeklyStudioContentId(items[0]!.contentId);
-        return;
-      }
-      if (taskId) setSelectedTaskId(taskId);
-      setSelectedContentItemId(contentItemId);
-      setWorkspaceView("live");
-      window.setTimeout(() => document.querySelector('[data-testid="production-task-scene"]')?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50);
+      const item=items[0];
+      openContentGenerationQueue({view:'tasks',taskId:item?.socialContentTaskId||undefined,contentId:item?.contentId||contentItemId||undefined});
     };
     // Only explicit action failures/conflicts belong here. Persisted run state
     // remains in the compact header and per-content progress, never a home banner.
@@ -276,7 +277,8 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
       feedback={weeklyActionFeedback}
       onMetricClick={goal ? metric => {
         setSelectedContentItemId("");
-        if (metric === "waiting_review") { setWorkspaceView("matrix"); return; }
+        if (metric === "waiting_review") { openContentGenerationQueue({view:'tasks',metric:'waiting_review',source:'weekly'}); return; }
+        if (metric === "planned_videos" || metric === "planned_duration") { openContentGenerationQueue({view:'tasks',source:'weekly'}); return; }
         if (metric === "settled_cost") { setWorkspaceView("review"); return; }
         setWeeklyPlanDetailsOpen(true);
       } : undefined}
@@ -294,7 +296,7 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
       <Tag color="processing">界面预览</Tag>
     </>} previewTotals={sampleWeekly}/></Suspense>;
     const dashboard = <Suspense fallback={deferredWorkspaceFallback}>{workspaceView === "rules"
-      ? <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} mode="rules" activeRun={activeRun} onOpenReadiness={openReadiness} onSave={(config) => void saveConfig(config)} />
+      ? <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} mode="rules" initialSettingsOpen activeRun={activeRun} onOpenReadiness={openReadiness} onSave={(config) => void saveConfig(config)} />
       : <SmartBusinessDashboard data={data} view={dashboardView} selectedAccountId={selectedAccountId} selectedContentItemId={selectedContentItemId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange} onRefresh={() => void load()} onGenerateDetails={() => void generateCurrentPlanDetails()} onOpenContent={openContentProduction} onOpenAgentSettings={() => setWorkspaceView("rules")} onOpenProductionProgress={openProductionProgress} onBackToQueue={()=>{setSelectedContentItemId("");setWorkspaceView("overview");}} onRetryTask={async taskId => Boolean(await act(`retry:${taskId}`, () => digitalEmployeeApi.retryTask(taskId)))} onControlJob={async (jobId, action) => Boolean(await act(`execution:${jobId}:${action}`, () => digitalEmployeeApi.controlExecutionJob(jobId, action)))} onGeneratePlan={() => { void controlWeeklyWork(); }} onNavigate={page => {
           if (page === "socialPlanning") { void controlWeeklyWork(); return; }
           if (page === "socialAccounts") { openAccountConfiguration(); return; }

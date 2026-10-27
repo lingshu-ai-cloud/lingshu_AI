@@ -46,6 +46,7 @@ import {
   type AssistantHomePromptMode,
   type AssistantHomeSubmitOptions,
 } from './assistant/useAssistantHomeAnchor';
+import { openContentGenerationQueue } from '../lib/contentGenerationQueue';
 
 type PendingHomePrompt = { entry: AssistantHomePrompt; submitOptions?: AssistantHomeSubmitOptions };
 
@@ -67,7 +68,7 @@ function resolveLauncherPrompts(launcher: AssistantHomeQuickLauncher | null): As
     .filter((entry): entry is AssistantHomePrompt => Boolean(entry));
 }
 
-export default function ContentCreationHome({ inspirationWorkspace, sessionScope }: { onNavigate?: (page: Page) => void; inspirationWorkspace?: ReactNode; sessionScope: string }) {
+export default function ContentCreationHome({ onNavigate, inspirationWorkspace, sessionScope }: { onNavigate?: (page: Page) => void; inspirationWorkspace?: ReactNode; sessionScope: string }) {
   const [activeLauncherId, setActiveLauncherId] = useState<AssistantHomeQuickLauncherId | null>(null);
   const [companyReportOpen, setCompanyReportOpen] = useState(false);
   const [highlightOpen, setHighlightOpen] = useState(false);
@@ -85,7 +86,18 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
     () => ASSISTANT_HOME_QUICK_LAUNCHERS.find(entry => entry.id === activeLauncherId) || null,
     [activeLauncherId],
   );
-  const activePrompts = useMemo(() => resolveLauncherPrompts(activeLauncher), [activeLauncher]);
+  const hasWeeklyPlan = Boolean(overview?.goal && overview.plan);
+  const activePrompts = useMemo(() => {
+    const prompts = resolveLauncherPrompts(activeLauncher);
+    if (activeLauncher?.id !== 'weekly-plan' || !firstRunLoaded || hasWeeklyPlan) return prompts;
+    return prompts.map(entry => entry.id === 'OP-CALENDAR' ? {
+      ...entry,
+      label: '创建周计划',
+      summary: '当前没有周计划，通过对话生成本周目标、任务、预算和排期',
+      prompt: '请帮我创建本周计划。',
+      level: 'plan' as const,
+    } : entry);
+  }, [activeLauncher, firstRunLoaded, hasWeeklyPlan]);
   const canvasCollapsed = activeLauncher === null;
   const showFirstRun = firstRunLoaded && !firstRunError && firstRunProgress.entered && (!overview?.config || !firstRunProgress.growthCompleted);
 
@@ -148,6 +160,14 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
   };
 
   const choosePrompt = (entry: AssistantHomePrompt) => {
+    if (entry.id === 'OP-CALENDAR') {
+      if (!hasWeeklyPlan) { preparePrompt(entry); return; }
+      onNavigate?.('digitalEmployees');
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent('lingshu:open-weekly-plan', { detail: { source: 'home' } })), 0);
+      setActiveLauncherId(null);
+      return;
+    }
+    if (entry.id === 'CO-11') { openContentGenerationQueue({view:'tasks'});setActiveLauncherId(null);return; }
     if (entry.id === 'CO-07') {
       if (assistantBusy) return;
       setBusinessSceneId(entry.id);
@@ -262,7 +282,7 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
         })}
       </div>}
 
-      <section id="creator-home-library" className="creator-home__library" aria-label="爆款素材">
+      <section id="creator-home-library" tabIndex={-1} className="creator-home__library" aria-label="爆款素材">
         {inspirationWorkspace}
       </section>
     </div>

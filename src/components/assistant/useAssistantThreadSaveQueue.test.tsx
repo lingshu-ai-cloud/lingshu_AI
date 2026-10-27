@@ -97,11 +97,14 @@ test('assistant save queue serializes updates and carries the latest CAS version
     assert.equal(requests.length, 5, 'a clear conflict must not retry old messages');
     assert.equal(queuesRef.current.get('business')?.pending, null);
     useAssistantStore.getState().setMessages('business', [{ role: 'user', content: 'new after clear' }]);
+    useAssistantStore.getState().setDraftInput('business', '尚未发送的草稿');
     persistThread('business');
     requests[5]!.respond(new Response(JSON.stringify({ current: {
       ...emptyAssistantThread(), version: 6, conversationResetVersion: 6, deletedAt: 'now',
     } }), { status: 410 }));
     await nextTick();
+    assert.equal(useAssistantStore.getState().threads.business.draftInput, '尚未发送的草稿',
+      'a cross-tab delete keeps unsent text available for the replacement conversation');
     persistThread('business');
     assert.equal(requests.length, 6, 'deleted conversations never silently recreate');
   } finally {

@@ -16,7 +16,6 @@ export function useAssistantWeeklyPlanExperience() {
   const refresh = useCallback(async () => {
     const next = await digitalEmployeeApi.overview();
     setOverview(next);
-    if (next.goal && next.plan && !operating(next)) setProposal(current => current?.goal?.id === next.goal?.id ? current : next);
     return next;
   }, []);
   useEffect(() => {
@@ -29,17 +28,14 @@ export function useAssistantWeeklyPlanExperience() {
 
   const prepare = useCallback(async () => {
     setError('');
-    let next = await digitalEmployeeApi.overview();
-    if (!next.goal || !next.plan) {
-      if (!next.config) throw new Error('请先点击上方『让灵小枢认识我』完成基础资料');
-      const { defaultWeeklyGoal } = await import('../../lib/defaultWeeklyGoal');
-      next = await digitalEmployeeApi.createGoal(defaultWeeklyGoal(next.config).draft);
-    }
-    if (!next.goal || !next.plan?.businessPackage) throw new Error('周计划没有生成完整，请稍后重试。');
-    setOverview(next); setProposal(next);
-    const planCount = next.goal.videoPlans?.length || next.plan.businessPackage.operatingContext?.outputs.count || 0;
-    const platforms = next.goal.contentPlatforms.join('、');
-    return `已生成本周运营计划：${next.goal.objective}。周期为 ${next.goal.startsAt} 至 ${next.goal.endsAt}，覆盖 ${platforms || '待确认平台'}${planCount ? `，共 ${planCount} 条内容` : ''}。点击下方卡片查看全部安排，确认无误后才会正式开始运行。`;
+    const next = await digitalEmployeeApi.overview();
+    if (!next.config) throw new Error('请先点击上方『让灵小枢认识我』完成基础资料');
+    setOverview(next);setProposal(null);setModalOpen(false);
+    window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{page:'digitalEmployees'}}));
+    window.setTimeout(()=>window.dispatchEvent(new CustomEvent('lingshu:open-weekly-plan',{detail:{source:'assistant'}})),0);
+    return next.goal&&next.plan
+      ? '已打开经营总览中的当前周计划。计划范围、预算、版本和启动确认都在同一处处理。'
+      : '已打开经营总览中的周计划编辑页。系统会预填建议，但在你确认前不会保存或启动计划。';
   }, []);
 
   const confirm = useCallback(async () => {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, Button, Descriptions, Drawer, Empty, Skeleton, Tag, Timeline } from 'antd';
+import { ArrowLeft } from 'lucide-react';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
 import { projectContentProductionTaskCard } from '../../../shared/contracts/assistantContentTaskCard';
 import type { DigitalEmployeeOverview } from '../../lib/digitalEmployees';
@@ -19,8 +20,8 @@ import ImageCreationTaskExecution from './ImageCreationTaskExecution';
 export const creationLocalTime = (value: string) => value.length===10 ? `${value} · 时刻待定`
   : Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}) : '待安排';
 
-export default function CreationTaskDetailDrawer({ row, overview, onClose, onUpdated, onRecover }:{
-  row:CreationTaskRow|null;overview:DigitalEmployeeOverview;onClose:()=>void;onUpdated:()=>void;onRecover?:()=>void;
+export default function CreationTaskDetailDrawer({ row, overview, onClose, onUpdated, onRecover, inline = false }:{
+  row:CreationTaskRow|null;overview:DigitalEmployeeOverview;onClose:()=>void;onUpdated:()=>void;onRecover?:()=>void;inline?:boolean;
 }) {
   const [loadedTask,setTask]=useState<SocialContentTaskDetail|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(false),[revision,setRevision]=useState(0);
   const task=loadedTask?.taskId===row?.taskId?loadedTask:null;
@@ -44,8 +45,7 @@ export default function CreationTaskDetailDrawer({ row, overview, onClose, onUpd
   const nodes=task?creationProductionNodes(task):[];
   const shots=task?.runId?contentShotProgress(task):[];
   const detailSource=creationTaskDetailSource(row,task);
-  return <Drawer title="创作任务详情" open={Boolean(row)} onClose={onClose} size={500} styles={{wrapper:{maxWidth:'100vw'}}} extra={<Button loading={loading} onClick={refresh}>刷新进展</Button>}>
-    {row&&<div className="space-y-5">
+  const content=row&&<div className="space-y-5">
       <div><h2 className="text-lg font-semibold text-text-primary">{task?.brief.title||row.title}</h2><Tag className="mt-2" color={state?.category==='confirmation'?'warning':state?.category==='completed'?'success':'processing'}>{state?.statusLabel}</Tag></div>
       <Descriptions column={1} size="small" items={[
         {key:'source',label:'创建来源',children:row.sourceLabel},{key:'product',label:'产品',children:row.product||'待补充'},
@@ -62,6 +62,15 @@ export default function CreationTaskDetailDrawer({ row, overview, onClose, onUpd
         {task.runId&&<><PresenterFirstFrameReviewPanel taskId={task.taskId} runId={task.runId}/>{task.artifacts.some(a=>a.kind==='short_video'&&a.origin==='agent')&&<><SocialSceneG4ReviewPanel task={task} onChanged={refresh}/><SocialDirectorG5ReviewPanel task={task} onChanged={refresh}/></>}</>}
         {task.artifacts.length>0&&<CreationTaskArtifacts task={task} onChanged={refresh}/>}
       </>:detailSource==='weekly'?<WeeklyContentProgressPanel data={overview} contentId={row.contentId!} onRefresh={onUpdated}/>:!row.readError&&!error?<Empty description="暂未取得制作回执"/>:null}
-    </div>}
+    </div>;
+  if(inline)return <section aria-label="内容生成任务详情" className="min-h-[420px] px-5 py-4">
+    <header className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
+      <Button icon={<ArrowLeft size={16}/>} onClick={onClose}>返回任务列表</Button>
+      <Button loading={loading} onClick={refresh}>刷新进展</Button>
+    </header>
+    {content}
+  </section>;
+  return <Drawer title="创作任务详情" open={Boolean(row)} onClose={onClose} size={500} styles={{wrapper:{maxWidth:'100vw'}}} extra={<Button loading={loading} onClick={refresh}>刷新进展</Button>}>
+    {content}
   </Drawer>;
 }

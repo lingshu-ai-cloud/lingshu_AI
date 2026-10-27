@@ -75,7 +75,9 @@ assert.match(assistantRootMarkup, /bottom-\[calc\(env\(safe-area-inset-bottom\)\
 assert.doesNotMatch(assistantRootMarkup, /5\.5rem/, '制作页不得通过额外抬高灵小枢入口制造底部空白');
 assert.match(conversationPanelSource, /assistantUsesMobileClearance[\s\S]{0,240}viewport\.height - \(assistantUsesMobileClearance \? 160 : 96\)/, '移动端抬高入口时必须同步收紧对话高度，不能把面板顶部裁掉');
 assert.match(launcherSource, /const closedLabel = weeklyPlanOperating \? '周计划正在运营中' : '周计划待生成'/, '右下角入口必须根据真实周运行状态给出明确文案');
-assert.match(weeklyPlanHookSource, /digitalEmployeeApi\.createGoal\(defaultWeeklyGoal\(next\.config\)\.draft\)/, '提示词必须复用真实周计划生成接口');
+assert.doesNotMatch(weeklyPlanHookSource, /digitalEmployeeApi\.createGoal|defaultWeeklyGoal/, '打开周计划时不得在后台默默创建或保存默认计划');
+assert.match(weeklyPlanHookSource, /digitalEmployeeApi\.overview\(\)[\s\S]{0,280}lingshu:navigate[\s\S]{0,180}page:'digitalEmployees'[\s\S]{0,280}lingshu:open-weekly-plan/, '灵小枢周计划入口必须读取真实状态并打开经营总览中的唯一编辑页');
+assert.match(weeklyPlanHookSource, /在你确认前不会保存或启动计划/, '系统预填建议必须明确保持用户确认边界');
 assert.match(weeklyPlanHookSource, /请先点击上方『让灵小枢认识我』完成基础资料/, '缺少初始资料时必须直接告知用户可操作的页面入口');
 assert.match(weeklyPlanSource, /确认周计划/, '完整周计划弹窗必须只显示直接的计划确认动作');
 assert.doesNotMatch(weeklyPlanSource, /Checkbox|generationAuthorized|确认授权/, '周计划弹窗不得增加独立授权复选框或授权按钮');
@@ -241,7 +243,7 @@ for (const [key, sourcePage] of [['legacy-traffic', 'traffic'], ['smart-assets-'
 }
 assert.match(appPageSlotSource, /page === 'socialInspiration'[\s\S]{0,300}<ContentCreationOverviewPage/, '内容创作页必须使用独立经营式工作区');
 assert.match(contentCreationOverviewSource, /<CreationPlan[^\n]*onCreate=\{\(\)=>setCreateOpen\(true\)\}/, '内容创作计划入口必须打开创建表单');
-assert.match(contentCreationOverviewSource, /<CreateContentPlanModal open=\{createOpen\}[\s\S]{0,350}productionPortalNavigation\(taskId\)/, '创建表单完成后必须导航到真实任务门户');
+assert.match(contentCreationOverviewSource, /<CreateContentPlanModal open=\{createOpen\}[\s\S]{0,350}openContentGenerationQueue\(\{view:'tasks',taskId\}\)/, '创建单条任务后必须打开统一内容生成队列并聚焦新任务');
 for (const reference of ['goalId', 'planId', 'runId', 'taskId', 'contentId', 'viewKey']) {
   assert.match(liveContextSource, new RegExp(`${reference}: contextIdentifier\\(detail\\.${reference}`), `页面上下文必须安全绑定 ${reference}`);
 }
@@ -251,7 +253,7 @@ assert.match(source, /liveContext\?\.sourcePage === normalizedPage/, '切换页�
 assert.match(source, /workflowStage === 'unplanned'/, '灵小枢必须识别尚未制定周计划的真实空白状态');
 assert.match(floatingRemindersSource, /data-lingshu-weekly-plan-prompt="true"[\s\S]{0,900}先制定本周计划[\s\S]{0,500}制定周计划/, '关闭态灵小枢必须主动说明先预览计划再生产');
 assert.match(conversationBubblesSource, /data-assistant-bubble="weekly-plan-kickoff"[\s\S]{0,900}确认后，数字员工才会开始生产[\s\S]{0,500}制定周计划/, '打开灵小枢后必须提供同一条计划制定入口');
-assert.match(source, /openWeeklyPlanFromAssistant[\s\S]{0,300}lingshu:open-weekly-plan[\s\S]{0,120}source: 'assistant'/, '灵小枢计划按钮必须派发明确来源的页面动作');
+assert.match(source, /openWeeklyPlanFromAssistant[\s\S]{0,300}onNavigate\?\.\('digitalEmployees'\)[\s\S]{0,220}lingshu:open-weekly-plan[\s\S]{0,120}source: 'assistant'/, '灵小枢计划按钮必须导航到权威周计划页并派发明确来源的页面动作');
 assert.doesNotMatch(source, /productionSuggestions|data-assistant-surface="production-suggestions"|aria-label="生产快捷问题"/, '不得在页面快捷入口上方重复渲染生产快捷问题');
 const pageQuickEntrySource = sourceSection(
   '<AssistantQuickEntries',

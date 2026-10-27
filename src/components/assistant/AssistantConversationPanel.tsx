@@ -1,8 +1,8 @@
-import AssistantWorkBookmark, { AssistantWorkSchedule } from './AssistantWorkBookmark';
+import AssistantWorkBookmark from './AssistantWorkBookmark';
 import GuidedCreationChoices from './GuidedCreationChoices';
 import ContentCreationChoices from './ContentCreationChoices';
 import { useCreationMode } from '../../lib/creationMode';
-import { useState, useEffect, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ArrowDown, ArrowLeft, X } from 'lucide-react';
 import type { AgentAction, Page } from '../../App';
@@ -99,9 +99,6 @@ export default function AssistantConversationPanel(props: Props) {
     setAssistantTool, setScrollPosition, setFollowingLatest, focusTaskCard, setMessages,
     setDraftInput, setDecisionFeedRevision, setMode, setWeeklyActionBusy,
     setPendingAttachments, setAttachmentError, persistThread } = props;
-  const [workExpanded, setWorkExpanded] = useState(false);
-  useEffect(() => { setWorkExpanded(false); }, [persistenceScopeKey, page, mode, inlineHome, assistantTool, panelView]);
-  const expanded = workExpanded && !inlineHome && mode === 'chat';
   const creationMode = useCreationMode();
   const compactHome = Boolean(inlineHome && (activeThread.creationDraft || activeThread.messages.length || loading));
   const creationReply = [...activeThread.messages].reverse().find(message => message.creation)?.creation;
@@ -138,46 +135,33 @@ export default function AssistantConversationPanel(props: Props) {
         animate={mode === 'chat' || inlineHomeBounds ? { opacity: 1, y: 0 } : { opacity: 0, y: reduceMotion ? 0 : 8 }}
         exit={{ y: reduceMotion ? 0 : 8, opacity: 0, transition: { ...spatialTransition, opacity: fadeExit.transition } }}
         transition={spatialTransition}
-        className={`ls-assistant-panel ${expanded ? 'ls-assistant-panel--work-expanded' : ''} absolute bottom-14 right-0 z-10 flex max-h-[calc(100dvh-env(safe-area-inset-bottom)-96px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden border border-border bg-surface outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' || inlineHomeBounds ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
+        className={`ls-assistant-panel absolute bottom-14 right-0 z-10 flex max-h-[calc(100dvh-env(safe-area-inset-bottom)-96px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden border border-border bg-surface outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' || inlineHomeBounds ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
         style={{ height: inlineHomeBounds?.height ?? assistantPanelHeight, width: inlineHomeBounds?.width ?? assistantPanelWidth, maxWidth: inlineHomeBounds ? '100%' : 'calc(100vw - 32px)' }}
-        onKeyDownCapture={event => {
-          if (!expanded) return;
-          if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setWorkExpanded(false); return; }
-
-        }}
-        data-assistant-view={expanded ? 'weekly-work' : 'conversation'}
+        data-assistant-view="conversation"
       >
-        {expanded && <button type="button" className="assistant-work-return-sector" aria-label="问问灵小枢，返回对话" title="返回灵小枢对话" onClick={() => {
-          setWorkExpanded(false);
-          requestAnimationFrame(() => assistantInputRef.current?.focus());
-        }}>
-          <span>问问灵小枢</span>
-          <ArrowLeft size={14} aria-hidden="true"/>
-        </button>}
-        {!inlineHome && !expanded && <AssistantWorkBookmark expanded={expanded} onToggle={() => { setAssistantTool(null); returnToConversation(); setWorkExpanded(value => !value); }}/>}
+        {!inlineHome && <AssistantWorkBookmark/>}
         {inlineHome && <div className="sr-only"><h2 id="global-assistant-panel-title">灵小枢创作对话</h2><p id="global-assistant-panel-description">描述创作需求，或添加图片、视频和音频参考。</p></div>}
         {inlineHome && <div className="flex shrink-0 justify-end px-3 pt-1" data-assistant-conversation-controls>{props.conversationControls}</div>}
         {activeThread.deletedAt && <p role="status" className="px-4 text-sm text-text-secondary">这条会话已删除，请从会话管理中新建会话。</p>}
         {!inlineHome && <header className="ls-assistant-panel__header flex shrink-0 items-center justify-between border-b border-border bg-surface">
           <div className="ls-assistant-panel__identity">
             <button type="button" onClick={() => {
-              if (expanded) { setWorkExpanded(false); }
-              else if (assistantTool === 'knowledge-intake') { setAssistantTool(null); returnToConversation(); }
+              if (assistantTool === 'knowledge-intake') { setAssistantTool(null); returnToConversation(); }
               else if (panelView !== 'chat') returnToConversation();
               else closeAssistant();
             }}
               className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              aria-label={expanded || assistantTool === 'knowledge-intake' || panelView !== 'chat' ? '返回灵小枢对话' : '收起灵小枢对话'}
-              title={expanded || assistantTool === 'knowledge-intake' || panelView !== 'chat' ? '返回灵小枢对话' : '收起灵小枢对话'}>
+              aria-label={assistantTool === 'knowledge-intake' || panelView !== 'chat' ? '返回灵小枢对话' : '收起灵小枢对话'}
+              title={assistantTool === 'knowledge-intake' || panelView !== 'chat' ? '返回灵小枢对话' : '收起灵小枢对话'}>
               <ArrowLeft size={16} />
             </button>
             <AssistantMascot size="sm" interactive reduceMotion={reduceMotion} />
             <div className="min-w-0">
-              <p id="global-assistant-panel-title" className="ls-type-title-small truncate text-text-primary">{expanded ? '灵小枢 · 本周智能体任务' : panelTitle}</p>
+              <p id="global-assistant-panel-title" className="ls-type-title-small truncate text-text-primary">{panelTitle}</p>
               <p id="global-assistant-panel-description" className="ls-type-body-small truncate text-text-muted">{panelSubtitle}</p>
             </div>
           </div>
-          <div className={expanded ? 'hidden' : 'flex items-center gap-1'}>
+          <div className="flex items-center gap-1">
             {props.conversationControls}
             <button type="button" onClick={closeAssistant} className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" title="关闭窗口（任务继续）" aria-label="关闭灵枢助手窗口，任务继续运行">
               <X size={15} />
@@ -200,11 +184,6 @@ export default function AssistantConversationPanel(props: Props) {
             }} />
         ) : (
           <>
-            {expanded && <div id="assistant-work-schedule" className="assistant-work-scroller"><AssistantWorkSchedule onNavigate={destination => {
-              setWorkExpanded(false);
-              window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: destination } }));
-            }}/></div>}
-            <div className={expanded ? 'hidden' : 'contents'}>
             <div ref={messageScrollRef} data-assistant-surface="conversation" hidden={inlineHome && !activeThread.creationDraft && !activeThread.messages.length && !loading} className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
               onScroll={event => {
                 const scroller = event.currentTarget;
@@ -297,14 +276,13 @@ export default function AssistantConversationPanel(props: Props) {
                 }
               }}
             />}
-            </div>
-            <AssistantComposer variant={inlineHome ? 'home' : 'default'} compact={expanded || compactHome} ref={assistantInputRef} draft={activeThread.draftInput} files={pendingAttachments}
-              suggestion={!expanded && !loading && !replyStreaming && !fileGenerating && !activeThread.creationDraft && !contentIntake.active ? assistantFollowUpSuggestion(activeThread.messages) : ''}
+            <AssistantComposer variant={inlineHome ? 'home' : 'default'} compact={compactHome} ref={assistantInputRef} draft={activeThread.draftInput} files={pendingAttachments}
+              suggestion={!loading && !replyStreaming && !fileGenerating && !activeThread.creationDraft && !contentIntake.active ? assistantFollowUpSuggestion(activeThread.messages) : ''}
               disabled={props.conversationLocked || Boolean(activeThread.deletedAt) || loading || replyStreaming || fileGenerating || contentIntake.busy || weeklyActionBusy}
               uploading={attachmentUploading} error={attachmentError}
               onDraftChange={value => setDraftInput(activeAgent, value)}
               onFilesChange={files => { setPendingAttachments(files); if (!files.length) setAttachmentError(''); }}
-              onValidationError={setAttachmentError} onSubmit={() => { setWorkExpanded(false); void sendComposerMessage(); }}
+              onValidationError={setAttachmentError} onSubmit={() => { void sendComposerMessage(); }}
             />
           </>
         )}

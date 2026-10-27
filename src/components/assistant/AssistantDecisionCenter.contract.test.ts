@@ -18,9 +18,10 @@ test('summary variant is a real-feed bubble that delegates opening to the extern
   assert.match(source, /AssistantDecisionCenterVariant = 'summary' \| 'detail'/);
   assert.match(source, /variant\?: AssistantDecisionCenterVariant/);
   assert.equal(`${source}\n${productionSource}`.match(/onOpenDetail\?: \(trigger\?: HTMLButtonElement \| null\) => void/g)?.length, 3, 'the shell callback and both summary variants must receive the trigger for focus restoration');
-  assert.match(source, /if \(variant === 'summary'\)[\s\S]*if \(!first && !productionDecision && !error\) return null/, 'an empty feed must not reserve summary space');
+  assert.match(source, /if \(variant === 'summary'\)[\s\S]*summaryDecision[\s\S]*if \(!summaryDecision && !productionDecision && !error\) return null/, 'an empty feed must not reserve summary space');
+  assert.match(source, /!\['plan_start', 'plan_adjustment'\]\.includes\(first\.kind\)/, 'weekly plan decisions stay in the weekly workspace instead of rendering a duplicate assistant summary');
   assert.match(source, /card\.kind === 'plan_start' \|\| card\.kind === 'plan_adjustment'[\s\S]*请确认本周的内容计划/, 'weekly plan summaries use the requested plain-language title');
-  assert.match(source, /<DecisionSummary card=\{first\} total=\{total \|\| 1\} onOpenDetail=\{onOpenDetail\}/, 'the real first feed card drives the summary bubble');
+  assert.match(source, /<DecisionSummary card=\{summaryDecision\} total=\{total \|\| 1\} onOpenDetail=\{onOpenDetail\}/, 'the real first non-weekly decision drives the summary bubble');
   const summarySource = source.slice(source.indexOf('function DecisionSummary'), source.indexOf('function DecisionCard'));
   assert.match(summarySource, /className="assistant-decision-summary"[\s\S]*onClick=\{event => onOpenDetail\?\.\(event\.currentTarget\)\}/, 'summary click delegates the trigger to the external dialog');
   assert.doesNotMatch(summarySource, /onAction|execute/, 'summary click only opens detail and never executes an action');

@@ -82,6 +82,7 @@ interface Props {
   onKickoffConsumed?: () => void;
   onAction?: AgentAction;
   onSessionRefresh?: () => void;
+  onNavigate?: (page: Page) => void;
 }
 
 function requestId() {
@@ -99,7 +100,7 @@ export default function GlobalAssistant({
   suppressForRightSidebar = false,
   onKickoffConsumed,
   onAction,
-  onSessionRefresh,
+  onSessionRefresh, onNavigate,
 }: Props) {
   const { modal, message: uiMessage } = AntApp.useApp();
   const reduceMotion = usePrefersReducedMotion();
@@ -238,10 +239,9 @@ export default function GlobalAssistant({
   const openWeeklyPlanFromAssistant = useCallback(() => {
     setWeeklyPlanPromptDismissed(true);
     setMode('breathing');
-    window.dispatchEvent(new CustomEvent('lingshu:open-weekly-plan', {
-      detail: { source: 'assistant' },
-    }));
-  }, []);
+    onNavigate?.('digitalEmployees');
+    window.setTimeout(()=>window.dispatchEvent(new CustomEvent('lingshu:open-weekly-plan', { detail: { source: 'assistant' } })),0);
+  }, [onNavigate]);
   const activeThread = threads[activeAgent];
   useAssistantHomeInteraction(inlineHome, activeThread.messages.length, loading, activeAgent, setDraftInput, assistantInputRef,
     Boolean(activeThread.creationDraft), setPendingHomeSubmission);
