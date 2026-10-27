@@ -2,6 +2,12 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前统一开发基线：图文背景细节保留（2026-10-27）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `5881f498` 快进至源码提交 `39b5e4750666a16489fd551b44a52f59bb7f3084`。原有 41 项未提交改动未纳入；合入前后已跟踪补丁 SHA-256 `2f8bbbec2c100c85c6ae68916819b6ff08325f57490751a7bd8adde96c683d93`、未跟踪路径清单 SHA-256 `e94212b6b855e502add040c13fb47fee4aa3fe05ed4d2884b34e9740e6c58735` 均不变。
+- B2B 单图的标题、企业信息和产品事实改为同一块紧凑白卡；删除覆盖画面上方 44% 的渐变白雾。出图提示保持场景细节，卡片外背景像素回归验证通过。图文管线 94 项及其路由/合同/治理检查、TypeScript、相对 `5881f498` 的架构检查（3030 个生产 TypeScript 文件）、207 项迁移清单只读检查、`git diff --check` 均通过。没有新增迁移。
+- 原 RS-003 底图的免费本地合成预览在 `~/.lingshu-ai/image-b2b-e2e-20261027/rs003-single-copy-card-local-preview.png`，仅用于版式检查；不是新 SKU 真实联调、供应商验收或发布就绪。真实联调需同版 Web/worker、独立任务上限和最终成片质检；本节记录时尚未执行本轮付费任务。未推送、部署或发布。
+
 ## 当前统一开发基线：图文 B2B 构图与 RS-003 真实联调（2026-10-27）
 
 - 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `cd5222e6` 快进至源码提交 `53e8ba20cc86d23618e48a859a883140e77ce8c2`。原有 41 项未提交变更未纳入，合入前后已跟踪补丁 SHA-256 `2f8bbbec2c100c85c6ae68916819b6ff08325f57490751a7bd8adde96c683d93`、未跟踪路径清单 SHA-256 `e94212b6b855e502add040c13fb47fee4aa3fe05ed4d2884b34e9740e6c58735` 均不变。
