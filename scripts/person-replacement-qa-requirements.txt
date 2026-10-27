@@ -1,5 +1,8 @@
-# Optional visual-model adapter environment. Core technical QA uses ffmpeg-static and runs without Python.
-numpy<2
+# Versions verified by the production visual QA self-check on 2026-10-27.
+# Pin JAX explicitly to avoid downloading many resolver candidates on small hosts.
+numpy==1.26.4
 opencv-contrib-python==4.10.0.84
 mediapipe==0.10.14
-scikit-image<0.23
+scikit-image==0.22.0
+jax==0.7.1
+jaxlib==0.7.1

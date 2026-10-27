@@ -36,13 +36,15 @@ RUN apt-get update \
   && corepack enable \
   && corepack prepare pnpm@11.19.0 --activate
 
-COPY --from=build /app /app
-
 # The visual QA runtime is part of the application image, not an undeclared
 # host dependency. This imports OpenCV/MediaPipe at build time; the live
 # readiness probe runs the same script with --self-check.
+COPY scripts/person-replacement-qa-requirements.txt scripts/person_replacement_visual_qa.py ./scripts/
 RUN python3 -m pip install --break-system-packages --no-cache-dir -r /app/scripts/person-replacement-qa-requirements.txt \
   && python3 /app/scripts/person_replacement_visual_qa.py --self-check
+
+# Keep stable Python dependencies cached when application source changes.
+COPY --from=build /app /app
 
 ARG APP_BUILD_SHA=unknown
 ENV APP_BUILD_SHA=${APP_BUILD_SHA}
