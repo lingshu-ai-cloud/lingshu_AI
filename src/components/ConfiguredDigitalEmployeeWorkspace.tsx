@@ -12,10 +12,9 @@ import WeeklyProductionStudioEntry from './smartBusiness/WeeklyProductionStudioE
 import PlanHistoryDialog from './PlanHistoryDialog';
 import { Suspense, useState, type Dispatch, type SetStateAction } from 'react';
 import { SmartBusinessDashboard, WeeklyCommandCenter, WeeklyPlanDetailsDrawer, BusinessInterpretation, deferredWorkspaceFallback } from './digitalEmployeeDeferredViews';
-import DigitalEmployeeHomeWork from './DigitalEmployeeHomeWork';
 import BusinessOverviewLanding from './smartBusiness/BusinessOverviewLanding';
 import BusinessOverviewDetailDrawer from './smartBusiness/BusinessOverviewDetailDrawer';
-import BusinessOverviewSampleWork, { BusinessOverviewSampleInterpretation } from './smartBusiness/BusinessOverviewSampleWork';
+import { BusinessOverviewSampleInterpretation } from './smartBusiness/BusinessOverviewSampleWork';
 import { businessOverviewSample, isBusinessOverviewSampleEnabled } from '../dev/businessOverviewSample';
 import { CalendarRange, ChevronLeft, History, Pause, Play } from 'lucide-react';
 import { digitalEmployeeApi, buildTaskDeepLink, dispatchDigitalEmployeeDeepLink, type BusinessReadinessItem, type DigitalEmployeeOverview } from '../lib/digitalEmployees';
@@ -310,7 +309,7 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
       {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-surface">
         <div className="mx-auto w-full px-2 py-3 sm:px-3">
           <h1 className="sr-only">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
-          {workspaceView === "today" ? <BusinessOverviewLanding data={data} onRefresh={() => void load()} onNavigate={onNavigate} onOpenAccountHealth={() => setHealthDialogOpen(true)} weeklyPlan={sampleWeeklyPlan || weeklyCommandCenter} interpretation={sampleEnabled ? <BusinessOverviewSampleInterpretation/> : <Suspense fallback={deferredWorkspaceFallback}><BusinessInterpretation data={data} onViewReview={() => setWorkspaceView("review")}/></Suspense>} work={sampleEnabled ? <BusinessOverviewSampleWork/> : <DigitalEmployeeHomeWork data={data} onNavigate={onNavigate}/>}/> : <div className="grid grid-cols-1 overflow-hidden rounded-2xl border border-border bg-surface xl:grid-cols-[minmax(0,1.7fr)_minmax(360px,1fr)]"><div aria-label="当前周计划" className="min-w-0">{weeklyCommandCenter}</div>
+          {workspaceView === "today" ? <BusinessOverviewLanding data={data} onRefresh={() => void load()} onNavigate={onNavigate} onOpenAccountHealth={() => setHealthDialogOpen(true)} weeklyPlan={sampleWeeklyPlan || weeklyCommandCenter} interpretation={sampleEnabled ? <BusinessOverviewSampleInterpretation/> : <Suspense fallback={deferredWorkspaceFallback}><BusinessInterpretation data={data} onViewReview={() => setWorkspaceView("review")}/></Suspense>}/> : <div className="grid grid-cols-1 overflow-hidden rounded-2xl border border-border bg-surface xl:grid-cols-[minmax(0,1.7fr)_minmax(360px,1fr)]"><div aria-label="当前周计划" className="min-w-0">{weeklyCommandCenter}</div>
             <aside aria-label="企业经营分" className="min-w-0 border-t border-border xl:border-l xl:border-t-0 [&_section]:rounded-none [&_section]:border-0"><BusinessHealthOverview summaryOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange} onOpenAccountHealth={() => setHealthDialogOpen(true)}/></aside><Suspense fallback={deferredWorkspaceFallback}><BusinessInterpretation data={data} onViewReview={() => setWorkspaceView("review")}/></Suspense></div>}
           <div className="grid grid-cols-1 gap-4 pb-6 pt-2">
             <main className="min-w-0">

@@ -19,6 +19,7 @@ const scoreLabel = (value: number | null) => value === null ? '待评估' : `${v
 export type BusinessHealthOverviewRange = { startsAt: string; endsAt: string };
 
 type Props = {
+  displayCompanyName?: string;
   summaryOnly?: boolean;
   scoreOnly?: boolean;
   detailsOnly?: boolean;
@@ -147,7 +148,7 @@ function AccountJourney({ account }: { account: AccountHealthResult }) {
   </div>;
 }
 
-export default function BusinessHealthOverview({ data, selectedAccountId = '', overviewRangeBusy = false, onOverviewRangeChange, onNavigate, onOpenAccountHealth, previewScore, summaryOnly = false, scoreOnly = false, detailsOnly = false, accountOnly = false }: Props) {
+export default function BusinessHealthOverview({ displayCompanyName, data, selectedAccountId = '', overviewRangeBusy = false, onOverviewRangeChange, onNavigate, onOpenAccountHealth, previewScore, summaryOnly = false, scoreOnly = false, detailsOnly = false, accountOnly = false }: Props) {
   const [sources, setSources] = useState<BusinessHealthSources>({ performance: null, channelsLoaded: false, whatsappConnected: false, messengerPages: [] });
   const [loading, setLoading] = useState(false);
   const requestId = useRef(0);
@@ -203,7 +204,7 @@ export default function BusinessHealthOverview({ data, selectedAccountId = '', o
     {!detailsOnly && !accountOnly && <section className="overflow-hidden rounded-lg border border-border bg-white" aria-labelledby="business-health-title">
       <header className="flex flex-wrap items-start justify-between gap-3 px-6 pb-4 pt-5 xl:min-h-[112px]">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="w-full min-w-0"><h2 id="business-health-title" className="break-words text-xl leading-8 font-semibold text-text-primary">{data.config?.companyName?.trim() || '企业名称待完善'}</h2>{scoreOnly && <p className="mt-1 text-xs text-text-secondary">账号分</p>}</div>{(summaryOnly || scoreOnly) && (onOpenAccountHealth ? <button type="button" onClick={onOpenAccountHealth} aria-haspopup="dialog" className="group flex flex-wrap items-baseline gap-2 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-accent"><span className="text-sm text-text-secondary">{scoreOnly ? '当前分数' : '企业经营分'}</span><strong className="text-[32px] font-semibold tabular-nums text-accent">{headlineScore ?? '—'}</strong><span className="text-xs text-text-muted">/ 100 · {headlineCoverage}</span><span className="inline-flex items-center gap-1 text-xs font-medium text-accent">查看账号健康<ArrowRight size={13} className="transition-transform group-hover:translate-x-0.5"/></span></button> : <div className="flex items-baseline gap-2"><span className="text-sm text-text-secondary">{scoreOnly ? '当前分数' : '企业经营分'}</span><strong className="text-[32px] font-semibold tabular-nums text-accent">{headlineScore ?? '—'}</strong><span className="text-xs text-text-muted">/ 100 · {headlineCoverage}</span></div>)}
+          <div className="w-full min-w-0"><h2 id="business-health-title" className="break-words text-xl leading-8 font-semibold text-text-primary">{displayCompanyName || data.config?.companyName?.trim() || '企业名称待完善'}</h2>{scoreOnly && <p className="mt-1 text-xs text-text-secondary">账号分</p>}</div>{(summaryOnly || scoreOnly) && (onOpenAccountHealth ? <button type="button" onClick={onOpenAccountHealth} aria-haspopup="dialog" className="group flex flex-wrap items-baseline gap-2 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-accent"><span className="text-sm text-text-secondary">{scoreOnly ? '当前分数' : '企业经营分'}</span><strong className="text-[32px] font-semibold tabular-nums text-accent">{headlineScore ?? '—'}</strong><span className="text-xs text-text-muted">/ 100 · {headlineCoverage}</span><span className="inline-flex items-center gap-1 text-xs font-medium text-accent">查看账号健康<ArrowRight size={13} className="transition-transform group-hover:translate-x-0.5"/></span></button> : <div className="flex items-baseline gap-2"><span className="text-sm text-text-secondary">{scoreOnly ? '当前分数' : '企业经营分'}</span><strong className="text-[32px] font-semibold tabular-nums text-accent">{headlineScore ?? '—'}</strong><span className="text-xs text-text-muted">/ 100 · {headlineCoverage}</span></div>)}
           {!summaryOnly && !scoreOnly && <><DatePicker.RangePicker
             aria-label="经营健康统计时间段"
             value={rangeValue}

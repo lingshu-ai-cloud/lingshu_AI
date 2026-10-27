@@ -12,7 +12,7 @@ const card = fs.readFileSync(new URL('./InspirationVideoCards.tsx', import.meta.
 const creatorStyles = fs.readFileSync(new URL('../styles/creator-workspace.css', import.meta.url), 'utf8');
 const homeAnchor = fs.readFileSync(new URL('./assistant/useAssistantHomeAnchor.ts', import.meta.url), 'utf8');
 const strategy = fs.readFileSync(new URL('./StrategyPage.tsx', import.meta.url), 'utf8');
-const workspace = fs.readFileSync(new URL('./smartBusiness/DigitalEmployeeWorkspace.tsx', import.meta.url), 'utf8');
+const workspace = fs.readFileSync(new URL('./ConfiguredDigitalEmployeeWorkspace.tsx', import.meta.url), 'utf8');
 const appSlot = fs.readFileSync(new URL('../AppPageSlot.tsx', import.meta.url), 'utf8');
 const creationOverview = fs.readFileSync(new URL('./ContentCreationOverviewPage.tsx', import.meta.url), 'utf8');
 const promptCatalog = fs.readFileSync(new URL('../lib/assistantHomeQuickPrompts.ts', import.meta.url), 'utf8');
@@ -50,7 +50,7 @@ assert.match(promptCatalog, /id: 'viral-script'[\s\S]{0,1800}id: 'traffic-optimi
 assert.match(home, /ASSISTANT_HOME_PROMPT_EVENT[\s\S]{0,220}detail: \{ prompt: entry\.prompt, mode \}/, '普通卡片和条件补齐后的查询只能填入原输入框');
 assert.match(home, /追加到现有内容[\s\S]{0,300}替换现有内容/, '输入框已有内容时必须明确提供追加与替换选择');
 assert.doesNotMatch(home, /DigitalEmployeeHomeWork/, '三栏进行中工作必须从首页移走');
-assert.match(workspace, /<DigitalEmployeeHomeWork data=\{data\} onNavigate=\{onNavigate\}/, '三栏进行中工作必须进入经营总览并替代旧日历');
+assert.doesNotMatch(workspace, /<DigitalEmployeeHomeWork/, '进行中工作由灵小枢书签承接，不再占据经营总览');
 assert.match(layout, /aria-label="经营导航"/, '经营总览必须与上方轻量入口分组');
 assert.match(layout, /item\.page !== 'digitalEmployees'/, '经营总览不得混入上方主导航组');
 assert.match(layout, /aria-label="经营导航"[\s\S]{0,900}<div className="min-h-0 flex-1"/, '经营总览须紧跟主导航，不能沉到账号区上方');

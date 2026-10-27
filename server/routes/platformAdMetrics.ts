@@ -1,3 +1,5 @@
+import { readLocalBusinessPreview } from '../platformAds/localBusinessPreview.js';
+import { getMetaBusinessOverview } from '../platformAds/businessOverview.js';
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
@@ -11,6 +13,22 @@ import { getAccountDirectory } from '../platformAds/accountDirectory.js';
 import { getAccountAdAsset } from '../platformAds/accountAdAsset.js';
 export const platformAdMetricsRouter = Router();
 platformAdMetricsRouter.use(requireAuth);
+platformAdMetricsRouter.get('/local-business-preview', (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const data = readLocalBusinessPreview((res.locals as AuthLocals).tenantId, req.socket.remoteAddress);
+    if (!data) { res.status(404).json({ error: 'not_found' }); return; }
+    res.json(data);
+  } catch { res.status(503).json({ error: '本地企业数据暂不可读' }); }
+});
+platformAdMetricsRouter.get('/connections/:id/overview/:accountId', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try { res.json(await getMetaBusinessOverview((res.locals as AuthLocals).tenantId, req.params.id, req.params.accountId, req.query)); }
+  catch (error) {
+    const status = error instanceof AdProviderError ? error.code === 'INVALID_INPUT' ? 400 : error.code === 'NOT_FOUND' ? 404 : 503 : 503;
+    res.status(status).json({ error: error instanceof AdProviderError && error.code === 'NOT_CONFIGURED' ? 'Meta 连接配置待完善，请到账号管理核对授权。' : error instanceof AdProviderError ? error.message : 'Meta 经营报告暂不可用，请重试' });
+  }
+});
 platformAdMetricsRouter.get('/account-directory', async (_req, res) => {
   res.setHeader('Cache-Control', 'private, no-store');
   try { res.json(await getAccountDirectory((res.locals as AuthLocals).tenantId)); }
