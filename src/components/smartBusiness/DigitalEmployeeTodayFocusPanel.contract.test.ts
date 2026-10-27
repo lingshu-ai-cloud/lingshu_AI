@@ -5,7 +5,9 @@ const page = fs.readFileSync(new URL('../DigitalEmployeePage.tsx', import.meta.u
 const workspace = fs.readFileSync(new URL('../ConfiguredDigitalEmployeeWorkspace.tsx', import.meta.url), 'utf8');
 const tabs = fs.readFileSync(new URL('./BusinessOverviewTabs.tsx', import.meta.url), 'utf8');
 
-assert.match(page, /if \(data\?\.config\) return <ConfiguredDigitalEmployeeWorkspace/,
+assert.match(page, /const configuredData: DigitalEmployeeOverview = overviewData\.config \? overviewData : \{ \.\.\.overviewData, config: EMPTY_CONFIG \};/,
+  'configured tenants must retain their actual configuration');
+assert.match(page, /<ConfiguredDigitalEmployeeWorkspace \{\.\.\.\{[\s\S]{0,80}data: configuredData/,
   'configured tenants must still enter the extracted workspace');
 assert.match(workspace, /<WeeklyCommandCenter[\s\S]{0,200}data=\{data\}[\s\S]{0,200}statusLabel=\{currentPlanStatusLabel\}/,
   'the overview must keep the real weekly status in its command center');

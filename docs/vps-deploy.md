@@ -180,6 +180,29 @@ https://你的客户访问域名
 
 ## 常用命令
 
+### 提前发布服务器维护公告
+
+维护公告必须在既有服务器 checkout 的交互式 SSH 终端中配置，不要把公告内容写进前端源码。编辑服务器上的 `.env.production`，设置以下字段；时间必须是带时区的 RFC 3339，例如 `2026-11-02T22:00:00+08:00`：
+
+```text
+SYSTEM_ANNOUNCEMENT_ENABLED=true
+SYSTEM_ANNOUNCEMENT_ID=maintenance-2026-11-02
+SYSTEM_ANNOUNCEMENT_TITLE=系统维护通知
+SYSTEM_ANNOUNCEMENT_MESSAGE=维护期间部分功能将暂时不可用，请提前保存正在编辑的内容。
+SYSTEM_ANNOUNCEMENT_PUBLISH_AT=2026-11-01T09:00:00+08:00
+SYSTEM_ANNOUNCEMENT_MAINTENANCE_START_AT=2026-11-02T22:00:00+08:00
+SYSTEM_ANNOUNCEMENT_MAINTENANCE_END_AT=2026-11-02T23:30:00+08:00
+```
+
+公告内容不得包含密钥、内部地址或其他敏感信息。保存后仅重建 Web 服务使环境配置生效，不启动 Worker 或付费任务：
+
+```bash
+docker compose --env-file .env.production up -d --no-deps --force-recreate app
+curl -fsS "http://127.0.0.1:${APP_HOST_PORT:-18788}/api/overseas/health"
+```
+
+健康接口的 `announcement` 必须与配置一致，随后用普通用户登录首页检查公告。公告会在维护结束时间自动隐藏；维护完成后仍应把 `SYSTEM_ANNOUNCEMENT_ENABLED` 改回 `false` 并按同一方式重建 Web 服务，避免旧配置被误用。
+
 查看服务状态：
 
 ```bash

@@ -95,6 +95,7 @@ import { dataAuthorityRequestScope } from './storage/dataAuthority.js';
 import { objectStorageConfigurationIssues, objectStorageDriver, objectStorageLocalRoot } from './storage/objectStorage.js';
 import { runtimeBuildInfo } from './runtime/buildInfo.js';
 import { createGracefulShutdown } from './runtime/gracefulShutdown.js';
+import { resolveSystemAnnouncement } from './runtime/systemAnnouncement.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const processRole = parseProcessRole(process.env.PROCESS_ROLE);
@@ -162,6 +163,7 @@ const readinessProbe = createRuntimeReadinessProbe({ role: processRole, startupI
 // traffic. Register them before the general API limiter and cache readiness
 // briefly so load balancers cannot amplify PocketBase load.
 app.get('/api/overseas/health', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   res.json({
     status: startupReadinessIssues.length ? 'degraded' : 'ok',
     service: 'overseas-marketing-agent',
@@ -173,6 +175,7 @@ app.get('/api/overseas/health', (_req, res) => {
     capabilities: runtimeCapabilities(processRole),
     localWeeklyRecovery: localWeeklyExecutionRuntime.health(),
     weeklyDiscoveryScopeMigrationRecovery: weeklyDiscoveryScopeMigrationRecoveryRuntime.read(),
+    announcement: resolveSystemAnnouncement(),
     startupIssues: startupReadinessIssues,
   });
 });

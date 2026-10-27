@@ -97,6 +97,8 @@ assert.match(ui, /<CustomerInfoRail/, 'the customer workbench must mount its cus
 const switchUi = read('src/components/customers/CustomerServiceSwitch.tsx');
 const listUi = read('src/components/customers/ConversionCustomerList.tsx');
 assert.match(switchUi, /aria-label="智能客服总开关"/, 'the customer workbench must expose a clear master switch');
+assert.match(switchUi, /查看全部用户信息/, 'the customer-list header must open the current customer directory');
+assert.match(switchUi, /<Modal[\s\S]*?<CustomerServiceControl[\s\S]*?<CustomerDirectory/, 'the directory dialog must retain the guarded activation control and list the current customer source');
 assert.match(listUi, /\{headerActions\}/, 'the compact list must render its activation control');
 assert.match(ui, /headerActions=\{<CustomerServiceSwitch[\s\S]*?unavailable=\{!customerServiceStatus \|\| customerServiceStatusLoadFailed\}[\s\S]*?changeCustomerServiceEnabled\(enabled\)/, 'the visible switch must use the original activation handler and fail closed without status');
 assert.match(ui, /requestDraft\(selected, instruction, undefined, intent, true\)/, 'manual AI drafts must remain available even when automatic customer service is off');

@@ -214,15 +214,6 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
       {showFirstRun && <div className="creator-home__canvas-stage">
         <section className="creator-home__canvas" aria-label="新用户入门">
           <div className="creator-home__canvas-grid creator-home__canvas-grid--onboarding">
-            <button type="button" className="creator-home__canvas-card" onClick={() => window.dispatchEvent(new CustomEvent(HOME_GROWTH_TOUR_START_EVENT, { detail: { restart: true } }))}>
-              <span className="creator-home__canvas-card-shade" aria-hidden="true"/>
-              <span className="creator-home__canvas-card-content">
-                <Compass size={28} aria-hidden="true"/>
-                <strong>灵枢如何助力海外增长</strong>
-                <span>亲手体验对话、业务页面、周任务包和创建任务。</span>
-                <span className="creator-home__canvas-card-action">{firstRunProgress.growthCompleted ? <><CheckCircle2 size={14} aria-hidden="true"/>已了解 · 再看一次</> : <>开始了解 · 约 2 分钟<ArrowRight size={14} aria-hidden="true"/></>}</span>
-              </span>
-            </button>
             <button type="button" className="creator-home__canvas-card creator-home__canvas-card--primary" onClick={() => setIntroductionOpen(true)}>
               <span className="creator-home__canvas-card-shade" aria-hidden="true"/>
               <span className="creator-home__canvas-card-content">
@@ -230,6 +221,15 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
                 <strong>让灵小枢认识我</strong>
                 <span>通过问答确认企业、品牌、主推产品和目标市场。</span>
                 <span className="creator-home__canvas-card-action">{overview?.config ? <><CheckCircle2 size={14} aria-hidden="true"/>已确认 · 查看资料</> : <>开始介绍 · 可稍后继续<ArrowRight size={14} aria-hidden="true"/></>}</span>
+              </span>
+            </button>
+            <button type="button" className="creator-home__canvas-card" onClick={() => window.dispatchEvent(new CustomEvent(HOME_GROWTH_TOUR_START_EVENT, { detail: { restart: true } }))}>
+              <span className="creator-home__canvas-card-shade" aria-hidden="true"/>
+              <span className="creator-home__canvas-card-content">
+                <Compass size={28} aria-hidden="true"/>
+                <strong>灵枢如何助力海外增长</strong>
+                <span>亲手体验对话、业务页面、周任务包和创建任务。</span>
+                <span className="creator-home__canvas-card-action">{firstRunProgress.growthCompleted ? <><CheckCircle2 size={14} aria-hidden="true"/>已了解 · 再看一次</> : <>开始了解 · 约 2 分钟<ArrowRight size={14} aria-hidden="true"/></>}</span>
               </span>
             </button>
           </div>
