@@ -4,9 +4,12 @@
 
 ## 当前统一开发基线：图文背景细节保留（2026-10-27）
 
-- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `5881f498` 分步快进至源码提交 `13dc22fdf2b3b4ea438e5fbff88dd3ff97f0aa9e`。原有 41 项未提交改动未纳入；每次合入前后已跟踪补丁 SHA-256 `2f8bbbec2c100c85c6ae68916819b6ff08325f57490751a7bd8adde96c683d93`、未跟踪路径清单 SHA-256 `e94212b6b855e502add040c13fb47fee4aa3fe05ed4d2884b34e9740e6c58735` 均不变。
+- 本轮新 SKU 真实联调基于 `2c5d71ab49dc014906c0c9252658efc41c7833cd`、独立本地数据、同版 Web/worker，经正常会话入口选取历史 Apify 参考 `history-image-4e4496cdadb6b43e8af7b695` 第 1 张和另一款产品 `GUIANFA-RS-006` 蜜桃冰雪霜，Facebook／英文／1:1，单任务上限 5 元。用户经界面确认后正常入队：内容任务 `socialtask_55ba41a32afb2715293ee51e`、图片任务 `img32295a0a7e7f`、作业 `58a10bc7ff58fdf`。观察期间未改任务、手动推进、重试或发布；作业自然停于 `blocked` / `user_input_required:social_image_quality_requires_review`，图片任务 `review_required`，候选图不可视为合格交付。供应商精确费用回执未取得，不能确认剩余预算，也未追加付费请求。
+- 真实候选图卡片外背景保留花枝与台面细节，原先大面积白雾问题改善；仍发现左上标题越出卡片、底图字样透出、瓶身品牌生成错误，硬质检未全部通过，参考结构软指标也有不确定项。本轮仅在该任务停止后修复标题按宽度自适应、单卡不透明底和包装可核实的 `FROST` 英文名；源码提交 `f74197a9712e98367061cd908a97eb5e9fdfaf5f`。使用已生成底图免费重排的 `~/.lingshu-ai/image-b2b-e2e-20261027/rs006-title-layout-local-preview.png` 只证明版式修复，未经过新一轮真实模型与质检，不是任务成片。瓶身品牌漂移仍为待解决质量断点。
+- 后续版式修复的定向 buyer-copy 5/5、图文管线 95/95、HTTP 集成 1/1、路由／工作区／治理合同、`pnpm run lint`、相对 `2c5d71ab` 的架构检查（3030 个生产 TypeScript 文件）、207 项迁移清单只读检查、`git diff --check` 通过。没有新迁移；未运行全仓 `quality/verify`、再次付费复验、推送、部署或发布。源码通过不代表真实 E2E 通过。
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `5881f498` 分步快进至源码提交 `f74197a9712e98367061cd908a97eb5e9fdfaf5f`。原有 41 项未提交改动未纳入；每次合入前后已跟踪补丁 SHA-256 `2f8bbbec2c100c85c6ae68916819b6ff08325f57490751a7bd8adde96c683d93`、未跟踪路径清单 SHA-256 `e94212b6b855e502add040c13fb47fee4aa3fe05ed4d2884b34e9740e6c58735` 均不变。
 - B2B 单图的标题、企业信息和产品事实改为同一块紧凑白卡；删除覆盖画面上方 44% 的渐变白雾。出图提示保持场景细节，卡片外背景像素回归验证通过。图文管线 94 项及其路由/合同/治理检查、TypeScript、相对 `5881f498` 的架构检查（3030 个生产 TypeScript 文件）、207 项迁移清单只读检查、`git diff --check` 均通过。没有新增迁移。
-- 原 RS-003 底图的免费本地合成预览在 `~/.lingshu-ai/image-b2b-e2e-20261027/rs003-single-copy-card-local-preview.png`，仅用于版式检查；不是新 SKU 真实联调、供应商验收或发布就绪。真实联调需同版 Web/worker、独立任务上限和最终成片质检；本节记录时尚未执行本轮付费任务。未推送、部署或发布。
+- 原 RS-003 底图的免费本地合成预览在 `~/.lingshu-ai/image-b2b-e2e-20261027/rs003-single-copy-card-local-preview.png`，仅用于前一阶段版式检查；后续 RS-006 真实联调结果见本节首段。未推送、部署或发布。
 - 正常对话入口还发现历史图文图片走受保护媒体路由，未带鉴权的 `<img>` 被判不可用。工作区的共享 `ReviewImage` 改为对同源 `/api/` 图片鉴权读取、生成临时预览 URL 并在卸载时释放；浏览器中同一历史图已从“暂不可用”变为可选。图文复刻 26/26、工作区合同、TypeScript、相对 `a31a737d` 的架构扫描（3030 个生产 TypeScript 文件）及 `git diff --check` 通过。此时仍未新建本轮付费任务。
 
 ## 当前统一开发基线：图文 B2B 构图与 RS-003 真实联调（2026-10-27）
