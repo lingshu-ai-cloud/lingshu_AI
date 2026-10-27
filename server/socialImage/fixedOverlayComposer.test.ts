@@ -62,9 +62,9 @@ test('mist poster reserves a readable upper-left OEM/ODM block without covering 
     cta: 'Message us for catalog and quote' };
   const svg = socialImageBuyerOverlaySvg(1200, 1200, poster).toString();
   assert.match(svg, /<text[^>]+font-size="54"[^>]*>OEM \/ ODM<\/text>/);
-  assert.match(svg, /<text[^>]+font-size="60"[^>]*>DEEP SEA<\/text>/);
-  assert.match(svg, /<text[^>]+font-size="60"[^>]*>MIST<\/text>/);
-  assert.match(svg, /<rect x="50" y="38" width="372"/);
+  assert.match(svg, /<text[^>]+font-size="54"[^>]*>DEEP SEA<\/text>/);
+  assert.match(svg, /<text[^>]+font-size="54"[^>]*>MIST<\/text>/);
+  assert.match(svg, /<rect x="50" y="38" width="438"/);
   assert.doesNotMatch(svg, /topWash|height="528" fill="url/);
   const result = await composeFixedSocialLayers({ background: product, products: [product], poster,
     width: 1200, height: 1200, productTreatment: 'integrated_scene' });
@@ -72,6 +72,18 @@ test('mist poster reserves a readable upper-left OEM/ODM block without covering 
   const source = await sharp(product).resize(1200, 1200, { fit: 'cover', position: 'attention' })
     .extract({ left: 600, top: 700, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
   assert.deepEqual([...center], [...source]);
+});
+
+test('buyer headline stays inside the single copy card for short and product-specific English names', async () => {
+  const base = { originBadge: 'GUIANFA', sellingPoints: ['Face cream', 'SKU: GUIANFA-RS-006'],
+    bottomBar: ['50 g', 'OEM / ODM', 'Ask about packaging'], cta: 'Message us for quote' };
+  const generic = socialImageBuyerOverlaySvg(1200, 1200, { ...base, headline: 'FACE CREAM' }).toString();
+  assert.doesNotMatch(generic, />FACE CREAM<\/text>/, 'a wide one-line title must wrap inside the card');
+  assert.match(generic, />FACE<\/text>/);
+  assert.match(generic, />CREAM<\/text>/);
+  const specific = socialImageBuyerOverlaySvg(1200, 1200, { ...base, headline: 'PEACH ICE FROST' }).toString();
+  assert.match(specific, />PEACH ICE<\/text>/);
+  assert.match(specific, />FROST<\/text>/);
 });
 
 test('buyer copy density changes both the reserved text zone and the product placement request', () => {

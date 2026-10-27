@@ -28,7 +28,7 @@ const productId = (product: Product) => String(product.id || product.productId |
 function verifiedHeadline(product: Product, language: ImageLanguage, category: string, packagingHint: string): string {
   if (language === 'zh') return String(product.name || category).trim().slice(0, 20);
   if (language === 'en') {
-    const endings = product.category === '面霜' ? ['CREAM']
+    const endings = product.category === '面霜' ? ['CREAM', 'FROST']
       : product.category === '护肤喷雾' ? ['MIST', 'SPRAY'] : [];
     const brand = String(product.brand || '').toUpperCase();
     const confirmedEnglishName = String(product.attributes?.['英文名称'] || '').trim();

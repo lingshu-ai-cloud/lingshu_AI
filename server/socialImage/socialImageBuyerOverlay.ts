@@ -94,7 +94,13 @@ export function socialImageBuyerOverlaySvg(width: number, height: number, poster
   const x = Math.round(width * .057), right = Math.round(width * .943);
   const brand = lines(poster.originBadge || '', 22);
   const wideGlyphs = /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(poster.headline || '');
-  const heading = lines(poster.headline || '', Math.max(7, Math.floor(width * (layout.copyRight - .07) / font(60) * (wideGlyphs ? .9 : 1.9))));
+  const headingWidth = Math.round(width * (layout.copyRight - .035)) - font(36);
+  const headingLayout = [60, 54, 48, 42, 36, 32].map(size => {
+    const maxChars = Math.max(4, Math.floor(headingWidth / (font(size) * (wideGlyphs ? 1 : .85))));
+    return { size, maxChars, rows: lines(poster.headline || '', maxChars) };
+  }).find(candidate => candidate.rows.length <= 2 && candidate.rows.every(row => row.length <= candidate.maxChars));
+  if (!headingLayout) throw new Error('social_image_buyer_copy_overflow');
+  const heading = headingLayout.rows;
   const supporting = lines(poster.subheadline || '', Math.max(12, Math.floor(width * (layout.copyRight - .05) / font(27) * 1.5)));
   const facts = (poster.sellingPoints || []).flatMap(item => lines(item, Math.max(12, Math.floor(width * (layout.copyRight - .10) / font(23) * 1.8))));
   const [netContent = '', label = '', question = ''] = poster.bottomBar || [];
@@ -105,7 +111,8 @@ export function socialImageBuyerOverlaySvg(width: number, height: number, poster
     throw new Error('social_image_buyer_copy_overflow');
   }
   const topY = Math.round(height * .046), headingY = Math.round(height * .136);
-  const supportY = headingY + (heading.length - 1) * font(69) + font(44);
+  const headingLine = font(headingLayout.size + 9);
+  const supportY = headingY + (heading.length - 1) * headingLine + font(44);
   const factY = Math.max(Math.round(height * .30), supportY + font(100));
   const factLine = font(43);
   if (factY + facts.length * factLine > height * .47) throw new Error('social_image_buyer_copy_overflow');
@@ -124,12 +131,12 @@ export function socialImageBuyerOverlaySvg(width: number, height: number, poster
       <linearGradient id="sealEdge" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff"/><stop offset=".5" stop-color="${colors.edge}"/><stop offset="1" stop-color="${colors.pale}"/></linearGradient>
       <radialGradient id="sealFace"><stop stop-color="${colors.sealLight}"/><stop offset="1" stop-color="${colors.seal}"/></radialGradient>
     </defs>
-    ${facts.length ? `<rect x="${x - font(18)}" y="${copyCardTop}" width="${Math.round(width * (layout.copyRight - .09))}" height="${copyCardBottom - copyCardTop}" rx="${font(18)}" fill="#fff" fill-opacity="${highContrast ? '.97' : '.91'}" stroke="${colors.pale}" stroke-width="${Math.max(1, Math.round(2 * scale))}"/>` : ''}
+    ${facts.length ? `<rect x="${x - font(18)}" y="${copyCardTop}" width="${Math.round(width * (layout.copyRight - .035))}" height="${copyCardBottom - copyCardTop}" rx="${font(18)}" fill="#fff" stroke="${colors.pale}" stroke-width="${Math.max(1, Math.round(2 * scale))}"/>` : ''}
     <rect y="${footerTop}" width="${width}" height="${height - footerTop}" fill="${highContrast ? colors.footerStrong : colors.footer}"/>
     <line x1="0" y1="${footerTop}" x2="${width}" y2="${footerTop}" stroke="${colors.pale}" stroke-width="${Math.max(2, Math.round(3 * scale))}"/>
     ${brand.map((line, index) => `<text x="${x}" y="${topY + font(30) + index * font(34)}" fill="${colors.ink}" font-family="${fontFamily}" font-size="${font(28)}" font-weight="700" letter-spacing="1">${xml(line)}</text>`).join('')}
     ${brand.length ? `<line x1="${x}" y1="${topY + font(48)}" x2="${x + font(216)}" y2="${topY + font(48)}" stroke="${colors.rule}" stroke-width="2"/>` : ''}
-    ${heading.map((line, index) => `<text x="${x}" y="${headingY + index * font(69)}" fill="${colors.ink}" font-family="${fontFamily}" font-size="${font(60)}" font-weight="700">${xml(line)}</text>`).join('')}
+    ${heading.map((line, index) => `<text x="${x}" y="${headingY + index * headingLine}" fill="${colors.ink}" font-family="${fontFamily}" font-size="${font(headingLayout.size)}" font-weight="700">${xml(line)}</text>`).join('')}
     ${supporting.map((line, index) => `<text x="${x}" y="${supportY + index * font(34)}" fill="${colors.muted}" font-family="${fontFamily}" font-size="${font(27)}">${xml(line)}</text>`).join('')}
     ${label && facts.length ? `<text x="${x}" y="${factY - font(58)}" fill="${colors.ink}" font-family="${fontFamily}" font-size="${labelSize}" font-weight="800" letter-spacing=".4">${xml(label)}</text>` : ''}
     ${facts.length ? `<line x1="${x}" y1="${factY - font(32)}" x2="${x + font(315)}" y2="${factY - font(32)}" stroke="${colors.rule}" stroke-width="${Math.max(1, Math.round(2 * scale))}"/>` : ''}

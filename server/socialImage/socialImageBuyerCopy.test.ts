@@ -48,6 +48,7 @@ test('switching to peach cream keeps its own facts and drops the previous sorbet
     id: 'GUIANFA-RS-006', sku: 'GUIANFA-RS-006', name: '蜜桃冰雪霜',
     attributes: { 净含量: '50g', 核心场景: '面霜质地与晚间锁水' } }] } } as unknown as EnterpriseProfile;
   const result = socialImageBuyerCopy(peach, 'GUIANFA-RS-006', 'en', 'PEACH ICE FROST');
+  assert.equal(result?.poster.headline, 'PEACH ICE FROST');
   assert.deepEqual(result?.poster.sellingPoints, ['Face cream', 'Evening skincare', 'SKU: GUIANFA-RS-006']);
   assert.equal(result?.poster.subheadline, '');
   assert.doesNotMatch(JSON.stringify(result), /RS-005|Sorbet-like|Thailand|OEM/);
