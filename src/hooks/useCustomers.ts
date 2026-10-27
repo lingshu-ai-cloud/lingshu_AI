@@ -148,6 +148,7 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
         if (!alive) return;
         const restoredMocks = storedMocks.map(customer => {const saved=savedDrafts.find(item=>item.customerId===customer.id);return saved?restoreLocalCustomerPatch(customer,saved.patch):customer;});
         setCustomers(current => {
+          if (liveCustomers.some((customer: CustomerProfile) => customer.localFollowupPreview === true)) return liveCustomers;
           if (!includeMockCustomers) return liveCustomers;
           const existingMocks = current.filter(customer => customer.isMock).map(customer => {
             const saved = savedDrafts.find(item => item.customerId === customer.id);

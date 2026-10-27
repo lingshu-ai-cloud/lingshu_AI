@@ -23,6 +23,12 @@ export function createMessageEvent(
 }
 
 export async function sendCustomerOutbox(customer: CustomerProfile, requestId: string, body: string, outsideWindow: boolean, templatePlan?: TemplatePlan | null, styleMemory?: StyleMemoryPayload | null): Promise<{status?:'queued'|'sent'|'delivered';outboxId?:string;providerMessageIds?:string[];timeline?:TimelineEvent[]}> {
+  if (customer.localFollowupPreview === true && customer.isMock && customer.id.startsWith('preview_followup_')) {
+    const response = await fetch(`/api/overseas/customers/${encodeURIComponent(customer.id)}/outbox`, {method:'POST',headers:{'Content-Type':'application/json',...authHeader()},body:JSON.stringify({requestId,body})});
+    const data = await response.json();
+    if (!response.ok || data.localPreview !== true || data.status !== 'sent') throw Error(data.error || '本地演练回复尚未保存');
+    return {status:'sent',outboxId:data.outboxId};
+  }
   if (customer.isMock && customer.localSimulation) {
     const simulation = customer.localSimulation;
     const response = await fetch(`/api/overseas/customer-simulation/sessions/${encodeURIComponent(simulation.sessionId)}/actions`, {method:'POST',headers:{'Content-Type':'application/json',...authHeader()},body:JSON.stringify({action:'send',text:body,contentHash:simulation.itemHash})});

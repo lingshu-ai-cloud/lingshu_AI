@@ -2,6 +2,7 @@ import type { CustomerSource } from '../../types/customer';
 import { SocialPlatformIcon } from '../SocialPlatformIcon';
 
 const SOURCE_LABEL: Record<string, string> = {
+  local_followup: '本地演练',
   whatsapp: 'WhatsApp',
   messenger: 'Messenger',
   youtube: 'YouTube',
@@ -58,7 +59,7 @@ export function SourceIcon({ source, size = 16 }: { source: CustomerSource; size
       className="inline-flex shrink-0 items-center justify-center"
       style={{ width: boxSize, height: boxSize }}
     >
-      <span className="text-[10px] font-black text-text-muted">?</span>
+      <span className="text-[10px] font-black text-text-muted">{normalized === 'local_followup' ? '本' : '?'}</span>
     </span>
   );
 }

@@ -9,6 +9,7 @@ import { businessSceneOptions, type BusinessSceneScope } from '../assistantConte
 import { BusinessSceneError } from '../assistantContext/businessScenes/readScope.js';
 import { platformRewriteService } from '../scripts/platformRewrite.js';
 import { consumeDemoQuota } from '../lib/demo.js';
+import { dailyFollowups } from '../assistantContext/businessScenes/dailyFollowups.js';
 export function registerAssistantBusinessScenes(router: Router) {
   const scope = async (req: Parameters<typeof requestOrganizationRoleStrict>[0], locals: AuthLocals): Promise<BusinessSceneScope> => ({ tenantId: locals.tenantId, userId: locals.userId,
     role: locals.browserReadRole ?? await requestOrganizationRoleStrict(req, locals.userId) });
@@ -19,6 +20,11 @@ export function registerAssistantBusinessScenes(router: Router) {
   router.get('/business-scene-options', async (req, res) => {
     if (typeof req.query.sceneId !== 'string' || !isBusinessScene(req.query.sceneId)) { res.status(400).json({ error: 'scene_input_invalid' }); return; }
     try { res.json(await businessSceneOptions(await scope(req.headers.authorization, res.locals as AuthLocals), req.query.sceneId)); }
+    catch (error) { fail(res, error); }
+  });
+  router.get('/daily-followups', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try { res.json(await dailyFollowups(await scope(req.headers.authorization, res.locals as AuthLocals))); }
     catch (error) { fail(res, error); }
   });
   router.post('/platform-rewrite', enforceSupportSessionReadOnly, previewInformationScope, async (req, res) => {

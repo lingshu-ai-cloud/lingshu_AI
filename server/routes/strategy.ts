@@ -428,6 +428,8 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
   res.on('close', onClose);
   const heartbeat = setInterval(() => { if (!res.destroyed) res.write(': keep-alive\n\n'); }, 10_000);
   heartbeat.unref();
+  const work = (id: string, label: string, detail: string, status = 'running') => { if (!res.destroyed) res.write(`data: ${JSON.stringify({ analysisWork: { id, label, detail, status } })}\n\n`); };
+  const finishAnalysis = () => { res.write('data: {"analysisComplete":true}\n\n'); res.write('data: [DONE]\n\n'); };
   const timeRule = currentTimeRule();
   try {
     const newsScope = businessScene ? null : await prepareExternalNewsScope(messages, tenantId);
@@ -436,23 +438,27 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
     requireSources = externalPlan.kind === 'web';
     if (newsScope?.clarification) {
       res.write(`data: ${JSON.stringify({ text: newsScope.clarification })}\n\n`);
-      res.write('data: [DONE]\n\n');
+      finishAnalysis();
       return;
     }
     if (newsScope) {
+      work('sources', '检索并核验公开来源', '按当前问题查找相关原文与可引用依据');
       const result = await authoritativeNewsAnswer(question, cancellation.signal);
+      work('sources', '检索并核验公开来源', `本轮已返回 ${result.sources.length} 条来源，结论与数据缺口见正文`, 'completed');
       res.write(`data: ${JSON.stringify({ sources: result.sources, text: result.text })}\n\n`);
-      res.write('data: [DONE]\n\n');
+      finishAnalysis();
       return;
     }
     const filingsIntent = businessScene ? null : companyFilingsIntent(question);
     if (filingsIntent) {
+      work('filings', '读取企业公开披露', '核对所选企业及报告期间');
       const result = renderCompanyFilings(await queryCompanyFilings(filingsIntent.companies, {
         signal: cancellation.signal, force: filingsIntent.force,
       }));
+      work('filings', '读取企业公开披露', `已取得 ${result.sources.length} 条可引用来源`, 'completed');
       if (result.sources.length) res.write(`data: ${JSON.stringify({ sources: result.sources })}\n\n`);
       res.write(`data: ${JSON.stringify({ text: result.text })}\n\n`);
-      res.write('data: [DONE]\n\n');
+      finishAnalysis();
       return;
     }
     const companyIntent = businessScene ? null : companyReportIntent(question);
@@ -462,31 +468,35 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
       } else {
         const companyId = companyIntent.target?.id ?? companyIntent.lookup!.companyId;
         const year = companyIntent.target?.year ?? companyIntent.lookup!.year;
+        work('company-report', '读取企业报告原文', '确认企业、期间与公开原文');
         const target = await resolveHalfYearReport(companyId, year, { signal: cancellation.signal });
         const report = await generateCompanyReport(target, tenantId, {
           signal: cancellation.signal,
-          progress: phase => { if (!res.destroyed) res.write(`data: ${JSON.stringify({ companyReportProgress: phase })}\n\n`); },
+          progress: phase => { if (!res.destroyed) res.write(`data: ${JSON.stringify({ companyReportProgress: phase, analysisWork: { id: 'company-report', label: '整理企业报告', detail: phase, status: 'running' } })}\n\n`); },
         });
+        work('company-report', '整理企业报告', '已完成报告原文核对与结果整理', 'completed');
         res.write(`data: ${JSON.stringify({ companyReport: report, text: companyReportSummary(report) })}\n\n`);
       }
-      res.write('data: [DONE]\n\n');
+      finishAnalysis();
       return;
     }
     const externalAnswer = businessScene ? null : await answerExternalData(question, { signal: cancellation.signal });
     if (externalAnswer && (!externalPlan.mixed || externalAnswer.status === 'needs_input')) {
       if (externalAnswer.sources.length) res.write(`data: ${JSON.stringify({ sources: externalAnswer.sources })}\n\n`);
       res.write(`data: ${JSON.stringify({ text: appendInformationSources(externalAnswer.text, externalAnswer.sources) })}\n\n`);
-      res.write('data: [DONE]\n\n');
+      finishAnalysis();
       return;
     }
     const role = await requestOrganizationRoleStrict(req.headers.authorization, userId).catch(() => null);
     const needsGrounding = externalPlan.kind === 'internal' || externalPlan.mixed
       || (externalPlan.kind === 'offline' && /写|生成|制作|脚本|文案|开发信|话术/u.test(question));
-    const grounding = businessScene ? { text: await businessSceneGrounding({ tenantId, userId, role }, businessScene).catch(error => { if (error instanceof BusinessSceneError) throw error; throw new BusinessSceneError('scene_unavailable', 503, '场景业务资料暂时无法核验，请稍后重试。'); }) } : needsGrounding ? await buildChatGrounding({ tenantId, userId }, { role, question })
+    if (!businessScene && needsGrounding) work('internal-records', '读取业务资料', '读取当前租户授权范围内的经营记录');
+    const grounding = businessScene ? { text: await businessSceneGrounding({ tenantId, userId, role }, businessScene, analysisWork => { if (!res.destroyed) res.write(`data: ${JSON.stringify({ analysisWork })}\n\n`); }).catch(error => { if (error instanceof BusinessSceneError) throw error; throw new BusinessSceneError('scene_unavailable', 503, '场景业务资料暂时无法核验，请稍后重试。'); }) } : needsGrounding ? await buildChatGrounding({ tenantId, userId }, { role, question })
       : { text: externalPlan.kind === 'offline' ? '【本轮上下文范围】这是一般方法问答，未加载企业经营资料。不得评价本企业现行规则、产品资质或处理流程；不能声称企业没有相关要求。' : '' };
+    if (!businessScene && needsGrounding) work('internal-records', '读取业务资料', '业务上下文已返回；缺失资料在回答中说明', 'completed');
     if ('taskStatusAnswer' in grounding && grounding.taskStatusAnswer && !requireSources && !externalAnswer && !creationGrounding) {
       res.write(`data: ${JSON.stringify({ text: grounding.taskStatusAnswer, taskPortal: grounding.taskPortal })}\n\n`);
-      res.write('data: [DONE]\n\n');
+      finishAnalysis();
       return;
     }
     const externalEvidence = externalAnswer ? `\n【本轮外部数据接口核验结果】\n${externalAnswer.text}\n以上数字和计算结果必须原样引用，不得自行更改；内部业务结论仍须内部证据。` : '';
@@ -497,11 +507,14 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
     const replyPolicy = quickTaskReply ? `\n\n${ASSISTANT_QUICK_TASK_POLICY}` : '';
     const systemPrompt = generalMethod ? `${GENERAL_METHOD_PROMPT}\n${grounding.text}${replyPolicy}`
       : `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${sourceRule}\n\n${grounding.text}\n${creationGrounding}\n${EXTERNAL_SOURCE_RULES}\n${externalEvidence}\n${ASSISTANT_CONTEXT_RULES}${replyPolicy}`;
-    for await (const ev of callLLMChatStream(messages, { systemPrompt, deepThinking, requireConclusion: requireSources, validateAnswer: generalMethod ? assertGeneralMethodAnswer : undefined, requireSources, webSearch: requireSources, searchDomains: requireSources ? externalPlan.domains : undefined, searchFreshnessDays: externalPlan.freshnessDays, signal: cancellation.signal })) {
+    const adReportRule = businessScene?.sceneId === 'AD-01' ? '\n【本轮投放分析报告格式】输出适合对话阅读的小报告，包含统计范围、数据更新时间、币种与归因口径、核心结论、关键指标对比表、异常与数据缺口、关联当前真实计划的建议动作。仅引用已取得的数值，缺失项显示未知；不编造行业基准，不展示内部推理。' : '';
+    work('report', '整理分析报告', '根据已取得的资料整理结论、依据与数据缺口');
+    for await (const ev of callLLMChatStream(messages, { systemPrompt: systemPrompt + adReportRule, deepThinking, requireConclusion: requireSources, validateAnswer: generalMethod ? assertGeneralMethodAnswer : undefined, requireSources, webSearch: requireSources, searchDomains: requireSources ? externalPlan.domains : undefined, searchFreshnessDays: externalPlan.freshnessDays, signal: cancellation.signal })) {
       res.write(`data: ${JSON.stringify(ev)}\n\n`);
     }
+    work('report', '整理分析报告', '本轮输出已完成，统计口径和缺口见正文', 'completed');
     if (externalAnswer?.sources.length) res.write(`data: ${JSON.stringify({ text: appendInformationSources('', externalAnswer.sources) })}\n\n`);
-    res.write('data: [DONE]\n\n');
+    finishAnalysis();
   } catch (err: any) {
     if (cancellation.signal.aborted) return;
     if (err instanceof ExternalInformationError && err.sources?.length) res.write(`data: ${JSON.stringify({ sources: err.sources })}\n\n`);

@@ -1,3 +1,4 @@
+import { upsertAssistantWork } from '../../../shared/contracts/assistantWork';
 import { businessSceneFollowup, defaultBusinessPeriod, isBusinessScene, type BusinessSceneSelection } from '../../../shared/contracts/assistantBusinessScene';
 import { requestCreationReply } from './contentCreationRequest';
 import { assistantScenarioIntake } from '../../lib/assistantScenarioIntake';
@@ -19,6 +20,7 @@ import type { AssistantActionRequest, AssistantActionResponse } from '../../../s
 import { assistantFileIntent } from '../../../shared/assistantFileIntent';
 import { confirmedTaskPortal } from '../../../shared/contracts/assistantTaskPortal';
 import { assistantSourceFollowUp } from '../../lib/assistantFollowUp';
+import { confirmedAssistantNavigation } from '../../lib/assistantNavigationPortal';
 import { focusedNaturalLanguageActionId, focusedNaturalLanguageActionInput,
   isWeeklyPlanKickoffRequest } from './assistantActionProjection';
 import { assistantAttachmentKind } from './AssistantComposer';
@@ -113,12 +115,12 @@ export function useAssistantSend(input: AssistantSendInput) {
       const sceneId = quickScene.id;
       const thread = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
       if (loading || fileGenerating || replyStreaming) return;
-      if (['CS-02', 'CS-03', 'CS-07', 'CS-09', 'AD-01', 'AD-06', 'AD-02'].includes(sceneId)) {
+      if (['CS-01', 'CS-02', 'CS-03', 'CS-07', 'CS-09', 'AD-01', 'AD-06', 'AD-02'].includes(sceneId)) {
         const customer = sceneId.startsWith('CS-');
         const lastScope = [...thread.messages].reverse().find(message => customer ? message.businessScene?.customerId : message.businessScene?.adTaskId)?.businessScene;
         const preferredId = customer ? lastScope?.customerId : lastScope?.adTaskId;
         setMessages(PRIMARY_ASSISTANT_THREAD, [...thread.messages, { role: 'user', content: userText }, { role: 'assistant',
-          content: sceneId === 'AD-02' ? '我们来创建一条新投流计划。我会带入企业资料，一次确认一项，最后保存草稿。' : customer ? preferredId ? '你还想再看看这位客户的其他信息吗？也可以换一位。' : '你想先关注谁？' : '你想查看哪条投放计划？我会分析近一周的数据。',
+          content: sceneId === 'CS-01' ? '下面是今天优先跟进的客户。点击去跟进，将打开客户会话并准备推荐回复。' : sceneId === 'AD-02' ? '我们逐项确认账户、素材、目标、市场和预算，最后由你点击创建计划。' : customer ? preferredId ? '你还想再看看这位客户的其他信息吗？也可以换一位。' : '你想先关注谁？' : '你想查看哪条投放计划？我会分析近一周的数据。',
           businessScenePrompt: { sceneId, ...(preferredId ? { preferredId } : {}) } }]);
         if (!options.preserveDraft) setDraftInput(PRIMARY_ASSISTANT_THREAD, '');
         setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true); openAgent(routeAgent, 'chat'); persistThread(PRIMARY_ASSISTANT_THREAD); return;
@@ -213,6 +215,13 @@ export function useAssistantSend(input: AssistantSendInput) {
         creationPortal: { kind: 'content_creation', id: `replication-${requestId()}`, scenario: 'viral_replication',
           title: '爆款复刻', objective: visibleText.slice(0, 1000), requestedOutputCount: 1,
           outputType: 'video', platforms: [], aspectRatio: null, targetDurationSeconds: null } }]);
+      setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
+      openAgent(routeAgent, 'chat'); persistThread(threadAgent);
+      return;
+    }
+    const navigation = !options.businessScene && !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? confirmedAssistantNavigation(visibleText, lastMessage) : null;
+    if (navigation) {
+      setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: `点击下方入口前往${navigation.title}。` }]);
       setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;
@@ -396,6 +405,8 @@ export function useAssistantSend(input: AssistantSendInput) {
         onSources: sources => patchAssistant(msg => ({ ...msg, sources })),
         onCompanyReport: (report, text) => patchAssistant(msg => ({ ...msg, content: text, companyReport: report })),
         onCompanyReportProgress: phase => patchAssistant(msg => ({ ...msg, content: `正在${phase}…` })),
+        onAnalysisWork: work => patchAssistant(msg => ({ ...msg, analysisWork: upsertAssistantWork(msg.analysisWork || [], work) })),
+        onAnalysisComplete: () => patchAssistant(msg => ({ ...msg, analysisComplete: true })),
         onTaskPortal: taskPortal => patchAssistant(msg => ({ ...msg, taskPortal })),
         onFileReady: content => patchAssistant(msg => ({ ...msg, content })),
         onTimeout: () => { chatTimedOut = true; },
@@ -408,7 +419,7 @@ export function useAssistantSend(input: AssistantSendInput) {
         : err?.name === 'AbortError'
           ? '这次响应已停止。'
         : (err?.message || '请求失败，请稍后重试。');
-      if (assistantStarted) patchAssistant(msg => ({ ...msg, taskPortal: undefined, content: fileIntent ? `文件未生成：${message}` : msg.content ? appendAssistantStreamFailure(msg.content, message) : message }));
+      if (assistantStarted) patchAssistant(msg => ({ ...msg, analysisComplete: false, analysisWork: msg.analysisWork?.map(e => e.status === 'running' ? { ...e, status: 'failed', detail: message.slice(0, 500) } : e), taskPortal: undefined, content: fileIntent ? `文件未生成：${message}` : msg.content ? appendAssistantStreamFailure(msg.content, message) : message }));
       else setMessages(threadAgent, [...useAssistantStore.getState().threads[threadAgent].messages, { role: 'assistant', content: message }]);
     } finally {
       controller.abort();

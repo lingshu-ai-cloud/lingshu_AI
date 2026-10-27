@@ -1,3 +1,4 @@
+import AdPlanConversationCreate from './AdPlanConversationCreate';
 import MetaTargetingFields from './MetaTargetingFields';
 import AdDraftMessageChannels from './AdDraftMessageChannels';
 import { adMarketSummary } from '../../shared/metaMessageChoice';
@@ -106,6 +107,7 @@ function PlatformAdsWorkspace({
   previewMode?: boolean;
 }) {
   const [dialog, setDialog] = useState<"create" | "accounts" | null>(null);
+  const [conversationCreate, setConversationCreate] = useState(false);
   const [returnToCreate, setReturnToCreate] = useState(false);
   const closeDialog = () => {
     if (saving) return;
@@ -188,6 +190,7 @@ function PlatformAdsWorkspace({
   const openCreate = () => {
     if (savingRef.current) return;
     setEntry('ai_assisted');
+    setConversationCreate(false);
     setNotice('');
     setSelectedDraft(null);
     setStep(0);
@@ -203,6 +206,13 @@ function PlatformAdsWorkspace({
     });
     setDialog("create");
   };
+  useEffect(() => {
+    if (previewMode || !window.location?.href) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('create') !== 'conversation') return;
+    openCreate(); setConversationCreate(true);
+    url.searchParams.delete('create'); window.history.replaceState(window.history.state, '', url);
+  }, [previewMode, planNavigation.identity]);
   const openBudget = (task: PlatformAdTask) => {
     if (!previewMode) { setBudgetTask(task); return; }
     setSelectedDraft(taskToDraft(task)); setEntry('manual'); setForm({ ...task, budget: String(task.budget), configuration: { ...task.configuration, startsAt: toLocalDateTime(task.configuration.startsAt), endsAt: toLocalDateTime(task.configuration.endsAt) } }); setStep(1); setDialog('create');
@@ -445,6 +455,11 @@ function PlatformAdsWorkspace({
                   先创建一份草稿 <ArrowRight size={15} />
                 </button>
               </>
+            ) : conversationCreate && !previewMode ? (
+              <div className="ads-create-layout"><AdPlanConversationCreate value={form} onChange={setForm}
+                onBusy={busy => { savingRef.current = busy; setSaving(busy); }} onManual={() => { setConversationCreate(false); setEntry('manual'); }}
+                onSaved={task => setDrafts(items => [taskToDraft(task), ...items.filter(item => item.id !== task.id)])}
+                onDone={(task, queued) => { setSelectedDraft(taskToDraft(task)); setDialog(null); setConversationCreate(false); onNavigate('adsPlans'); setNotice(queued ? '计划已保存并加入执行队列，请在计划管理查看真实执行状态。' : '计划草稿已保存，尚未加入执行队列。'); }}/><AdGoalExamples goal={form.goal} onOverlayOpenChange={setReferenceOverlayOpen}/></div>
             ) : (
               <div className="ads-create-layout"><form onSubmit={next}>
                 {!selectedDraft && <div className="ads-creation-method"><span>{entry === 'manual' ? '手动填写计划' : '默认由 AI 生成可编辑方案'}</span><Button type="link" disabled={saving} onClick={() => setEntry(entry === 'manual' ? 'ai_assisted' : 'manual')}>{entry === 'manual' ? '切换为 AI 创编' : '改为手动填写'}</Button></div>}

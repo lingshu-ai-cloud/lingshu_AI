@@ -33,7 +33,7 @@ test('the launcher row starts with concrete high-frequency actions', () => {
 test('launchers expose bounded task cards with a financial source entry', () => {
   assert.equal(new Set(ASSISTANT_HOME_QUICK_LAUNCHERS.map(entry => entry.id)).size, ASSISTANT_HOME_QUICK_LAUNCHERS.length);
   for (const launcher of ASSISTANT_HOME_QUICK_LAUNCHERS) {
-    assert.ok(launcher.promptIds.length >= 4 && launcher.promptIds.length <= 7, `${launcher.id} must expose four or five cards`);
+    assert.ok(launcher.promptIds.length >= 1 && launcher.promptIds.length <= 7, `${launcher.id} must expose one to seven cards`);
     assert.equal(new Set(launcher.promptIds).size, launcher.promptIds.length, `${launcher.id} must not repeat cards`);
     assert.ok(launcher.promptIds.every(id => assistantHomePromptById(id)), `${launcher.id} must only reference real prompts`);
   }
@@ -53,6 +53,8 @@ test('the remaining launcher labels are concrete tasks rather than abstract doma
     ASSISTANT_HOME_QUICK_LAUNCHERS.slice(4).map(entry => entry.label),
     ['跟进重点客户', '优化智能投流'],
   );
+  assert.deepEqual(ASSISTANT_HOME_QUICK_LAUNCHERS.find(item => item.id === 'customer-followup')!.promptIds, ['CS-01']);
+  assert.deepEqual(ASSISTANT_HOME_QUICK_LAUNCHERS.find(item => item.id === 'traffic-optimization')!.promptIds, ['AD-01', 'AD-02']);
 });
 
 test('creation retains existing four scenarios and appends the confirmed speech selling point flow', () => {
