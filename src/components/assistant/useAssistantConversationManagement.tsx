@@ -170,8 +170,7 @@ export function useAssistantConversationManagement(input: Input) {
     } }}>
       <Button type="text" aria-label="会话管理" title="会话管理" disabled={disabled} loading={busy} icon={<Ellipsis size={20} />} />
     </Dropdown>
-    <Modal title="历史会话" open={historyOpen} onCancel={() => setHistoryOpen(false)} footer={null} width={480}>
-      <div className="mb-3 flex gap-2"><Button type={!historyDeleted ? 'primary' : 'default'} onClick={() => { setHistoryDeleted(false); void refreshHistory(1, false); }}>历史会话</Button><Button type={historyDeleted ? 'primary' : 'default'} onClick={() => { setHistoryDeleted(true); void refreshHistory(1, true); }}>已删除会话</Button></div>
+    <Modal title={<Button type={historyDeleted ? 'primary' : 'default'} aria-pressed={historyDeleted} onClick={() => { const deleted = !historyDeleted; setHistoryDeleted(deleted); void refreshHistory(1, deleted); }}>已删除会话</Button>} open={historyOpen} onCancel={() => setHistoryOpen(false)} footer={null} width={480}>
       <Spin spinning={historyLoading || busy}>
         {historyError ? <div role="alert">{historyError}<Button onClick={() => void refreshHistory()}>重试</Button></div>
           : !items.length ? <Empty description="暂无历史会话" image={Empty.PRESENTED_IMAGE_SIMPLE} />
