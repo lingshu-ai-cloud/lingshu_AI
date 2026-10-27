@@ -6,13 +6,9 @@ migrate((app) => {
   if (!collection.fields.getByName('pendingContentTaskBinding')) {
     collection.fields.add(new JSONField({ name: 'pendingContentTaskBinding', maxSize: 16384 }));
   }
-  if (!collection.fields.getByName('conversationRecovery')) {
-    collection.fields.add(new JSONField({ name: 'conversationRecovery', maxSize: 2097152 }));
-  }
   return app.save(collection);
 }, (app) => {
   const collection = app.findCollectionByNameOrId('assistant_threads');
   collection.fields.removeByName('pendingContentTaskBinding');
-  collection.fields.removeByName('conversationRecovery');
   return app.save(collection);
 });

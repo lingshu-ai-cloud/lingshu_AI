@@ -28,6 +28,7 @@ test('real PocketBase preserves assistant saves, clear/delete and pending receip
     '1792800000_extend_assistant_creation_draft.js',
     '1793059200_assistant_conversation_lifecycle.js',
     '1793062800_assistant_pending_content_binding.js',
+    '1793066400_assistant_conversation_recovery.js',
   ]) await copyFile(path.resolve('pb_migrations', name), path.join(migrations, name));
   const flags = [`--dir=${path.join(dir, 'data')}`, `--migrationsDir=${migrations}`];
   const password = 'Disposable-PocketBase-test-427!';
