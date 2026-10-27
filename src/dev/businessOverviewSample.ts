@@ -48,7 +48,7 @@ export function businessOverviewSample(data: DigitalEmployeeOverview, now = new 
   })) || [];
   const displayData: DigitalEmployeeOverview = {
     ...overview,
-    config: overview.config ? { ...overview.config, companyName: '澄光美研（环球校区）' } : overview.config,
+    config: overview.config ? { ...overview.config, companyName: 'Aurelia 澄光美研有限公司' } : overview.config,
     industryTrends: overview.industryTrends ? { ...overview.industryTrends, signals: topics } : undefined,
     businessSnapshot: {
       ...snapshot,
