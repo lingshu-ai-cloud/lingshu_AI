@@ -110,7 +110,7 @@ export function WeeklyCommandCenter({
   } : null;
 
   return <section className={`flex flex-col overflow-hidden bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
-    <div className="flex flex-wrap items-start justify-between gap-3 px-6 pb-4 pt-5 text-text-primary xl:min-h-[112px]">
+    <div className="weekly-command-header flex flex-wrap items-start justify-between gap-3 px-6 pb-4 pt-5 text-text-primary xl:min-h-[112px]">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-xl font-semibold">周经营计划</h2>
@@ -132,7 +132,7 @@ export function WeeklyCommandCenter({
       {actions && <div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{actions}</div>}
     </div>
     {feedback && <div aria-label="周任务操作反馈" className="border-b border-border bg-white px-4 py-2.5">{feedback}</div>}
-    <div className="grid auto-rows-[112px] gap-x-6 gap-y-6 bg-white px-6 pb-6 pt-3 sm:grid-cols-3">
+    <div className="weekly-command-metrics grid auto-rows-[112px] gap-x-6 gap-y-6 bg-white px-6 pb-6 pt-3 sm:grid-cols-3">
       {[
         { id: "waiting_review", label: "待验收成片", value: `${previewTotals?.waitingReview ?? display.totals.waitingReviewCount} 条` },
         { id: "planned_videos", label: "本周计划视频", value: `${previewTotals?.plannedVideos ?? plannedOutputCount} 条` },

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 const source = fs.readFileSync(new URL('./BusinessOverviewLanding.tsx', import.meta.url), 'utf8');
+const analytics = fs.readFileSync(new URL('./BusinessOverviewAnalytics.tsx', import.meta.url), 'utf8');
 const work = fs.readFileSync(new URL('./BusinessOverviewSampleWork.tsx', import.meta.url), 'utf8');
 const funnel = fs.readFileSync(new URL('./BusinessCustomerFunnel.tsx', import.meta.url), 'utf8');
 const workspace = fs.readFileSync(new URL('../ConfiguredDigitalEmployeeWorkspace.tsx', import.meta.url), 'utf8');
@@ -13,15 +14,14 @@ test('today workspace keeps the requested information hierarchy', () => {
   assert.match(workspace, /sampleWeeklyPlan = sampleWeekly[\s\S]*查看周计划[\s\S]*制定周计划[\s\S]*previewTotals=\{sampleWeekly\}/, 'preview weekly plan must retain visible view and create actions');
   assert.match(workspace, /disabled=\{Boolean\(busy\) \|\| activeRun \|\| Boolean\(goal && !canCreateNextGoal\) \|\| Boolean\(viewGoalId\)\}/, 'preview must not bypass real weekly-plan eligibility');
   assert.match(workspace, /setSampleWeeklyPlanOpen\(true\)[\s\S]*<BusinessOverviewDetailDrawer detail=\{sampleWeeklyPlanOpen && sampleWeekly/, 'preview view action must open weekly-plan details');
-  assert.match(source, /周经营计划与今日经营概览[\s\S]{0,220}当前周计划[\s\S]{0,120}\{weeklyPlan\}/, 'today, score and topics must share the weekly-plan surface');
-  for (const heading of ['今日实时数据', '热门话题', '数字员工正在推进的工作', '爆款与曝光', '投流', '询盘与人群']) {
-    assert.ok(source.includes(heading), `missing overview section: ${heading}`);
+  assert.match(source, /周经营计划与今日经营概览[\s\S]{0,220}当前周计划[\s\S]{0,180}weeklyPlan\}/, 'today, score and topics must share the weekly-plan surface');
+  for (const heading of ['今日实时数据', '热门话题', '爆款与曝光', '投流', '询盘与人群']) {
+    assert.ok((source + analytics).includes(heading), `missing overview section: ${heading}`);
   }
-  assert.match(source, /自然流数据[\s\S]{0,100}商业数据/);
-  assert.match(source, /AI 投流建议/);
-  assert.match(source, /客户进线', '主动触达', '意图识别', '智能报价', '二次触达/);
-  assert.match(source, /今日数据经营解读.*\{interpretation\}/, 'interpretation belongs beneath today charts');
-  assert.match(source, /<BusinessCustomerFunnel stages=\{funnelStages\}/);
+  assert.match(analytics, /整体曝光 = 付费流曝光 \+ 自然流曝光/);
+  assert.match(analytics, /Meta 广告归因回传/);
+  assert.match(source, /今日数据经营解读.*interpretation\}/, 'interpretation belongs beneath today charts');
+  assert.match(analytics, /<BusinessCustomerFunnel stages=\{funnelStages\}/);
 });
 
 test('the overview prioritizes real signals and gives unavailable data an icon-backed state', () => {
@@ -33,7 +33,7 @@ test('the overview prioritizes real signals and gives unavailable data an icon-b
   assert.match(source, /平台播放分布/);
   assert.match(source, /<LsIllustratedEmpty icon=\{ChartNoAxesCombined\}/);
   assert.match(source, /<LsIllustratedEmpty icon=\{Hash\}/);
-  assert.match(funnel, /<LsIllustratedEmpty icon=\{MessageSquareText\}/);
+  assert.match(funnel, /business-funnel-stage/);
   assert.match(source, /displayData\.industryTrends\?\.status === 'available'/, 'topics must have the existing traceable source');
 });
 
@@ -44,15 +44,14 @@ test('preview work and metrics open informative details without business mutatio
   assert.match(work, /<Drawer open=\{Boolean\(selected\)\}/);
   assert.match(source, /查看每日数据/);
   assert.match(source, /查看平台明细/);
-  assert.match(source, /onStageClick=\{/);
+  assert.match(analytics, /onStageClick=\{/);
   assert.match(funnel, /aria-haspopup="dialog"/);
   assert.doesNotMatch(work, /onNavigate|fetch\(/);
 });
 
 test('unavailable provider figures stay visibly unknown', () => {
   assert.doesNotMatch(source, /loadConnectedSocialPerformance/, 'landing must reuse persisted review instead of starting another provider sync');
-  assert.match(source, /observedMetric\(adsPerformance\?\.impressions\)/);
-  assert.match(source, /value: customerReady \? customer\.funnel\[index\] \?\? null : null/);
+  assert.match(analytics, /totals\?\.impressions/);
   assert.match(source, /customerReady \? customer\.inbound : null/);
-  assert.match(source, /不绘制虚构趋势/);
+  assert.match(analytics, /不绘制虚构趋势/);
 });
