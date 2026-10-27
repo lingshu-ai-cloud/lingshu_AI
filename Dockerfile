@@ -21,7 +21,6 @@ COPY scripts/customer-preview-ai-scope.mjs scripts/customer-isolated-test-guard.
 COPY scripts/recover-assistant-pb-claims.ts ./scripts/
 COPY scripts/fast_head_pipeline.py scripts/fast_head_preflight.py scripts/fast_head_composite.py scripts/person-replacement-quality.ts ./scripts/
 COPY scripts/person-replacement-qa-requirements.txt scripts/person_replacement_visual_qa.py scripts/validate-syncnet.py ./scripts/
-COPY scripts/recover-assistant-pb-claims.ts ./scripts/
 ARG APP_BUILD_SHA=unknown
 ENV APP_BUILD_SHA=${APP_BUILD_SHA}
 RUN pnpm run build \
