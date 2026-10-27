@@ -2,6 +2,14 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前统一开发基线：背景同色文字衬底与空质检回执封存（2026-10-27）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `9270b79b3609e2f50c8578c1b4bb9d777f14857c` 依次快进到取色提交 `0e4f19166ab57d71737731277fbf94ddbba87b0c` 和质检提交 `0a9ba67ca51f676b513f7a9e981393c35a002ade`。本治理记录另行提交。前一次快进保留了原 72 项未提交内容，已跟踪补丁 SHA-256 `8fa26b8f53be146c270426c47a3d522f731e66c98a93c9bf34409e9ea1a76ef7`、未跟踪路径清单 SHA-256 `2f40491c6175a4a00b04971afb754b78d252c1a7026e22477628a34b10012f42` 均不变。第二次快进期间其他开发现场继续新增未提交内容，已跟踪补丁 SHA-256 前后仍为 `5d0c564d62e36d7a51181e3248f4cffb8c0a2f40dfcdea86c667f4411bd9861d`；未跟踪路径清单由 `e3152dc424cdd5c6e7a9fd0a1a4d0d45dadaec276cabc263d28b94d35387c9e0` 变为 `e2707c67a6f3f0d0f6012e78ad4df03578c9a598a5d0dc4799be141b5175b439`，数量 78→79，未纳入本次提交。该并行变化不作为本次来源内容。
+- 确需文字衬底时，从真实底图文案区取中位背景色并保留色相，只提亮到深色文字可读程度；局部 OCR 修复沿用同一颜色，不再贴纯白卡。上一条 RS-016 底图的免费离线重排 `~/.lingshu-ai/image-b2b-e2e-20261027/rs016-offline-v4-background-card.png` 本地 OCR 通过，属于排版验证，不是新任务验收。
+- 基于 `0e4f1916` 的隔离 Web/正常 worker，同版运行。用户通过正常会话选择历史 Apify 参考 `history-image-4e4496cdadb6b43e8af7b695` 第 1 张、RS-016 御龄紧致青春面霜、Facebook／英语／1:1，设置单任务上限 5 元后提交；内容任务 `socialtask_766293976499fb5bd6e767fc`、图片 `img81f01cbc132a`、作业 `ca6c97f3c81cf4a`。worker 领取并完成一次 GPT Image 2 底图出图、原产品合成和 OCR；候选素材 `c0df68ac-8fcc-567e-932f-543a8698f307` 的卡片为背景暖米色，标签来自原图，文字 OCR 为 `pass`。任务自然停在 `blocked` / `user_input_required:social_image_quality_requires_review`；无人工推进、重试或发布。精确供应商费用回执未取得，不推断剩余额度。
+- 断点是付费 Qwen 视觉质检记录 `completed` 却返回空检查列表，导致产品身份等硬检查维持 `uncertain`，候选 `repair_required`。参考爆点软检查也返回 `fail`，仍需正常视觉证据与用户验收；不能将此图称为已交付。随后源码 `0a9ba67c` 缩短视觉质检响应格式要求，并把空/缺项结果封存为未决、明确错误码，禁止假完成和自动重试。该源码修复尚无新付费 E2E，旧任务不回写、不补质检。
+- 取色版图文管线 100/100、HTTP 1/1、合同／治理 2/2、TypeScript、架构检查 3042 个生产 TypeScript 文件、207 项迁移清单只读检查、`git diff --check` 通过；质检版定向 19/19、图文管线 101/101 加 HTTP／合同／治理、TypeScript、相对 `0e4f1916` 的架构检查和 `git diff --check` 通过。未新增迁移；未运行全仓 `quality/verify`、推送、部署或发布。较大前端 `test:social-content-frontend` 在此前已知的 `socialContentManualBridge.contract.test.ts:75` 产品绑定断言未通过，本轮未重跑，不把局部回归写为整体验收。
+
 ## 当前统一开发基线：图文参考画幅与局部文字复核（2026-10-27）
 
 - 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `a614c71053e73a2a6c58cc2b987826d3e2772f8d` 分两次快进至源码提交 `9fb7cb2e`；提交 `a970222e` 先修复会话参考图画幅，`9fb7cb2e` 再修复质检与排版。合入前后另一个开发现场的 44 项未提交内容均未纳入；已跟踪补丁 SHA-256 均为 `6276409689a978ab0578fe2c0f875f1cfad0a973c298288638ba8d6475fe85a3`，未跟踪路径清单 SHA-256 均为 `e94212b6b855e502add040c13fb47fee4aa3fe05ed4d2884b34e9740e6c58735`。
