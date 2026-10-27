@@ -1,5 +1,11 @@
 # Git 工作树状态盘点
 
+## 2026-10-28 节节图片联调完成安全集成
+
+- 当前 `baseline/unified-20261028` 原干净目录已 ff-only 推进到源码 `e67e0c5d`，治理记录随后单独提交；隔离集成目录为 `/Users/julia1/Documents/ChatGPT/基线管理/jiejie-image-safe-20261028`。
+- 来源 `节节图片联调完成` / `453ef28b...` 已定向拉取并建立同名本地跟踪分支；双亲合并 `378a7a64`，恢复分支 `backup/pre-jiejie-image-20261028-21a9fb94` 保留。
+- 其他旧工作树和分支不变。原始来源对照测试工作树位于 `/Users/julia1/.codex/integration-evidence/20261028-jiejie-image/source-453ef28b`；仅用于复现已知预算与 worker 验收失败。详见 [合并记录](JIEJIE-IMAGE-INTEGRATION-20261028.md)。未推送或部署。
+
 ## 2026-10-28 图文联调本地基线
 
 - 新本地统一基线目录 `/Users/julia1/Documents/ChatGPT/基线管理/image-text-baseline-20261028`，分支 `baseline/unified-20261028`。源码双亲合并 `0bc495bdd75925437b86231188de3727a50b66ee`，治理记录随后单独提交；该目录仅软链依赖，未复制运行数据或凭据。
