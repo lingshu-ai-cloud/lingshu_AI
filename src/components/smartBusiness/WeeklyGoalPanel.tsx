@@ -213,7 +213,10 @@ export function GoalPanel({
                   const account = config.publishingTargets.find(target => target.platform === item.platform)?.accountLabel || '平台账号';
                   return <div key={item.platform} className="flex items-center justify-between gap-4 px-4 py-3">
                     <div className="min-w-0"><p className="font-medium text-text-primary">{contentPlatformLabel[item.platform]}</p><p className="truncate text-xs text-text-muted">{account}</p></div>
-                    <InputNumber aria-label={`${contentPlatformLabel[item.platform]}视频条数`} min={0} max={30} precision={0} value={item.count} onChange={value => updatePlatformCount(item.platform, value)} addonAfter="条" />
+                    <div className="flex items-center gap-2">
+                      <InputNumber aria-label={`${contentPlatformLabel[item.platform]}视频条数`} min={0} max={30} precision={0} value={item.count} onChange={value => updatePlatformCount(item.platform, value)} />
+                      <span className="text-sm text-text-secondary">条</span>
+                    </div>
                   </div>;
                 })}
               </div>
@@ -231,7 +234,10 @@ export function GoalPanel({
                   onChange={contentId => updatePromotion(index, { contentId })}
                   options={plans.filter(plan => plan.contentId && (plan.contentId === promotion.contentId || !promotions.some(item => item.contentId === plan.contentId))).map((plan, planIndex) => ({ value: plan.contentId!, label: videoOptionLabel(plan, planIndex) }))}
                 />
-                <InputNumber aria-label={`第 ${index + 1} 条投流预算`} min={1} max={1_000_000} precision={2} value={promotion.budgetCny} onChange={value => updatePromotion(index, { budgetCny: Number(value || 0) })} addonBefore="¥" />
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-text-secondary">¥</span>
+                  <InputNumber className="w-full" aria-label={`第 ${index + 1} 条投流预算`} min={1} max={1_000_000} precision={2} value={promotion.budgetCny} onChange={value => updatePromotion(index, { budgetCny: Number(value || 0) })} />
+                </div>
                 <Button htmlType="button" aria-label={`删除第 ${index + 1} 条投流计划`} icon={<Trash2 size={16} />} onClick={() => removePromotion(index)} />
               </div>)}</div> : <div className="mt-3 rounded-lg border border-dashed border-border px-4 py-5 text-center text-sm text-text-muted">本周不投流；需要时点击“添加一条”。</div>}
             </section>}
