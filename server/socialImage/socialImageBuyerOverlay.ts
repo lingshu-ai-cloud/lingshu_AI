@@ -103,8 +103,10 @@ export function socialImageBuyerOverlaySvg(width: number, height: number, poster
   if (!headingLayout) throw new Error('social_image_buyer_copy_overflow');
   const heading = headingLayout.rows;
   const supporting = lines(poster.subheadline || '', Math.max(12, Math.floor(width * (layout.copyRight - .05) / font(27) * 1.5)));
-  const facts = (poster.sellingPoints || []).flatMap(item => lines(item, Math.max(12, Math.floor(width * (layout.copyRight - .10) / font(23) * 1.8))));
   const [netContent = '', label = '', question = ''] = poster.bottomBar || [];
+  const facts = (poster.sellingPoints || []).flatMap(item => lines(
+    item.startsWith('SKU:') && netContent ? `${item} · ${netContent}` : item,
+    Math.max(12, Math.floor(width * (layout.copyRight - .10) / font(23) * 1.8))));
   const cta = lines(poster.cta || '', Math.max(12, Math.floor(width * .60 / font(36) * 1.7)));
   const inquiry = lines(question, Math.max(12, Math.floor(width * .38 / font(22) * 1.7)));
   if (brand.length > 1 || heading.length > 2 || supporting.length > 2 || facts.length > 5
@@ -133,7 +135,7 @@ export function socialImageBuyerOverlaySvg(width: number, height: number, poster
       <radialGradient id="sealFace"><stop stop-color="${colors.sealLight}"/><stop offset="1" stop-color="${colors.seal}"/></radialGradient>
     </defs>
     ${facts.length && backing === 'solid' ? `<rect x="${x - font(18)}" y="${copyCardTop}" width="${Math.round(width * (layout.copyRight - .035))}" height="${copyCardBottom - copyCardTop}" rx="${font(18)}" fill="#fff" stroke="${colors.pale}" stroke-width="${Math.max(1, Math.round(2 * scale))}"/>` : ''}
-    ${facts.length && backing === 'local' ? `<rect x="${x - font(13)}" y="${copyCardTop}" width="${Math.round(width * (layout.copyRight - .045))}" height="${supportY + font(20) - copyCardTop}" rx="${font(12)}" fill="#fff" fill-opacity=".92"/><rect x="${x - font(13)}" y="${factY - font(83)}" width="${Math.round(width * (layout.copyRight - .045))}" height="${copyCardBottom - factY + font(83)}" rx="${font(12)}" fill="#fff" fill-opacity=".92"/>` : ''}
+    ${facts.length && backing === 'local' ? `<rect x="${x - font(13)}" y="${copyCardTop}" width="${Math.round(width * (layout.copyRight - .045))}" height="${copyCardBottom - copyCardTop}" rx="${font(12)}" fill="#fff" fill-opacity=".88"/>` : ''}
     <rect y="${footerTop}" width="${width}" height="${height - footerTop}" fill="${highContrast ? colors.footerStrong : colors.footer}"/>
     <line x1="0" y1="${footerTop}" x2="${width}" y2="${footerTop}" stroke="${colors.pale}" stroke-width="${Math.max(2, Math.round(3 * scale))}"/>
     ${brand.map((line, index) => `<text x="${x}" y="${topY + font(30) + index * font(34)}" fill="${colors.ink}" font-family="${fontFamily}" font-size="${font(28)}" font-weight="700" letter-spacing="1">${xml(line)}</text>`).join('')}

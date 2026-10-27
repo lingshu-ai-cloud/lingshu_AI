@@ -86,6 +86,15 @@ test('identity-locked buyer poster adds contrast backing only when the measured 
   assert.ok(card[0]! > 230 && card[1]! > 230 && card[2]! > 230);
 });
 
+test('contrast repair uses one translucent copy panel and repeats verified net content in readable copy', () => {
+  const svg = socialImageBuyerOverlaySvg(1200, 1200, {
+    originBadge: 'GUIANFA', headline: 'FACE CREAM', sellingPoints: ['Face cream', 'SKU: GUIANFA-RS-016'],
+    bottomBar: ['50 g', 'B2B SOURCING', 'Ask about packaging'], cta: 'Message us',
+  }, true, 'warm', 'local').toString();
+  assert.equal((svg.match(/fill-opacity="\.88"/g) || []).length, 1);
+  assert.match(svg, /SKU: GUIANFA-RS-016 · 50 g/);
+});
+
 test('mist poster reserves a readable upper-left OEM/ODM block without covering the product center', async () => {
   const product = readFileSync(new URL('../../fixtures/beauty-showcase/media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-03.png', import.meta.url));
   const poster = { originBadge: 'GUIANFA', headline: 'DEEP SEA MIST',

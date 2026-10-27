@@ -134,6 +134,9 @@ export default function ImageReplicationConversation({ request, onShowCreations,
     if (step === 0 && measuredReference?.error) { setError(measuredReference.error); return; }
     if (step === 1) {
       if (!product) { setError('请选择一个企业知识库中的产品。'); return; }
+      if (measuredReference?.ratio && aspectRatio !== measuredReference.ratio) {
+        setError(`当前参考图为 ${measuredReference.ratio}，请使用同画幅交付，或更换参考图。`); return;
+      }
       const issue = imageReplicationDraftIssue(draft());
       if (issue) { setError(issue); return; }
     }

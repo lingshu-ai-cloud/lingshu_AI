@@ -19,7 +19,22 @@ import { inspectSocialImageCandidateFactors, prepareSocialImageReferenceStrategy
 import { localProductOcrReadiness, recognizeProductImageLocally, recognizeProductImageTokensLocally } from '../lib/localProductOcr.js';
 import { runSocialImageVisualPreflight } from '../socialImage/socialImageQualityPreflight.js';
 import { continueSocialImageProduction } from '../socialImage/socialImageProductionContinuation.js';
-import { isSocialImageBuyerPoster, socialImageBuyerVisibleTexts } from './socialImageBuyerOverlay.js';
+import { isSocialImageBuyerPoster, socialImageBuyerLayout, socialImageBuyerVisibleTexts,
+  type BuyerPosterCopy } from './socialImageBuyerOverlay.js';
+
+/** Full-frame OCR can overlook large display copy. Verify the deterministic copy zone separately as pixel evidence. */
+export async function recognizeSocialImageCandidateText(input: { bytes: Buffer; mimeType: string },
+  poster?: BuyerPosterCopy, recognize = recognizeProductImageLocally): Promise<string> {
+  const full = await recognize(input);
+  if (!poster || !isSocialImageBuyerPoster(poster)) return full;
+  const { width, height } = await sharp(input.bytes).metadata();
+  if (!width || !height) throw new Error('social_image_candidate_dimensions_missing');
+  const left = Math.round(width * .035), top = Math.round(height * .025);
+  const focus = await sharp(input.bytes).extract({ left, top,
+    width: Math.min(width - left, Math.round(width * (socialImageBuyerLayout(poster).copyRight + .005))),
+    height: Math.min(height - top, Math.round(height * .46)) }).png().toBuffer();
+  return `${full}\n${await recognize({ bytes: focus, mimeType: 'image/png' })}`;
+}
 export class ImageQuotaResponseHandled extends Error {
 }
 export class ImageWorkflowError extends Error {
@@ -279,7 +294,7 @@ export async function preflightImage(input: ImageWorkflowInput) {
                 String(plannedUnit?.poster.subheadline || task.imageTextContract.supportingText || ''), task.imageTextContract.cta || ''];
         const ocrCheck = await socialImageCandidateOcrCheck({ bytes: generated.bytes, mimeType: generated.mimeType,
             expectedTexts,
-            recognize: recognizeProductImageLocally });
+            recognize: input => recognizeSocialImageCandidateText(input, task.renderBrief) });
         localByOutput.set(output.id, { generated, pixelChecks, ocrCheck });
         if ([...pixelChecks, ocrCheck].some(check => check.severity === 'hard'
             && !['pass', 'not_applicable'].includes(check.verdict))) continue;
@@ -324,7 +339,7 @@ export async function preflightImage(input: ImageWorkflowInput) {
                 String(plannedUnit?.poster.subheadline || task.imageTextContract.supportingText || ''), task.imageTextContract.cta || ''];
         const ocrCheck = local?.ocrCheck || await socialImageCandidateOcrCheck({ bytes: generated.bytes, mimeType: generated.mimeType,
             expectedTexts,
-            recognize: recognizeProductImageLocally });
+            recognize: input => recognizeSocialImageCandidateText(input, task.renderBrief) });
         const localChecks = new Map([...pixelChecks, ocrCheck, ...animationCheck].map(check => [check.key, check]));
         const deterministicForOutput = deterministic.filter(check => output.role === 'gif_output'
             || check.key !== 'motion_mechanism_similarity').map(check => localChecks.get(check.key) || check);
