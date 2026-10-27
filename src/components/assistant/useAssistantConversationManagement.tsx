@@ -69,6 +69,8 @@ export function useAssistantConversationManagement(input: Input) {
   const run = async (action: 'new' | 'open' | 'clear' | 'delete' | 'restore', targetKey = activeKey, targetVersion?: number) => {
     if (lock.current || input.pause.current || input.blocked || !input.ready) return;
     const local = useAssistantStore.getState().threads[agent];
+    // Toast undo can outlive the render that deleted the active conversation.
+    const runningKey = local.conversationKey || agent;
     if (local.pendingContentTaskBinding) {
       void message.warning('有一条任务回执尚待恢复，请先在当前会话完成恢复再管理会话。'); return;
     }
@@ -88,7 +90,7 @@ export function useAssistantConversationManagement(input: Input) {
     try {
       await input.wait(agent);
       if (!current()) return;
-      const remote = await api(activeKey);
+      const remote = await api(runningKey);
       if (!current()) return;
       if (remote.pendingContentTaskBinding) throw new Error('当前会话有尚待恢复的任务回执，请先恢复后再管理会话。');
       if (remote.deletedAt && action !== 'new' && action !== 'open') throw new Error('会话已删除，请新建会话或打开历史会话。');
@@ -109,18 +111,18 @@ export function useAssistantConversationManagement(input: Input) {
         if (remote.version > local.version && !remoteIsEarlierSnapshot) {
           throw new Error('会话已在其他窗口更新，未覆盖任何记录。请先刷新核对，再管理会话。');
         }
-        saved = await api(activeKey, 'PUT', { ...local, expectedVersion: remote.version });
+        saved = await api(runningKey, 'PUT', { ...local, expectedVersion: remote.version });
         if (!current()) return;
         useAssistantStore.getState().setPersistenceMetadata(agent, saved.version, saved.updatedAt);
       }
       let next: AgentThreadState | undefined;
       if (action === 'clear' || action === 'delete' || action === 'restore') {
         const result = await api(targetKey, action === 'delete' ? 'DELETE' : 'POST', {
-          expectedVersion: action === 'restore' ? (await api(targetKey)).version : targetKey === activeKey ? saved.version : targetVersion,
+          expectedVersion: action === 'restore' ? (await api(targetKey)).version : targetKey === runningKey ? saved.version : targetVersion,
         }, action === 'clear' ? '/clear' : action === 'restore' ? '/restore' : '');
         if (!current()) return;
         if (action === 'restore') next = persistedAssistantThread(result, emptyAssistantThread())!;
-        else if (targetKey === activeKey) next = action === 'clear'
+        else if (targetKey === runningKey) next = action === 'clear'
           ? persistedAssistantThread(result, emptyAssistantThread())!
           : { ...emptyAssistantThread(), conversationKey: `conversation:${crypto.randomUUID()}` };
       } else if (action === 'new') next = { ...emptyAssistantThread(), conversationKey: `conversation:${crypto.randomUUID()}` };
@@ -136,7 +138,7 @@ export function useAssistantConversationManagement(input: Input) {
         clearAssistantThreadJournal(window.localStorage, input.scope, agent);
         writeAssistantConversationKey(input.scope, next.conversationKey || agent);
       }
-      if (action === 'delete' && targetKey !== activeKey) await refreshHistory();
+      if (action === 'delete' && targetKey !== runningKey) await refreshHistory();
       else setHistoryOpen(false);
       if (action === 'clear' || action === 'delete') void message.success({ duration: 8, content: <span>{action === 'clear' ? '会话已清空' : '会话已删除'} <Button type="link" size="small" onClick={() => void run('restore', targetKey)}>撤销</Button></span> });
       if (action === 'restore') void message.success('会话已恢复');
