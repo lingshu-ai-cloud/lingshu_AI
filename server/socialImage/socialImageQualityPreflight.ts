@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import type { SocialImageCreationTask, SocialImageQualityCheck } from '../../shared/contracts/socialImageCreation.js';
 import { qualityCheckSocialImageWithQwen } from '../agents/qwen.js';
+import { SOCIAL_IMAGE_VISUAL_KEYS } from '../agents/socialImageQwen.js';
 import { exactQwenScope } from '../agents/exactQwenScope.js';
 import { assertSocialImageCurrentContentTask } from './socialImageProductionRun.js';
 import { readSocialImageTask, updateSocialImageTask } from './socialImageTask.js';
@@ -13,6 +14,10 @@ export class SocialImageQualityPreflightError extends Error {
 }
 
 const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+const completeVisualChecks = (checks: SocialImageQualityCheck[]) => {
+  const keys = new Set(checks.map(check => check.key));
+  return checks.length === SOCIAL_IMAGE_VISUAL_KEYS.length && SOCIAL_IMAGE_VISUAL_KEYS.every(key => keys.has(key));
+};
 
 /** The claim key includes every image, expected fact, and model input sent to paid visual QA. */
 export function socialImageVisualPreflightHash(input: VisualInput): string {
@@ -40,6 +45,7 @@ export async function runSocialImageVisualPreflight(input: {
   const prior = output.qualityPreflight;
   await assertSocialImageCurrentContentTask(input.store, input.tenantId, task);
   if (prior?.status === 'completed' && prior.inputHash === inputHash && prior.visualChecks) {
+    if (!completeVisualChecks(prior.visualChecks)) throw new SocialImageQualityPreflightError('social_image_quality_response_invalid', 503);
     return { task, visual: prior.visualChecks };
   }
   if (prior && prior.status !== 'completed') {
@@ -56,14 +62,21 @@ export async function runSocialImageVisualPreflight(input: {
   });
   if (claim.kind !== 'updated') throw new SocialImageQualityPreflightError('social_image_quality_claim_conflict');
   let visual: SocialImageQualityCheck[];
-  try { visual = await (input.qualityCheck || qualityCheckSocialImageWithQwen)(input.visualInput); }
-  catch {
+  try {
+    visual = await (input.qualityCheck || qualityCheckSocialImageWithQwen)(input.visualInput);
+    if (!completeVisualChecks(visual)) {
+      throw new SocialImageQualityPreflightError('social_image_quality_response_invalid', 502);
+    }
+  }
+  catch (error) {
     const unknown = await updateSocialImageTask(input.store, input.tenantId, task.id, claim.task.version, {
       outputs: claim.task.outputs.map(item => item.id === output.id
         ? { ...item, qualityPreflight: { inputHash, status: 'outcome_unknown' as const, claimedAt } } : item),
     }).catch(() => null);
     if (unknown?.kind !== 'updated') throw new SocialImageQualityPreflightError('social_image_quality_receipt_write_unknown', 503);
-    throw new SocialImageQualityPreflightError('social_image_quality_provider_outcome_unknown', 503);
+    throw new SocialImageQualityPreflightError(error instanceof SocialImageQualityPreflightError
+      && error.code === 'social_image_quality_response_invalid'
+      ? error.code : 'social_image_quality_provider_outcome_unknown', 503);
   }
   const completed = await updateSocialImageTask(input.store, input.tenantId, task.id, claim.task.version, {
     outputs: claim.task.outputs.map(item => item.id === output.id
