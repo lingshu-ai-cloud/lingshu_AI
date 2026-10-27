@@ -229,7 +229,13 @@ export default function AssistantConversationPanel(props: Props) {
                 welcomeBubbleVisible={welcomeBubbleVisible} activeAgentLabel="灵小枢"
                 reduceMotion={reduceMotion}
                 messages={activeThread.messages} onAction={onAction}
-                onSuggest={suggestion => void send(suggestion, currentPageAgent)}
+                onSuggest={suggestion => {
+                  setDraftInput(activeAgent, suggestion);
+                  window.requestAnimationFrame(() => {
+                    assistantInputRef.current?.focus();
+                    assistantInputRef.current?.setSelectionRange(suggestion.length, suggestion.length);
+                  });
+                }}
                 contentIntakeNode={contentIntake.node} loading={loading} focusedTaskCard={focusedTaskCard}
                 onOpenTaskDetail={(trigger, taskId) => {
                   focusTaskCard(activeAgent, taskId);

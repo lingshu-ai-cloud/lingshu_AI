@@ -19,7 +19,10 @@ test('preview values are complete and leave the fetched overview untouched', () 
   assert.equal(sample.displayData.businessSnapshot?.social.dailyTrend.at(-1)?.date, '2026-10-27');
   assert.equal(sample.today.views, 34_500);
   assert.equal(sample.customer.quoted, 43);
-  assert.equal(sample.score.criteria.length, 5);
+  assert.equal(sample.displayData.config?.companyName, 'Aurelia 澄光美研有限公司');
+  assert.equal(sample.score.totalScore, 82);
+  assert.deepEqual(sample.score.dimensions.map(item => item.label), ['搭账号', '提转化', '扩流量', '接询盘']);
+  assert.equal(sample.score.dimensions.flatMap(item => item.criteria).length, 12);
   assert.equal(sample.adPlans.tasks.length, 2);
   assert.equal(sample.weekly.plannedVideos, 32);
 });

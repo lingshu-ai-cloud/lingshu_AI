@@ -68,6 +68,13 @@ test('one confirmation accepts only a persisted matching run and publishes its s
   }]);
 });
 
+test('a newly persisted draft can use the same version-bound launch path without relying on stale page data', async () => {
+  const run = setup({ data: null });
+  await run.launchWeeklyPlan(draft);
+  assert.equal(run.calls.filter(value => value === 'approve').length, 1);
+  assert.deepEqual(run.data, [running]);
+});
+
 test('an uncertain launch response performs one read-only reconciliation and never approves twice', async () => {
   const run = setup({ approveGoal: async () => { throw new Error('connection closed'); } });
   await run.confirmWeeklyPlan();

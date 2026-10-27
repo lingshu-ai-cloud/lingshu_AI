@@ -237,7 +237,12 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
       {/* ── Left sidebar ─────────────────────────────── */}
       {page !== 'agentMonitor' && <motion.aside
         initial={false}
-        animate={{ width: sidebarWidth, minWidth: sidebarWidth, maxWidth: sidebarWidth }}
+        animate={{ '--sidebar-width': `${sidebarWidth}px` }}
+        style={{
+          width: 'var(--sidebar-width)',
+          minWidth: 'var(--sidebar-width)',
+          maxWidth: 'var(--sidebar-width)',
+        }}
         transition={spatialTransition}
         className="app-sidebar relative z-40 flex flex-shrink-0 flex-col overflow-visible border-r border-border"
       >

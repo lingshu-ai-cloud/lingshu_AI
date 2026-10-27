@@ -4,8 +4,9 @@ import type { CompanyReportOptions } from '../../../shared/contracts/companyFili
 import { companyReportSceneRequest, fetchCompanyReportOptions } from '../../lib/companyReportApi';
 import './companyReportScene.css';
 
-export default function CompanyReportScene({ busy, onCancel, onConfirm }: {
+export default function CompanyReportScene({ busy, onCancel, onPrompt, onConfirm }: {
   busy: boolean; onCancel: () => void;
+  onPrompt: (text: string) => void;
   onConfirm: (request: ReturnType<typeof companyReportSceneRequest>) => void;
 }) {
   const [options, setOptions] = useState<CompanyReportOptions | null>(null);
@@ -54,13 +55,13 @@ export default function CompanyReportScene({ busy, onCancel, onConfirm }: {
       </div>
       {company && !company.reports.length && <section className="space-y-2"><p>{company.name}（{company.code}）· {company.segment}</p>
         <p className="text-sm text-text-secondary">本地还没有可核验的半年报全文。可以先看企业公开信息，或读取官方财报目录。</p>
-        <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => { onCancel(); window.dispatchEvent(new CustomEvent('lingshu-assistant-open', { detail: { text: `请查询${company.name}（${company.code}）的企业公开信息，介绍主营业务、产品和海外布局，优先引用官网及公开披露；缺少半年报不影响呈现已核验的信息，不推算财务数字。`, preserveDraft: true } })); }}>查看企业公开信息</Button>
-          <Button disabled={busy} onClick={() => { onCancel(); window.dispatchEvent(new CustomEvent('lingshu-assistant-open', { detail: { text: `刷新${company.name}历史财报目录`, preserveDraft: true } })); }}>刷新官方财报目录</Button></div>
+        <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => onPrompt(`请查询${company.name}（${company.code}）的企业公开信息，介绍主营业务、产品和海外布局，优先引用官网及公开披露；缺少半年报不影响呈现已核验的信息，不推算财务数字。`)}>查看企业公开信息</Button>
+          <Button disabled={busy} onClick={() => onPrompt(`刷新${company.name}历史财报目录`)}>刷新官方财报目录</Button></div>
       </section>}
       {report?.status === 'needs_review' && <Alert type="warning" title="该期间有更正或版本变化，核对前暂不生成报告。"/>}
     </>}
     <div className="company-report-scene__footer"><p>{busy ? '当前回复完成后即可生成。' : '基于所选期间的财报原文生成研究草稿，附数字对照、业务解读及来源页码。'}</p>
-      <div><Button onClick={onCancel}>取消</Button><Button type="primary" disabled={!report || report.status !== 'available' || busy} onClick={confirm}>确认并生成深度报告</Button></div>
+      <div><Button onClick={onCancel}>取消</Button><Button type="primary" disabled={!report || report.status !== 'available' || busy} onClick={confirm}>填入输入框</Button></div>
     </div>
   </section>;
 }

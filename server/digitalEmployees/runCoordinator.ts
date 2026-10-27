@@ -204,7 +204,7 @@ export function createDigitalEmployeeRunCoordinator(deps: Pick<DigitalEmployeeAp
     const packageBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
     let businessPackage = packageBody.businessPackage as WeeklyPackage | undefined;
     let videoTask = businessPackage?.tasks.find(t => t.templateId === 'production');
-    if (videoTask?.videoPlans) goal.scope = { description: goalInput(goal).scope, videoPlans: videoTask.videoPlans };
+    if (videoTask?.videoPlans) goal.scope = { ...jsonObject<Record<string, unknown>>(goal.scope, {}), description: goalInput(goal).scope, videoPlans: videoTask.videoPlans };
     let reopened = false;
     if (normalizeContinuationPolicy(config.continuationPolicy).newCustomers === 'reopen') {
       const criteria = { ...DEFAULT_FOLLOWUP_SEGMENT_CRITERIA, ...(businessPackage?.authorization.customerIds.length ? { includeCustomerIds: businessPackage.authorization.customerIds } : {}) };
@@ -304,7 +304,7 @@ export function createDigitalEmployeeRunCoordinator(deps: Pick<DigitalEmployeeAp
           businessPackage = rebound.pack;
           packageBody.businessPackage = rebound.pack;
           videoTask = rebound.pack.tasks.find(item => item.templateId === 'production');
-          if (videoTask?.videoPlans) goal.scope = { description: goalInput(goal).scope, videoPlans: videoTask.videoPlans };
+          if (videoTask?.videoPlans) goal.scope = { ...jsonObject<Record<string, unknown>>(goal.scope, {}), description: goalInput(goal).scope, videoPlans: videoTask.videoPlans };
           const inventory = rebound.inventory;
           const inventoryPreflight = {
             requiredCount: inventory.requiredCount,
@@ -430,7 +430,7 @@ export function createDigitalEmployeeRunCoordinator(deps: Pick<DigitalEmployeeAp
             businessPackage = rebound.pack;
             packageBody.businessPackage = rebound.pack;
             videoTask = rebound.pack.tasks.find(item => item.templateId === 'production');
-            if (videoTask?.videoPlans) goal.scope = { description: goalInput(goal).scope, videoPlans: videoTask.videoPlans };
+            if (videoTask?.videoPlans) goal.scope = { ...jsonObject<Record<string, unknown>>(goal.scope, {}), description: goalInput(goal).scope, videoPlans: videoTask.videoPlans };
           }
           const createdResource = task.task_key === 'customer_segmentation' && businessSnapshot.customer.total.value === 0 ? false : metadata.executionMode === 'draft_executor'
             ? await prepareObserveBusinessResource({ tenantId, goal, run, task, config, snapshot: businessSnapshot })

@@ -17,7 +17,9 @@ import type { DirectorDecision, DirectorDecisionReason } from './directorDecisio
 import type { SocialOperatingProfileId } from '../../shared/contracts/socialOperatingProfile';
 import type { ProductionOnboardingPreferences } from '../../shared/contracts/productionOnboarding';
 import type { BusinessMetric, BusinessReadinessItem, DataAvailability, DigitalEmployeePublishingReadiness, SnapshotTaskReference } from './digitalEmployeeOverviewContracts';
+import type { WeeklyPromotionPlan } from '../../shared/contracts/weeklyPromotionPlan';
 export type { BusinessMetric, BusinessReadinessItem, DataAvailability, DigitalEmployeePublishingReadiness, SnapshotTaskReference } from './digitalEmployeeOverviewContracts';
+export type { WeeklyPromotionPlan } from '../../shared/contracts/weeklyPromotionPlan';
 
 export type AutonomyMode = "suggest" | "collaborate" | "managed" | "automatic";
 export type DigitalEmployeeAgentRole = "orchestrator" | "business" | "director" | "content" | "customer";
@@ -93,6 +95,7 @@ export type ContentPlatform = "all" | "facebook" | "instagram" | "tiktok" | "you
 
 export interface WeeklyGoal {
   videoPlans?: VideoCreationPlan[];
+  promotionPlans?: WeeklyPromotionPlan[];
   id: string;
   businessLine: "full_funnel" | "content_growth" | "customer_conversion";
   contentPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube" | "linkedin">;

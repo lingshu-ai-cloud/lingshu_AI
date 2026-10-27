@@ -38,8 +38,6 @@ export function createDigitalEmployeeWeeklyLaunch(context: WeeklyLaunchContext) 
   const api = context.api || digitalEmployeeApi;
   const feedback = context.feedback || showActionFeedback;
   const notify = context.notify || notifyWeeklyWorkUpdated;
-  const goal = data?.goal;
-
   const reportWeeklyStartFailure = (message: string) => {
     setError(message);
     feedback({ title: '周任务未启动', description: message, tone: 'error' });
@@ -85,13 +83,13 @@ export function createDigitalEmployeeWeeklyLaunch(context: WeeklyLaunchContext) 
     return true;
   };
 
-  const confirmWeeklyPlan = async () => {
-    if (busy) return;
+  const launchWeeklyPlan = async (source: DigitalEmployeeOverview | null) => {
+    const goal = source?.goal;
     if (!goal) {
       reportWeeklyStartFailure('尚未创建本周目标，请先完成目标设置。');
       return;
     }
-    if (!data?.plan?.businessPackage) {
+    if (!source?.plan?.businessPackage) {
       reportWeeklyStartFailure('本周计划尚未生成完整，请刷新后重试。');
       return;
     }
@@ -102,7 +100,7 @@ export function createDigitalEmployeeWeeklyLaunch(context: WeeklyLaunchContext) 
     try {
       // Preparation is runtime work; only the server validates this revision.
       launchRequestSent = true;
-      const next = await api.approveGoal(goal.id, data.plan.businessPackage.revision, true);
+      const next = await api.approveGoal(goal.id, source.plan.businessPackage.revision, true);
       if (!presentConfirmedWeeklyExecution(next, goal.id)) {
         throw new Error('启动结果未返回可确认的真实运行；系统不会自动重复提交同一周计划。');
       }
@@ -137,5 +135,10 @@ export function createDigitalEmployeeWeeklyLaunch(context: WeeklyLaunchContext) 
     }
   };
 
-  return { confirmWeeklyPlan, presentConfirmedWeeklyExecution, publishWeeklyWorkUpdate };
+  const confirmWeeklyPlan = async () => {
+    if (busy) return;
+    await launchWeeklyPlan(data);
+  };
+
+  return { confirmWeeklyPlan, launchWeeklyPlan, presentConfirmedWeeklyExecution, publishWeeklyWorkUpdate };
 }

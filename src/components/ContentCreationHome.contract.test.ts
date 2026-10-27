@@ -47,7 +47,9 @@ assert.match(home, /className="creator-home__suggestions"/, '自由创作的提�
 assert.match(home, /ASSISTANT_HOME_QUICK_LAUNCHERS\.map\(launcher =>/, '底部须渲染全部小按钮入口');
 assert.match(creatorStyles, /\.creator-home__suggestions \{[^}]*flex-wrap: nowrap[^}]*justify-content: flex-start[^}]*overflow-x: auto/, '高频按钮须保持单行，空间不足时左右滑动');
 assert.match(promptCatalog, /id: 'viral-script'[\s\S]{0,1800}id: 'traffic-optimization'/, '其余快捷按钮须覆盖内容、素材、发布、客户和投流高频动作');
-assert.match(home, /ASSISTANT_HOME_PROMPT_EVENT[\s\S]{0,220}detail: \{ prompt: entry\.prompt, mode \}/, '普通卡片和条件补齐后的查询只能填入原输入框');
+assert.match(home, /ASSISTANT_HOME_PROMPT_EVENT[\s\S]{0,260}detail: \{ prompt: entry\.prompt, mode, submitOptions \}/, '普通卡片和条件补齐后的查询只能填入原输入框');
+assert.doesNotMatch(home, /lingshu-assistant-open/, '首页卡片不得绕过输入框直接发送');
+assert.match(home, /if \(isBusinessScene\(entry\.id\)\) \{ preparePrompt\(entry\); return; \}/, '经营分析卡片必须先填入草稿');
 assert.match(home, /追加到现有内容[\s\S]{0,300}替换现有内容/, '输入框已有内容时必须明确提供追加与替换选择');
 assert.doesNotMatch(home, /DigitalEmployeeHomeWork/, '三栏进行中工作必须从首页移走');
 assert.doesNotMatch(workspace, /<DigitalEmployeeHomeWork/, '进行中工作由灵小枢书签承接，不再占据经营总览');

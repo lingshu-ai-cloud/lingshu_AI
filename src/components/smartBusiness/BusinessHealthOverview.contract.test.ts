@@ -4,6 +4,8 @@ import fs from 'node:fs';
 const overview = fs.readFileSync('src/components/smartBusiness/BusinessHealthOverview.tsx', 'utf8');
 const page = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
 const workspace = fs.readFileSync('src/components/ConfiguredDigitalEmployeeWorkspace.tsx', 'utf8');
+const scoreCard = fs.readFileSync('src/components/smartBusiness/AccountOperatingScoreCard.tsx', 'utf8');
+const scoreModel = fs.readFileSync('src/components/smartBusiness/accountOperatingScore.ts', 'utf8');
 
 assert.match(overview, /<DatePicker\.RangePicker/, 'health range selection must use the shared Ant RangePicker');
 assert.match(overview, /allowClear=\{false\}/, 'the selected health range must remain explicit');
@@ -27,5 +29,10 @@ assert.match(overview, /neutralFill: '#E4E4E7'[\s\S]{0,220}neutralFill: '#F4F4F5
 assert.match(overview, /className="mt-4 grid gap-\[2px\] overflow-hidden bg-white md:grid-cols-2"/, 'the coverage board must render as one contiguous mosaic without an outer card frame');
 assert.doesNotMatch(overview, /label: '查看完整计算口径'/, 'the removed calculation-basis disclosure must stay absent');
 assert.doesNotMatch(overview, /label: '评分口径与数据覆盖'/, 'the removed scoring-criteria disclosure must stay absent from the interface');
+assert.match(scoreCard, />展开</, 'the account score card must expose a clear detail trigger');
+assert.match(scoreCard, /<Modal[\s\S]{0,220}title="账号分 · 过程健康详情"/, 'the detail trigger must open an Ant modal');
+assert.match(scoreCard, /<Tabs items=\{score\.dimensions/, 'the modal must let users inspect each scoring dimension');
+assert.match(scoreModel, /'setup'.*'搭账号'[\s\S]*'conversion'.*'提转化'[\s\S]*'traffic'.*'扩流量'[\s\S]*'inquiries'.*'接询盘'/, 'account score must use the four requested process dimensions');
+assert.doesNotMatch(scoreModel, /fromAccountDimension\(accountHealth, 'performance'/, 'reach performance must not directly drive the process score');
 
 console.log('Business Health range contract tests passed');

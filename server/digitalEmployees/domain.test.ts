@@ -67,12 +67,19 @@ assert.deepEqual(validateWeeklyGoal(goal), []);
 const directorCollectionGoal = normalizeWeeklyGoal({
   ...goal,
   videoPlans: [{
+    contentId: 'video-1',
     route: 'clone', productName: '检测设备', theme: '采购验机', language: 'en', duration: 30,
     platform: 'youtube', materialIds: [], referenceId: '', presenter: 'material', heygenAvatarId: '',
     avatarConsent: false, voice: 'v1', directorStatus: 'candidate',
   }],
+  promotionPlans: [
+    { contentId: 'video-1', budgetCny: 120 },
+    { contentId: 'video-1', budgetCny: 80 },
+    { contentId: 'missing-video', budgetCny: 500 },
+  ],
 }, config);
 assert.deepEqual(validateWeeklyGoal(directorCollectionGoal), [], 'a new weekly goal must allow the Director Agent to collect its reference after confirmation');
+assert.deepEqual(directorCollectionGoal.promotionPlans, [{ contentId: 'video-1', budgetCny: 120 }], 'promotion plans must bind once to a real weekly video');
 const plan = buildWeeklyPlan(goal, config);
 const expectedTaskKeys = [
   'context_readiness',

@@ -15,7 +15,7 @@ import { SocialPlatformIcon } from '../SocialPlatformIcon';
 import { ThumbnailImage, VideoThumbnail } from '../inspiration/InspirationMedia';
 import AssistantMascot from './AssistantMascot';
 import CompanyReportCard from './CompanyReportCard';
-import { isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
+import { assistantReplyPresentationForPromptId, assistantReplyPresentationForText, isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
 import { AssistantAnalysisWork, AssistantReportExport } from './AssistantAnalysisWork';
 import AssistantBusinessSceneChoice from './AssistantBusinessSceneChoice';
 import AssistantNavigationPortalCard from './AssistantNavigationPortalCard';
@@ -107,6 +107,8 @@ export default function AssistantConversationBubbles(props: Props) {
             {msg.analysisWork?.length ? <AssistantAnalysisWork events={msg.analysisWork} complete={msg.analysisComplete}/> : null}
             {msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction}
               compact={inlineHome && isAssistantHomeQuickTaskText(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
+              presentation={inlineHome ? assistantReplyPresentationForText(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')
+                || (msg.businessScene ? assistantReplyPresentationForPromptId(msg.businessScene.sceneId) : undefined) : undefined}
               detailExpanded={assistantWantsDetailedReply(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
               onSuggest={onSuggest} /> : <span className="opacity-40">...</span>}
             {msg.creationPortal && <AssistantCreationPortalCard key={msg.creationPortal.id} portal={msg.creationPortal} />}

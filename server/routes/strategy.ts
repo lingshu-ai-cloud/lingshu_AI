@@ -24,6 +24,7 @@ import { ExternalInformationError } from '../externalInformation/http.js';
 import { appendInformationSources } from '../externalInformation/sourceFooter.js';
 import { previewInformationScope } from '../assistantContext/previewInformationScope.js';
 import { ASSISTANT_DETAILS_POLICY, ASSISTANT_QUICK_TASK_POLICY } from '../../shared/assistantReadableReply.js';
+import { assistantReplyPresentationPolicy, parseAssistantReplyPresentation } from '../../shared/assistantReplyPresentation.js';
 import { companyReportIntent, generateCompanyReport, companyReportSummary } from '../externalInformation/companyReport.js';
 import { companyFilingsIntent, companyReportOptions, queryCompanyFilings, renderCompanyFilings, resolveHalfYearReport } from '../externalInformation/companyFilingsDelivery.js';
 import { DecisionMemoryError, recordDecisionMemory, updateDecisionMemory, revokeDecisionMemory, listDecisionMemories, type DecisionMemory } from '../assistantContext/decisionMemory.js';
@@ -77,8 +78,9 @@ ${ASSISTANT_DETAILS_POLICY}
 - 用户需要图表且数据全部真实可溯源时，可以输出图表块；简单数字回答不附图表。格式为三反引号 + chart，内容是一个严格 JSON（不要注释、不要多余文字）：
   {"type":"bar 或 line","title":"图表标题","unit":"单位(可省)","data":[{"label":"项目","value":123}],"conclusion":"一句话结论(可省)"}
   · data 2-8 项，value 必须是真实数字；对比用 bar，时间趋势用 line；没有真实数据时禁止输出 chart 块
-- 仅在确有帮助的后续追问时，可用三反引号 + next，每行一个问题，最多两个；普通回答不需要此块：
-  · 每条 ≤14 字、动词开头（如"生成阿语版脚本"），必须是继续在对话里就能完成的事，不要写做不到的操作
+- 仅在确有帮助的后续处理时，可用三反引号 + next，每行一个可编辑草稿入口，最多两个；普通回答不需要此块：
+  · 每条 ≤14 字、动词开头（如"补录产品信息"），必须是继续在对话里就能完成的事，不要写做不到的操作
+  · 不要写“是否需要”“是否立即”等二次确认问题；点击入口只会把草稿填进输入框，仍由用户修改并发送
   · 内容要承接本轮回复，像顾问主动递上的下一步，不要泛泛的"还有什么问题"
 - 多项对照确实更清楚时才使用 Markdown 表格；简单比较用自然段，不强制附表：
   · 表格必须包含表头、分隔行和完整行，例如 | 阶段 | 动作 | 负责人 |
@@ -414,6 +416,7 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
   if (scene && !scene.success) { res.status(400).json({ error: 'scene_input_invalid', message: '请选择有效业务对象及日期范围。' }); return; }
   const businessScene = scene?.success ? scene.data : undefined;
   const quickTaskReply = req.body?.responseMode === 'quick_task';
+  const replyPresentation = parseAssistantReplyPresentation(req.body?.replyPresentation);
   const deepThinking = req.body?.deepThinking === true;
   if (!await consumeDemoQuota(req, res, 'aiChat')) return;
 
@@ -504,7 +507,7 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
     const sourceRule = requireSources ? '\n\n【联网来源硬规则】本轮涉及联网搜索/公开信息核验，必须使用联网检索结果，并通过 sources 事件返回可点击来源；如果无法取得来源，不要给出联网结论，改为说明需要重新检索。'
       : externalPlan.kind === 'offline' ? '\n本轮用户明确禁止联网。只回答已有证据和一般方法，不列未核验的具体认证/监管要求、法律义务、技术极限或行业精确阈值，也不提供未核验的当前汇率、行情、贸易数字或最新政策。需要此类信息时明确另行核验。' : '';
     const generalMethod = externalPlan.kind === 'offline' && !needsGrounding && !creationGrounding;
-    const replyPolicy = quickTaskReply ? `\n\n${ASSISTANT_QUICK_TASK_POLICY}` : '';
+    const replyPolicy = quickTaskReply ? `\n\n${ASSISTANT_QUICK_TASK_POLICY}${assistantReplyPresentationPolicy(replyPresentation)}` : '';
     const systemPrompt = generalMethod ? `${GENERAL_METHOD_PROMPT}\n${grounding.text}${replyPolicy}`
       : `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${sourceRule}\n\n${grounding.text}\n${creationGrounding}\n${EXTERNAL_SOURCE_RULES}\n${externalEvidence}\n${ASSISTANT_CONTEXT_RULES}${replyPolicy}`;
     const adReportRule = businessScene?.sceneId === 'AD-01' ? '\n【本轮投放分析报告格式】输出适合对话阅读的小报告，包含统计范围、数据更新时间、币种与归因口径、核心结论、关键指标对比表、异常与数据缺口、关联当前真实计划的建议动作。仅引用已取得的数值，缺失项显示未知；不编造行业基准，不展示内部推理。' : '';

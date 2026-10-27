@@ -205,7 +205,9 @@ assert.match(appShellChromeSource, /suppressForRightSidebar=\{page !== 'digitalE
 assert.match(conversationPanelSource, /width: inlineHomeBounds\?\.width \?\? assistantPanelWidth,\s*maxWidth: inlineHomeBounds \? '100%' : 'calc\(100vw - 32px\)'/, '首页面板使用锚点尺寸，其余页面继续受视口宽度约束');
 assert.match(source, /inlineHomeAnchor \? createPortal\(assistantRoot, inlineHomeAnchor\) : assistantRoot/, '首页助手必须挂载在内容节点中随页面原生滚动');
 assert.match(source, /!inlineHome && <AssistantLauncher/, '首页只有创作输入区，不叠加全局浮动入口');
-assert.match(homeAnchorSource, /ASSISTANT_HOME_PROMPT_EVENT = 'lingshu:assistant-home-prompt'[\s\S]*useAssistantHomeInteraction[\s\S]*setDraftInput\(agent, mergeAssistantHomePrompt/, '首页快捷建议必须写入原助手草稿');
+assert.match(homeAnchorSource, /ASSISTANT_HOME_PROMPT_EVENT = 'lingshu:assistant-home-prompt'[\s\S]*useAssistantHomeInteraction[\s\S]*const draft = mergeAssistantHomePrompt[\s\S]*setDraftInput\(agent, draft\)/, '首页快捷建议必须写入原助手草稿');
+assert.match(source, /pendingHomeSubmissionRef = useRef<AssistantHomePendingSubmission \| null>/, '结构化查询条件必须等待用户显式发送');
+assert.match(source, /useAssistantHomeInteraction\([\s\S]{0,300}setPendingHomeSubmission\)/, '首页草稿须保留待提交的结构化条件');
 assert.match(conversationPanelSource, /<AssistantComposer variant=\{inlineHome \? 'home' : 'default'\}/, '首页沿用同一聊天与上传契约，仅切换输入区外观');
 assert.match(conversationPanelSource, /ls-assistant-panel__header[^"\n]*bg-surface/, '助手标题栏统一使用主题表面');
 assert.doesNotMatch(conversationPanelSource, /bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50/, '夜间模式不得保留浅色专用标题条');
@@ -554,7 +556,8 @@ assert.match(decisionDialogSource, /dialogTaskCard\.workspace\.href/, '外部弹
 assert.match(conversationBubblesSource, /data-assistant-summary="task-card"[\s\S]{0,1100}onOpenTaskDetail\(/, '任务结果必须先以概要气泡呈现');
 assert.match(conversationPanelSource, /onOpenTaskDetail=\{[\s\S]*openDecisionDialog\(\{ kind: 'task', taskId \}, trigger\)/, '任务结果点击后才打开外部详情');
 assert.match(conversationPanelSource, /<AssistantComposer/, '灵小枢必须使用统一输入组件');
-assert.match(conversationPanelSource, /onSuggest=\{suggestion => void send\(suggestion, currentPageAgent\)\}/, '快捷回复卡片必须点击后直接进入当前灵小枢对话');
+assert.match(conversationPanelSource, /onSuggest=\{suggestion => \{[\s\S]{0,260}setDraftInput\(activeAgent, suggestion\)[\s\S]{0,260}assistantInputRef\.current\?\.focus\(\)/, '快捷回复卡片必须填入当前输入框并聚焦，不能自动发送');
+assert.doesNotMatch(conversationPanelSource, /onSuggest=\{suggestion => void send\(/, '快捷回复卡片不得绕过输入框直接发送');
 assert.match(composerSource, /rows=\{1\}/, '输入框必须默认只占一行');
 assert.match(composerSource, /maxLength=\{4000\}/, '输入框必须遵守确定性操作接口的长度边界');
 assert.match(composerSource, /max-h-\[88px\]/, '输入框最多只能扩展到三行');

@@ -1,3 +1,5 @@
+import type { AssistantReplyPresentationKind } from '../../shared/assistantReplyPresentation';
+
 export type AssistantHomePromptGroupId = 'operations' | 'inspiration' | 'content' | 'publishing' | 'ads' | 'customer' | 'enterprise';
 export type AssistantHomePromptLevel = 'query' | 'plan' | 'sensitive' | 'navigation';
 
@@ -156,13 +158,41 @@ function normalizedQuickTaskText(value: string): string {
   return value.trim().replace(/\r\n?/gu, '\n').replace(/[ \t]+/gu, ' ');
 }
 
-/** Presentation-only classification; it never authorizes a task or mutation. */
-export function isAssistantHomeQuickTaskText(value: string): boolean {
+const NEWS_PROMPTS = new Set(['OP-02', 'OP-09', 'OP-11', 'OP-LEADER', 'OP-12']);
+const REFERENCE_PROMPTS = new Set(['OP-RATES', 'OP-TRADE']);
+
+export function assistantHomePromptIdForText(value: string): string | undefined {
   const text = normalizedQuickTaskText(value);
-  if (!text) return false;
-  if (/^(?:行业资讯：行业：.+，目标市场：.+|查询.+兑.+的最新参考汇率|查询\d{4}年.+HS\s*\d{2,6}(?:进口|出口)金额)/u.test(text)) return true;
-  return ASSISTANT_HOME_PROMPTS.some(entry => {
+  if (!text) return undefined;
+  if (/^行业资讯：行业：.+，目标市场：.+/u.test(text)) return 'OP-09';
+  if (/^查询.+兑.+的最新参考汇率/u.test(text)) return 'OP-RATES';
+  if (/^查询\d{4}年.+HS\s*\d{2,6}(?:进口|出口)金额/u.test(text)) return 'OP-TRADE';
+  return ASSISTANT_HOME_PROMPTS.find(entry => {
     const prompt = normalizedQuickTaskText(entry.prompt);
     return text === prompt || text.startsWith(`${prompt}\n`) || text.endsWith(`\n${prompt}`);
-  });
+  })?.id;
+}
+
+export function assistantReplyPresentationForPromptId(id: string): AssistantReplyPresentationKind | undefined {
+  if (NEWS_PROMPTS.has(id)) return 'news';
+  if (REFERENCE_PROMPTS.has(id)) return 'reference';
+  if (id === 'OP-04') return 'analytics';
+  if (id.startsWith('OP-')) return 'operations';
+  if (id.startsWith('IN-')) return 'inspiration';
+  if (id.startsWith('CO-')) return 'content';
+  if (id.startsWith('PU-')) return 'publishing';
+  if (id.startsWith('AD-')) return 'ads';
+  if (id.startsWith('CS-')) return 'customer';
+  if (id.startsWith('EN-') || id.startsWith('PL-')) return 'enterprise';
+  return undefined;
+}
+
+export function assistantReplyPresentationForText(value: string): AssistantReplyPresentationKind | undefined {
+  const id = assistantHomePromptIdForText(value);
+  return id ? assistantReplyPresentationForPromptId(id) : undefined;
+}
+
+/** Presentation-only classification; it never authorizes a task or mutation. */
+export function isAssistantHomeQuickTaskText(value: string): boolean {
+  return Boolean(assistantHomePromptIdForText(value));
 }

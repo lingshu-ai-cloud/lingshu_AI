@@ -22,6 +22,18 @@ assert.equal(pack.operatingContext?.outputs.count, pack.operatingContext?.cadenc
 assert.ok(pack.operatingContext?.outputs.formats.length, 'the package states its primary output formats');
 assert.equal(pack.operatingContext?.authorization.mode, 'bounded');
 assert.deepEqual(pack.operatingContext?.authorization.accountIds, ['account-a']);
+const promotedVideoPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+const promotedContentId = promotedVideoPlans[0]?.contentId;
+assert.ok(promotedContentId, 'recommended videos expose stable content identities for the promotion plan');
+const promotedGoal = normalizeWeeklyGoal({
+  ...goal,
+  videoPlans: promotedVideoPlans,
+  promotionPlans: [{ contentId: promotedContentId!, budgetCny: 120 }],
+}, config);
+const promotedPack = recommendPackage(promotedGoal, config);
+assert.deepEqual(promotedPack.operatingContext?.promotionPlans, [{ contentId: promotedContentId!, budgetCny: 120 }], 'the confirmed per-video promotion plan must remain visible in the operating context');
+assert.equal(promotedPack.directorPlan?.paidMediaBudget, 120, 'the confirmed promotion spend must become the paid-media budget');
+assert.equal(promotedPack.operatingContext?.budget.totalMaxCny, (promotedPack.operatingContext?.budget.productionMaxCny || 0) + 120, 'the second confirmation total must include production and promotion spend');
 const twoAccounts = recommendPackage(goal, normalizeDigitalEmployeeConfig({
   ...config,
   publishingTargets: [

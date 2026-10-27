@@ -12,7 +12,8 @@ test('application shell keeps one shared mobile breakpoint', () => {
 });
 
 test('sidebar width is constrained while the main content remains shrinkable', () => {
-  assert.match(layout, /animate=\{\{ width: sidebarWidth, minWidth: sidebarWidth, maxWidth: sidebarWidth \}\}/);
+  assert.match(layout, /animate=\{\{ '--sidebar-width': `\$\{sidebarWidth\}px` \}\}/);
+  assert.match(layout, /width: 'var\(--sidebar-width\)'[\s\S]{0,120}minWidth: 'var\(--sidebar-width\)'[\s\S]{0,120}maxWidth: 'var\(--sidebar-width\)'/);
   assert.match(layout, /app-main[^"\n]*min-w-0[^"\n]*flex-1[^"\n]*basis-0/);
   assert.match(transition, /data-app-content-stack[^>]*min-w-0[^>]*w-full/);
 });

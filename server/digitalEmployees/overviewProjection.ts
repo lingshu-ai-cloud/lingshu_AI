@@ -35,6 +35,7 @@ export function publicGoal(record: GoalRecord): WeeklyGoalInput & { id: string; 
     endsAt: String(record.ends_at || ''),
     scope: typeof jsonObject(record.scope, record.scope || '') === 'object' ? String(jsonObject<any>(record.scope, {}).description || '') : String(jsonObject(record.scope, record.scope || '')),
     videoPlans: jsonObject<any>(record.scope, {}).videoPlans,
+    promotionPlans: jsonObject<any>(record.scope, {}).promotionPlans,
     constraints: jsonObject<string[]>(record.constraints, []),
     status: String(record.status || 'draft'),
     version: Number(record.version || 1),
