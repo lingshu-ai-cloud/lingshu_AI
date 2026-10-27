@@ -1,5 +1,12 @@
 # Git 工作树状态盘点
 
+## 2026-10-27 首页快捷卡片安全集成
+
+- 功能现场与权威基线共用 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`，从 `8cecbd02` 独立 index 固定 54 个任务文件为 `0e9872a0`。其余 43 个脏文件哈希全部保持，不清理其他开发现场。
+- 隔离候选 `/Users/julia1/Documents/ChatGPT/基线管理/quick-cards-safe-20261027` / `integration/quick-cards-20261027` 已验证通过并保留；来源快照 `codex/quick-cards-source-20261027`，恢复点 `backup/pre-quick-cards-20261027-8cecbd02` 保留。
+- 基线已安全快进源码，治理补记后继续快进；远端目标为用户指定 `xixi快捷卡片`。无私有运行数据复制、无部署。详见 [合入记录](QUICK-CARDS-INTEGRATION-20261027.md)。
+
+
 ## 2026-10-27 智能经营与灵小枢周任务视图集成
 
 - 功能树 `intelligent-analytics-page-20261027` 的本轮修改提交至 `4fcaed5d`，基于实际统一基线 `40a35534` 在 `business-overview-safe-20261027` / `integration/business-overview-safe-20261027` 隔离合并，源码 `0b72de2c`。仅软链依赖，未复制运行数据或凭据。
