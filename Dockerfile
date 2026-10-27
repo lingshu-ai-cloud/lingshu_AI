@@ -20,6 +20,9 @@ COPY scripts/bootstrap-workbench-admin.mjs scripts/gemini-video-worker.mjs scrip
 COPY scripts/customer-preview-ai-scope.mjs scripts/customer-isolated-test-guard.mjs scripts/customer-isolation-canary.mjs scripts/customer-isolation-diagnostics.mjs scripts/customer-isolated-processes.mjs ./scripts/
 COPY scripts/fast_head_pipeline.py scripts/fast_head_preflight.py scripts/fast_head_composite.py scripts/person-replacement-quality.ts ./scripts/
 COPY scripts/person-replacement-qa-requirements.txt scripts/person_replacement_visual_qa.py scripts/validate-syncnet.py ./scripts/
+COPY scripts/recover-assistant-pb-claims.ts ./scripts/
+ARG APP_BUILD_SHA=unknown
+ENV APP_BUILD_SHA=${APP_BUILD_SHA}
 RUN pnpm run build \
   && pnpm prune --prod
 
@@ -41,6 +44,8 @@ COPY --from=build /app /app
 RUN python3 -m pip install --break-system-packages --no-cache-dir -r /app/scripts/person-replacement-qa-requirements.txt \
   && python3 /app/scripts/person_replacement_visual_qa.py --self-check
 
+ARG APP_BUILD_SHA=unknown
+ENV APP_BUILD_SHA=${APP_BUILD_SHA}
 ENV NODE_ENV=production
 ENV DIGITAL_HUMAN_VISUAL_QA_PYTHON=/usr/bin/python3
 EXPOSE 8788

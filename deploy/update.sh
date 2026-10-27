@@ -36,6 +36,8 @@ compose=(env -u COMPOSE_FILE -u COMPOSE_PROJECT_NAME
   "PB_DATA_VOLUME_NAME=$pb_data_volume_name" "APP_HOST_PORT=$app_host_port" "ENV_FILE_PATH=$ENV_FILE"
   docker compose --project-directory "$ROOT_DIR" -f "$ROOT_DIR/docker-compose.yml" --env-file "$ENV_FILE")
 
+export APP_BUILD_SHA="$(git rev-parse HEAD)"
+
 echo "==> Building changed layers (Docker cache is preserved)"
 "${compose[@]}" build app worker pocketbase
 
