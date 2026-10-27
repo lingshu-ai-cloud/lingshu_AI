@@ -67,6 +67,11 @@ test('home prompt events remain fill-only and support explicit append or replace
   assert.equal(normalizeAssistantHomePromptDetail({ prompt: '  ' }), null);
   assert.equal(mergeAssistantHomePrompt('原有内容', '新提示词', 'append'), '原有内容\n\n新提示词');
   assert.equal(mergeAssistantHomePrompt('原有内容', '新提示词', 'replace'), '新提示词');
+  assert.deepEqual(normalizeAssistantHomePromptDetail({ prompt: '本周任务', submitOptions: {
+    businessScene: { sceneId: 'OP-01', from: '2026-10-20', to: '2026-10-27' },
+  } }), { prompt: '本周任务', mode: 'replace', submitOptions: {
+    businessScene: { sceneId: 'OP-01', from: '2026-10-20', to: '2026-10-27' },
+  } });
 });
 
 test('quick task presentation recognizes fixed cards and parameterized query dialogs only', () => {

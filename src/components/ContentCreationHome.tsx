@@ -44,7 +44,10 @@ import {
   ASSISTANT_HOME_ACTIVITY_EVENT,
   ASSISTANT_HOME_PROMPT_EVENT,
   type AssistantHomePromptMode,
+  type AssistantHomeSubmitOptions,
 } from './assistant/useAssistantHomeAnchor';
+
+type PendingHomePrompt = { entry: AssistantHomePrompt; submitOptions?: AssistantHomeSubmitOptions };
 
 function launcherIcon(id: AssistantHomeQuickLauncherId, size = 18) {
   const props = { size, 'aria-hidden': true as const };
@@ -71,7 +74,7 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
   const [businessSceneId, setBusinessSceneId] = useState<BusinessSceneId | null>(null);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [queryPrompt, setQueryPrompt] = useState<AssistantHomePrompt | null>(null);
-  const [pendingPrompt, setPendingPrompt] = useState<AssistantHomePrompt | null>(null);
+  const [pendingPrompt, setPendingPrompt] = useState<PendingHomePrompt | null>(null);
   const [overview, setOverview] = useState<DigitalEmployeeOverview | null>(null);
   const [firstRunLoaded, setFirstRunLoaded] = useState(false);
   const [firstRunError, setFirstRunError] = useState('');
@@ -132,26 +135,25 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
     return () => window.removeEventListener(ASSISTANT_HOME_ACTIVITY_EVENT, onAssistantActivity);
   }, []);
 
-  const fillPrompt = (entry: AssistantHomePrompt, mode: AssistantHomePromptMode = 'replace') => {
-    window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_PROMPT_EVENT, { detail: { prompt: entry.prompt, mode } }));
+  const fillPrompt = (entry: AssistantHomePrompt, mode: AssistantHomePromptMode = 'replace', submitOptions?: AssistantHomeSubmitOptions) => {
+    window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_PROMPT_EVENT, { detail: { prompt: entry.prompt, mode, submitOptions } }));
     setPendingPrompt(null);
     setActiveLauncherId(null);
   };
 
-  const preparePrompt = (entry: AssistantHomePrompt) => {
+  const preparePrompt = (entry: AssistantHomePrompt, submitOptions?: AssistantHomeSubmitOptions) => {
     const draft = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].draftInput.trim();
-    if (draft && draft !== entry.prompt.trim()) { setPendingPrompt(entry); return; }
-    fillPrompt(entry);
+    if (draft && draft !== entry.prompt.trim()) { setPendingPrompt({ entry, submitOptions }); return; }
+    fillPrompt(entry, 'replace', submitOptions);
   };
 
   const choosePrompt = (entry: AssistantHomePrompt) => {
-    if (entry.id === 'CO-07') { setBusinessSceneId(entry.id); return; }
-    if (isBusinessScene(entry.id) || ['OP-02', 'OP-09', 'OP-11', 'OP-12'].includes(entry.id)) {
+    if (entry.id === 'CO-07') {
       if (assistantBusy) return;
-      setActiveLauncherId(null);
-      window.dispatchEvent(new CustomEvent('lingshu-assistant-open', { detail: { text: entry.prompt, preserveDraft: true } }));
+      setBusinessSceneId(entry.id);
       return;
     }
+    if (isBusinessScene(entry.id)) { preparePrompt(entry); return; }
     if (entry.id === 'CO-SPEECH-HIGHLIGHT') { setHighlightOpen(true); return; }
     if (entry.id === 'OP-LEADER') { setCompanyReportOpen(true); return; }
     setCompanyReportOpen(false);
@@ -200,12 +202,13 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
               </button>)}
             </div>
             {companyReportOpen && <div id="company-report-selection"><CompanyReportScene busy={assistantBusy}
-              onCancel={() => setCompanyReportOpen(false)} onConfirm={request => {
+              onCancel={() => setCompanyReportOpen(false)} onPrompt={text => {
+                setCompanyReportOpen(false);
+                preparePrompt({ ...assistantHomePromptById('OP-LEADER')!, prompt: text }, { companyReport: true });
+              }} onConfirm={request => {
                 if (assistantBusy) return;
-                setCompanyReportOpen(false); setActiveLauncherId(null);
-                window.dispatchEvent(new CustomEvent('lingshu-assistant-open', { detail: {
-                  text: request.text, preserveDraft: true, companyReportRequest: { companyId: request.companyId, year: request.year },
-                } }));
+                setCompanyReportOpen(false);
+                preparePrompt({ ...assistantHomePromptById('OP-LEADER')!, prompt: request.text }, { companyReport: true });
               }}/></div>}
           </div> : null}
         </section>
@@ -265,18 +268,18 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
     </div>
     {businessSceneId && <AssistantBusinessSceneDialog key={`${sessionScope}:${businessSceneId}`} sceneId={businessSceneId} onClose={() => setBusinessSceneId(null)} onConfirm={selection => {
       const entry = assistantHomePromptById(selection.sceneId); if (!entry || assistantBusy) return;
-      setBusinessSceneId(null); setActiveLauncherId(null);
-      window.dispatchEvent(new CustomEvent('lingshu-assistant-open', { detail: { text: entry.prompt, preserveDraft: true, businessScene: selection } }));
+      setBusinessSceneId(null);
+      preparePrompt(entry, { businessScene: selection });
     }}/>}
     <ProductHighlightDialog key={sessionScope} open={highlightOpen} onClose={() => setHighlightOpen(false)}/>
     {queryPrompt && assistantQueryKind(queryPrompt.id) && <AssistantQuickPromptDialog key={queryPrompt.id} kind={assistantQueryKind(queryPrompt.id)!}
       onClose={() => setQueryPrompt(null)} onPrompt={prompt => preparePrompt({ ...queryPrompt, prompt })}/>}
     <Modal open={Boolean(pendingPrompt)} title="输入框已有内容" width={480} closable={false} footer={[
       <Button key="cancel" onClick={() => setPendingPrompt(null)}>取消</Button>,
-      <Button key="append" onClick={() => pendingPrompt && fillPrompt(pendingPrompt, 'append')}>追加到现有内容</Button>,
-      <Button key="replace" type="primary" onClick={() => pendingPrompt && fillPrompt(pendingPrompt, 'replace')}>替换现有内容</Button>,
+      <Button key="append" onClick={() => pendingPrompt && fillPrompt(pendingPrompt.entry, 'append', pendingPrompt.submitOptions)}>追加到现有内容</Button>,
+      <Button key="replace" type="primary" onClick={() => pendingPrompt && fillPrompt(pendingPrompt.entry, 'replace', pendingPrompt.submitOptions)}>替换现有内容</Button>,
     ]}>
-      <p>“{pendingPrompt?.label}”会填入灵小枢输入框。请选择追加或替换；系统不会自动发送。</p>
+      <p>“{pendingPrompt?.entry.label}”会填入灵小枢输入框。请选择追加或替换；系统不会自动发送。</p>
     </Modal>
     <HomeIntroduction open={introductionOpen} initialConfig={overview?.config || EMPTY_CONFIG}
       onClose={() => setIntroductionOpen(false)} onComplete={() => {

@@ -31,7 +31,8 @@ import { useAssistantQuickExecution } from './assistant/useAssistantQuickExecuti
 import { useAssistantTaskCardActions } from './assistant/useAssistantTaskCardActions';
 import { useAssistantDecisionDialog } from './assistant/useAssistantDecisionDialog';
 import { useAssistantPanelControls } from './assistant/useAssistantPanelControls';
-import { ASSISTANT_HOME_ACTIVITY_EVENT, useAssistantHomeAnchor, useAssistantHomeInteraction, useAssistantHomeMode } from './assistant/useAssistantHomeAnchor';
+import { ASSISTANT_HOME_ACTIVITY_EVENT, useAssistantHomeAnchor, useAssistantHomeInteraction, useAssistantHomeMode,
+  type AssistantHomePendingSubmission } from './assistant/useAssistantHomeAnchor';
 import { useAssistantLauncherRetraction } from './assistant/useAssistantLauncherRetraction';
 import { useAssistantDecisionCount, useAssistantPageContextSignal } from './assistant/useAssistantPageSignals';
 import { useAssistantContentTaskCard } from './assistant/useAssistantContentTaskCard';
@@ -124,6 +125,10 @@ export default function GlobalAssistant({
   }));
   const messageScrollRef = useRef<HTMLDivElement>(null);
   const assistantInputRef = useRef<HTMLTextAreaElement>(null);
+  const pendingHomeSubmissionRef = useRef<AssistantHomePendingSubmission | null>(null);
+  const setPendingHomeSubmission = useCallback((submission: AssistantHomePendingSubmission | null) => {
+    pendingHomeSubmissionRef.current = submission;
+  }, []);
   const launcherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
   const edgeLauncherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
   const { launcherRetracted, retractLauncher, restoreLauncher } = useAssistantLauncherRetraction(launcherButtonRef, edgeLauncherButtonRef);
@@ -235,7 +240,8 @@ export default function GlobalAssistant({
     }));
   }, []);
   const activeThread = threads[activeAgent];
-  useAssistantHomeInteraction(inlineHome, activeThread.messages.length, loading, activeAgent, setDraftInput, assistantInputRef, Boolean(activeThread.creationDraft));
+  useAssistantHomeInteraction(inlineHome, activeThread.messages.length, loading, activeAgent, setDraftInput, assistantInputRef,
+    Boolean(activeThread.creationDraft), setPendingHomeSubmission);
   const inlineHomeActive = inlineHome && Boolean(activeThread.messages.length || loading || activeThread.creationDraft);
   useEffect(() => {
     if (!inlineHome) return;
@@ -481,7 +487,7 @@ export default function GlobalAssistant({
     setFileGenerating, setReplyStreaming, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
     activeAgent, draftInput: activeThread.draftInput, pendingAttachments, attachmentUploading,
     weeklyPlanKickoffAvailable, uploadedAttachmentCacheRef, setAttachmentError,
-    setAttachmentUploading, setPendingAttachments, openWeeklyPlanFromAssistant,
+    setAttachmentUploading, setPendingAttachments, openWeeklyPlanFromAssistant, pendingHomeSubmissionRef,
   });
 
   const runQuickExecution = useAssistantQuickExecution({

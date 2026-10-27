@@ -28,6 +28,7 @@ import { assistantImageReplicationPortal } from './assistantImageReplicationInte
 import { ASSISTANT_HOME_PROMPTS, isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
 import { runAssistantProductionRequest } from './assistantProductionRequest';
 import type { useContentTaskIntake } from './useContentTaskIntake';
+import type { AssistantHomePendingSubmission } from './useAssistantHomeAnchor';
 import { agentForOrbit, compactText, contextForOrbit, loadLiveIntegrationFacts,
   mergeConsecutiveAssistant, PRIMARY_ASSISTANT_THREAD, responseErrorMessage,
   type AssistantContext } from './globalAssistantRuntime';
@@ -75,6 +76,7 @@ type AssistantSendInput = {
   setAttachmentUploading: Dispatch<SetStateAction<boolean>>;
   setPendingAttachments: Dispatch<SetStateAction<File[]>>;
   openWeeklyPlanFromAssistant: () => void;
+  pendingHomeSubmissionRef: { current: AssistantHomePendingSubmission | null };
 };
 
 const API_PATH: Record<AgentType, string> = {
@@ -94,7 +96,7 @@ export function useAssistantSend(input: AssistantSendInput) {
     setPipelineRefresh, persistThread, onSessionRefresh, requestId,
     activeAgent, draftInput, pendingAttachments, attachmentUploading, weeklyPlanKickoffAvailable,
     uploadedAttachmentCacheRef, setAttachmentError, setAttachmentUploading, setPendingAttachments,
-    openWeeklyPlanFromAssistant } = input;
+    openWeeklyPlanFromAssistant, pendingHomeSubmissionRef } = input;
   const creationMode = useCreationMode();
   const send = useCallback(async (
     text: string,
@@ -448,7 +450,10 @@ export function useAssistantSend(input: AssistantSendInput) {
       return;
     }
     if (!files.length) {
-      void send(draft);
+      const pending = pendingHomeSubmissionRef.current;
+      pendingHomeSubmissionRef.current = null;
+      const submitOptions = pending?.agent === activeAgent && pending.draft === draft ? pending.submitOptions : undefined;
+      void send(draft, currentPageAgent, undefined, [], undefined, submitOptions);
       return;
     }
 
@@ -489,7 +494,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       setAttachmentError(error instanceof Error ? error.message : '附件上传失败，请重试。');
       setAttachmentUploading(false);
     }
-  }, [contentIntake.active, activeAgent, draftInput, attachmentUploading, currentPageAgent, loading, openWeeklyPlanFromAssistant, pendingAttachments, persistThread, send, setDraftInput, setFollowingLatest, setMessages, weeklyPlanKickoffAvailable]);
+  }, [contentIntake.active, activeAgent, draftInput, attachmentUploading, currentPageAgent, loading, openWeeklyPlanFromAssistant, pendingAttachments, pendingHomeSubmissionRef, persistThread, send, setDraftInput, setFollowingLatest, setMessages, weeklyPlanKickoffAvailable]);
 
   return { send, sendComposerMessage };
 }
