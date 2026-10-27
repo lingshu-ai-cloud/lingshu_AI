@@ -142,7 +142,7 @@ function OverviewContent({ data, onRefresh, onNavigate, onOpenAccountHealth, wee
         <div className="mt-5" aria-label="今日数据经营解读">{interpretation}</div>
       </section>
       <div className="grid min-w-0 content-start border-t border-border xl:border-l xl:border-t-0">
-        <div className="min-w-0 [&_section]:border-0 [&_section]:rounded-none"><BusinessHealthOverview scoreOnly data={displayData} previewScore={sample?.score} onOpenAccountHealth={sample ? () => setDetail({ title: '账号分与评估口径', summary: '当前展示 5 项账号健康口径，点击各项分数可对照评分结构。', rows: sample.score.criteria.map(item => [item.label, `${item.score ?? '—'} 分`]), preview: true }) : onOpenAccountHealth}/></div>
+        <div className="min-w-0 [&_section]:border-0 [&_section]:rounded-none"><BusinessHealthOverview scoreOnly data={displayData} previewScore={sample?.score} onOpenAccountHealth={onOpenAccountHealth}/></div>
         <section className="min-w-0 border-t border-border p-4 sm:p-5" aria-labelledby="business-topics-title">
           <div className="flex items-center justify-between gap-2"><div><h2 id="business-topics-title" className="text-base font-semibold text-text-primary">热门话题</h2><p className="mt-1 text-xs text-text-secondary">{sample ? '三个平台的最新热议方向' : `已发现 ${topics.length} 个平台的最新话题`}</p></div><Tag>{sample ? '界面预览' : '可追溯来源'}</Tag></div>
           {topics.length ? <ul className="mt-3 divide-y divide-border">{topics.map(topic => <li key={topic.id}>
