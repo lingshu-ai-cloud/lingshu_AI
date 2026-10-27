@@ -87,8 +87,9 @@ function productSeal(width: number, height: number, poster: BuyerPosterCopy, sca
 
 /** A deterministic, evidence-bound B2B layer. All visible wording comes from the frozen poster. */
 export function socialImageBuyerOverlaySvg(width: number, height: number, poster: BuyerPosterCopy,
-  highContrast = false, tone: BuyerPosterTone = 'cool', backing: BuyerCopyBacking = 'solid'): Buffer {
+  highContrast = false, tone: BuyerPosterTone = 'cool', backing: BuyerCopyBacking = 'solid', backingColor = '#f7f7f7'): Buffer {
   const colors = TONES[tone];
+  const cardColor = /^#[0-9a-fA-F]{6}$/.test(backingColor) ? backingColor : '#f7f7f7';
   const layout = socialImageBuyerLayout(poster);
   const scale = Math.min(width, height) / 1200;
   const font = (size: number) => Math.max(10, Math.round(size * scale));
@@ -134,8 +135,8 @@ export function socialImageBuyerOverlaySvg(width: number, height: number, poster
       <linearGradient id="sealEdge" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff"/><stop offset=".5" stop-color="${colors.edge}"/><stop offset="1" stop-color="${colors.pale}"/></linearGradient>
       <radialGradient id="sealFace"><stop stop-color="${colors.sealLight}"/><stop offset="1" stop-color="${colors.seal}"/></radialGradient>
     </defs>
-    ${facts.length && backing === 'solid' ? `<rect x="${x - font(18)}" y="${copyCardTop}" width="${Math.round(width * (layout.copyRight - .035))}" height="${copyCardBottom - copyCardTop}" rx="${font(18)}" fill="#fff" stroke="${colors.pale}" stroke-width="${Math.max(1, Math.round(2 * scale))}"/>` : ''}
-    ${facts.length && backing === 'local' ? `<rect x="${x - font(13)}" y="${copyCardTop}" width="${Math.round(width * (layout.copyRight - .045))}" height="${copyCardBottom - copyCardTop}" rx="${font(12)}" fill="#fff" fill-opacity=".88"/>` : ''}
+    ${facts.length && backing === 'solid' ? `<rect x="${x - font(18)}" y="${copyCardTop}" width="${Math.round(width * (layout.copyRight - .035))}" height="${copyCardBottom - copyCardTop}" rx="${font(18)}" fill="${cardColor}" stroke="${colors.pale}" stroke-width="${Math.max(1, Math.round(2 * scale))}"/>` : ''}
+    ${facts.length && backing === 'local' ? `<rect x="${x - font(13)}" y="${copyCardTop}" width="${Math.round(width * (layout.copyRight - .045))}" height="${copyCardBottom - copyCardTop}" rx="${font(12)}" fill="${cardColor}" fill-opacity=".88"/>` : ''}
     <rect y="${footerTop}" width="${width}" height="${height - footerTop}" fill="${highContrast ? colors.footerStrong : colors.footer}"/>
     <line x1="0" y1="${footerTop}" x2="${width}" y2="${footerTop}" stroke="${colors.pale}" stroke-width="${Math.max(2, Math.round(3 * scale))}"/>
     ${brand.map((line, index) => `<text x="${x}" y="${topY + font(30) + index * font(34)}" fill="${colors.ink}" font-family="${fontFamily}" font-size="${font(28)}" font-weight="700" letter-spacing="1">${xml(line)}</text>`).join('')}

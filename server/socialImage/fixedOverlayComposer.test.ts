@@ -75,7 +75,7 @@ test('identity-locked buyer poster keeps real product pixels and omits the white
     'the scene outside text and product keeps its details');
 });
 
-test('identity-locked buyer poster adds contrast backing only when the measured scene is dark', async () => {
+test('identity-locked buyer poster derives a readable backing from a dark scene instead of pasting white', async () => {
   const background = await sharp({ create: { width: 1200, height: 1200, channels: 3, background: '#3f2939' } }).png().toBuffer();
   const product = await sharp({ create: { width: 300, height: 300, channels: 3, background: '#fff' } }).png().toBuffer();
   const output = await composeFixedSocialLayers({ background, products: [product], width: 1200, height: 1200,
@@ -83,7 +83,21 @@ test('identity-locked buyer poster adds contrast backing only when the measured 
       bottomBar: ['50 g', 'OEM / ODM', 'Ask about packaging'], cta: 'Message us' },
     productTreatment: 'framed_source' });
   const card = await sharp(output).extract({ left: 200, top: 430, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
-  assert.ok(card[0]! > 230 && card[1]! > 230 && card[2]! > 230);
+  assert.ok(card[0]! > 63 && card[1]! > 41 && card[2]! > 57, 'the derived color lifts the dark copy zone');
+  assert.ok(card[0]! > card[2]! && card[2]! > card[1]!, 'the backing retains the source burgundy hue');
+  assert.ok(Math.max(...card) < 230, 'the card is tinted rather than white');
+});
+
+test('contrast repair preserves a warm background color family under the copy', async () => {
+  const background = await sharp({ create: { width: 1200, height: 1200, channels: 3, background: '#dfb9a4' } }).png().toBuffer();
+  const product = await sharp({ create: { width: 300, height: 300, channels: 3, background: '#fff' } }).png().toBuffer();
+  const output = await composeFixedSocialLayers({ background, products: [product], width: 1200, height: 1200,
+    poster: { originBadge: 'GUIANFA', headline: 'FACE CREAM', sellingPoints: ['Face cream'],
+      bottomBar: ['50 g', 'OEM / ODM', 'Ask about packaging'], cta: 'Message us' },
+    productTreatment: 'framed_source', repairContrast: true });
+  const card = await sharp(output).extract({ left: 200, top: 430, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  assert.ok(card[0]! > card[1]! && card[1]! > card[2]!, 'the repair backing follows the warm source hue');
+  assert.ok(Math.max(...card) < 250, 'repair does not introduce a white sticker');
 });
 
 test('contrast repair uses one translucent copy panel and repeats verified net content in readable copy', () => {

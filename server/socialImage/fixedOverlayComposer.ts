@@ -166,16 +166,17 @@ async function featherBuyerPhotoEdges(bytes: Buffer): Promise<Buffer> {
 
 /** Choose typography backing from the actual copy-zone pixels, not a prompt or SKU. */
 async function buyerCopyBacking(scene: Buffer, width: number, height: number,
-  repairContrast: boolean): Promise<BuyerCopyBacking> {
-  if (repairContrast) return 'local';
+  repairContrast: boolean): Promise<{ mode: BuyerCopyBacking; color: string }> {
   const left = Math.round(width * .04), top = Math.round(height * .03);
   const { data } = await sharp(scene).extract({ left, top,
     width: Math.round(width * .40), height: Math.round(height * .45) })
     .resize(32, 32).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const brightness: number[] = [];
+  const channels: number[][] = [[], [], []];
   let edgeSum = 0, edgeCount = 0;
   for (let y = 0; y < 32; y += 1) for (let x = 0; x < 32; x += 1) {
     const i = (y * 32 + x) * 3;
+    for (let channel = 0; channel < 3; channel += 1) channels[channel]!.push(data[i + channel]!);
     const value = (.2126 * data[i]! + .7152 * data[i + 1]! + .0722 * data[i + 2]!) / 255;
     brightness.push(value);
     if (x > 0) {
@@ -187,9 +188,14 @@ async function buyerCopyBacking(scene: Buffer, width: number, height: number,
   }
   const tenth = brightness.sort((a, b) => a - b)[Math.floor(brightness.length * .1)]!;
   const detail = edgeSum / Math.max(1, edgeCount);
-  if (tenth >= .62 && detail <= .075) return 'none';
-  if (tenth >= .38 && detail <= .13) return 'local';
-  return 'solid';
+  const median = channels.map(channel => channel.sort((a, b) => a - b)[Math.floor(channel.length / 2)]!);
+  const level = (.2126 * median[0]! + .7152 * median[1]! + .0722 * median[2]!);
+  const lift = level >= 205 ? 0 : (205 - level) / (255 - level);
+  const color = `#${median.map(value => Math.round(value + (255 - value) * lift).toString(16).padStart(2, '0')).join('')}`;
+  const mode: BuyerCopyBacking = repairContrast ? 'local'
+    : tenth >= .62 && detail <= .075 ? 'none'
+      : tenth >= .38 && detail <= .13 ? 'local' : 'solid';
+  return { mode, color };
 }
 
 /** Keeps identity and UI pixel-identical across GIF frames. */
@@ -230,9 +236,9 @@ export async function composeFixedSocialLayers(input: {
         Math.round(width * layout.heroCenter - (size.width || heroWidth) / 2)));
     const top = Math.round(height * .53 - (size.height || heroHeight) / 2);
     const withProduct = await sharp(scene).composite([{ input: hero, left, top }]).png().toBuffer();
+    const backing = await buyerCopyBacking(scene, width, height, Boolean(input.repairContrast));
     const overlay = socialImageBuyerOverlaySvg(width, height, input.poster,
-      Boolean(input.repairContrast), await buyerPosterTone(source),
-      await buyerCopyBacking(scene, width, height, Boolean(input.repairContrast)));
+      Boolean(input.repairContrast), await buyerPosterTone(source), backing.mode, backing.color);
     return sharp(withProduct).composite([{ input: overlay, left: 0, top: 0 }])
       .png({ compressionLevel: 9 }).toBuffer();
   }
