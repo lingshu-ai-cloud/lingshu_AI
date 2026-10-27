@@ -542,7 +542,8 @@ assert.match(decisionDialogSource, /dialogTaskCard\.workspace\.href/, '外部弹
 assert.match(conversationBubblesSource, /data-assistant-summary="task-card"[\s\S]{0,1100}onOpenTaskDetail\(/, '任务结果必须先以概要气泡呈现');
 assert.match(conversationPanelSource, /onOpenTaskDetail=\{[\s\S]*openDecisionDialog\(\{ kind: 'task', taskId \}, trigger\)/, '任务结果点击后才打开外部详情');
 assert.match(conversationPanelSource, /<AssistantComposer/, '灵小枢必须使用统一输入组件');
-assert.match(conversationPanelSource, /onSuggest=\{suggestion => void send\(suggestion, currentPageAgent\)\}/, '快捷回复卡片必须点击后直接进入当前灵小枢对话');
+assert.match(conversationPanelSource, /onSuggest=\{suggestion => \{[\s\S]{0,260}setDraftInput\(activeAgent, suggestion\)[\s\S]{0,260}assistantInputRef\.current\?\.focus\(\)/, '快捷回复卡片必须填入当前输入框并聚焦，不能自动发送');
+assert.doesNotMatch(conversationPanelSource, /onSuggest=\{suggestion => void send\(/, '快捷回复卡片不得绕过输入框直接发送');
 assert.match(composerSource, /rows=\{1\}/, '输入框必须默认只占一行');
 assert.match(composerSource, /maxLength=\{4000\}/, '输入框必须遵守确定性操作接口的长度边界');
 assert.match(composerSource, /max-h-\[88px\]/, '输入框最多只能扩展到三行');

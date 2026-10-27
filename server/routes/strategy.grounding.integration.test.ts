@@ -150,7 +150,8 @@ test('strategy chat grounds actual local records with tenant/user/role isolation
     const sceneSystem = captured.at(-1)!.messages.find(message => message.role === 'system')!.content;
     assert.match(sceneSystem, /recordsInPeriod/); assert.match(sceneSystem, /actual-blocked-task/); assert.doesNotMatch(sceneSystem, /FOREIGN_/);
     assert.match(sceneSystem, /快捷任务回复/); assert.match(sceneSystem, /不同功能套进同一份固定模板/);
-    assert.match(sceneSystem, /最重要的指标变化、异常和影响/); assert.match(sceneSystem, /计算口径、完整明细和次要维度放 details/);
+    assert.match(sceneSystem, /不得输出“产品20\/P20”/); assert.match(sceneSystem, /不要写“是否需要”“是否立即”等二次确认问题/);
+    assert.match(sceneSystem, /最重要的三至五个指标变化、异常和业务影响/); assert.match(sceneSystem, /计算口径、完整明细和次要维度放 details/);
     const deniedScene = await api(memberToken, '/chat', { messages: [{ role: 'user', content: '查看经营数据' }], businessScene: sceneSelection });
     assert.match(await deniedScene.text(), /scene_forbidden/); assert.equal(captured.length, sceneBefore + 1);
     const invalidScene = await api(adminToken, '/chat', { messages: [{ role: 'user', content: '查看经营数据' }], businessScene: { ...sceneSelection, tenantId: foreignTenantId } });

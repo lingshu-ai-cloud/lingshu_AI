@@ -12,6 +12,7 @@ import { extractAssistantFiles } from '../../shared/assistantFileIntent';
 import AssistantFileCard from './assistant/AssistantFileCard';
 import AssistantSourceLink from './assistant/AssistantSourceLink';
 import type { ReplySource } from '../lib/assistantSourceLinks';
+import { assistantDraftSuggestion } from '../../shared/assistantDraftSuggestion';
 import {
   ASSISTANT_REPLY_PRESENTATIONS,
   type AssistantReplyPresentationKind,
@@ -234,24 +235,29 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
   const inline = (text: string, key: string) => renderInline(text, key, sources);
   const files = extractAssistantFiles(content);
   const sourcePresentation = allowSources ? splitReplySourceFooter(files.text) : { body: files.text, footer: '' };
-  const replyParts = allowDetails ? splitAssistantReply(sourcePresentation.body, { compact: compact && !presentation }) : { summary: sourcePresentation.body, details: [] };
-  const lines = readableAssistantReply(replyParts.summary).split('\n');
+  const readableBody = readableAssistantReply(sourcePresentation.body);
+  const replyParts = allowDetails ? splitAssistantReply(readableBody, { compact: compact && !presentation, presentation }) : { summary: readableBody, details: [] };
+  const lines = replyParts.summary.split('\n');
   const blocks: ReactNode[] = [];
   let list: { type: 'ul' | 'ol'; items: string[] } | null = null;
 
   const quickReplyCards = (items: string[], key: string) => (
     <div key={key} className="my-2 grid gap-2" role="group" aria-label="快捷回复">
-      {items.map((item, index) => (
-        <button
-          key={`${key}_${index}`}
-          type="button"
-          onClick={() => onSuggest?.(item)}
-          className="group flex w-full items-center justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2.5 text-left text-sm leading-5 text-text-primary hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-        >
-          <span>{cleanLooseMarkdown(item)}</span>
-          <ArrowRight size={14} className="shrink-0 text-accent transition-transform group-hover:translate-x-0.5" />
-        </button>
-      ))}
+      {items.map((item, index) => {
+        const suggestion = assistantDraftSuggestion(item, readableBody);
+        return (
+          <button
+            key={`${key}_${index}`}
+            type="button"
+            onClick={() => onSuggest?.(suggestion.draft)}
+            aria-label={`${suggestion.label}，填入输入框`}
+            className="group flex w-full items-center justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2.5 text-left text-sm leading-5 text-text-primary hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            <span className="min-w-0"><span className="block">{suggestion.label}</span><span className="mt-0.5 block text-[11px] leading-4 text-text-muted">填入输入框，可修改后发送</span></span>
+            <ArrowRight size={14} className="shrink-0 text-accent transition-transform group-hover:translate-x-0.5" />
+          </button>
+        );
+      })}
     </div>
   );
 

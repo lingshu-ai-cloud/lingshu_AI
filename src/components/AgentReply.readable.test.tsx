@@ -18,6 +18,15 @@ test('ordinary explanation and lists stay readable text, not action menus', () =
   assert.doesNotMatch(legacy, /<button/); assert.match(legacy, /工作区/);
 });
 
+test('next suggestions show direct draft actions instead of another confirmation question', () => {
+  const content = '还缺少实拍素材和唇釉资料。\n```next\n确认是否立即上传P4/P33/P20的实拍素材？\n是否需要我协助起草唇釉SKU的信息补录模板？\n```';
+  const html = renderToStaticMarkup(createElement(AgentReply, { content, onSuggest: () => undefined }));
+  assert.match(html, /补充产品实拍素材/);
+  assert.match(html, /补录唇釉信息/);
+  assert.match(html, /填入输入框，可修改后发送/);
+  assert.doesNotMatch(html, /P4|P33|P20|确认是否|是否需要/);
+});
+
 test('analysis is expandable, essential risks visible, and detailed requests open it', () => {
   const content = '建议先补充参考素材。\n```details\n这里是完整的备选方案。\n费用200元，尚未批准发布。\n```';
   const closed = renderToStaticMarkup(createElement(AgentReply, { content }));
@@ -53,6 +62,15 @@ test('query scenes keep decision-critical text visible and personalize details, 
   assert.match(news, /已核验来源 · 1/);
   assert.match(news, /平台官方公告/);
   assert.doesNotMatch(news, />详细分析</);
+});
+
+test('operations scene removes internal product and provider diagnostics before folding details', () => {
+  const content = '当前状态：\n本周目标明确，重点产品聚焦于：\n- 精华（对应产品20：安肤修护水光液）\n- 唇釉（未在当前41款现货盘中查到，企业知识库无该SKU信息）\n目标尚未实际发布。\n已完成：\n- 目标设定（weekly_goals 集合中 state: complete）\n待处理：\n- 14条任务处于 plan_review。\n阻塞项：\n- 技术链路中断：404 model not activated、fetch failed。\n今天最优先动作：\n- 上传P4/P33/P20的真实产品素材。';
+  const html = renderToStaticMarkup(createElement(AgentReply, { content, compact: true, presentation: 'operations' }));
+  assert.doesNotMatch(html, /产品20|P4|P33|P20|41款|weekly_goals|state|plan_review|404|model not activated|fetch failed/);
+  assert.match(html, /当前状态|已完成|待处理|阻塞项|今天最优先动作/);
+  assert.match(html, /逐项任务与判断依据/);
+  assert.match(html, /查看经营总览/);
 });
 
 test('source-like text in code is preserved; no-source replies do not gain an empty disclosure', async () => {
