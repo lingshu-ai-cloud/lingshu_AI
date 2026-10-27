@@ -242,8 +242,9 @@ for (const [key, sourcePage] of [['legacy-traffic', 'traffic'], ['smart-assets-'
   assert.match(appPageSlotSource, new RegExp(`key=[^\\n]*${key}[\\s\\S]{0,160}sourcePage=["']${sourcePage}["']`), `${key} 必须标记准确的助手上下文来源`);
 }
 assert.match(appPageSlotSource, /page === 'socialInspiration'[\s\S]{0,300}<ContentCreationOverviewPage/, '内容创作页必须使用独立经营式工作区');
-assert.match(contentCreationOverviewSource, /<CreationPlan[^\n]*onCreate=\{\(\)=>setCreateOpen\(true\)\}/, '内容创作计划入口必须打开创建表单');
-assert.match(contentCreationOverviewSource, /<CreateContentPlanModal open=\{createOpen\}[\s\S]{0,350}openContentGenerationQueue\(\{view:'tasks',taskId\}\)/, '创建单条任务后必须打开统一内容生成队列并聚焦新任务');
+assert.match(contentCreationOverviewSource, /<CreationPlan[^\n]*onCreate=\{openHomeViralLibrary\}/, '内容创作计划入口必须使用首页爆款素材导航');
+assert.match(contentCreationOverviewSource, /function openHomeViralLibrary\(\)[\s\S]{0,240}lingshu:navigate[\s\S]{0,160}page: 'strategy', homeTarget: HOME_VIRAL_LIBRARY_ID/, '单条内容入口必须携带首页素材定位目标');
+assert.doesNotMatch(contentCreationOverviewSource, /CreateContentPlanModal|createOpen/, '单条内容入口不得恢复与统一首页流程重复的创建弹窗');
 for (const reference of ['goalId', 'planId', 'runId', 'taskId', 'contentId', 'viewKey']) {
   assert.match(liveContextSource, new RegExp(`${reference}: contextIdentifier\\(detail\\.${reference}`), `页面上下文必须安全绑定 ${reference}`);
 }

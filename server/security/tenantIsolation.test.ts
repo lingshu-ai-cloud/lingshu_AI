@@ -245,7 +245,10 @@ assert.match(cloudMaterials, /tenantId: input\.tenantId/, 'PocketBase material r
 assert.match(cloudMaterials, /materialTenantId\(record\) !== input\.tenantId/, 'PocketBase material writes must verify the returned tenant before exposing the record');
 assert.match(studio, /materialResponse\(/, 'Studio routes must use the protected material response projection');
 assert.match(studioMaterialProjection, /material\.objectKey[\s\S]*?privateStudioAssetUrl\('materials', tenantId/, 'private COS material reads must use the signed application route');
-assert.match(studio, /get\('\/private-assets\/:namespace\/:file'[\s\S]*?objectStorageGetObject\(tenantPrivateObjectKey\(namespace, tenantId, req\.params\.file\)/, 'the private asset route must bind object reads to the authenticated tenant');
+const privateAssetRoutes = read('server/routes/studioPrivateAssetRoutes.ts');
+assert.match(privateAssetRoutes, /get\('\/private-assets\/:namespace\/:file'[\s\S]*?const \{ tenantId \} = res\.locals[\s\S]*?let key = tenantPrivateObjectKey\(namespace, tenantId, req\.params\.file\)/, 'private asset keys must derive from the authenticated tenant');
+assert.match(privateAssetRoutes, /namespace === 'material-records'[\s\S]*?readMaterialLibrary\(tenantId\)[\s\S]*?inventory\.items\.filter\(item => item\.id === match\[1\]\)[\s\S]*?records\.length === 1[\s\S]*?if \(!key\)[\s\S]*?objectStorageGetObject\(key, req\.headers\.range\)/, 'material records must resolve a unique authorized inventory entry before any object read');
+assert.doesNotMatch(privateAssetRoutes, /req\.query\.(?:key|tenantId)|req\.body\.(?:key|tenantId)/, 'private object reads must not accept a caller-selected key or tenant');
 assert.match(studio, /item\.id === req\.params\.id && item\.tenantId === tenantId/, 'material mutations must enforce tenant ownership');
 const studioProjectRead = read('server/routes/studioProjectReadRoutes.ts');
 const studioProjectSave = read('server/routes/studioProjectSaveRoutes.ts');
