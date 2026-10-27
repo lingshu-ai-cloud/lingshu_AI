@@ -1,3 +1,4 @@
+import { formatMediaDuration } from '../lib/mediaDuration';
 import { Button } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { Eye, Images, Loader2, Pencil, Play, Star, Trash2 } from 'lucide-react';
@@ -126,12 +127,7 @@ export function VideoCard({ video, onSelect, onCreate, onWatch, onEditManage, on
         <button
           type="button"
           aria-label={`${isImagePost ? '查看图文' : '播放视频'} ${video.title}`}
-          onPointerUp={event => {
-            if (event.button === 0) onWatch();
-          }}
-          onClick={event => {
-            if (event.detail === 0) onWatch();
-          }}
+          onClick={event => { event.stopPropagation(); onWatch(); }}
           className="ls-touch-media-reveal absolute inset-0 z-10 flex items-center justify-center bg-black/25 opacity-0 transition-opacity duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white"
         >
           <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-neutral-900 shadow-none" aria-hidden="true">
@@ -150,7 +146,7 @@ export function VideoCard({ video, onSelect, onCreate, onWatch, onEditManage, on
             title="删除" aria-label={`删除 ${video.title}`} className="!border-white/25 !bg-black/65 !text-white hover:!bg-red-600" />}
         </div>}
         <div data-compact-overlay={compactOverlay || undefined} className={`ls-touch-media-reveal absolute inset-x-0 bottom-0 z-30 max-h-full overflow-hidden bg-gradient-to-t from-black/90 via-black/60 to-transparent text-white opacity-0 transition-opacity duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100 ${compactOverlay ? 'px-2 pb-2 pt-7' : 'px-3 pb-3 pt-10'}`}>
-          {!compactOverlay && <p className="mb-1 inline-flex items-center gap-1.5 text-xs text-white/80"><SocialPlatformIcon platform={video.platform} size={13} />{meta.label}<span aria-hidden="true">·</span>{isImagePost ? '图文' : `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')}`}</p>}
+          {!compactOverlay && <p className="mb-1 inline-flex items-center gap-1.5 text-xs text-white/80"><SocialPlatformIcon platform={video.platform} size={13} />{meta.label}<span aria-hidden="true">·</span>{isImagePost ? '图文' : formatMediaDuration(video.duration)}</p>}
           {!compactOverlay && mediaState !== 'ready' && <p role="status" className="mb-1 text-xs text-white/80">{mediaState === 'error' ? '分析失败' : imageQueue?.label || analysisProgress?.stageLabel || '分析中'}</p>}
           {!actionsOnlyOverlay && <p className={`${compactOverlay ? 'line-clamp-1 text-xs' : 'line-clamp-2 text-sm'} font-semibold`} title={video.title}>{video.title}</p>}
           {!compactOverlay && <p className="mt-1 truncate text-xs text-white/80">{trendLabel} · {video.views} 次播放 · {video.aiAnalysis?.author || video.aiAnalysis?.sourceAccountName || '来源账号待获取'}</p>}

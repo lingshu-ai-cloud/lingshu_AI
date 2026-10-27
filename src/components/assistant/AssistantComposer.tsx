@@ -1,5 +1,7 @@
 import {
   forwardRef,
+  useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type ChangeEvent,
@@ -106,6 +108,14 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
   onValidationError,
   onSubmit,
 }, forwardedRef) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useImperativeHandle(forwardedRef, () => textareaRef.current!, []);
+  useEffect(() => {
+    const input = textareaRef.current;
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(88, Math.max(36, input.scrollHeight))}px`;
+  }, [draft, compact]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [draggingFiles, setDraggingFiles] = useState(false);
 
@@ -163,7 +173,7 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
         )}
         <div className="ls-assistant-composer__editing">
           <textarea
-            ref={forwardedRef}
+            ref={textareaRef}
             value={draft}
             onChange={event => onDraftChange(event.target.value)}
             onKeyDown={submitOnEnter}

@@ -11,6 +11,7 @@ import { creationTaskCalendar, creationTaskRows, type CreationTaskCategory, type
 import { studioApi } from '../../lib/studioApi';
 import CreationTaskCover from './CreationTaskCover';
 import { LsCalendar } from '../ui/LsCalendar';
+import CreateContentPlanModal from './CreateContentPlanModal';
 import CreationTaskDetailDrawer, { creationLocalTime } from './CreationTaskDetailDrawer';
 import { beijingDay } from '../../lib/assistantScheduleProjection';
 
@@ -18,6 +19,7 @@ const selectedTask = () => readSocialContentNavigationQueryTaskId('socialInspira
   || readSocialContentNavigationTaskId('socialInspiration',window.history.state);
 
 export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalendar = false }:{data:DigitalEmployeeOverview;onRefresh:()=>void;embeddedCalendar?:boolean}) {
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [tasks,setTasks]=useState<SocialContentTaskSummary[]>([]),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
   const [view,setView]=useState<'calendar'|'tasks'>(()=>!embeddedCalendar&&(selectedTask()||new URLSearchParams(window.location.search).get('view')==='tasks')?'tasks':'calendar');
   const [calendarPortalRevision,setCalendarPortalRevision]=useState(0);
@@ -103,6 +105,7 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
       {rows.length>events.length&&<p className="px-5 py-3 text-xs text-text-muted">{rows.length-events.length} 条任务尚未安排发布时间，可在创作任务中查看。</p>}
       {!rows.length&&!loading&&<Empty description="暂无创作任务"/>}
     </>}
-    <CreationTaskDetailDrawer key={`${identity}:${selected?.key||''}`} row={selected} overview={data} onClose={close} onUpdated={refresh}/>
+    <CreationTaskDetailDrawer key={`${identity}:${selected?.key||''}`} row={selected} overview={data} onClose={close} onUpdated={refresh} onRecover={() => { close(); setRecoveryOpen(true); }}/>
+    <CreateContentPlanModal open={recoveryOpen} onCancel={() => setRecoveryOpen(false)} onCreated={taskId => { setRecoveryOpen(false); refresh(); setTaskId(taskId); setView('tasks'); }}/>
   </section>;
 }

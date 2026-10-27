@@ -452,3 +452,16 @@ html[data-lingshu-appearance='light'] .ls-assistant-home-root .ls-assistant-flow
 
 /* Keep all creation capabilities reachable, but never crowd more than four cards into the desktop viewport. */
 .creator-home__prompt-grid--creation { grid-auto-columns: minmax(210px, calc((100% - 30px) / 4)); }
+
+/* Active conversations reserve the bottom row for a compact composer. */
+.ls-assistant-home-root[data-home-empty='false'] .ls-assistant-composer { padding: 8px 16px 10px; }
+.ls-assistant-home-root[data-home-empty='false'] .ls-assistant-composer__surface { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: end; gap: 8px; }
+.ls-assistant-home-root[data-home-empty='false'] .ls-assistant-composer__editing { grid-column: 2; grid-row: 2; padding: 0; }
+.ls-assistant-home-root[data-home-empty='false'] .ls-assistant-composer__input { min-height: 36px; padding: 6px 0; }
+.ls-assistant-home-root[data-home-empty='false'] .ls-assistant-composer__surface > .flex:last-child { display: contents; }
+.ls-assistant-home-root[data-home-empty='false'] .ls-assistant-composer__tools { grid-column: 1; grid-row: 2; }
+.ls-assistant-home-root[data-home-empty='false'] .ls-assistant-composer__surface > .flex:last-child > button { grid-column: 3; grid-row: 2; align-self: end; }
+.ls-assistant-home-root[data-home-empty='false'] .ls-assistant-composer__surface > [data-assistant-attachments],
+.ls-assistant-home-root[data-home-empty='false'] .ls-assistant-composer__surface > [role='status'] { grid-column: 1 / -1; grid-row: 1; }
+.ls-assistant-home-root[data-home-empty='false'] #assistant-follow-up-hint { grid-column: 1 / -1; grid-row: 3; padding: 0; }
+@media (max-width: 640px) { .ls-assistant-home-root[data-home-empty='false'] .ls-assistant-composer__tools button > span { display: none; } }

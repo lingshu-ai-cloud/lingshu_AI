@@ -43,7 +43,7 @@ export default function InspirationMaterialGallery({ materials, favoritingMateri
     materialType,
     setMaterialType,
     localMaterials,
-    materialsLoading,
+    materialsLoading, inventoryError,
     materialPage,
     setMaterialPage,
     filteredProductMaterialSummaries: productMaterialSummaries,
@@ -117,8 +117,15 @@ export default function InspirationMaterialGallery({ materials, favoritingMateri
               </div>
               {materialProductsError && <Alert type="error" showIcon title={materialProductsError}
                 action={<Button size="small" onClick={() => void refreshMaterialProducts()}>重试读取产品</Button>} />}
+              <div className="flex flex-wrap items-center gap-2" aria-label="工厂素材快捷筛选">
+                {['工厂实拍', '产线', '灌装', '包装', '产品实拍'].map(term => <Button key={term} size="small" onClick={() => {
+                  clearMaterialFilters(); setMaterialSearch(term === '产线' ? '生产线' : term);
+                }}>{term}</Button>)}
+              </div>
+              {inventoryError && <Alert type="warning" showIcon title="素材未完整加载" description={inventoryError} action={<Button onClick={() => void refreshMaterials()}>重新加载</Button>} />}
+              {materialsLoading && localMaterials.length > 0 && <p role="status" className="text-xs text-text-muted">已显示首批素材，正在加载其余素材；搜索结果与数量将在加载完成后更新。</p>}
               <MaterialLibraryStatus onRetry={refreshMaterials} />
-              {materialsLoading ? (
+              {materialsLoading && !localMaterials.length ? (
                   <div className="flex items-center justify-center gap-2 py-16 text-sm text-text-muted">
                     <Loader2 size={16} className="animate-spin" /> 正在读取素材库...
                   </div>
@@ -135,9 +142,9 @@ export default function InspirationMaterialGallery({ materials, favoritingMateri
                     <button type="button" onClick={clearMaterialFilters} className="mt-2 text-xs font-bold text-accent">清空筛选条件</button>
                   </div>
                 ) : (
-                  <div className="space-y-6">
+                  <div className="flex flex-col gap-6">
                     {visibleProductGroupsForPage.length > 0 ? (
-                      <section aria-labelledby="product-material-groups-title" className="space-y-3">
+                      <section aria-labelledby="product-material-groups-title" className="order-2 space-y-3">
                         <div className="flex items-center justify-between gap-3">
                           <h2 id="product-material-groups-title" className="ls-type-title-small text-text-primary">产品素材集合</h2>
                           <span className="ls-type-body-small text-text-muted">{visibleProductGroups.length} 个产品</span>
@@ -162,7 +169,7 @@ export default function InspirationMaterialGallery({ materials, favoritingMateri
                       </section>
                     ) : null}
                     {pagedUngroupedFilteredMaterials.length > 0 ? (
-                      <section aria-labelledby="ordinary-materials-title" className="space-y-3">
+                      <section aria-labelledby="ordinary-materials-title" className="order-1 space-y-3">
                         <div className="flex items-center justify-between gap-3">
                           <h2 id="ordinary-materials-title" className="ls-type-title-small text-text-primary">普通素材</h2>
                           <span className="ls-type-body-small text-text-muted">共 {ordinaryFilteredTotal} 条 · 当前第 {materialPage} 页</span>

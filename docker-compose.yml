@@ -94,6 +94,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      # Existing production SQLite can take about two minutes to cold-start.
+      start_period: 180s
 
   caddy:
     image: caddy:2-alpine

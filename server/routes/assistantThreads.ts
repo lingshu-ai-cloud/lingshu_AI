@@ -515,6 +515,7 @@ export function createAssistantThreadsRouter(
   router.get('/', async (req: Request, res: Response) => {
     const identity = res.locals as AuthLocals;
     const items: AssistantThread[] = [];
+    const deletedOnly = req.query.deleted === '1';
     let page = Number(req.query.page || 1);
     if (!Number.isSafeInteger(page) || page < 1) { res.status(400).json({ error: 'invalid_page' }); return; }
     let totalPages = 1;
@@ -523,7 +524,7 @@ export function createAssistantThreadsRouter(
         where: { tenantId: identity.tenantId, userId: identity.userId },
         perPage: 20, page, sort: '-updatedAt',
       });
-      items.push(...result.items.filter(item => isDesktopThread(item) && !item.deletedAt));
+      items.push(...result.items.filter(item => isDesktopThread(item) && (deletedOnly ? Boolean(item.deletedAt) : !item.deletedAt)));
       totalPages = result.totalPages;
       page += 1;
     } while (page <= totalPages && !items.length);

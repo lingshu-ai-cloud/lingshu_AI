@@ -430,7 +430,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             {embedded ? <h2 className="py-3 text-sm font-semibold text-text-primary">爆款素材</h2> : <Tabs className="min-w-0 flex-1" activeKey={innerView} onChange={key => setInnerView(key as InspirationInnerView)} aria-label="灵感集市分类"
               items={[
                 { key: 'inspiration', label: `爆款视频 · ${tenantVideoTotalItems ?? '…'}`, icon: <Flame size={16} /> },
-                { key: 'library', label: `素材库 · ${materialTotal}`, icon: <Film size={16} /> },
+                { key: 'library', label: `素材库 · ${!materials.inventoryLoaded ? (materials.materialsLoading ? '加载中' : '待加载') : materialTotal}`, icon: <Film size={16} /> },
                 { key: 'accounts', label: `对标账号 · ${competitorAccountCount ?? '…'}`, icon: <Users size={16} /> },
                 { key: 'shooting', label: `待拍 · ${shootingNeeds.length + pendingShootingTaskCount(scriptGapTasks)}`, icon: <Lightbulb size={16} /> },
               ]} />}

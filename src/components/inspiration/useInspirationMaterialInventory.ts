@@ -25,6 +25,7 @@ export function useInspirationMaterialInventory({ innerView, materialSource, mat
   const [inventorySlots, setInventorySlots] = useState<ProductScenePreparationSlotView[]>([]);
   const [inventoryError, setInventoryError] = useState('');
   const inFlightRef = useRef(0);
+  const [inventoryLoaded, setInventoryLoaded] = useState(false);
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [materialPage, setMaterialPage] = useState(1);
   const [materialFacets, setMaterialFacets] = useState<MaterialLibraryFacets | null>(null);
@@ -33,20 +34,26 @@ export function useInspirationMaterialInventory({ innerView, materialSource, mat
   const refreshMaterials = async (page?: number): Promise<Material[]> => {
     const requestId = ++materialLibraryRequestRef.current;
     inFlightRef.current += 1;
-    if (!localMaterials.length) setMaterialsLoading(true);
+    const progressive = !localMaterials.length;
+    setMaterialsLoading(true);
     try {
       const inventory = await studioApi.listMaterialLibrary('library', {
         page: 1,
         pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE,
       });
       const pageCount = Math.max(1, Math.ceil(Number(inventory.total ?? inventory.items.length) / MATERIAL_LIBRARY_FETCH_PAGE_SIZE));
-      const additionalPages = pageCount > 1
-        ? await (async () => {
-          const pages = [];
-          for (let next = 2; next <= pageCount; next += 1) pages.push(await studioApi.listMaterialLibrary('library', { page: next, pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE }));
-          return pages;
-        })()
-        : [];
+      if (requestId !== materialLibraryRequestRef.current) return localMaterials;
+      if (progressive) { setLocalMaterials(inventory.items); setInventorySlots(inventory.productSceneSlots || []); }
+      const additionalPages: typeof inventory[] = [];
+      // Publish the first page immediately; bound background reads to four.
+      for (let next = 2; next <= pageCount; next += 4) {
+        const batch = await Promise.all(Array.from({ length: Math.min(4, pageCount - next + 1) }, (_, index) =>
+          studioApi.listMaterialLibrary('library', { page: next + index, pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE })));
+        if (requestId !== materialLibraryRequestRef.current) return localMaterials;
+        additionalPages.push(...batch);
+        if (progressive) setLocalMaterials([...new Map([inventory, ...additionalPages]
+          .flatMap(result => result.items).map(material => [material.id, material])).values()]);
+      }
       const materials = [...new Map([inventory, ...additionalPages]
         .flatMap(result => result.items)
         .map(material => [material.id, material])).values()];
@@ -54,6 +61,7 @@ export function useInspirationMaterialInventory({ innerView, materialSource, mat
       setLocalMaterials(materials);
       setInventorySlots(inventory.productSceneSlots || []);
       setInventoryError('');
+      setInventoryLoaded(true);
       setMaterialFacets(inventory.facets || null);
       if (page !== undefined) setMaterialPage(page);
       return materials;
@@ -147,7 +155,7 @@ export function useInspirationMaterialInventory({ innerView, materialSource, mat
   }, [localMaterials, materialProducts, inventorySlots, materialsLoading, inventoryError, productSummaryRefreshVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
-    localMaterials, setLocalMaterials, materialsLoading, materialPage, setMaterialPage, materialFacets,
+    localMaterials, setLocalMaterials, materialsLoading, inventoryLoaded, inventoryError, materialPage, setMaterialPage, materialFacets,
     productDetailProduct, productDetailMaterials, setProductDetailMaterials, productDetailSlots,
     setProductDetailSlots, productDetailLoading, productDetailError, productMaterialSummaries,
     setProductMaterialSummaries, setProductSummaryRefreshVersion, refreshMaterials,

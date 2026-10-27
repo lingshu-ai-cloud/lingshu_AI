@@ -317,7 +317,11 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
         </div>
       </div>}
       <Modal open={healthDialogOpen} title="账号健康与阶段目标" width={960} footer={null} destroyOnHidden onCancel={() => setHealthDialogOpen(false)}>
-        <BusinessHealthOverview accountOnly data={data} selectedAccountId={selectedAccountId} onNavigate={onNavigate}/>
+        <BusinessHealthOverview accountOnly data={data} selectedAccountId={selectedAccountId} onNavigate={page => {
+          setHealthDialogOpen(false);
+          if (page === 'socialAccounts') { setWorkspaceView('matrix'); return; }
+          onNavigate?.(page);
+        }}/>
       </Modal>
       {active && applicationGuideOpen && (
         <OnboardingPanel

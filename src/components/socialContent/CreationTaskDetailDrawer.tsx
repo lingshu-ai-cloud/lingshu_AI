@@ -19,8 +19,8 @@ import ImageCreationTaskExecution from './ImageCreationTaskExecution';
 export const creationLocalTime = (value: string) => value.length===10 ? `${value} · 时刻待定`
   : Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}) : '待安排';
 
-export default function CreationTaskDetailDrawer({ row, overview, onClose, onUpdated }:{
-  row:CreationTaskRow|null;overview:DigitalEmployeeOverview;onClose:()=>void;onUpdated:()=>void;
+export default function CreationTaskDetailDrawer({ row, overview, onClose, onUpdated, onRecover }:{
+  row:CreationTaskRow|null;overview:DigitalEmployeeOverview;onClose:()=>void;onUpdated:()=>void;onRecover?:()=>void;
 }) {
   const [loadedTask,setTask]=useState<SocialContentTaskDetail|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(false),[revision,setRevision]=useState(0);
   const task=loadedTask?.taskId===row?.taskId?loadedTask:null;
@@ -52,7 +52,7 @@ export default function CreationTaskDetailDrawer({ row, overview, onClose, onUpd
         {key:'date',label:'预计发布（北京时间）',children:creationLocalTime(row.publishAt)},
       ]}/>
       {error&&<Alert showIcon type="warning" title={task?'最新进展暂未更新':'任务详情暂时无法读取'} description={task?'以下保留上次成功读取的进度。':'请重试查询，当前无法判断最新执行状态。'} action={<Button onClick={refresh}>重试查询</Button>}/>}
-      {row.readError&&<Alert type="warning" showIcon title="历史任务资料需要核对" description="该任务的保存记录不完整，暂时无法读取制作进展。其他任务可以继续查看。"/>}
+      {row.readError&&<Alert type="warning" showIcon title="历史任务资料需要核对" description="缺少可核验的制作记录，不能恢复原制作进展。可补充产品、创作方向与预计发布时间，另建一条计划；原记录继续保留。" action={onRecover && <Button onClick={onRecover}>补充资料，新建计划</Button>}/>}
       {loading&&!task&&row.taskId?<Skeleton active/>:task?<>
         {card&&state?.category==='confirmation'&&<Alert type="warning" showIcon title="待确认项" description={<ul className="space-y-2">{card.blockingItems.length?card.blockingItems.map(item=><li key={item.key}>{item.value}</li>):<li>{card.currentNode.userFacingSummary}</li>}</ul>}/>}
         {task.brief.formats.includes('social_image') ? <ImageCreationTaskExecution contentTaskId={task.taskId}/> : <section aria-label="执行节点进度"><h3 className="mb-4 text-base font-semibold">制作进度</h3>

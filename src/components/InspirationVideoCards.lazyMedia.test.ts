@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { formatMediaDuration } from '../lib/mediaDuration';
 import fs from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -58,6 +59,7 @@ function harness(observationAvailable = true) {
     require(name: string) {
       if (name === 'react') return hooks;
       if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+      if (name === '../lib/mediaDuration') return { formatMediaDuration };
       if (name === 'antd') return { Button: 'Button' };
       if (name === 'lucide-react') return {};
       if (name === './SocialPlatformIcon') return { SocialPlatformIcon: 'SocialPlatformIcon' };
@@ -119,10 +121,10 @@ test('preview action survives pointer-first media loading and remains keyboard a
   const tree = page.render(video, () => { opened += 1; });
   const preview = descendants(tree).find(node => node.type === 'button' && String(node.props['aria-label']).startsWith('播放视频'));
   assert.ok(preview);
-  preview.props.onPointerUp({ button: 0 });
-  preview.props.onClick({ detail: 1 });
+  assert.equal(preview.props.onPointerUp, undefined, 'opening on pointer-up can let the following click dismiss the newly mounted backdrop');
+  preview.props.onClick({ detail: 1, stopPropagation() {} });
   assert.equal(opened, 1, 'a pointer gesture must open once even when the browser follows it with click');
-  preview.props.onClick({ detail: 0 });
+  preview.props.onClick({ detail: 0, stopPropagation() {} });
   assert.equal(opened, 2, 'keyboard and assistive activation must still open the preview');
   page.cleanup();
 });

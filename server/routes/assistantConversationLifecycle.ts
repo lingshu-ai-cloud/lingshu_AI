@@ -6,7 +6,8 @@ import type { AuthLocals } from '../middleware/auth.js';
 export function registerAssistantConversationLifecycle(router: Router, store: DataStore) {
   router.post('/:agentId/clear', handle(false));
   router.delete('/:agentId', handle(true));
-  function handle(deleting: boolean) {
+  router.post('/:agentId/restore', handle(false, true));
+  function handle(deleting: boolean, restoring = false) {
     return async (req: import('express').Request, res: import('express').Response) => {
       const { tenantId, userId } = res.locals as AuthLocals;
       const agentId = req.params.agentId;
@@ -21,7 +22,7 @@ export function registerAssistantConversationLifecycle(router: Router, store: Da
         const owner = { tenantId, userId, agentId };
         const result = await store.list('assistant_threads', { where: owner, perPage: 1 });
         const current = result.items[0];
-        if (!current || current.deletedAt || (current.source && current.source !== 'desktop')) {
+        if (!current || (current.deletedAt && !restoring) || (current.source && current.source !== 'desktop')) {
           res.status(404).json({ error: 'assistant_conversation_not_found', message: '会话已删除或不存在。' }); return;
         }
         if (current.version !== expectedVersion) {
@@ -32,7 +33,16 @@ export function registerAssistantConversationLifecycle(router: Router, store: Da
         }
         const version = expectedVersion + 1;
         const updatedAt = new Date().toISOString();
-        const patch = { messages: [], draftInput: '', creationDraft: null, scrollPosition: 0,
+        const recovery = current.conversationRecovery && typeof current.conversationRecovery === 'object'
+          ? current.conversationRecovery as Record<string, unknown> : null;
+        if (restoring && !recovery) {
+          res.status(409).json({ error: 'assistant_recovery_unavailable', message: '这条会话暂无可恢复的备份。' }); return;
+        }
+        const backupKeys = ['messages', 'draftInput', 'creationDraft', 'scrollPosition', 'unreadCount',
+          'isFollowingLatest', 'focusedTaskId', 'taskCards', 'title', 'paused'];
+        const snapshot = Object.fromEntries(backupKeys.filter(key => current[key] !== undefined).map(key => [key, current[key]]));
+        const patch = restoring ? { ...recovery, deletedAt: '', conversationRecovery: null,
+          conversationResetVersion: version, version, updatedAt } : { conversationRecovery: snapshot, messages: [], draftInput: '', creationDraft: null, scrollPosition: 0,
           unreadCount: 0, isFollowingLatest: true, focusedTaskId: null, taskCards: {},
           title: deleting ? '' : current.title || '新会话', deletedAt: deleting ? updatedAt : '',
           conversationResetVersion: version, version, updatedAt };

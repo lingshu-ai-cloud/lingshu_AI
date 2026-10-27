@@ -86,7 +86,7 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
 
 
   const {
-    localMaterials, setLocalMaterials, materialsLoading, materialPage, setMaterialPage, materialFacets,
+    localMaterials, setLocalMaterials, materialsLoading, inventoryLoaded, inventoryError, materialPage, setMaterialPage, materialFacets,
     productDetailProduct, productDetailMaterials, setProductDetailMaterials, productDetailSlots,
     setProductDetailSlots, productDetailLoading, productDetailError, productMaterialSummaries,
     setProductMaterialSummaries, setProductSummaryRefreshVersion, refreshMaterials,
@@ -530,7 +530,7 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
     setMaterialFavoriteFilter,
     localMaterials,
     setLocalMaterials,
-    materialsLoading,
+    materialsLoading, inventoryLoaded, inventoryError,
     materialPage,
     setMaterialPage,
     materialFacets,

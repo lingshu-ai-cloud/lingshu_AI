@@ -25,6 +25,7 @@ export function useAssistantConversationManagement(input: Input) {
   const { modal, message } = App.useApp();
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
+  const [historyDeleted, setHistoryDeleted] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
@@ -51,21 +52,21 @@ export function useAssistantConversationManagement(input: Input) {
     if (!response.ok) throw new Error(data.message || '会话暂时无法更新，请重试。');
     return data;
   };
-  const refreshHistory = async (page = 1) => {
+  const refreshHistory = async (page = 1, deleted = historyDeleted) => {
     const token = getToken();
     setHistoryLoading(true); setHistoryError('');
     try {
-      const response = await fetch(`/api/overseas/assistant-threads?page=${page}`, { headers: authHeader() });
+      const response = await fetch(`/api/overseas/assistant-threads?page=${page}${deleted ? '&deleted=1' : ''}`, { headers: authHeader() });
       if (!response.ok) throw new Error('历史会话读取失败，请重试。');
       const data = await response.json();
       if (token !== getToken()) return;
-      const entries = (data.items || []).filter((item: Entry) => !item.deletedAt && /^(?:business|conversation:)/.test(item.agentId));
+      const entries = (data.items || []).filter((item: Entry) => (deleted ? Boolean(item.deletedAt) : !item.deletedAt) && /^(?:business|conversation:)/.test(item.agentId));
       setItems(previous => page === 1 ? entries : [...new Map([...previous, ...entries].map(item => [item.agentId, item])).values()]);
       setNextPage(data.nextPage || null);
     } catch (error) { setHistoryError(error instanceof Error ? error.message : '读取失败'); }
     finally { setHistoryLoading(false); }
   };
-  const run = async (action: 'new' | 'open' | 'clear' | 'delete', targetKey = activeKey, targetVersion?: number) => {
+  const run = async (action: 'new' | 'open' | 'clear' | 'delete' | 'restore', targetKey = activeKey, targetVersion?: number) => {
     if (lock.current || input.pause.current || input.blocked || !input.ready) return;
     const local = useAssistantStore.getState().threads[agent];
     if (local.pendingContentTaskBinding) {
@@ -113,12 +114,13 @@ export function useAssistantConversationManagement(input: Input) {
         useAssistantStore.getState().setPersistenceMetadata(agent, saved.version, saved.updatedAt);
       }
       let next: AgentThreadState | undefined;
-      if (action === 'clear' || action === 'delete') {
-        const result = await api(targetKey, action === 'clear' ? 'POST' : 'DELETE', {
-          expectedVersion: targetKey === activeKey ? saved.version : targetVersion,
-        }, action === 'clear' ? '/clear' : '');
+      if (action === 'clear' || action === 'delete' || action === 'restore') {
+        const result = await api(targetKey, action === 'delete' ? 'DELETE' : 'POST', {
+          expectedVersion: action === 'restore' ? (await api(targetKey)).version : targetKey === activeKey ? saved.version : targetVersion,
+        }, action === 'clear' ? '/clear' : action === 'restore' ? '/restore' : '');
         if (!current()) return;
-        if (targetKey === activeKey) next = action === 'clear'
+        if (action === 'restore') next = persistedAssistantThread(result, emptyAssistantThread())!;
+        else if (targetKey === activeKey) next = action === 'clear'
           ? persistedAssistantThread(result, emptyAssistantThread())!
           : { ...emptyAssistantThread(), conversationKey: `conversation:${crypto.randomUUID()}` };
       } else if (action === 'new') next = { ...emptyAssistantThread(), conversationKey: `conversation:${crypto.randomUUID()}` };
@@ -136,7 +138,8 @@ export function useAssistantConversationManagement(input: Input) {
       }
       if (action === 'delete' && targetKey !== activeKey) await refreshHistory();
       else setHistoryOpen(false);
-      if (action === 'clear' || action === 'delete') void message.success(action === 'clear' ? '会话已清空' : '会话已删除');
+      if (action === 'clear' || action === 'delete') void message.success({ duration: 8, content: <span>{action === 'clear' ? '会话已清空' : '会话已删除'} <Button type="link" size="small" onClick={() => void run('restore', targetKey)}>撤销</Button></span> });
+      if (action === 'restore') void message.success('会话已恢复');
     } catch (error) {
       if (current()) void message.error(error instanceof Error ? error.message : '操作失败，请重试。');
     } finally {
@@ -146,7 +149,7 @@ export function useAssistantConversationManagement(input: Input) {
   };
   const confirm = (action: 'clear' | 'delete', key = activeKey, version?: number) => modal.confirm({
     title: action === 'clear' ? '清空当前会话？' : '删除这条会话？',
-    content: `${action === 'clear' ? '聊天消息将被清空，会话会保留。' : '会话及聊天消息将从历史记录中移除。'}此操作不可撤销。已创建的任务、素材、企业资料和已保存的长期记忆会保留，正在执行的任务不受影响。`,
+    content: `${action === 'clear' ? '聊天消息将被清空，会话会保留。' : '会话及聊天消息将从历史记录中移除。'}可在历史会话中恢复已删除的会话；清空后可撤销最近一次操作。已创建的任务、素材、企业资料和已保存的长期记忆会保留，正在执行的任务不受影响。`,
     okText: action === 'clear' ? '清空会话' : '删除会话', cancelText: '取消',
     autoFocusButton: 'cancel', okButtonProps: { danger: true }, onOk: () => run(action, key, version),
   });
@@ -166,17 +169,18 @@ export function useAssistantConversationManagement(input: Input) {
       <Button type="text" aria-label="会话管理" title="会话管理" disabled={disabled} loading={busy} icon={<Ellipsis size={20} />} />
     </Dropdown>
     <Modal title="历史会话" open={historyOpen} onCancel={() => setHistoryOpen(false)} footer={null} width={480}>
+      <div className="mb-3 flex gap-2"><Button type={!historyDeleted ? 'primary' : 'default'} onClick={() => { setHistoryDeleted(false); void refreshHistory(1, false); }}>历史会话</Button><Button type={historyDeleted ? 'primary' : 'default'} onClick={() => { setHistoryDeleted(true); void refreshHistory(1, true); }}>已删除会话</Button></div>
       <Spin spinning={historyLoading || busy}>
         {historyError ? <div role="alert">{historyError}<Button onClick={() => void refreshHistory()}>重试</Button></div>
           : !items.length ? <Empty description="暂无历史会话" image={Empty.PRESENTED_IMAGE_SIMPLE} />
           : <div className="max-h-[60vh] overflow-y-auto">{items.map(item => <div key={item.agentId} className="flex items-center gap-2 border-b border-border py-2">
-            <button type="button" disabled={disabled} className="min-w-0 flex-1 rounded-lg p-2 text-left hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent" onClick={() => void run('open', item.agentId)}>
+            <button type="button" disabled={disabled} className="min-w-0 flex-1 rounded-lg p-2 text-left hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent" onClick={() => void run(historyDeleted ? 'restore' : 'open', item.agentId)}>
               <span className="block truncate text-text-primary">{item.title || item.messages.find(msg => msg.role === 'user')?.content.slice(0, 40) || '新会话'}{item.agentId === activeKey ? ' · 当前' : ''}</span>
               <span className="text-xs text-text-muted">{item.messages.length} 条消息 · {new Date(item.updatedAt).toLocaleString('zh-CN')}</span>
             </button>
-            <Dropdown trigger={['click']} getPopupContainer={trigger => trigger.parentElement!} menu={{ items: [{ key: 'delete', label: '删除会话', danger: true }], onClick: () => confirm('delete', item.agentId, item.version) }}>
+            {historyDeleted ? <Button disabled={disabled} onClick={() => void run('restore', item.agentId)}>恢复会话</Button> : <Dropdown trigger={['click']} getPopupContainer={trigger => trigger.parentElement!} menu={{ items: [{ key: 'delete', label: '删除会话', danger: true }], onClick: () => confirm('delete', item.agentId, item.version) }}>
               <Button type="text" disabled={disabled} aria-label={`管理会话：${item.title || '新会话'}`} icon={<Ellipsis size={18} />} />
-            </Dropdown>
+            </Dropdown>}
           </div>)}</div>}
         {nextPage && <Button block disabled={historyLoading || busy} onClick={() => void refreshHistory(nextPage)}>加载更多会话</Button>}
       </Spin>
