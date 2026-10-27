@@ -2,6 +2,16 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前统一开发基线：前端冒烟问题修复候选（2026-10-27）
+
+- 权威分支仍为 `baseline/unified-20261026`，本批源码候选 `f55aebb70472b5c6e00429ada45824af61e01bfe`；用户要求按冒烟清单修复并部署，追加对话状态底部输入栏收紧。原有 WorkBuddy 素材准入和视频维护的未提交改动保持原样，未纳入候选。
+- 修复会话写入时 PocketBase 对空字符串的规范化与严格 CAS 比对；清空/删除可撤销、历史已删除会话可恢复，恢复继续沿用版本和所有权校验。旧写入 claim 恢复脚本默认只读，仅在完整快照和指纹完全匹配、已过期且二次复核后允许备份并释放 claim，不改写会话内容。
+- 修复视频鼠标播放、时长格式、账号健康入口与 Messenger 字段说明；素材库首批立即展示并限制后台并发，未完成加载与失败均不显示伪零结果，普通素材和工厂筛选前置。断网支持原地重连；历史残缺任务提供既有新建计划入口，投放名称与运行状态不符只作提示，不自动修改广告。
+- 对话模式输入栏默认单行，随文字增长至上限。真实组件本地浏览器实测外栏 70px、单行文本区 36px；六行文本时为 114px / 88px。截图 `/Users/julia1/.lingshu-ai/deployment-validation/smoke-fixes-composer-local.png`。尚未将本地视觉验证写成线上验收。
+- 合并并行生产修复 `d77192bf`，合并提交 `ee097a7a`；已发布来源的 `1793062800_assistant_pending_content_binding.js` 保持原字节，恢复快照单独使用新增 `1793066400_assistant_conversation_recovery.js`，迁移清单同步核验，未放宽 checksum guard。
+- 独立干净检出 `/Users/julia1/.lingshu-ai/deployment-validation/quick-card-v2-20261027`：真实 PocketBase 0.39.5 HTTP/生命周期、CAS、恢复脚本及受影响 UI 定向回归 45/45 通过；最终候选 TypeScript/lint、生产构建与容器可重现合同通过。相对 `d77192bf` 的架构扫描（3017 个生产 TS）及 207 项迁移清单只读检查通过。构建仍有大 chunk 提示，Studio 专项预算 373270/485000 字节通过。日志位于同目录父级 `smoke-fixes-*.log`。
+- **部署未完成**：另一用户会话“对已部署服务网站做前端冒烟测试”正在处理 `d77192bf` 的生产更新及无响应恢复，腾讯云已受理重启。本会话未并发运行生产部署、恢复或清理；尚未取得本批线上 SHA、容器状态和 ready 回执。待现有发布完成后再备份、从既有 `/opt/lingshu_AI` 快进拉取并执行 `bash deploy/update.sh`，然后验证页面。真实客户发送和付费供应商未执行。
+
 ## 当前统一开发基线：快捷卡片回复优化 v2 与本地基线（2026-10-27）
 
 本节指定当前工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026` 为本次集成与部署来源；下方其他机器的“当前基线”段落保留为来源历史。
