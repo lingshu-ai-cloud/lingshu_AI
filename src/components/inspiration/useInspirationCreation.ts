@@ -141,10 +141,9 @@ export function useInspirationCreation({ onEnterWorkflow, setMaterialMessage, se
       const store = useAssistantStore.getState();
       store.setMessages(PRIMARY_ASSISTANT_THREAD, [
         ...store.threads[PRIMARY_ASSISTANT_THREAD].messages,
-        { role: 'user', content: `参考这条爆款图文继续创作：${title}` },
         {
           role: 'assistant',
-          content: '已带入这条爆款图文。先核对参考图，再确认企业产品和发布要求。',
+          content: '已带入原帖，请选择参考图。',
           creationPortal: referencedPortal,
         },
       ]);

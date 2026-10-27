@@ -129,6 +129,8 @@ assert.doesNotMatch(videoCardSource.slice(videoCardSource.indexOf('export functi
 assert.match(detailSource, /aria-label="内容标签"[^]*?video\.tags\.map/, '爆款 hashtag 必须集中展示在详情顶部');
 assert.match(componentSource, /startInspirationCreation[^]*?requestExactFullAnalysis/, '未完成详细分析的视频点击复刻时必须自动补齐分析');
 assert.match(imageReplicationBranch, /assistantImageReplicationPortal\(prompt\)[^]*?sourceRecordId[^]*?creationPortal: referencedPortal/, '图文爆款复刻必须把已选参考写入原灵小枢对话');
+assert.match(imageReplicationBranch, /role: 'assistant',[^]*?content: '已带入原帖，请选择参考图。'/, '图文复刻入口只保留一句可执行提示');
+assert.doesNotMatch(imageReplicationBranch, /role: 'user'|参考这条爆款图文继续创作/, '卡片点击不得把长原帖标题重复写入对话');
 assert.match(imageReplicationBranch, /page: 'strategy'[^]*?ASSISTANT_HOME_ACTIVITY_EVENT/, '图文爆款复刻必须回到 hi，灵小枢首页继续问答');
 assert.doesNotMatch(imageReplicationBranch, /page: 'smartAssets'|directStudio: false/, '图文爆款复刻的新入口不得再打开独立制作界面');
 assert.match(detailSource, /detailCreationReady =[^;]*exactQuality\.ready && !pending/, '详情复刻入口不能依赖可失败的交接状态读取');

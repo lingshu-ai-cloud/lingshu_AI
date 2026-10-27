@@ -38,6 +38,7 @@ export function resolveSocialImageReviewSet(
     : anchor.contentHash!;
   const qualityEvidenceHash = createHash('sha256').update(JSON.stringify({ refs,
     checks: outputs.map(output => output.qualityChecks),
+    humanReview: outputs.map(output => output.humanQualityReview || null),
     preflight: outputs.map(output => output.qualityPreflight || null),
     hookFactorSpec: task.hookFactorSpec || null, adaptationSpec: task.adaptationSpec || null })).digest('hex');
   return { outputs, anchor, refs, contentHash, qualityEvidenceHash, qualityPassed: outputs.every(output =>

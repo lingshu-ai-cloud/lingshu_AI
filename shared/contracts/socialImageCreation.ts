@@ -130,7 +130,7 @@ export interface SocialImageRepairInstruction {
   failedChecks: SocialImageQualityCheckKey[];
   targetLayer: 'background' | 'product' | 'logo' | 'typography' | 'timeline' | 'full_composite';
   instruction: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'waived';
   fromVersion: number;
   toVersion?: number;
 }
@@ -227,6 +227,8 @@ export interface SocialImageOutputNode {
   contentHash?: string;
   version: number;
   qualityChecks: SocialImageQualityCheck[];
+  /** Explicit human acceptance bound to the reviewed candidate bytes; prior machine findings remain auditable. */
+  humanQualityReview?: { acceptedBy: string; acceptedAt: string; contentHash: string; priorChecks: SocialImageQualityCheck[] };
   /** Durable one-shot receipt for the paid visual preflight of exact candidate and reference bytes. */
   qualityPreflight?: {
     inputHash: string;

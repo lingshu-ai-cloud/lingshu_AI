@@ -102,7 +102,7 @@ function derivedNodeStates(task: SocialImageCreationTask): SocialImageProduction
   if (directorCurrent) states.director_review = completed('director_review');
   else if (qualityReady) states.director_review = { ...waiting('director_review'), status: 'needs_review', blockingReasons: ['social_image_director_review_required'] };
 
-  const activeRepairs = task.repairInstructions.filter(item => item.status !== 'completed');
+  const activeRepairs = task.repairInstructions.filter(item => ['pending', 'running', 'failed'].includes(item.status));
   states.repair = activeRepairs.length ? { ...waiting('repair'), status: activeRepairs.some(item => item.status === 'running') ? 'running' : 'needs_review',
     attempt: Math.max(1, activeRepairs.length), blockingReasons: activeRepairs.filter(item => item.status === 'failed').map(() => 'social_image_repair_failed') }
     : { ...waiting('repair'), status: 'skipped' };

@@ -1,6 +1,6 @@
 import type {SocialImageExecutionReceipt} from '../../shared/contracts/socialImageExecution';
 import { authHeader } from './auth';
-import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation';
+import type { SocialImageCreationTask, SocialImageOutputNode } from '../../shared/contracts/socialImageCreation';
 import type { SocialImageLayerGraph } from '../../shared/contracts/socialImageLayerGraph';
 import type { SocialImageDeliveryPackage, SocialImageProductionEvent, SocialImageProductionSnapshot } from '../../shared/contracts/socialImageProduction';
 
@@ -103,6 +103,11 @@ export const socialImageApi = {
   runPreflight: (task: SocialImageCreationTask) => request<{ ok: true; task: SocialImageCreationTask }>(`/tasks/${encodeURIComponent(task.id)}/quality/preflight`, {
     method: 'POST', body: JSON.stringify({ expectedVersion: task.version }),
   }),
+  acceptHumanQuality: (task: SocialImageCreationTask, candidate: SocialImageOutputNode) => request<{ ok: true; task: SocialImageCreationTask }>(
+    `/tasks/${encodeURIComponent(task.id)}/quality/human-accept`, { method: 'POST', body: JSON.stringify({
+      expectedVersion: task.version, candidateId: candidate.id, candidateVersion: candidate.version,
+      expectedContentHash: candidate.contentHash, confirmed: true,
+    }) }),
   compileLayered: (task: SocialImageCreationTask) => request<{ ok: true; task: SocialImageCreationTask; layerGraph: SocialImageLayerGraph }>(`/tasks/${encodeURIComponent(task.id)}/compile-layered`, {
     method: 'POST', body: JSON.stringify({ expectedVersion: task.version }),
   }),
