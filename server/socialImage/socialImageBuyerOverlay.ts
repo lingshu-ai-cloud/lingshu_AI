@@ -109,8 +109,10 @@ export function socialImageBuyerOverlaySvg(width: number, height: number, poster
   const factY = Math.max(Math.round(height * .30), supportY + font(100));
   const factLine = font(43);
   if (factY + facts.length * factLine > height * .47) throw new Error('social_image_buyer_copy_overflow');
-  const factPanelTop = factY - font(115);
-  const factPanelHeight = facts.length * factLine + font(145);
+  // One compact copy card carries both the headline and buyer facts. Keep the
+  // rest of the generated scene untouched so its lighting and detail survive.
+  const copyCardTop = topY - font(17);
+  const copyCardBottom = factY + (facts.length - 1) * factLine + font(75);
   const labelSize = label.length <= 14 ? font(54) : font(32);
   // Keep the benchmark's full-width rectangular CTA, with the product's color family.
   const footerTop = Math.round(height * .875);
@@ -119,12 +121,10 @@ export function socialImageBuyerOverlaySvg(width: number, height: number, poster
   const fontFamily = 'Arial, PingFang SC, Noto Sans, sans-serif';
   return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
     <defs>
-      <linearGradient id="topWash" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#f5fbff" stop-opacity="${highContrast ? '.98' : '.94'}"/><stop offset="1" stop-color="#f5fbff" stop-opacity="0"/></linearGradient>
       <linearGradient id="sealEdge" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff"/><stop offset=".5" stop-color="${colors.edge}"/><stop offset="1" stop-color="${colors.pale}"/></linearGradient>
       <radialGradient id="sealFace"><stop stop-color="${colors.sealLight}"/><stop offset="1" stop-color="${colors.seal}"/></radialGradient>
     </defs>
-    <rect width="${width}" height="${Math.round(height * .44)}" fill="url(#topWash)"/>
-    ${facts.length ? `<rect x="${x - font(18)}" y="${factPanelTop}" width="${Math.round(width * (layout.copyRight - .09))}" height="${factPanelHeight}" rx="${font(18)}" fill="#fff" fill-opacity="${highContrast ? '.97' : '.91'}" stroke="${colors.pale}" stroke-width="${Math.max(1, Math.round(2 * scale))}"/>` : ''}
+    ${facts.length ? `<rect x="${x - font(18)}" y="${copyCardTop}" width="${Math.round(width * (layout.copyRight - .09))}" height="${copyCardBottom - copyCardTop}" rx="${font(18)}" fill="#fff" fill-opacity="${highContrast ? '.97' : '.91'}" stroke="${colors.pale}" stroke-width="${Math.max(1, Math.round(2 * scale))}"/>` : ''}
     <rect y="${footerTop}" width="${width}" height="${height - footerTop}" fill="${highContrast ? colors.footerStrong : colors.footer}"/>
     <line x1="0" y1="${footerTop}" x2="${width}" y2="${footerTop}" stroke="${colors.pale}" stroke-width="${Math.max(2, Math.round(3 * scale))}"/>
     ${brand.map((line, index) => `<text x="${x}" y="${topY + font(30) + index * font(34)}" fill="${colors.ink}" font-family="${fontFamily}" font-size="${font(28)}" font-weight="700" letter-spacing="1">${xml(line)}</text>`).join('')}

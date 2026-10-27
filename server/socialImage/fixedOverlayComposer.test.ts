@@ -38,6 +38,9 @@ test('approved B2B fallback draws verified buyer information over the existing s
   const center = await sharp(result).extract({ left: 600, top: 600, width: 1, height: 1 }).raw().toBuffer();
   const original = await sharp(scene).extract({ left: 600, top: 600, width: 1, height: 1 }).raw().toBuffer();
   assert.deepEqual([...center.subarray(0, 3)], [...original.subarray(0, 3)], 'the real product stage is not obscured by a synthetic box');
+  const sceneAbove = await sharp(result).extract({ left: 600, top: 120, width: 1, height: 1 }).raw().toBuffer();
+  assert.deepEqual([...sceneAbove.subarray(0, 3)], [...original.subarray(0, 3)],
+    'the scene above the product stays unchanged outside the compact copy card');
   const seal = await sharp(result).extract({ left: 1040, top: 180, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
   assert.ok(seal[0]! < 80 && seal[1]! < 150, 'the top-right buyer facts sit inside a visible dark product seal');
   const heroEdge = await sharp(result).extract({ left: 920, top: 180, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
@@ -61,7 +64,8 @@ test('mist poster reserves a readable upper-left OEM/ODM block without covering 
   assert.match(svg, /<text[^>]+font-size="54"[^>]*>OEM \/ ODM<\/text>/);
   assert.match(svg, /<text[^>]+font-size="60"[^>]*>DEEP SEA<\/text>/);
   assert.match(svg, /<text[^>]+font-size="60"[^>]*>MIST<\/text>/);
-  assert.match(svg, /<rect x="50" y="261" width="372"/);
+  assert.match(svg, /<rect x="50" y="38" width="372"/);
+  assert.doesNotMatch(svg, /topWash|height="528" fill="url/);
   const result = await composeFixedSocialLayers({ background: product, products: [product], poster,
     width: 1200, height: 1200, productTreatment: 'integrated_scene' });
   const center = await sharp(result).extract({ left: 600, top: 700, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
