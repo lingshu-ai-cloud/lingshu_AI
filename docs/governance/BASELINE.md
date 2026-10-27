@@ -2,6 +2,13 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前统一开发基线：智能经营与灵小枢周任务视图（2026-10-27）
+
+- 权威工作树与 `baseline/unified-20261026` 不变；实际起点 `40a35534`，功能来源 `feature/intelligent-analytics-page-20261027` / `4fcaed5d`，源码候选 `0b72de2c`，本治理补记另行提交。旧 `cd5222e6` 是祖先，后续图文修复完整保留。
+- 经营总览布局及 Meta 统计、企业目录本地补充、原灵小枢对话框展开周任务视图与扇形返回按钮合入；展开隐藏侧边书签，返回保留草稿。私有目录数据、媒体、数据库及凭据不纳入 Git。
+- 干净候选 28/28 定向测试、全量 TypeScript、相对 `40a35534` 的架构预算（3041 文件）、207 项迁移清单与 checksum guard、双端构建、diff 检查通过；无迁移变更。原 41 项未提交内容在快进前后逐字节复核，不纳入提交。
+- 未运行全仓 quality/verify、真实供应商 E2E、推送、部署或数据库迁移；基线源码不等于预览/生产环境已更新。详见 [本轮合入记录](BUSINESS-OVERVIEW-INTEGRATION-20261027.md)。
+
 ## 当前统一开发基线：图文背景细节保留（2026-10-27）
 
 - 本轮新 SKU 真实联调基于 `2c5d71ab49dc014906c0c9252658efc41c7833cd`、独立本地数据、同版 Web/worker，经正常会话入口选取历史 Apify 参考 `history-image-4e4496cdadb6b43e8af7b695` 第 1 张和另一款产品 `GUIANFA-RS-006` 蜜桃冰雪霜，Facebook／英文／1:1，单任务上限 5 元。用户经界面确认后正常入队：内容任务 `socialtask_55ba41a32afb2715293ee51e`、图片任务 `img32295a0a7e7f`、作业 `58a10bc7ff58fdf`。观察期间未改任务、手动推进、重试或发布；作业自然停于 `blocked` / `user_input_required:social_image_quality_requires_review`，图片任务 `review_required`，候选图不可视为合格交付。供应商精确费用回执未取得，不能确认剩余预算，也未追加付费请求。

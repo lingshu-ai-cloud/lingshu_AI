@@ -1,5 +1,10 @@
 # Git 工作树状态盘点
 
+## 2026-10-27 智能经营与灵小枢周任务视图集成
+
+- 功能树 `intelligent-analytics-page-20261027` 的本轮修改提交至 `4fcaed5d`，基于实际统一基线 `40a35534` 在 `business-overview-safe-20261027` / `integration/business-overview-safe-20261027` 隔离合并，源码 `0b72de2c`。仅软链依赖，未复制运行数据或凭据。
+- 权威基线树与原 41 项未提交内容保留；恢复点 `backup/pre-business-overview-20261027-40a35534`。功能树及候选树保留，预览继续使用原功能树；没有推送、部署、迁移或其他工作树清理。详见 [合入记录](BUSINESS-OVERVIEW-INTEGRATION-20261027.md)。
+
 ## 2026-10-27 智能问数版本安全集成
 
 - 新建本聊天隔离候选 `/Users/julia1/Documents/ChatGPT/基线管理/analytics-safe-20261027` / `integration/analytics-safe-20261027`，以 `1f0ca7e3` 合入远端 `节节智能问数待优化` / `cdfbab8d`，源码合并 `ce83f310`。候选树保留；仅软链依赖，未复制业务数据库或凭据。
