@@ -10,6 +10,7 @@ services:
       - ${ENV_FILE_PATH:-.env.production}
     environment:
       NODE_ENV: production
+      APP_BUILD_SHA: ${APP_BUILD_SHA:-unknown}
       PORT: 8788
       PB_URL: http://pocketbase:8090
       PROCESS_ROLE_SPLIT_ENABLED: "true"
@@ -48,6 +49,7 @@ services:
       - ${ENV_FILE_PATH:-.env.production}
     environment:
       NODE_ENV: production
+      APP_BUILD_SHA: ${APP_BUILD_SHA:-unknown}
       PB_URL: http://pocketbase:8090
       PROCESS_ROLE_SPLIT_ENABLED: "true"
       PROCESS_ROLE: worker
