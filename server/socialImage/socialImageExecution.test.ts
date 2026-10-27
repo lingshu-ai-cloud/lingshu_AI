@@ -430,11 +430,9 @@ test('durable image worker claims one frozen GPT Image 2 unit and never submits 
       referenceBytes:async()=>({bytes:referenceBytes,mimeType:'image/png'}),
       submit:async(request:Parameters<typeof import('./socialImagePaidSingleRender.js').submitClaimedSocialImageSingleRender>[0])=>{
         submitted++;
-        assert.equal(request.references.length, 2, 'the model receives the product before the benchmark');
-        assert.equal(Buffer.from(request.references[0]!.base64, 'base64').compare(productBytes), 0);
-        assert.equal(Buffer.from(request.references[1]!.base64, 'base64').compare(referenceBytes), 0);
-        assert.match(request.prompt,/one photograph/);
-        assert.doesNotMatch(request.prompt,/BACKGROUND ONLY/);
+        assert.equal(request.references.length, 0, 'the model receives no product or benchmark identity pixels');
+        assert.match(request.prompt,/BACKGROUND PLATE ONLY/);
+        assert.match(request.prompt,/Do not draw any product/);
         assert.ok(request.composition?.productBytes.equals(productBytes));
         assert.equal(request.task.generationJobs.at(-1)?.status,'running');
         const saved=await completeSocialImagePaidJob({store,tenantId:'tenant-a',taskId:request.task.id,

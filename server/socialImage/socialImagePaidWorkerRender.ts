@@ -17,6 +17,7 @@ import { submitClaimedSocialImageSingleRender } from './socialImagePaidSingleRen
 import { readSocialImageTask, updateSocialImageTask } from './socialImageTask.js';
 import { socialImageBuyerCopy } from './socialImageBuyerCopy.js';
 import { isSocialImageBuyerPoster } from './socialImageBuyerOverlay.js';
+import { buyerPosterTone } from './fixedOverlayComposer.js';
 import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
 import type { SocialImageAspectRatio } from './referenceCanvas.js';
 import { imageLanguageSchema, normalizeImageLanguage } from '../../shared/contracts/imageLanguages.js';
@@ -60,14 +61,11 @@ export async function renderSocialImagePaidWorker(input: {
   const assetIssue = socialImageV3ResolvedAssetIssue(task, {
     productHashes: { [productId]: hash(product.bytes) }, materialHashes, referenceHash });
   if (assetIssue) throw new Error(assetIssue);
-  // The model sees the authoritative product first and the benchmark second.
-  // Package fidelity and scene cohesion are both checked on the final pixels.
+  // The paid scene request receives no identity pixels. Product and reference
+  // bytes are still bound and verified, then the product is locally composited.
   const productFormat = (await sharp(product.bytes).metadata()).format;
   if (!['png', 'jpeg', 'webp'].includes(productFormat || '')) throw new Error('social_image_product_image_format_unsupported');
-  const references: ReferenceImage[] = [{ mimeType: productFormat === 'jpeg' ? 'image/jpeg' : `image/${productFormat}`,
-    base64: product.bytes.toString('base64') }];
-  if (reference?.bytes.length) references.push({ mimeType: reference.mimeType,
-    base64: reference.bytes.toString('base64') });
+  const references: ReferenceImage[] = [];
   const profile = input.ports?.enterpriseProfile ? await input.ports.enterpriseProfile(tenantId)
     : input.ports?.enterpriseContext ? null : await readTenantEnterpriseProfile(tenantId);
   const enterprise = await (input.ports?.enterpriseContext || (async () => buildEnterpriseContext(profile!)))(tenantId);
@@ -104,11 +102,13 @@ export async function renderSocialImagePaidWorker(input: {
     headline: frozen.poster.headline, imagePrompt: frozen.imagePrompt });
   if (commercialIssue) throw new Error(commercialIssue);
   const prompt = buildSocialImagePosterPlatePrompt({ ratio: frozen.ratio, recipe: task.replicationRecipe,
-    buyerPoster: isSocialImageBuyerPoster(frozen.poster) ? frozen.poster : undefined });
+    buyerPoster: isSocialImageBuyerPoster(frozen.poster) ? frozen.poster : undefined,
+    tone: await buyerPosterTone(product.bytes) });
   const ratio = frozen.ratio as SocialImageAspectRatio;
   const quality = normalizeImageGenerationQuality(frozen.imageQuality);
   const inputHash = createHash('sha256').update(JSON.stringify({ prompt, ratio, quality,
     references: references.map(ref => hash(Buffer.from(ref.base64, 'base64'))),
+    productSourceSha256: hash(product.bytes), benchmarkSha256: referenceHash,
     requestedProductIds: [productId], materialIds: task.materialIds,
     imageTaskId: task.id, imageJobId: job.id, plannedInputHash: null,
     renderSpecInputHash: socialImageV3RenderSpecInputHash(task) })).digest('hex');

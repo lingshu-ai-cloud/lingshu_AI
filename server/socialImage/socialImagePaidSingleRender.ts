@@ -33,7 +33,7 @@ export async function submitClaimedSocialImageSingleRender(input: {
   const bytes = input.composition ? await composeFixedSocialLayers({ background: plate,
     products: [input.composition.productBytes], poster: input.composition.poster,
     width: canvas.width, height: canvas.height, recipe: input.composition.recipe,
-    productTreatment: 'integrated_scene', referenceTextRegion: input.composition.referenceTextRegion }) : plate;
+    productTreatment: 'framed_source', referenceTextRegion: input.composition.referenceTextRegion }) : plate;
   const material = await createGeneratedImageMaterial({
     title: `AI 图文海报 · ${input.task.renderBrief?.headline || 'Product overview'}`.slice(0, 120),
     bytes, mimeType: 'image/png', source: generated.source, tenantId: input.tenantId,
@@ -46,7 +46,7 @@ export async function submitClaimedSocialImageSingleRender(input: {
       socialImageTaskId: input.task.id, socialImageJobId: input.jobId,
       socialImageInputHash: input.inputHash, model: generated.model, qualityStatus: 'needs_review',
       ...(input.composition ? { localComposition: isSocialImageBuyerPoster(input.composition.poster)
-        ? 'integrated-scene-b2b-v2' : 'integrated-scene-and-copy-v1',
+        ? 'identity-locked-b2b-v1' : 'fixed-product-and-copy-v1',
         backgroundMaterialId: plateMaterial?.id,
         plateSha256: createHash('sha256').update(plate).digest('hex'),
         productSha256: createHash('sha256').update(input.composition.productBytes).digest('hex') } : {}) },

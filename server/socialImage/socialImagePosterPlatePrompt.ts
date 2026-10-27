@@ -1,18 +1,18 @@
 import type { SocialImageReplicationRecipe } from '../../shared/contracts/socialImageCreation.js';
-import { socialImageBuyerLayout, type BuyerPosterCopy } from './socialImageBuyerOverlay.js';
+import { socialImageBuyerLayout, type BuyerPosterCopy, type BuyerPosterTone } from './socialImageBuyerOverlay.js';
 
 /** Give the image model room to unify the product and scene; typography stays deterministic. */
 export function buildSocialImagePosterPlatePrompt(input: {
   ratio: string;
   recipe?: SocialImageReplicationRecipe;
   buyerPoster?: BuyerPosterCopy;
+  tone?: BuyerPosterTone;
 }): string {
   const layout = input.buyerPoster ? socialImageBuyerLayout(input.buyerPoster) : null;
   return [
-    `Create one polished ${input.ratio} social poster scene. Image 1 is our real product; keep its package shape, color, logo and label faithful. Match the product's lighting, reflections and contact shadow to the scene.`,
-    'If image 2 is provided, borrow its overall layout and visual rhythm, but create an original scene for our product. Do not copy its brand or claims.',
-    'Only depict product views and packaging elements supported by the supplied enterprise image. If no open container or outer box is shown, keep the faithful closed product and use the visible texture as the secondary visual cue. Never invent a box, open jar, label, or formula.',
-    layout ? `Reserve the left ${Math.round(layout.copyRight * 100)}% for the buyer headline and facts. Center the complete product near ${Math.round(layout.heroCenter * 100)}% width, clear of the top-right badge and left copy. Retain the reference layout rhythm and leave the bottom 16% for the inquiry footer.` : '',
-    'Keep the scene detailed across the canvas: no broad fog, fade, or white wash. Do not add new text outside the product packaging; our compositor adds one compact left copy card and the footer.',
+    `Create one polished ${input.ratio} product-photography BACKGROUND PLATE ONLY. The enterprise product photo, its original label, all copy, badge, and footer will be composited later.`,
+    'Do not draw any product, container, box, package, hand, person, logo, letters, numbers, text, sign, badge, CTA, or interface element. Keep the entire product stage empty.',
+    layout ? `Leave a quiet, naturally light area in the left ${Math.round(layout.copyRight * 100)}% for dark buyer copy. Leave the central-right stage near ${Math.round(layout.heroCenter * 100)}% width empty for our real product photo; keep the outer top-right clear for a badge and the bottom 16% for a footer.` : '',
+    `Scene rhythm: ${input.recipe?.contentArchetype || 'premium product photography'}. Use a ${input.tone || 'neutral'} color family, a detailed setting and surface with natural light, depth, and contact-shadow space. No broad fog, fade, white wash, or text backing; the compositor decides whether localized contrast is needed.`,
   ].filter(Boolean).join('\n\n');
 }

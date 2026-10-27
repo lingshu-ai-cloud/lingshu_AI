@@ -54,6 +54,38 @@ test('approved B2B fallback draws verified buyer information over the existing s
   assert.ok(footerCorner[0]! < 50 && footerCorner[1]! < 100, 'the cool-blue CTA block is distinctly darker than the scene');
 });
 
+test('identity-locked buyer poster keeps real product pixels and omits the white card on a quiet light scene', async () => {
+  const background = await sharp({ create: { width: 1200, height: 1200, channels: 3, background: '#f4e9e8' } }).png().toBuffer();
+  const product = await sharp({ create: { width: 300, height: 300, channels: 3, background: '#fafafa' } })
+    .composite([{ input: Buffer.from('<svg width="300" height="300"><rect x="95" y="95" width="110" height="110" fill="#bd3462"/></svg>') }]).png().toBuffer();
+  const poster = { originBadge: 'GUIANFA', headline: 'PEACH ICE FROST',
+    sellingPoints: ['Face cream', 'SKU: GUIANFA-RS-006'], bottomBar: ['50 g', 'OEM / ODM', 'Ask about packaging'],
+    cta: 'Message us for catalog and quote' };
+  const output = await composeFixedSocialLayers({ background, products: [product], poster,
+    width: 1200, height: 1200, productTreatment: 'framed_source' });
+  const pixel = async (bytes: Buffer, left: number, top: number) => [...(await sharp(bytes)
+    .extract({ left, top, width: 1, height: 1 }).removeAlpha().raw().toBuffer()).subarray(0, 3)];
+  assert.deepEqual(await pixel(output, 200, 430), await pixel(background, 200, 430),
+    'a pale quiet scene needs no white card behind the buyer copy');
+  assert.deepEqual(await pixel(output, 770, 636), [189, 52, 98],
+    'the product center comes from the source photograph rather than a model redraw');
+  assert.deepEqual(await pixel(output, 1151, 400), await pixel(background, 1151, 400),
+    'the source photo edge reaches zero opacity instead of leaving a rectangular border');
+  assert.deepEqual(await pixel(output, 600, 120), await pixel(background, 600, 120),
+    'the scene outside text and product keeps its details');
+});
+
+test('identity-locked buyer poster adds contrast backing only when the measured scene is dark', async () => {
+  const background = await sharp({ create: { width: 1200, height: 1200, channels: 3, background: '#3f2939' } }).png().toBuffer();
+  const product = await sharp({ create: { width: 300, height: 300, channels: 3, background: '#fff' } }).png().toBuffer();
+  const output = await composeFixedSocialLayers({ background, products: [product], width: 1200, height: 1200,
+    poster: { originBadge: 'GUIANFA', headline: 'PEACH ICE FROST', sellingPoints: ['Face cream'],
+      bottomBar: ['50 g', 'OEM / ODM', 'Ask about packaging'], cta: 'Message us' },
+    productTreatment: 'framed_source' });
+  const card = await sharp(output).extract({ left: 200, top: 430, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  assert.ok(card[0]! > 230 && card[1]! > 230 && card[2]! > 230);
+});
+
 test('mist poster reserves a readable upper-left OEM/ODM block without covering the product center', async () => {
   const product = readFileSync(new URL('../../fixtures/beauty-showcase/media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-03.png', import.meta.url));
   const poster = { originBadge: 'GUIANFA', headline: 'DEEP SEA MIST',
@@ -101,8 +133,8 @@ test('buyer copy density changes both the reserved text zone and the product pla
   const densePrompt = buildSocialImagePosterPlatePrompt({ ratio: '1:1', buyerPoster: dense });
   assert.match(compactPrompt, /left 40%/);
   assert.match(densePrompt, /left 44%/);
-  assert.match(compactPrompt, /complete product near 64% width/);
-  assert.match(densePrompt, /complete product near 66% width/);
+  assert.match(compactPrompt, /stage near 64% width empty for our real product photo/);
+  assert.match(densePrompt, /stage near 66% width empty for our real product photo/);
 });
 
 test('a different peach product changes the buyer poster color family', async () => {

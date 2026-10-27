@@ -3,11 +3,11 @@ import type { SocialImageReplicationRecipe } from '../../shared/contracts/social
 import { socialImageRectOverlapRatio } from '../../shared/contracts/socialImageLayerGraph.js';
 import { connectedBorderToAlpha } from './layerRenderer.js';
 import { normalizeSocialImageReferenceLayerBlueprints } from './socialImageTask.js';
-import { isSocialImageBuyerPoster, socialImageBuyerOverlaySvg } from './socialImageBuyerOverlay.js';
-import type { BuyerPosterTone } from './socialImageBuyerOverlay.js';
+import { isSocialImageBuyerPoster, socialImageBuyerLayout, socialImageBuyerOverlaySvg } from './socialImageBuyerOverlay.js';
+import type { BuyerCopyBacking, BuyerPosterTone } from './socialImageBuyerOverlay.js';
 
 /** Pick a broad color family from the selected product pixels, not from the benchmark brand. */
-async function buyerPosterTone(bytes: Buffer): Promise<BuyerPosterTone> {
+export async function buyerPosterTone(bytes: Buffer): Promise<BuyerPosterTone> {
   const { data } = await sharp(bytes).rotate().resize(80, 80, { fit: 'inside' })
     .removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const scores = { cool: 0, warm: 0, botanical: 0 };
@@ -144,6 +144,54 @@ async function softenFramedProductEdges(bytes: Buffer): Promise<Buffer> {
   return sharp(bytes).ensureAlpha().composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer();
 }
 
+/** Source-photo borders fade to zero; the label and center pixels stay unchanged. */
+async function featherBuyerPhotoEdges(bytes: Buffer): Promise<Buffer> {
+  const { width = 0, height = 0 } = await sharp(bytes).metadata();
+  if (!width || !height) return bytes;
+  const horizontal = Math.max(1, Math.round(width * .15));
+  const vertical = Math.max(1, Math.round(height * .12));
+  const mask = Buffer.alloc(width * height * 4, 255);
+  const ease = (value: number) => {
+    const t = Math.max(0, Math.min(1, value));
+    return t * t * (3 - 2 * t);
+  };
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const border = Math.min(ease(x / horizontal), ease((width - 1 - x) / horizontal),
+      ease(y / vertical), ease((height - 1 - y) / vertical));
+    mask[(y * width + x) * 4 + 3] = Math.round(border * 255);
+  }
+  return sharp(bytes).ensureAlpha().composite([{ input: mask,
+    raw: { width, height, channels: 4 }, blend: 'dest-in' }]).png().toBuffer();
+}
+
+/** Choose typography backing from the actual copy-zone pixels, not a prompt or SKU. */
+async function buyerCopyBacking(scene: Buffer, width: number, height: number,
+  repairContrast: boolean): Promise<BuyerCopyBacking> {
+  if (repairContrast) return 'local';
+  const left = Math.round(width * .04), top = Math.round(height * .03);
+  const { data } = await sharp(scene).extract({ left, top,
+    width: Math.round(width * .40), height: Math.round(height * .45) })
+    .resize(32, 32).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const brightness: number[] = [];
+  let edgeSum = 0, edgeCount = 0;
+  for (let y = 0; y < 32; y += 1) for (let x = 0; x < 32; x += 1) {
+    const i = (y * 32 + x) * 3;
+    const value = (.2126 * data[i]! + .7152 * data[i + 1]! + .0722 * data[i + 2]!) / 255;
+    brightness.push(value);
+    if (x > 0) {
+      const previous = i - 3;
+      edgeSum += Math.abs(value - (.2126 * data[previous]! + .7152 * data[previous + 1]!
+        + .0722 * data[previous + 2]!) / 255);
+      edgeCount += 1;
+    }
+  }
+  const tenth = brightness.sort((a, b) => a - b)[Math.floor(brightness.length * .1)]!;
+  const detail = edgeSum / Math.max(1, edgeCount);
+  if (tenth >= .62 && detail <= .075) return 'none';
+  if (tenth >= .38 && detail <= .13) return 'local';
+  return 'solid';
+}
+
 /** Keeps identity and UI pixel-identical across GIF frames. */
 export async function composeFixedSocialLayers(input: {
   background: Buffer;
@@ -164,6 +212,28 @@ export async function composeFixedSocialLayers(input: {
       : copyOverlaySvg(width, height, input.poster, input.recipe, input.referenceTextRegion, input.repairContrast);
     return sharp(input.background).rotate().resize(width, height, { fit: 'cover', position: 'attention' })
       .composite([{ input: overlay, left: 0, top: 0 }])
+      .png({ compressionLevel: 9 }).toBuffer();
+  }
+  if (isSocialImageBuyerPoster(input.poster) && input.productTreatment === 'framed_source') {
+    const source = input.products[0];
+    if (!source) throw new Error('social_image_buyer_product_source_missing');
+    const scene = await sharp(input.background).rotate().resize(width, height,
+      { fit: 'cover', position: 'attention' }).png().toBuffer();
+    const layout = socialImageBuyerLayout(input.poster);
+    const heroWidth = Math.round(width * Math.min(.55, .97 - layout.copyRight - .01));
+    const heroHeight = Math.round(height * .58);
+    const fitted = await sharp(source).rotate().resize(heroWidth, heroHeight, { fit: 'inside' }).png().toBuffer();
+    const hero = await featherBuyerPhotoEdges(fitted);
+    const size = await sharp(hero).metadata();
+    const left = Math.max(Math.round(width * (layout.copyRight + .01)),
+      Math.min(width - (size.width || heroWidth),
+        Math.round(width * layout.heroCenter - (size.width || heroWidth) / 2)));
+    const top = Math.round(height * .53 - (size.height || heroHeight) / 2);
+    const withProduct = await sharp(scene).composite([{ input: hero, left, top }]).png().toBuffer();
+    const overlay = socialImageBuyerOverlaySvg(width, height, input.poster,
+      Boolean(input.repairContrast), await buyerPosterTone(source),
+      await buyerCopyBacking(scene, width, height, Boolean(input.repairContrast)));
+    return sharp(withProduct).composite([{ input: overlay, left: 0, top: 0 }])
       .png({ compressionLevel: 9 }).toBuffer();
   }
   const stage = input.referenceTextRegion === 'top_left'
