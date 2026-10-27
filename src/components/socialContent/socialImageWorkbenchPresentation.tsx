@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LsMediaStateFrame, LsProgressiveMedia } from '../ui/LsExperiencePrimitives';
+import { authHeader } from '../../lib/auth';
 import type { SocialImageContentType, SocialImageCreationTask, SocialImageQualityCheckKey } from '../../../shared/contracts/socialImageCreation';
 
 export const IMAGE_TYPES: Array<{ id: SocialImageContentType; label: string; description: string; available: boolean }> = [
@@ -58,9 +59,30 @@ export function posterStyleForType(type: SocialImageContentType) {
 export function ReviewImage({ src, alt, onAvailability }: { src: string; alt: string; onAvailability?: (ready: boolean) => void }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [resolvedSrc, setResolvedSrc] = useState('');
+  const availability = useRef(onAvailability);
+  availability.current = onAvailability;
+  useEffect(() => {
+    setLoaded(false); setFailed(false); setResolvedSrc('');
+    if (!src) { setFailed(true); availability.current?.(false); return; }
+    const url = new URL(src, window.location.href);
+    if (url.origin !== window.location.origin || !url.pathname.startsWith('/api/')) {
+      setResolvedSrc(src);
+      return;
+    }
+    const controller = new AbortController();
+    let active = true;
+    let objectUrl = '';
+    void fetch(src, { headers: authHeader(), signal: controller.signal }).then(async response => {
+      if (!response.ok || !response.headers.get('Content-Type')?.startsWith('image/')) throw new Error('review_image_unavailable');
+      const blob = await response.blob();
+      if (active) { objectUrl = URL.createObjectURL(blob); setResolvedSrc(objectUrl); }
+    }).catch(() => { if (active) { setFailed(true); availability.current?.(false); } });
+    return () => { active = false; controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [src]);
   return <LsMediaStateFrame state={failed ? 'error' : loaded ? 'ready' : 'loading'}
     label={failed ? '图片暂不可用' : '正在加载图片'} className="h-full w-full">
-    <LsProgressiveMedia src={src} alt={alt} width="100%" height="100%" className="h-full w-full object-contain" preview={false}
-      onLoad={() => { setLoaded(true); if (!failed) onAvailability?.(true); }} onError={() => { setFailed(true); onAvailability?.(false); }} />
+    {resolvedSrc && <LsProgressiveMedia src={resolvedSrc} alt={alt} width="100%" height="100%" className="h-full w-full object-contain" preview={false}
+      onLoad={() => { setLoaded(true); if (!failed) availability.current?.(true); }} onError={() => { setFailed(true); availability.current?.(false); }} />}
   </LsMediaStateFrame>;
 }
