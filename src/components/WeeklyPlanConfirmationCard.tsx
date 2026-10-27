@@ -42,7 +42,7 @@ export default function WeeklyPlanConfirmationCard({
     <section aria-label="预算二次确认" className="rounded-lg border border-border bg-white p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <div className="rounded-lg bg-accent-dim p-3 text-accent"><WalletCards size={22} /></div>
+          <div className="rounded-lg border border-border bg-surface-2 p-3 text-accent"><WalletCards size={22} /></div>
           <div>
             <p className="text-xs font-semibold text-accent">第 2 步 · 确认预算</p>
             <h2 className="mt-1 text-xl font-semibold text-text-primary">本周预计需要 {money(totalMin)}–{money(totalMax)}</h2>
@@ -62,9 +62,9 @@ export default function WeeklyPlanConfirmationCard({
           <dd className="mt-2 text-lg font-semibold text-text-primary">{money(promotionBudgetCny)}</dd>
           <p className="mt-1 text-xs text-text-secondary">{promotionPlanCount > 0 ? `${promotionPlanCount} 条内容` : '本周不投流'}</p>
         </div>
-        <div className="rounded-lg border border-accent/30 bg-accent-dim p-4">
+        <div className="rounded-lg border border-accent bg-white p-4">
           <dt className="text-xs text-text-secondary">合计预算范围</dt>
-          <dd className="mt-2 text-lg font-semibold text-text-primary">{money(totalMin)}–{money(totalMax)}</dd>
+          <dd className="mt-2 text-lg font-semibold text-accent">{money(totalMin)}–{money(totalMax)}</dd>
           <p className="mt-1 text-xs text-text-secondary">按实际供应商账单结算</p>
         </div>
       </dl>
