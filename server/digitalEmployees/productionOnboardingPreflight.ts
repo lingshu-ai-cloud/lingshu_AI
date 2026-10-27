@@ -140,8 +140,9 @@ function assetRightsConsistentWithProfile(asset: AssetCandidate, profile: LocalM
 }
 
 function candidateProfiles(asset: AssetCandidate, tenantId: string): InventorySegmentProfile[] {
-  if (asset.type !== 'video' || asset.synthetic || asset.authorization.status !== 'owned'
-    || asset.authorization.scope !== 'tenant' || asset.source !== 'tenant_material' || asset.duration <= 0) return [];
+  const owned = asset.authorization.status === 'owned' && asset.authorization.scope === 'tenant' && asset.source === 'tenant_material';
+  const shared = asset.authorization.status === 'licensed' && asset.authorization.scope === 'shared' && asset.source === 'licensed_shared_material';
+  if (asset.type !== 'video' || asset.synthetic || (!owned && !shared) || asset.duration <= 0) return [];
   const carrier = asset as AssetProfileCarrier;
   const rawProfiles = [
     ...(Array.isArray(carrier.segmentProfiles) ? carrier.segmentProfiles : []),
@@ -152,7 +153,7 @@ function candidateProfiles(asset: AssetCandidate, tenantId: string): InventorySe
     if (!profile) return [];
     const currentSourceRevision = text(carrier.currentSourceRevision) || text(carrier.sourceRevision)
       || text(asset.scriptAnalysis?.sourceRevision) || profile.sourceRevision;
-    return [{ asset, profile, currentSourceRevision, persisted: true,
+    return [{ asset, profile: shared ? { ...profile, tenantId } : profile, currentSourceRevision, persisted: true,
       assetRightsConsistent: assetRightsConsistentWithProfile(asset, profile) }];
   });
   const analysis = asset.scriptAnalysis;
@@ -161,8 +162,8 @@ function candidateProfiles(asset: AssetCandidate, tenantId: string): InventorySe
     for (const shot of analysis.shots) {
       const assessment = buildLocalMaterialSegmentProfile({
         tenantId,
-        sourceTenantId: tenantId,
-        origin: 'my_materials',
+        sourceTenantId: shared ? null : tenantId,
+        origin: shared ? 'shared_library' : 'my_materials',
         assetId: asset.id,
         segmentId: shot.segmentId,
         sourceRevision: analysis.sourceRevision,
@@ -225,9 +226,8 @@ function structurallyCurrentProfile(item: InventorySegmentProfile, tenantId: str
     && profile.endMs <= Math.round(asset.duration * 1000);
 }
 
-/** Maps only tenant-owned, authorized and analyzed local video segments. A
- * product image, reference-only viral video or synthetic output cannot satisfy
- * local-footage readiness. */
+/** Maps authorized and analyzed tenant videos or licensed shared-library videos.
+ * Product images, reference-only viral videos and synthetic output cannot satisfy footage readiness. */
 export function inventoryFixedYieldArchetypes(
   assets: AssetCandidate[],
   input: { tenantId: string; requirements?: FixedYieldLocalMaterialRequirement[] },

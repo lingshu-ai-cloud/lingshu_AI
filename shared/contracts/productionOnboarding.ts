@@ -36,8 +36,9 @@ export interface ProductionOnboardingEvidence {
   productFactsReady: boolean;
   presenterReady: boolean;
   voiceReady: boolean;
-  /** Archetypes with at least one tenant-owned, authorized, analyzed segment. */
+  /** Archetypes with at least one authorized, analyzed tenant or shared-library segment. */
   inventoryArchetypes: FixedYieldArchetypeId[];
+  /** Legacy evidence kept for stored v1 payload compatibility. Creative spend is metered, not capped. */
   budgetConfirmed: boolean;
 }
 
@@ -50,8 +51,7 @@ export type ProductionOnboardingBlockerCode =
   | 'primary_cta_missing'
   | 'presenter_missing'
   | 'voice_missing'
-  | 'local_material_missing'
-  | 'budget_unconfirmed';
+  | 'local_material_missing';
 
 export interface ProductionOnboardingReadiness {
   ready: boolean;
@@ -60,8 +60,7 @@ export interface ProductionOnboardingReadiness {
     archetypeId?: FixedYieldArchetypeId;
     message: string;
     action: 'complete_production_onboarding' | 'complete_enterprise_profile' | 'complete_product_profile' | 'configure_contact'
-      | 'configure_presenter' | 'configure_voice' | 'upload_local_material'
-      | 'confirm_budget';
+      | 'configure_presenter' | 'configure_voice' | 'upload_local_material';
   }>;
 }
 
@@ -125,9 +124,8 @@ export function evaluateProductionOnboardingReadiness(input: {
   for (const archetypeId of new Set(input.requiredArchetypes.filter(item => !item.startsWith('P1')))) {
     if (!available.has(archetypeId)) add({
       code: 'local_material_missing', archetypeId,
-      message: `${archetypeId} 缺少企业自有且已授权的同类视频片段`, action: 'upload_local_material',
+      message: `${archetypeId} 缺少企业自有或共享素材库中已授权的同类视频片段`, action: 'upload_local_material',
     });
   }
-  if (!input.evidence.budgetConfirmed) add({ code: 'budget_unconfirmed', message: '开工预算尚未确认', action: 'confirm_budget' });
   return { ready: blockers.length === 0, blockers };
 }

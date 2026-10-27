@@ -8,18 +8,17 @@ import { AUTH_TOKEN_CHANGED_EVENT, authHeader } from '../lib/auth';
 import { productionNavigationIdentity } from '../lib/productionNavigation';
 import { socialContentApi } from '../lib/socialContentApi';
 import { SOCIAL_CONTENT_TASK_REFRESH_EVENT } from '../lib/socialContentTaskRefresh';
-import { creationTaskRows, type CreationTaskProduct, type CreationTaskRow } from '../lib/creationTaskWorkspace';
+import { creationTaskRows, type CreationTaskProduct } from '../lib/creationTaskWorkspace';
 import { mergeSocialContentTaskSummaries } from '../lib/socialContentTaskPagination';
 import { studioApi } from '../lib/studioApi';
 import { useAdPlanTasks } from '../lib/useAdPlanNavigation';
+import { openContentGenerationQueue } from '../lib/contentGenerationQueue';
 import { useCustomers } from '../hooks/useCustomers';
 import { useAdPlanOperatingData } from './useAdPlanOperatingData';
 import { projectContentWork, projectAdWork, projectCustomerWork, type BusinessWorkItem, type BusinessWorkKind } from '../lib/businessWorkProjection';
 import { dispatchDigitalEmployeeDeepLink } from '../lib/digitalEmployeeNavigation';
 import CreationTaskCover from './socialContent/CreationTaskCover';
-import CreationTaskDetailDrawer, { creationLocalTime } from './socialContent/CreationTaskDetailDrawer';
 import AdPlanMetricsCell from './AdPlanMetricsCell';
-import CreateContentPlanModal from './socialContent/CreateContentPlanModal';
 import LsIllustratedEmpty from './ui/LsIllustratedEmpty';
 
 const columns = [
@@ -28,6 +27,8 @@ const columns = [
   { kind: 'customer', label: '智能客服', page: 'conversion', Icon: Headphones },
 ] satisfies Array<{ kind: BusinessWorkKind; label: string; page: Page; Icon: typeof Sparkles }>;
 const time = (value: string) => Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('zh-CN') : '';
+const creationLocalTime = (value: string) => value.length === 10 ? `${value} · 时刻待定`
+  : Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '待安排';
 
 /** Remount domain readers on identity change; late responses cannot cross tenants. */
 export default function DigitalEmployeeHomeWork(props: { data: DigitalEmployeeOverview | null; onNavigate?: (page: Page) => void }) {
@@ -44,8 +45,6 @@ function BusinessWork({ data, onNavigate, identity }: { data: DigitalEmployeeOve
   const [content, setContent] = useState<SocialContentTaskSummary[] | null>(null), [products, setProducts] = useState<CreationTaskProduct[]>([]);
   const [unavailable, setUnavailable] = useState<NonNullable<SocialContentTaskPage['unavailableItems']>>([]);
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [productError, setProductError] = useState('');
-  const [selectedContent, setSelectedContent] = useState<string | null>(null);
-  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const plans = useAdPlanTasks(authHeader().Authorization || '');
   const customerList = useCustomers(revision, false);
   const refresh = () => { setRevision(value => value + 1); plans.retry(); };
@@ -88,7 +87,10 @@ function BusinessWork({ data, onNavigate, identity }: { data: DigitalEmployeeOve
   const available = { content: content !== null, traffic: plans.items !== null, customer: !customerList.loading && !customerList.error };
   const open = (item: BusinessWorkItem) => {
     if (identity !== productionNavigationIdentity()) return;
-    if (item.kind === 'content') { setSelectedContent(item.row.key); return; }
+    if (item.kind === 'content') {
+      openContentGenerationQueue({ view: 'tasks', ...(item.row.taskId ? { taskId: item.row.taskId } : {}) });
+      return;
+    }
     if (item.kind === 'customer') {
       dispatchDigitalEmployeeDeepLink({ page: 'conversion', runId: '', taskId: '', businessRef: { entityId: item.customer.id, taskKey: 'customer_conversation', businessDomain: 'customer' } }); return;
     }
@@ -97,7 +99,6 @@ function BusinessWork({ data, onNavigate, identity }: { data: DigitalEmployeeOve
     window.history.replaceState(window.history.state, '', url);
     window.dispatchEvent(new PopStateEvent('popstate', { state: window.history.state }));
   };
-  const selected: CreationTaskRow | null = rows.find(row => row.key === selectedContent) || null;
   return <section className="creator-home__canvas business-work" aria-label="数字员工正在进行的工作">
     <header className="business-work__header"><div><h2>正在推进的工作</h2><p>按业务对象展示，需要处理的优先</p></div><div className="business-work__controls"><Segmented aria-label="进行中工作筛选" value={mine ? 'mine' : 'all'} options={[{ label: '全部进行中', value: 'all' }, { label: '只看待我处理', value: 'mine' }]} onChange={value => setMine(value === 'mine')}/><Button onClick={refresh} loading={loading || plans.loading}>刷新</Button></div></header>
     <div className="business-work__grid">{columns.map(({ kind, label, page, Icon }) => {
@@ -112,10 +113,8 @@ function BusinessWork({ data, onNavigate, identity }: { data: DigitalEmployeeOve
           {item.kind === 'traffic' && <><p className="business-work__context">计划日预算 {item.task.currency} {item.task.configuration.dailyBudget ?? '—'}</p><AdPlanMetricsCell task={item.task} data={operating.items[item.task.id]} onRetry={() => operating.retryMetrics(item.task.id)} disabled={operating.loading}/></>}
           <footer><Button type="link" onClick={() => open(item)}>{item.action}</Button>{time(item.updatedAt) && <small>记录更新 {time(item.updatedAt)}</small>}</footer>
         </article>)}</div> : available[kind] && !errors[kind] ? <LsIllustratedEmpty icon={Icon} title={mine ? '暂无需要你处理的记录' : '暂无进行中的业务记录'} detail={`${label}的真实任务出现后，会在这里显示当前状态与下一步。`}/> : null}
-        <Button type="text" className="business-work__all" onClick={() => onNavigate?.(page)}>查看全部{label}</Button>
+        <Button type="text" className="business-work__all" onClick={() => kind === 'content' ? openContentGenerationQueue({ view: 'tasks' }) : onNavigate?.(page)}>查看全部{label}</Button>
       </section>;
     })}</div>
-    {data && <CreationTaskDetailDrawer row={selected} overview={data} onClose={() => setSelectedContent(null)} onUpdated={refresh} onRecover={() => { setSelectedContent(null); setRecoveryOpen(true); }}/>}
-    <CreateContentPlanModal open={recoveryOpen} onCancel={() => setRecoveryOpen(false)} onCreated={() => { setRecoveryOpen(false); refresh(); }}/>
   </section>;
 }

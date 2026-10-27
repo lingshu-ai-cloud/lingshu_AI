@@ -24,6 +24,14 @@ assert.match(source, /for \(const service of services\) start\(service\)/, '后�
 assert.match(source, /stableLocalAuthSecret/, '本地预览必须持久化独立签名密钥，后端重启不能让浏览器会话失效');
 assert.match(source, /LOCAL_DEMO_TOKEN_SECRET: localAuthSecret/, '本地预览后端必须复用机器本地的稳定签名密钥');
 assert.match(source, /LOCAL_DEMO_TOKEN_TTL_SECONDS: '86400'/, '本地预览登录应保持完整一天，不能在工作过程中提前失效');
+assert.match(source, /NODE_ENV: 'development'/, '受监督本地后端不能继承机器上的生产模式');
+assert.match(source, /SOCIAL_WEEKLY_EXECUTION_WORKER_ENABLED: 'true'/, '打开受监督应用时必须自动启动周内容扫描器');
+assert.match(source, /CONTENT_WORKER_SELF_HEAL_ENABLED: 'true'/, '本地 worker 心跳或扫描连续失效时必须由监督进程自动拉起');
+assert.match(source, /STARTER_198_ORCHESTRATOR_WORKER_ENABLED: 'true'/, '打开受监督应用时必须自动启动内容编排 worker');
+assert.match(source, /LINGSHU_LOCAL_PAID_GENERATION_ENABLED: '1'/, '只有受监督应用进程才允许用户确认后进入真实生成队列');
+assert.match(source, /LINGSHU_LOCAL_PRODUCTION_RUNTIME: '1'/, '受监督应用必须显式选择后台生产运行模式，普通预览保持网络隔离');
+assert.match(source, /PB_MIGRATIONS_DIR: path\.join\(runtimeRoot, 'pb_migrations'\)/, '工作树预览必须使用同一源码版本的迁移目录，不能继承其他 checkout 的绝对路径');
+assert.match(source, /api\/overseas\/ready/, '本地后台监控必须验证依赖与内容 worker，不能只验证 HTTP 进程存活');
 assert.match(source, /VITE_LINGSHU_LOCAL_PREVIEW: '1'/, '本地预览前端必须显式启用仅回环地址可用的会话引导');
 assert.match(source, /LINGSHU_PREVIEW_FRONTEND_PORT/, '功能分支必须能够使用独立前端端口，不能占用基线预览');
 assert.match(source, /Local preview services must use distinct ports/, '同一预览内的前后端端口必须拒绝重复配置');
@@ -33,6 +41,7 @@ assert.match(source, /loadLocalPreviewProviderEnvironment\(\{ runtimeRoot \}\)/,
 assert.match(source, /providerEnvironmentForService\(service.name, providerConfiguration\)/, '共享 provider 凭据只能注入后端，不能注入 Vite');
 assert.match(source, /providerConfiguration.loadedKeys.join/, 'provider 配置日志只能记录白名单键名');
 assert.doesNotMatch(source, /(?:log|console\.[a-z]+)\([^\n]*providerConfiguration\.providerEnv/, '不能记录 provider 凭据值');
+assert.match(source, /NODE_USE_ENV_PROXY: '0'/, '隔离预览必须直连已授权供应商，不能把请求改道到未授权的本地代理');
 assert.doesNotMatch(source, /'0\.0\.0\.0'/, '受监督的本地预览不能监听局域网接口');
 assert.match(source, /'--host',\s*'127\.0\.0\.1'/, '受监督的本地预览必须只绑定 IPv4 回环地址');
 assert.match(viteSource, /process\.env\.LINGSHU_PREVIEW_FRONTEND_PORT \|\| process\.env\.DEV_PORT/, '受监督预览的缓存命名必须采用实际监听端口，不能回退到默认端口');

@@ -102,8 +102,9 @@ export function useAssistantThreadSaveQueue({
           if (queue.abortController === controller) queue.abortController = null;
           if (!fenceIsCurrent()) return;
           if (response.status === 410) {
+            const latestLocal = useAssistantStore.getState().threads[agentId];
             const remote = persistedAssistantThread(payload?.current, snapshot);
-            if (remote) hydrateThread(agentId, remote);
+            if (remote) hydrateThread(agentId, { ...remote, draftInput: latestLocal.draftInput });
             window.dispatchEvent?.(new Event('lingshu:assistant-conversation-reset'));
             queue.pending = null;
             clearAssistantThreadJournal(window.localStorage, stablePersistenceScope, agentId);

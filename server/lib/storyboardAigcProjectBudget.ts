@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { withPaidOperationLock } from './paidOperationLock.js';
-import { isInternalBudgetExemptTenant } from './tenantBudgetExemption.js';
 
 export type StoryboardAigcStage = 'first_frame' | 'video';
 export interface StoryboardAigcSpendEntry {
@@ -91,7 +90,6 @@ export class StoryboardAigcProjectBudget {
           throw new Error('分镜 AIGC 请求标识对应的参考资产或镜头输入已变化，未调用供应商');
         return { existing: true, entry: existing };
       }
-      const budgetExempt = isInternalBudgetExemptTenant(input.tenantId);
       const maxRetries = this.maxRetries();
       if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 20) throw new Error('分镜 AIGC 重试上限配置无效');
       // Retries protect one exact supplier input.  A newly uploaded product
@@ -101,16 +99,7 @@ export class StoryboardAigcProjectBudget {
       const acceptedAttempts = Object.values(ledger.entries).filter(entry => entry.shotId === input.shotId
         && entry.stage === input.stage && entry.inputFingerprint === input.inputFingerprint).length;
       if (acceptedAttempts >= maxRetries + 1) throw new Error(`当前镜头${input.stage === 'first_frame' ? '首帧' : '视频'}已达到 ${maxRetries + 1} 次生成上限，未调用供应商`);
-      const configuredLimit = this.limitCny();
-      const requestedLimit = input.limitCny === undefined
-        ? (budgetExempt ? 1_000_000_000 : configuredLimit)
-        : Number(input.limitCny);
-      if (!Number.isFinite(requestedLimit) || requestedLimit <= 0) throw new Error('冻结制作额度无效，未调用供应商');
-      const limitMicros = micros(input.approvedFrozenLimit || budgetExempt ? requestedLimit : Math.min(configuredLimit, requestedLimit));
-      const usedMicros = Object.values(ledger.entries).reduce((sum, entry) => sum + entry.amountMicros, 0);
       const amountMicros = micros(input.estimatedCostCny);
-      if (!Number.isSafeInteger(usedMicros) || usedMicros + amountMicros > limitMicros)
-        throw new Error(`当前项目 AIGC 预算剩余 ¥${(Math.max(0, limitMicros - usedMicros) / 1e6).toFixed(2)}，本次预计 ¥${(amountMicros / 1e6).toFixed(2)}；未调用供应商`);
       const entry: StoryboardAigcSpendEntry = { operationId: input.operationId, shotId: input.shotId,
         stage: input.stage, amountMicros, originalAmountMicros: amountMicros, status: 'reserved', at: new Date().toISOString(),
         ...(input.inputFingerprint ? { inputFingerprint: input.inputFingerprint } : {}) };

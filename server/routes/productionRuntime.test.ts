@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createProductionRuntime } from './productionRuntime.js';
 import type { ProductionRouterOptions } from './productionContracts.js';
 
-test('production reference adapters remain unavailable until an explicit valid budget is configured', () => {
+test('production reference adapters require execution ports but never a creative budget ceiling', () => {
   const saved = process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT;
   let effects = 0;
   const options: ProductionRouterOptions = {
@@ -15,11 +15,11 @@ test('production reference adapters remain unavailable until an explicit valid b
     for (const raw of [undefined, '', ' ', '-1', 'NaN', 'Infinity']) {
       if (raw === undefined) delete process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT;
       else process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT = raw;
-      assert.deepEqual(createProductionRuntime(options).executableReferenceAdapters(), []);
+      assert.deepEqual(createProductionRuntime(options).executableReferenceAdapters(), options.adapters);
     }
     for (const referenceBudgetLimitCny of [0, 2]) {
       const runtime = createProductionRuntime({ ...options, referenceBudgetLimitCny });
-      assert.equal(runtime.referenceBudgetLimitCny(), referenceBudgetLimitCny);
+      assert.equal(runtime.referenceBudgetLimitCny(), null);
       assert.deepEqual(runtime.executableReferenceAdapters(), options.adapters);
     }
     assert.equal(effects, 0);
@@ -29,7 +29,7 @@ test('production reference adapters remain unavailable until an explicit valid b
   }
 });
 
-test('the exact exempt tenant does not depend on an internal reference ceiling', () => {
+test('all tenants use reference adapters without an internal reference ceiling', () => {
   const savedBudget = process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT;
   const savedExemptions = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
   const options: ProductionRouterOptions = {
@@ -46,10 +46,10 @@ test('the exact exempt tenant does not depend on an internal reference ceiling',
     delete process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT;
     process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'tenant-exact';
     const runtime = createProductionRuntime(options);
-    assert.ok(Number(runtime.referenceBudgetLimitCny('tenant-exact')) > 0);
+    assert.equal(runtime.referenceBudgetLimitCny('tenant-exact'), null);
     assert.deepEqual(runtime.executableReferenceAdapters('tenant-exact'), options.adapters);
     assert.equal(runtime.referenceBudgetLimitCny('tenant-other'), null);
-    assert.deepEqual(runtime.executableReferenceAdapters('tenant-other'), []);
+    assert.deepEqual(runtime.executableReferenceAdapters('tenant-other'), options.adapters);
   } finally {
     if (savedBudget === undefined) delete process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT;
     else process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT = savedBudget;

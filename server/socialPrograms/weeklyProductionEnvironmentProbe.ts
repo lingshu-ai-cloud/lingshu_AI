@@ -29,8 +29,14 @@ export async function probeContentWorkerHeartbeat(input: {
     if (row.state !== 'ready' || !['worker', 'all'].includes(String(row.role || ''))) return false;
     const age = now - Date.parse(String(row.last_seen_at || ''));
     const build = record(record(row.details).build);
+    const weekly = record(record(row.details).weeklyExecution);
+    const starter = record(record(row.details).starterContentWorkers);
     return Number.isFinite(age) && age >= 0 && age <= maxAgeMs
-      && String(build.commitSha || '').toLowerCase() === input.expectedBuildSha.toLowerCase();
+      && String(build.commitSha || '').toLowerCase() === input.expectedBuildSha.toLowerCase()
+      && weekly.configuredEnabled === true
+      && weekly.started === true
+      && ['waiting', 'scanning', 'idle'].includes(String(weekly.state || ''))
+      && starter.ready === true;
   });
 }
 

@@ -12,6 +12,8 @@ import LsDataChart, { chartPalette } from '../ui/LsDataChart';
 import { LsGradientProgress } from '../ui/LsExperiencePrimitives';
 import { buildBusinessHealthModel, businessHealthStatus, healthCriterionCoverageStatus, summarizeHealthCriteria, type BusinessHealthDimension, type BusinessHealthSources, type HealthCriterion, type HealthCriterionCoverageStatus } from './businessHealthModel';
 import type { AccountHealthResult } from './AccountHealthPanel';
+import AccountOperatingScoreCard from './AccountOperatingScoreCard';
+import { buildAccountOperatingScore, type AccountOperatingScore } from './accountOperatingScore';
 
 const icons = { accounts: Users, inquiries: MessageSquareText, content: Clapperboard, advertising: CircleDollarSign };
 const scoreLabel = (value: number | null) => value === null ? '待评估' : `${value} 分`;
@@ -30,7 +32,7 @@ type Props = {
   onOverviewRangeChange?: (range: BusinessHealthOverviewRange) => void;
   onNavigate?: (page: Page) => void;
   onOpenAccountHealth?: () => void;
-  previewScore?: { score: number; criteria: Array<{ label: string; score: number | null }> };
+  previewScore?: AccountOperatingScore;
 };
 
 function readPerformanceWithDeadline() {
@@ -191,15 +193,17 @@ export default function BusinessHealthOverview({ displayCompanyName, data, selec
   }, [refresh, snapshotStartsAt, snapshotEndsAt, previewScore, scoreOnly]);
   const model = useMemo(() => buildBusinessHealthModel(data, sources, selectedAccountId), [data, sources, selectedAccountId]);
   const accountDimension = model.dimensions.find(dimension => dimension.key === 'accounts');
-  const headlineScore = scoreOnly ? previewScore?.score ?? accountDimension?.score ?? null : model.totalScore;
+  const operatingScore = useMemo(() => previewScore || buildAccountOperatingScore(model.accounts, model.accountHealth, model.dimensions), [model, previewScore]);
+  const headlineScore = scoreOnly ? operatingScore.totalScore : model.totalScore;
   const headlineCoverage = scoreOnly
-    ? `${(previewScore?.criteria || accountDimension?.criteria || []).filter(item => item.score !== null).length}/${previewScore?.criteria.length ?? accountDimension?.criteria.length ?? 0} 项已评估`
+    ? `${operatingScore.evaluatedCriteria}/${operatingScore.totalCriteria} 项已评估`
     : `${model.scoreCoverage}/4 领域已评估`;
-  const accountCriteria = previewScore?.criteria || accountDimension?.criteria || [];
+  const accountCriteria = accountDimension?.criteria || [];
   const scoredAccountCriteria = accountCriteria.filter(item => item.score !== null && Number.isFinite(item.score)).length;
   const rangeValue = useMemo<[Dayjs, Dayjs] | null>(() => model.startsAt && model.endsAt
     ? [dayjs(model.startsAt), dayjs(model.endsAt)]
     : null, [model.endsAt, model.startsAt]);
+  if (scoreOnly) return <div className="space-y-6"><AccountOperatingScoreCard companyName={data.config?.companyName?.trim() || ''} score={operatingScore} preview={Boolean(previewScore)}/></div>;
   return <div className="space-y-6">
     {!detailsOnly && !accountOnly && <section className="overflow-hidden rounded-lg border border-border bg-white" aria-labelledby="business-health-title">
       <header className="flex flex-wrap items-start justify-between gap-3 px-6 pb-4 pt-5 xl:min-h-[112px]">

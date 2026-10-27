@@ -117,9 +117,9 @@ assert.match(publicationScheduleRoute, /weekly_publication\.rescheduled/, 'manua
 
 const goalApprovalRoute = routeBlock("digitalEmployeesRouter.post('/goals/:goalId/approve'");
 assert.match(goalApprovalRoute, /approveGoalForReview/, 'manual approval must call the same validated activation as review scheduling');
+assert.match(goalApprovalRoute, /contentGenerationAuthorization/, 'manual approval must require explicit content-generation authorization');
 const approveGoal = digitalEmployeeFunction(source, 'ensureReviewRunTasks') + digitalEmployeeFunction(source, 'approveGoalForReview');
-assert.match(approveGoal, /presenterProductionGate/, 'weekly approval must enforce the presenter appearance gate on the server');
-assert.match(approveGoal, /error: 'presenter_required'/, 'weekly approval must return a stable presenter-required error');
+assert.doesNotMatch(approveGoal, /presenterProductionGate|error: 'presenter_required'/, 'weekly approval must not require a presenter for pure product plans');
 for (const [stored, planned] of [
   ['business_domain', 'businessDomain'],
   ['capability_key', 'capabilityKey'],

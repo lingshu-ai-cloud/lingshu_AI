@@ -7,9 +7,10 @@ const progress = fs.readFileSync(new URL('./SocialProductionProgressPanel.tsx', 
 const confirmation = fs.readFileSync(new URL('./SocialGenerationConfirmationCard.tsx', import.meta.url), 'utf8');
 const hook = fs.readFileSync(new URL('./useSocialContentWorkspace.ts', import.meta.url), 'utf8');
 
-assert.match(progress, /data-content-milestone-rail/);
-assert.match(progress, /共 7 个节点/);
-assert.match(progress, /formatContentDuration\(item\.productionProgress\.estimatedRemainingSeconds\)/);
+assert.match(progress, /data-social-production-progress/, '制作页仍必须保留紧凑的实时状态入口');
+assert.match(progress, /onClick=\{\(\) => openContentGenerationQueue\(\{ view: 'tasks', taskId: task\.taskId \}\)\}/, '制作状态入口必须打开全局统一内容生成队列');
+assert.match(progress, /previousStatus === 'plan_review'[\s\S]{0,220}openContentGenerationQueue\(\{ view: 'tasks', taskId: task\.taskId \}\)/, '任务开始制作时必须聚焦统一队列中的同一任务');
+assert.doesNotMatch(progress, /data-content-milestone-rail|role="dialog"|taskItems\.map/, '制作页不得再维护第二份进度抽屉或任务列表');
 assert.doesNotMatch(progress, /style=\{\{\s*width|\d+%/);
 
 assert.match(confirmation, /data-content-preflight/);

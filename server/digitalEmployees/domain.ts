@@ -2,7 +2,7 @@ import { normalizeManagedPublishingGrant, type ManagedPublishingGrant } from '..
 import { normalizeContinuationPolicy, type ContinuationPolicy } from '../../shared/contracts/continuationPolicy.js';
 import { normalizeAssessment, type OperatingAssessment } from '../../shared/contracts/operatingMaturity.js';
 import { VIDEO_LANGUAGES, normalizeVideoLanguage } from '../../shared/contracts/videoLanguages.js';
-import { normalizeVideoPlan, videoSchedulingErrors, type VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
+import { normalizeVideoPlan, type VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 import {
   connectedAccountIssues,
   SOCIAL_DISCOVERY_BASELINE,
@@ -16,6 +16,7 @@ import {
   normalizeProductionOnboardingPreferences,
   type ProductionOnboardingPreferences,
 } from '../../shared/contracts/productionOnboarding.js';
+import { normalizeWeeklyPromotionPlans, type WeeklyPromotionPlan } from '../../shared/contracts/weeklyPromotionPlan.js';
 
 export type AutonomyMode = 'suggest' | 'collaborate' | 'managed' | 'automatic';
 /** The five user-facing roles. Legacy persisted `industry` values are mapped at the read boundary. */
@@ -98,6 +99,7 @@ export interface DigitalEmployeeConfig {
 
 export interface WeeklyGoalInput {
   videoPlans?: VideoCreationPlan[];
+  promotionPlans?: WeeklyPromotionPlan[];
   businessLine: 'full_funnel' | 'content_growth' | 'customer_conversion';
   contentPlatforms: Array<'facebook' | 'instagram' | 'tiktok' | 'youtube' | 'linkedin'>;
   title: string;
@@ -309,9 +311,11 @@ export function normalizeWeeklyGoal(input: Partial<WeeklyGoalInput>, config: Dig
   const contentPlatforms: WeeklyGoalInput['contentPlatforms'] = Array.isArray(input.contentPlatforms)
     ? [...new Set(input.contentPlatforms.filter((item): item is WeeklyGoalInput['contentPlatforms'][number] => allowedPlatforms.has(item as WeeklyGoalInput['contentPlatforms'][number])))]
     : defaultPlatforms;
+  const videoPlans = Array.isArray(input.videoPlans) ? input.videoPlans.slice(0, 30).map(normalizeVideoPlan) : undefined;
   return {
     businessLine,
-    ...(Array.isArray(input.videoPlans) ? { videoPlans: input.videoPlans.slice(0, 30).map(normalizeVideoPlan) } : {}),
+    ...(videoPlans ? { videoPlans } : {}),
+    ...(videoPlans ? { promotionPlans: normalizeWeeklyPromotionPlans(input.promotionPlans, videoPlans) } : {}),
     contentPlatforms: contentPlatforms.length ? contentPlatforms : defaultPlatforms,
     title: text(input.title, 160) || `${config.companyName} 本周增长目标`,
     objective: text(input.objective, 1000),
@@ -330,7 +334,6 @@ export function normalizeWeeklyGoal(input: Partial<WeeklyGoalInput>, config: Dig
 
 export function validateWeeklyGoal(goal: WeeklyGoalInput): string[] {
   const missing: string[] = [];
-  for (const [index, plan] of (goal.videoPlans || []).entries()) missing.push(...videoSchedulingErrors(plan).map(error => `第 ${index + 1} 条：${error}`));
   if (!goal.title) missing.push('目标名称');
   if (!goal.objective) missing.push('目标说明');
   if (!goal.metric) missing.push('指标');

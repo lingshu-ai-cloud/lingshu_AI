@@ -163,37 +163,24 @@ assert.match(productionProgress, /fixed bottom-24 right-4/,
 assert.match(productionProgress, /编导 Agent 正在准备导演方案/);
 assert.match(productionProgress, /内容 Agent 正在按导演方案生成视频/);
 assert.match(productionProgress, /animate-spin[^]*?motion-reduce:animate-none/);
-assert.match(productionProgress, /role="dialog"[^]*?aria-modal="true"[^]*?inset-y-0 right-0/,
-  'task details must open in an accessible right-side drawer');
-assert.match(productionProgress, /taskItems\.map\(item =>/,
-  'the drawer must render multiple tasks instead of only the selected task');
-for (const detail of ['当前自动步骤', '提交时间', '结果与预计', '编导 Agent 定方案，内容 Agent 生成视频']) {
-  assert.match(productionProgress, new RegExp(detail));
-}
+assert.match(productionProgress, /aria-haspopup="dialog"/, '制作进度触发器必须宣告它会打开统一队列弹窗');
+assert.match(productionProgress, /onClick=\{\(\) => openContentGenerationQueue\(\{ view: 'tasks', taskId: task\.taskId \}\)\}/,
+  '制作进度入口必须聚焦全局统一队列中的当前任务');
+assert.match(productionProgress, /previousStatus === 'plan_review'[\s\S]{0,220}openContentGenerationQueue\(\{ view: 'tasks', taskId: task\.taskId \}\)/,
+  '计划确认后进入制作时必须打开同一队列任务');
+assert.match(productionProgress, /打开内容生成队列/);
+assert.doesNotMatch(productionProgress, /role="dialog"|aria-modal="true"|taskItems\.map|data-content-milestone-rail/,
+  '制作页不得再保留平行的本地抽屉、多任务列表或里程碑轨道');
 for (const detail of ['任务已提交', '制作准备', '脚本与口播', '逐镜制作', '剪辑合成', '成片质检', '完成与验收']) {
   assert.match(productionExperienceModel, new RegExp(detail));
 }
-assert.match(productionProgress, /contentProgressNodes\(task\)/,
-  'the drawer rail and task pages must read the same persisted task status adapter');
-for (const detail of ['自动制作接力', '编导 Agent', '内容 Agent', '查看导演方案摘要', '脚本', '口播', '字幕', '镜头与节奏']) {
-  assert.match(productionProgress, new RegExp(detail));
-}
-for (const field of ['scriptSummary', 'voiceoverSummary', 'subtitleSummary', 'shotRhythmSummary']) {
-  assert.match(productionProgress, new RegExp(`plan\\.${field}`));
-}
-assert.match(productionProgress, /plan\?\.status === 'ready'/);
 assert.doesNotMatch(productionProgress, /formulaId|formula_reference|内部模板|系统提示词/,
   'customer progress must not expose internal formula identifiers or prompts');
-assert.match(productionProgress, /onSelectTask\?\.\(taskId\)/);
-assert.doesNotMatch(productionProgress, /if \(taskId !== task\.taskId\) onSelectTask/,
-  '当前项也必须可点击进入制作工作台');
-assert.match(productionProgress, /loadingMoreTasks \? '正在加载任务' : `加载更多任务/);
 assert.match(productionProgress, /task\.runId/);
 assert.doesNotMatch(productionProgress, /style=\{\{\s*width|\d+%/, 'production progress must not invent a percentage');
 assert.doesNotMatch(commandPanel + overview + productionProgress, /继续制作|请继续完成脚本|进入内容创作|Studio|旧路线/);
 assert.doesNotMatch(productionProgress + overview, /onNavigate\('smartAssets'\)/,
   'production status must not send the user into the old production route');
-for (const action of ['查看费用与效果', '继续自动处理', '审核生成结果']) assert.match(productionProgress, new RegExp(action));
 assert.match(overview, /真实素材已就绪，可以制作/);
 assert.match(overview, /<SocialAgentWorkflowPanel task=\{task\}/);
 for (const detail of ['经营 Agent', '编导 Agent', '内容 Agent', 'DirectorBrief', 'ContentExecutionPlan', '完整实现', '功能等价', '事实或权利阻断']) {
@@ -236,8 +223,6 @@ assert.doesNotMatch(studio, /storyboardSlots\.find\(item => item\.id === shotId\
 for (const field of ['estimatedTotalCostCny', 'estimatedSuccessRate', 'budgetLimitCny', 'executionPlanReview']) {
   assert.match(generationConfirmation, new RegExp(field));
 }
-assert.match(productionProgress, /内容 Agent 正按编导方案生成配音、字幕并剪辑视频/);
-assert.match(productionProgress, /补充任务资料/);
 assert.doesNotMatch(landing + overview, /配置爆款公式|填写脚本|填写口播|填写字幕/,
   'customers must not be asked to configure formulas or author production components');
 assert.match(preview, /fetchArtifactMedia\(artifact\.taskId, artifact\.artifactId/);

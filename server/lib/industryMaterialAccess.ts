@@ -32,8 +32,8 @@ export async function readMaterialTenantIndustry(tenantId: string, dataStore?: P
 }
 
 export function officialIndustryMaterialVisible(item: Record<string, unknown>, industry: string): boolean {
-  return item.scope === 'shared' && materialSourceCategoryOf(item) === 'official_import'
-    && Boolean(industry) && materialIndustryKey(item.industry) === industry;
+  void industry;
+  return item.scope === 'shared' && materialSourceCategoryOf(item) === 'official_import';
 }
 
 export function tenantUploadUsesReservedOrigin(input: Record<string, unknown>): boolean {

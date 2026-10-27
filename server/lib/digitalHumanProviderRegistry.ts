@@ -55,9 +55,11 @@ export function requiredReferencePreservation(input: { preserve?: string; produc
   const text = String(input.preserve || '');
   const required: ReferencePreservation[] = ['identity'];
   if (/动作|姿态|手势|节奏|motion|pose|gesture/i.test(text)) required.push('motion');
-  if (input.productMaterialId || /产品|商品|设备|配件|product|sku/i.test(text)) required.push('product');
-  if (input.backgroundMaterialId || /背景|场景|环境|background|scene/i.test(text)) required.push('background');
-  if (/构图|机位|镜头结构|景别|composition|camera|framing/i.test(text)) required.push('composition');
+  // Product, background and framing assets remain explicit generation inputs,
+  // but are not used to reject Seedance before submission. The provider cannot
+  // promise pixel locking; any drift is a post-render advisory for user review.
+  void input.productMaterialId;
+  void input.backgroundMaterialId;
   return [...new Set(required)];
 }
 
@@ -69,6 +71,9 @@ export function selectReferenceAdapter(input: {
   maxEstimatedCostCny?: number | null;
   requiredPreservation: ReferencePreservation[];
 }): { adapter?: DigitalHumanExecutionAdapter; reason: string; estimatedCostCny: number | null; evaluations: Array<{ tool: string; compatible: boolean; reasons: string[]; qualityInspection: boolean; estimatedCostCny: number | null }> } {
+  // Kept only for compatibility with stored requests created under the old
+  // capped policy. Reference production is now metered without an amount cap.
+  void input.maxEstimatedCostCny;
   const evaluated = input.candidates.map((id, order) => input.adapters.find(adapter => adapter.id === id && adapter.methods.includes(input.method)))
     .filter((adapter): adapter is DigitalHumanExecutionAdapter => Boolean(adapter))
     .map((adapter, order) => {
@@ -88,19 +93,13 @@ export function selectReferenceAdapter(input: {
         ? Number((duration * profile.estimatedCostCnyPerSecond).toFixed(2)) : null;
       const estimateInvalid = rawEstimatedCostCny != null && (!Number.isFinite(rawEstimatedCostCny) || rawEstimatedCostCny < 0);
       const estimatedCostCny = estimateInvalid ? null : rawEstimatedCostCny;
-      const budgetLimit = Number(input.maxEstimatedCostCny);
-      const budgetInvalid = input.maxEstimatedCostCny != null && (!Number.isFinite(budgetLimit) || budgetLimit < 0);
-      const budgetConfigured = input.maxEstimatedCostCny != null && Number.isFinite(budgetLimit) && budgetLimit >= 0;
-      const budgetUnknown = budgetConfigured && estimatedCostCny == null;
-      const budgetExceeded = budgetConfigured && estimatedCostCny != null && estimatedCostCny > budgetLimit;
-      return { adapter, order, profile, missing, durationExceeded, durationInvalid, profileInvalid, estimateInvalid, budgetInvalid, estimatedCostCny, budgetUnknown, budgetExceeded };
+      return { adapter, order, profile, missing, durationExceeded, durationInvalid, profileInvalid, estimateInvalid, estimatedCostCny };
     });
-  const compatible = evaluated.filter(item => !item.durationInvalid && !item.profileInvalid && !item.estimateInvalid && !item.budgetInvalid && !item.durationExceeded && item.missing.length === 0 && !item.budgetUnknown && !item.budgetExceeded)
+  const compatible = evaluated.filter(item => !item.durationInvalid && !item.profileInvalid && !item.estimateInvalid && !item.durationExceeded && item.missing.length === 0)
     .sort((a, b) => Number(Boolean(b.profile?.qualityInspection)) - Number(Boolean(a.profile?.qualityInspection))
       || (a.estimatedCostCny ?? Number.MAX_SAFE_INTEGER) - (b.estimatedCostCny ?? Number.MAX_SAFE_INTEGER) || a.order - b.order)[0];
-  const evaluations = evaluated.map(item => ({ tool: item.adapter.id, compatible: !item.durationInvalid && !item.profileInvalid && !item.estimateInvalid && !item.budgetInvalid && !item.durationExceeded && item.missing.length === 0 && !item.budgetUnknown && !item.budgetExceeded,
-    reasons: [...(item.durationInvalid ? ['镜头时长必须是有限正数'] : []), ...(item.budgetInvalid ? ['预算上限必须是有限非负数'] : []), ...(item.profileInvalid || item.estimateInvalid ? ['供应商时长或估价配置无效'] : []), ...(item.durationExceeded ? [`最长支持 ${item.profile?.maxDurationSeconds} 秒`] : []), ...(item.missing.length ? [`不能保证保留：${item.missing.join('、')}`] : []),
-      ...(item.budgetUnknown ? ['未声明估价，无法验证预算'] : []), ...(item.budgetExceeded ? [`预计 ¥${item.estimatedCostCny?.toFixed(2)} 超出预算上限 ¥${Number(input.maxEstimatedCostCny).toFixed(2)}`] : [])],
+  const evaluations = evaluated.map(item => ({ tool: item.adapter.id, compatible: !item.durationInvalid && !item.profileInvalid && !item.estimateInvalid && !item.durationExceeded && item.missing.length === 0,
+    reasons: [...(item.durationInvalid ? ['镜头时长必须是有限正数'] : []), ...(item.profileInvalid || item.estimateInvalid ? ['供应商时长或估价配置无效'] : []), ...(item.durationExceeded ? [`最长支持 ${item.profile?.maxDurationSeconds} 秒`] : []), ...(item.missing.length ? [`不能保证保留：${item.missing.join('、')}`] : [])],
     qualityInspection: Boolean(item.profile?.qualityInspection), estimatedCostCny: item.estimatedCostCny }));
   if (compatible) return { adapter: compatible.adapter, reason: '', estimatedCostCny: compatible.estimatedCostCny, evaluations };
   if (!evaluated.length) return { reason: '服务端没有注册支持当前制作方式的真实执行适配器', estimatedCostCny: null, evaluations: [] };
@@ -166,7 +165,7 @@ export function digitalHumanToolCapabilities(input: {
       costReconciliation: Boolean(adapter?.cost) || (id === 'heygen' && Boolean(input.talkingCostReconciliation)),
       ...(adapter?.executionProfile ? { executionProfile: structuredClone(adapter.executionProfile) } : {}),
       reason: execution
-        ? '服务端已注册真实执行适配器；提交仍需逐镜内容确认、预算准入和幂等任务标识'
+        ? '服务端已注册真实执行适配器；提交仍需逐镜内容确认、任务授权和幂等任务标识'
         : input.unavailableReasons?.[id]
           ? input.unavailableReasons[id]!
         : id === 'runway_seedance'

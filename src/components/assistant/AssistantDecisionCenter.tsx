@@ -609,6 +609,7 @@ export default function AssistantDecisionCenter({
         page,
         goalId,
         note: fieldValue({ key: 'note', label: '处理意见', type: 'text', required: action.requiresNote, maxLength: 500 }, note) as string,
+        contentGenerationAuthorized: action.id === 'approve_and_start',
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
@@ -689,7 +690,8 @@ export default function AssistantDecisionCenter({
   if (hideWhenEmpty && feed && !first && !loading && !error) return null;
 
   if (variant === 'summary') {
-    if (!first && !productionDecision && !error) return null;
+    const summaryDecision = first && !['plan_start', 'plan_adjustment'].includes(first.kind) ? first : null;
+    if (!summaryDecision && !productionDecision && !error) return null;
     return (
       <section
         className={`assistant-decision-center assistant-decision-center--summary ${className}`.trim()}
@@ -706,8 +708,8 @@ export default function AssistantDecisionCenter({
           />
         ) : productionFirst && productionDecision ? (
           <ProductionDecisionSummary decision={productionDecision} total={total || 1} onOpenDetail={onOpenDetail} />
-        ) : first ? (
-          <DecisionSummary card={first} total={total || 1} onOpenDetail={onOpenDetail} />
+        ) : summaryDecision ? (
+          <DecisionSummary card={summaryDecision} total={total || 1} onOpenDetail={onOpenDetail} />
         ) : null}
       </section>
     );

@@ -4,6 +4,7 @@ import AssistantTaskLinkCard from './AssistantTaskLinkCard';
 import type { ContentProductionTaskCard } from '../../../shared/contracts/assistantContentTaskCard';
 import { socialContentApi } from '../../lib/socialContentApi';
 import { productionNavigationIdentity } from '../../lib/productionNavigation';
+import { openContentGenerationQueue } from '../../lib/contentGenerationQueue';
 
 export function productionPortalNavigation(taskId: string) {
   return { page: 'socialInspiration', view: 'tasks', socialContentTaskId: taskId,
@@ -43,6 +44,6 @@ export default function AssistantProductionPortal({ taskId }: { taskId: string }
   if (!item) return <p role="status" className="mt-3 text-xs text-text-muted">正在核验生产任务回执…</p>;
   return <AssistantTaskLinkCard title={item.title} description={`内容任务 · ${item.card.currentNode.label}`} onOpen={() => {
     if (scopeIdentity.current !== productionNavigationIdentity()) { setItem(null); setError('登录身份已变化，请重新打开会话。'); return; }
-    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { ...productionPortalNavigation(taskId), navigationIdentity: productionNavigationIdentity() } }));
+    openContentGenerationQueue({view:'tasks',taskId});
   }}/>;
 }

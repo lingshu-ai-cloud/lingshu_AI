@@ -120,6 +120,7 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
     await send('总结当前会话', 'business', undefined, [], undefined, { businessScene: scene, preserveDraft: true });
     assert.deepEqual(requestedBody.businessScene, scene);
     assert.equal(requestedBody.responseMode, 'quick_task', 'home business cards request the compact actionable reply contract');
+    assert.equal(requestedBody.replyPresentation, 'customer', 'the server receives a scene-specific reply contract instead of a generic template');
     assert.deepEqual(useAssistantStore.getState().threads.business.messages.at(-1)?.businessScene, scene);
     await send('继续分析这个客户的异议'); assert.deepEqual(requestedBody.businessScene, scene);
     store.hydrateThread('business', emptyAssistantThread());

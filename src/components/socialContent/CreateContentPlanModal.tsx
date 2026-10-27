@@ -65,7 +65,7 @@ export default function CreateContentPlanModal({open,onCancel,onCreated}:{open:b
     }catch(cause){if(current())setError(cause instanceof Error?cause.message:'创建结果暂未核验，请重试原请求。');}
     finally{submitLock.current=false;setBusy(false);}
   };
-  return <Modal title="创建一条新计划" open={open} onCancel={()=>{if(!busy)onCancel();}} footer={<div className="flex justify-end gap-2"><Button disabled={busy} onClick={onCancel}>取消</Button><Button type="primary" loading={busy} disabled={!locked&&(loading||Boolean(loadError))} onClick={()=>form.submit()}>{locked?'重试原请求':'确认本条创作任务'}</Button></div>} centered width={560} styles={{body:{maxHeight:'calc(100dvh - 180px)',overflowY:'auto'}}} maskClosable={!busy} closable={!busy} keyboard={!busy}>
+  return <Modal title="新建单条内容任务" open={open} onCancel={()=>{if(!busy)onCancel();}} footer={<div className="flex justify-end gap-2"><Button disabled={busy} onClick={onCancel}>取消</Button><Button type="primary" loading={busy} disabled={!locked&&(loading||Boolean(loadError))} onClick={()=>form.submit()}>{locked?'重试原请求':'确认本条创作任务'}</Button></div>} centered width={560} styles={{body:{maxHeight:'calc(100dvh - 180px)',overflowY:'auto'}}} maskClosable={!busy} closable={!busy} keyboard={!busy}>
     <Form form={form} layout="vertical" onFinish={values=>void submit(values)} disabled={busy||locked} className="pt-4">
       <Form.Item name="title" label="任务名称" rules={[{required:true,whitespace:true,message:'请填写任务名称。'}]}><Input maxLength={120} placeholder="例如：新品使用场景介绍"/></Form.Item>
       <Form.Item name="productIds" label="推广产品" rules={[{required:true,type:'array',min:1,message:'请至少选择一款产品。'}]}>

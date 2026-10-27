@@ -28,16 +28,16 @@ test('the duration rate remains a default target; explicit confirmed limits surv
   assert.equal(productionBudgetDuration({targetDurationSeconds:30,scenes:[{duration:{startSeconds:0,endSeconds:60}}]}),30);
   for(const duration of [NaN,Infinity,0,-1])assert.throws(()=>productionBudgetLimitCny(duration),/duration_invalid/);
 });
-test('60-second authorized film can reserve 30 yuan; a replay cannot enlarge its duration or budget',async()=>{
+test('60-second forecast remains visible while later valid usage is metered without a cap',async()=>{
   const f=fixture(60);try{
     await f.ledger.reserveBatch(scope,[operation('original:30')]);
     assert.equal(new SocialContentTaskBudget(f.root,f.ports).status(scope)!.limitCny,30);
     f.ports.authorization=async()=>({maximumCny:60,productionDurationSeconds:120,authorizationRef:'unapproved-duration-change'});
-    await assert.rejects(f.ledger.reserveBatch({...scope,runId:'retry'},[operation('retry:0.01')]),/production_budget_decision_required/);
-    assert.equal(f.ledger.status(scope)!.retainedCny,30);
+    await f.ledger.reserveBatch({...scope,runId:'retry'},[operation('retry:0.01')]);
+    assert.equal(f.ledger.status(scope)!.retainedCny,30.01);
   }finally{f.clean();}
 });
-test('an explicitly approved 100-yuan film keeps its ceiling across retries and blocks the next cent',async()=>{
+test('an explicit 100-yuan forecast is retained while retries continue to be metered',async()=>{
   const brief=parseCreateSocialTask({title:'authorized film',objective:'production',mode:'instant',targetDurationSeconds:38,perItemBudgetCny:100});
   assert.equal(brief.perItemBudgetCny,100);assert.equal(defaultBrief(brief).perItemBudgetCny,100);
   const f=fixture(38,100);try{
@@ -47,11 +47,11 @@ test('an explicitly approved 100-yuan film keeps its ceiling across retries and 
     await restarted.reserveBatch({...scope,runId:'retry'},[operation('last:10')]);
     assert.equal(restarted.status(scope)!.limitCny,100);assert.equal(restarted.status(scope)!.retainedCny,100);
     f.ports.authorization=async()=>({maximumCny:200,productionDurationSeconds:38,authorizationRef:'changed-default'});
-    await assert.rejects(restarted.reserveBatch({...scope,runId:'retry-2'},[operation('extra:0.01')]),/production_budget_decision_required/);
-    assert.equal(restarted.status(scope)!.limitCny,100);
+    await restarted.reserveBatch({...scope,runId:'retry-2'},[operation('extra:0.01')]);
+    assert.equal(restarted.status(scope)!.limitCny,100);assert.equal(restarted.status(scope)!.retainedCny,100.01);
   }finally{f.clean();}
 });
-test('verified acquisition is separately accounted, while unknown production and child repair occupy the same cap',async()=>{
+test('verified acquisition is separately accounted while production and repair usage remain metered',async()=>{
   const f=fixture();try{
     await f.ledger.carryForwardPreproduction(scope,operation('acquisition:50'),{schema:'social-task-preproduction-budget-binding.v1',source:'weekly_candidate_exact_analysis',tenantId:scope.tenantId,packageId:'week',packageVersion:1,motherContentId:'film',candidateId:'reference',sourceOperationId:'acquisition:50',sourceAuthorizationHash:'c'.repeat(64),sourceLedgerOutcomeHash:'d'.repeat(64),sourceReceiptHash:'e'.repeat(64),retainedUpperBoundCny:50},async()=>true);
     assert.equal(f.ledger.status(scope)!.acquisitionCny,50);assert.equal(f.ledger.status(scope)!.remainingCny,15);
@@ -60,18 +60,17 @@ test('verified acquisition is separately accounted, while unknown production and
     const repair={...scope,taskId:'child',budgetTaskId:'film',runId:'repair'};
     const restarted=new SocialContentTaskBudget(f.root,f.ports);
     await restarted.reserveBatch(repair,[operation('repair:3')]);
-    const before=restarted.status(repair)!;
-    await assert.rejects(restarted.reserveBatch({...repair,runId:'repair-retry'},[operation('extra:0.01')]),/production_budget_decision_required/);
-    assert.deepEqual(restarted.status(repair),before);assert.equal(before.retainedCny,15);
-    assert.equal(before.entries.find(entry=>entry.operationId==='original:12')!.status,'unknown');
+    await restarted.reserveBatch({...repair,runId:'repair-retry'},[operation('extra:0.01')]);
+    const after=restarted.status(repair)!;assert.equal(after.retainedCny,15.01);
+    assert.equal(after.entries.find(entry=>entry.operationId==='original:12')!.status,'unknown');
   }finally{f.clean();}
 });
-test('an earlier lower authorization and incremental repair allowance are never silently raised',async()=>{
+test('an earlier forecast stays unchanged while additional usage is recorded',async()=>{
   const f=fixture(30,10);try{
     await f.ledger.reserveBatch(scope,[operation('original:9')]);
     f.ports.authorization=async()=>({maximumCny:15,productionDurationSeconds:30,authorizationRef:'new-product-default'});
-    await assert.rejects(f.ledger.reserveBatch({...scope,runId:'revision'},[operation('extra:2')]),/production_budget_decision_required/);
-    assert.equal(f.ledger.status(scope)!.limitCny,10);
+    await f.ledger.reserveBatch({...scope,runId:'revision'},[operation('extra:2')]);
+    assert.equal(f.ledger.status(scope)!.limitCny,10);assert.equal(f.ledger.status(scope)!.retainedCny,11);
   }finally{f.clean();}
 });
 test('budget failures require a user decision; unresolved supplier receipts retain reconciliation priority',()=>{

@@ -90,6 +90,7 @@ export type AssistantDecisionCommand = {
   actionId: AssistantDecisionActionId;
   expectedVersion: string;
   note?: string;
+  contentGenerationAuthorization?: import('./contentGenerationAuthorization.js').ContentGenerationAuthorization;
   /** Optional retry key. The server also derives a stable key when omitted. */
   idempotencyKey?: string;
 };

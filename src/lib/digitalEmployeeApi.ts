@@ -7,6 +7,7 @@ import type { DirectorDecision, DirectorDecisionReason } from './directorDecisio
 import type { DigitalEmployeeConfig, DigitalEmployeeOverview, EnterpriseFactsRebuildInput, FollowupDispatchResponse, PublishingTarget, RunEvent, WeeklyGoal } from './digitalEmployees';
 import { hydrateWeeklyPublishingTargets } from '../../shared/contracts/weeklyPublishingTargets';
 import { applySmartBusinessShowcaseData } from '../dev/smartBusinessShowcaseData';
+import { newContentGenerationAuthorization } from '../../shared/contracts/contentGenerationAuthorization';
 
 const BASE = "/api/overseas/digital-employees";
 
@@ -167,12 +168,12 @@ export const digitalEmployeeApi = {
   ),
   linkTaskProject: (runId: string, taskId: string, projectId: string) => request<DigitalEmployeeOverview>(`/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/link-project`, { method: "POST", body: JSON.stringify({ projectId }) }),
   packageOptions: () => request<{ members: Array<{ id: string; name: string }>; projects: Array<{ id: string; title: string }>; customers: Array<{ id: string; name: string }> }>("/package-options"),
-  approveGoal: (goalId: string, packageRevision?: number) =>
+  approveGoal: (goalId: string, packageRevision?: number, contentGenerationAuthorized = false) =>
     request<DigitalEmployeeOverview>(
       `/goals/${encodeURIComponent(goalId)}/approve`,
       {
         method: "POST",
-        body: JSON.stringify({ packageRevision }),
+        body: JSON.stringify({ packageRevision, ...(contentGenerationAuthorized ? { contentGenerationAuthorization: newContentGenerationAuthorization() } : {}) }),
         // Starting a week persists the run before the first Agent pass. That
         // pass can include provider and browser work, so do not leave the UI
         // waiting indefinitely for the same HTTP response. The page treats an

@@ -1,8 +1,6 @@
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { type Page } from "../pageRegistry";
 import { readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../lib/agentCalendarReturnContext';
-import { productionApi } from "../lib/productionApi";
-import { presenterProductionGate, type PresenterProductionGate } from "../lib/shotProduction";
 import { Button } from 'antd';
 import { consumeBusinessPageContext, saveBusinessPageContext } from '../lib/businessPageNavigation';
 import { EMPTY_CONFIG } from './smartBusiness/digitalEmployeeConfigRules';
@@ -76,8 +74,6 @@ export default function DigitalEmployeePage({
   const [error, setError] = useState("");
   const [weeklyStartConflict, setWeeklyStartConflict] = useState<WeeklyStartConflict | null>(null);
   const [weeklyStartDialogOpen, setWeeklyStartDialogOpen] = useState(false);
-  const [weeklyPresenterLoading, setWeeklyPresenterLoading] = useState(false);
-  const [weeklyPresenterGate, setWeeklyPresenterGate] = useState<PresenterProductionGate>(() => presenterProductionGate(null));
   const [newGoal, setNewGoal] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [selectedContentItemId, setSelectedContentItemId] = useState("");
@@ -118,15 +114,6 @@ export default function DigitalEmployeePage({
 
   const openWeeklyStartConfirmation = async () => {
     setWeeklyStartDialogOpen(true);
-    setWeeklyPresenterLoading(true);
-    try {
-      const defaults = await productionApi.defaults();
-      setWeeklyPresenterGate(presenterProductionGate(defaults));
-    } catch (cause) {
-      setWeeklyPresenterGate({ ready: false, reason: 'selection_required', message: cause instanceof Error ? cause.message : '数字人形象状态读取失败，请稍后重试。' });
-    } finally {
-      setWeeklyPresenterLoading(false);
-    }
   };
 
   useEffect(() => {
@@ -576,18 +563,33 @@ export default function DigitalEmployeePage({
     recoverEnterpriseFactsChanged,
   });
 
+  const { confirmWeeklyPlan, launchWeeklyPlan, presentConfirmedWeeklyExecution, publishWeeklyWorkUpdate } = createDigitalEmployeeWeeklyLaunch({
+    data, busy, overviewRequestVersionRef, setData, setBusy, setError,
+    setWeeklyStartConflict, setWeeklyPlanOpen, setNewGoal, setWorkspaceView,
+    setSelectedTaskId, recoverEnterpriseFactsChanged,
+  });
+
   const createWeeklyOutline = async (goalInput: GoalDraft) => {
     setBusy("create-weekly-plan");
     setError("");
     try {
+      if (goalInput.videoPlans?.length) {
+        const defaults = await productionApi.defaults();
+        const presenterGate = presenterProductionGate(defaults);
+        setWeeklyPresenterGate(presenterGate);
+        if (!presenterGate.ready) {
+          setApplicationGuideEntry("presenter");
+          setApplicationGuideOpen(true);
+          throw new Error(presenterGate.message);
+        }
+      }
       const created = await digitalEmployeeApi.createGoal(goalInput);
       if (!created.goal) throw new Error("周计划未能创建，请重试。");
       overviewRequestVersionRef.current += 1;
       setData(created);
       setNewGoal(false);
       setWeeklyPlanOpen(false);
-      setWorkspaceView("today");
-      showActionSuccess("周计划已生成", "计划已显示在智能经营首页。核对平台、产量、预算和排期后，再确认开始生产。");
+      await launchWeeklyPlan(created);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "周目标生成失败");
       await load();
@@ -606,12 +608,6 @@ export default function DigitalEmployeePage({
       : "爆款参考、素材组合和编导分镜已经保存，刷新页面也不会丢失。");
     else showActionSuccess("制作准备已完成", `有 ${detail?.blockedCount || 0} 条任务需要先补素材、授权或预算。`);
   };
-
-  const { confirmWeeklyPlan, presentConfirmedWeeklyExecution, publishWeeklyWorkUpdate } = createDigitalEmployeeWeeklyLaunch({
-    data, busy, overviewRequestVersionRef, setData, setBusy, setError,
-    setWeeklyStartConflict, setWeeklyPlanOpen, setNewGoal, setWorkspaceView,
-    setSelectedTaskId, recoverEnterpriseFactsChanged,
-  });
 
   const returnToLatest = async () => {
     setViewGoalId("");
@@ -637,8 +633,8 @@ export default function DigitalEmployeePage({
     businessLine, contentPlatform, selectedAccountId, selectedContentItemId,
     weeklyStudioContentId, weeklyStartConflict, weeklyPlanOpen, newGoal,
     planHistoryOpen, weeklyPlanDetailsOpen, applicationGuideOpen,
-    applicationGuideEntry, weeklyStartDialogOpen, weeklyPresenterLoading,
-    weeklyPresenterGate, onboardingWelcomeOpen, setError, setViewGoalId,
+    applicationGuideEntry, weeklyStartDialogOpen,
+    onboardingWelcomeOpen, setError, setViewGoalId,
     setWorkspaceView, setSelectedTaskId, setSelectedContentItemId,
     setWeeklyStudioContentId, setWeeklyPlanOpen, setNewGoal, setPlanHistoryOpen,
     setWeeklyPlanDetailsOpen, setApplicationGuideOpen, setApplicationGuideEntry,

@@ -5,12 +5,10 @@ import { AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
 import { digitalEmployeeApi } from '../lib/digitalEmployeeApi';
 import type { ContentQueueStatus, DigitalEmployeeOverview } from '../lib/digitalEmployees';
 import { loadConnectedSocialPerformance, type ConnectedSocialPerformance } from '../lib/socialPerformance';
+import { getScrollBehavior } from '../lib/usePrefersReducedMotion';
 import { PAGE_REGISTRY } from '../pageRegistry';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
-import CreationTaskWorkspace from './socialContent/CreationTaskWorkspace';
-import CreateContentPlanModal from './socialContent/CreateContentPlanModal';
-import { productionPortalNavigation } from './assistant/AssistantProductionPortal';
-import { productionNavigationIdentity } from '../lib/productionNavigation';
+import { openContentGenerationQueue } from '../lib/contentGenerationQueue';
 
 const statusLabel: Partial<Record<string, { text: string; color: string }>> = {
   running: { text: '执行中', color: 'processing' },
@@ -21,6 +19,18 @@ const statusLabel: Partial<Record<string, { text: string; color: string }>> = {
 };
 
 const number = (value: number) => value.toLocaleString('zh-CN');
+const HOME_VIRAL_LIBRARY_ID = 'creator-home-library';
+
+function openHomeViralLibrary() {
+  window.dispatchEvent(new CustomEvent('lingshu:navigate', {
+    detail: { page: 'strategy', homeTarget: HOME_VIRAL_LIBRARY_ID },
+  }));
+  window.setTimeout(() => {
+    const target = document.getElementById(HOME_VIRAL_LIBRARY_ID);
+    target?.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' });
+    target?.focus({ preventScroll: true });
+  }, 0);
+}
 
 function countStatuses(data: DigitalEmployeeOverview, statuses: ContentQueueStatus[]) {
   return (data.contentQueue?.items || []).filter(item => statuses.includes(item.status)).length;
@@ -30,13 +40,14 @@ function CreationPlan({ data, onCreate }: { data: DigitalEmployeeOverview; onCre
   const queue = data.contentQueue?.items || [];
   const displayStatus = statusLabel[data.run?.status || data.goal?.status || ''] || { text: data.goal ? '待启动' : '待创建', color: data.goal ? 'warning' : 'default' };
   const metrics = [
-    { label: '计划内容', value: `${queue.length} 条` },
-    { label: '待制作', value: `${countStatuses(data, ['planned', 'queued'])} 条` },
-    { label: '制作中', value: `${countStatuses(data, ['producing'])} 条` },
-    { label: '待验收成片', value: `${countStatuses(data, ['waiting_review'])} 条` },
-    { label: '已完成成片', value: `${countStatuses(data, ['completed'])} 条` },
-    { label: '已排期发布', value: `${queue.filter(item => Boolean(item.plannedPublishDate)).length} 条` },
+    { label: '计划内容', value: `${queue.length} 条`, view: 'tasks', metric: 'all' },
+    { label: '待制作', value: `${countStatuses(data, ['planned', 'queued'])} 条`, view: 'tasks', metric: 'planned' },
+    { label: '制作中', value: `${countStatuses(data, ['producing'])} 条`, view: 'tasks', metric: 'producing' },
+    { label: '待验收成片', value: `${countStatuses(data, ['waiting_review'])} 条`, view: 'tasks', metric: 'waiting_review' },
+    { label: '已完成成片', value: `${countStatuses(data, ['completed'])} 条`, view: 'tasks', metric: 'completed' },
+    { label: '已排期发布', value: `${queue.filter(item => Boolean(item.plannedPublishDate)).length} 条`, view: 'calendar', metric: 'scheduled' },
   ];
+  const openMetric = (metric: typeof metrics[number]) => openContentGenerationQueue({ view: metric.view as 'tasks'|'calendar', metric: metric.metric as 'all'|'planned'|'producing'|'waiting_review'|'completed'|'scheduled' });
 
 
   return <section aria-labelledby="creation-plan-title" className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface">
@@ -47,14 +58,15 @@ function CreationPlan({ data, onCreate }: { data: DigitalEmployeeOverview; onCre
           <Tag color={displayStatus.color}>{displayStatus.text}</Tag>
           {data.goal && <Tag>{data.goal.startsAt.slice(5)} — {data.goal.endsAt.slice(5)}</Tag>}
         </div>
-        <p className="mt-2 text-sm text-text-secondary">{data.plan?.strategy || data.goal?.objective || '点击“创建一条新计划”，填写本条内容的产品、创作方向与预计发布时间。'}</p>
+        {(data.plan?.strategy || data.goal?.objective) && <p className="mt-2 text-sm text-text-secondary">{data.plan?.strategy || data.goal?.objective}</p>}
       </div>
-      <Button type="primary" icon={<CalendarPlus size={16}/>} onClick={onCreate}>创建一条新计划</Button>
+      <div className="flex flex-wrap gap-2"><Button onClick={()=>openContentGenerationQueue({view:'tasks'})}>查看内容生成队列</Button><Button type="primary" icon={<CalendarPlus size={16}/>} onClick={onCreate}>新建单条内容任务</Button></div>
     </header>
     <div className="grid gap-x-6 gap-y-4 px-6 py-5 sm:grid-cols-3">
-      {metrics.map(metric => <div key={metric.label} className="min-w-0 rounded-lg px-1 py-3">
+      {metrics.map(metric => <button type="button" key={metric.label} onClick={() => openMetric(metric)} aria-label={`查看${metric.label}，${metric.value}`} className="group min-w-0 rounded-lg px-1 py-3 text-left outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent">
         <Statistic title={metric.label} value={metric.value} styles={{ title: { color: 'var(--color-text-secondary)', fontSize: 14, marginBottom: 8 }, content: { color: 'var(--color-text-primary)', fontSize: 26, fontWeight: 600 } }}/>
-      </div>)}
+        <span className="mt-2 inline-flex items-center gap-1 text-xs text-text-muted group-hover:text-accent">查看详情 <ArrowRight size={12}/></span>
+      </button>)}
     </div>
   </section>;
 }
@@ -67,7 +79,7 @@ function TopPublishedVideos({ performance, loading, error }: { performance: Conn
 
   return <section aria-labelledby="top-published-videos-title" className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface">
     <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
-      <div><h2 id="top-published-videos-title" className="ls-type-title-medium text-text-primary">当前最火的 3 条视频</h2><p className="mt-1 text-xs text-text-secondary">按已连接账号历史发布数据的播放量排序</p></div>
+      <h2 id="top-published-videos-title" className="ls-type-title-medium text-text-primary">当前最火的 3 条视频</h2>
       <Eye size={18} className="text-accent" aria-hidden="true"/>
     </header>
     <div className="p-4">
@@ -95,7 +107,6 @@ export default function ContentCreationOverviewPage() {
   const [overviewError, setOverviewError] = useState('');
   const [performanceError, setPerformanceError] = useState('');
   const [revision, setRevision] = useState(0);
-  const [createOpen,setCreateOpen]=useState(false);
 
   useEffect(() => {
     const reset = () => { setOverview(null); setPerformance(null); setRevision(value => value + 1); };
@@ -128,15 +139,10 @@ export default function ContentCreationOverviewPage() {
       {overviewError && <Alert type="warning" showIcon title={overviewError}/>}
       {loading && !overview ? <section className="rounded-lg border border-border bg-surface p-6"><Skeleton active paragraph={{ rows: 8 }}/></section> : overview ? <>
         <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-          <CreationPlan data={overview} onCreate={()=>setCreateOpen(true)}/>
+          <CreationPlan data={overview} onCreate={openHomeViralLibrary}/>
           <TopPublishedVideos performance={performance} loading={loading} error={performanceError}/>
         </div>
-        <CreationTaskWorkspace data={overview} onRefresh={() => setRevision(value => value + 1)}/>
       </> : null}
     </div>
-    <CreateContentPlanModal open={createOpen} onCancel={()=>setCreateOpen(false)} onCreated={taskId=>{
-      setCreateOpen(false);setRevision(value=>value+1);
-      window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{...productionPortalNavigation(taskId),navigationIdentity:productionNavigationIdentity()}}));
-    }}/>
   </main>;
 }

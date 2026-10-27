@@ -62,6 +62,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      # The web readiness endpoint validates this exact worker build's durable
+      # heartbeat and weekly scanner state. A disabled or wedged worker makes
+      # both services unhealthy and lets Compose restart/reject the rollout.
+      test: ["CMD", "node", "scripts/check-runtime-readiness.mjs", "http://app:8788/api/overseas/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   redis:
     image: redis:7-alpine

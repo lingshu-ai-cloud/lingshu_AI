@@ -41,13 +41,17 @@ assert.match(home, /useState<AssistantHomeQuickLauncherId \| null>\(null\)/, '�
 assert.match(home, /HOME_GROWTH_TOUR_START_EVENT, \{ detail: \{ restart: true \} \}/, '点击海外增长导览卡片必须从头开始，不能停留在旧进度');
 assert.ok(home.indexOf('<strong>让灵小枢认识我</strong>') < home.indexOf('<strong>灵枢如何助力海外增长</strong>'), '首次引导须先展示企业介绍，再展示海外增长导览');
 assert.match(home, /activeLauncher \? <div className="creator-home__quick-panel">[\s\S]{0,1600}activePrompts\.map/, '点击小按钮后才可显示其对应的大卡片');
+assert.match(home, /const hasWeeklyPlan = Boolean\(overview\?\.goal && overview\.plan\)[\s\S]{0,500}activeLauncher\?\.id !== 'weekly-plan'[\s\S]{0,200}hasWeeklyPlan[\s\S]{0,500}label: '创建周计划'[\s\S]{0,300}prompt: '请帮我创建本周计划。'/, '周计划快捷卡须根据真实计划状态切换查看或创建提示词');
 assert.doesNotMatch(home, /全部快捷任务/, '首页不应增加额外的全部快捷任务层级');
-assert.doesNotMatch(home, /onClick=\{\(\) => onNavigate\?\.\('digitalEmployees'\)\}/, '首页业务卡不得直接跳转经营总览');
+assert.match(home, /entry\.id === 'OP-CALENDAR'[\s\S]{0,120}!hasWeeklyPlan\) \{ preparePrompt\(entry\); return; \}[\s\S]{0,180}onNavigate\?\.\('digitalEmployees'\)[\s\S]{0,220}lingshu:open-weekly-plan/, '周计划入口必须在无计划时进入首页对话、有计划时打开唯一计划编辑页');
+assert.match(home, /entry\.id === 'CO-11'[\s\S]{0,120}openContentGenerationQueue\(\{view:'tasks'\}\)/, '首页内容任务入口必须打开全局统一内容生成队列');
 assert.match(home, /className="creator-home__suggestions"/, '自由创作的提示输入须保留在数字员工输入框下方');
 assert.match(home, /ASSISTANT_HOME_QUICK_LAUNCHERS\.map\(launcher =>/, '底部须渲染全部小按钮入口');
 assert.match(creatorStyles, /\.creator-home__suggestions \{[^}]*flex-wrap: nowrap[^}]*justify-content: flex-start[^}]*overflow-x: auto/, '高频按钮须保持单行，空间不足时左右滑动');
 assert.match(promptCatalog, /id: 'viral-script'[\s\S]{0,1800}id: 'traffic-optimization'/, '其余快捷按钮须覆盖内容、素材、发布、客户和投流高频动作');
-assert.match(home, /ASSISTANT_HOME_PROMPT_EVENT[\s\S]{0,220}detail: \{ prompt: entry\.prompt, mode \}/, '普通卡片和条件补齐后的查询只能填入原输入框');
+assert.match(home, /ASSISTANT_HOME_PROMPT_EVENT[\s\S]{0,260}detail: \{ prompt: entry\.prompt, mode, submitOptions \}/, '普通卡片和条件补齐后的查询只能填入原输入框');
+assert.doesNotMatch(home, /lingshu-assistant-open/, '首页卡片不得绕过输入框直接发送');
+assert.match(home, /if \(isBusinessScene\(entry\.id\)\) \{ preparePrompt\(entry\); return; \}/, '经营分析卡片必须先填入草稿');
 assert.match(home, /追加到现有内容[\s\S]{0,300}替换现有内容/, '输入框已有内容时必须明确提供追加与替换选择');
 assert.doesNotMatch(home, /DigitalEmployeeHomeWork/, '三栏进行中工作必须从首页移走');
 assert.doesNotMatch(workspace, /<DigitalEmployeeHomeWork/, '进行中工作由灵小枢书签承接，不再占据经营总览');
@@ -59,11 +63,17 @@ assert.match(creationOverview, /创作计划/, '内容创作页顶部必须使�
 for (const metric of ['计划内容', '待制作', '制作中', '待验收成片', '已完成成片', '已排期发布']) {
   assert.match(creationOverview, new RegExp(`label: '${metric}'`), `创作计划必须展示${metric}`);
 }
-assert.match(creationOverview, /创建一条新计划/, '创作计划须保留新计划入口');
+assert.match(creationOverview, /const openMetric[\s\S]{0,260}openContentGenerationQueue\(\{ view: metric\.view[\s\S]{0,180}metric: metric\.metric/, '六项创作计划数据必须聚焦统一队列中对应的任务或日历视图');
+assert.doesNotMatch(creationOverview, /按已连接账号历史发布数据的播放量排序|点击“创建一条新计划”，填写本条内容/, '批注要求的说明小字不得保留');
+assert.match(creationOverview, /新建单条内容任务/, '创作计划须将非周计划的新建动作明确命名为单条任务');
 assert.match(creationOverview, /loadConnectedSocialPerformance\(50\)/, '右侧必须读取已连接账号的真实历史发布表现');
 assert.match(creationOverview, /当前最火的 3 条视频/, '右侧必须展示历史发布表现前三');
 assert.match(creationOverview, /sort\(\(left, right\) => \(right\.metrics\.views \|\| 0\) - \(left\.metrics\.views \|\| 0\)\)[\s\S]{0,120}slice\(0, 3\)/, '历史视频必须按真实播放量取前三');
-assert.match(creationOverview, /<CreationTaskWorkspace data=\{overview\}/, '创作计划下方必须使用共享任务与发布日历工作区');
+assert.match(creationOverview, /openContentGenerationQueue\(\{view:'tasks'\}\)[\s\S]{0,100}>查看内容生成队列<\//, '内容创作页必须通过明确按钮打开全局统一队列');
+assert.match(creationOverview, /function openHomeViralLibrary\(\)[\s\S]{0,240}lingshu:navigate[\s\S]{0,160}page: 'strategy'[\s\S]{0,500}getElementById\(HOME_VIRAL_LIBRARY_ID\)[\s\S]{0,240}scrollIntoView\(\{ behavior: getScrollBehavior\(\), block: 'start' \}\)[\s\S]{0,120}focus\(\{ preventScroll: true \}\)/, '新建单条内容任务必须回到 hi 灵小枢首页并定位爆款视频区域');
+assert.match(home, /id="creator-home-library" tabIndex=\{-1\}/, '首页爆款视频区域必须支持跨页定位后的程序化焦点');
+assert.doesNotMatch(creationOverview, /CreateContentPlanModal|createOpen/, '内容创作页不得再为单条任务打开独立创建弹窗');
+assert.doesNotMatch(creationOverview, /<CreationTaskWorkspace\b/, '内容创作页不得再嵌入第二份任务队列');
 assert.doesNotMatch(home, /到爆款库创作/, '首页不得保留旧的中转按钮文案');
 assert.match(inspiration, /requestedReference\?\.startViralReplication[\s\S]{0,1600}startInspirationCreation\(selectedVideo\)/, '其他显式生产入口必须先核对精确引用，再进入既有爆款裂变生产函数');
 assert.match(inspiration, /selectedVideo\.id\.startsWith\('weekly-reference-'\)[\s\S]{0,700}const exactMatch =/, '只有实时库存精确引用可自动发起生产，周快照不得绕过门禁');

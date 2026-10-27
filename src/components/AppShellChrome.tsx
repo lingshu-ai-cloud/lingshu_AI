@@ -7,6 +7,8 @@ import { isSocialTaskContextPage, type SocialTaskView } from '../lib/socialTaskC
 import { OptionalFeatureErrorBoundary } from './AppPageBoundary';
 import RuntimeVersionBanner from './RuntimeVersionBanner';
 import { GlobalAssistant, SocialTaskContextBar, StarterWorkflowContextBar } from '../appPageModules';
+import ContentGenerationQueueModal from './socialContent/ContentGenerationQueueModal';
+import { openAgentSettings } from '../lib/contentGenerationQueue';
 
 interface AppShellChromeProps {
   page: Page;
@@ -44,8 +46,12 @@ export default function AppShellChrome({
             onKickoffConsumed={onKickoffConsumed}
             onAction={onAction}
             onSessionRefresh={onSessionRefresh}
+            onNavigate={onNavigate}
           />
         </Suspense>
+      </OptionalFeatureErrorBoundary>
+      <OptionalFeatureErrorBoundary resetKey={`content-generation-queue:${identity}`} label="内容生成队列">
+        <ContentGenerationQueueModal onOpenAgentSettings={() => { onNavigate('digitalEmployees'); window.setTimeout(openAgentSettings, 0); }}/>
       </OptionalFeatureErrorBoundary>
       <RuntimeVersionBanner showSystemAnnouncement={page === 'strategy'} />
       {sessionRefreshError && <div role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">{sessionRefreshError} <button type="button" className="ml-2 font-semibold underline" onClick={onSessionRefresh}>立即重试</button></div>}

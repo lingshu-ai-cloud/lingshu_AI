@@ -1,3 +1,5 @@
+import type { AssistantReplyPresentationKind } from '../../shared/assistantReplyPresentation';
+
 export type AssistantHomePromptGroupId = 'operations' | 'inspiration' | 'content' | 'publishing' | 'ads' | 'customer' | 'enterprise';
 export type AssistantHomePromptLevel = 'query' | 'plan' | 'sensitive' | 'navigation';
 
@@ -47,7 +49,7 @@ const defineGroup = (group: AssistantHomePromptGroupId, entries: Array<Omit<Assi
 
 export const ASSISTANT_HOME_PROMPTS: AssistantHomePrompt[] = [
   ...defineGroup('operations', [
-    { id: 'OP-CALENDAR', label: '查看本周发布日历', summary: '只读查看本周已有发布安排与发布时间待定的内容', level: 'query', prompt: '帮我查看本周发布日历，看看哪些内容已发布、哪些待发布，以及哪些事项需要我处理。' },
+    { id: 'OP-CALENDAR', label: '查看周计划', summary: '查看本周任务、排期、预算和最新运行状态', level: 'query', prompt: '请读取当前企业的本周目标、周计划、任务排期、预算和最新运行回执，说明当前状态、待处理事项与阻塞；不要自动启动或修改任务。' },
     { id: 'OP-01', label: '周经营任务', summary: '查看本周进度、阻塞和今天最优先动作', level: 'query', prompt: '请读取当前企业本周目标、周计划、真实任务、依赖关系和最新运行回执，按“当前状态、已完成、待处理、阻塞项、今天最优先动作”总结本周经营任务。缺少数据时请明确指出；不要自动创建、启动或修改任务。如建议执行，请先给出可确认的计划摘要。' },
     { id: 'OP-02', label: '今日资讯', summary: '解读与企业和目标市场有关的真实信号', level: 'query', prompt: '请结合当前企业资料、主推产品、目标市场，并检索核验行业与平台公开原文，整理今天最值得关注的资讯。每条说明来源、与本企业的关系、机会或风险及建议动作；没有可靠来源时明确说明，不要编造资讯。' },
     { id: 'OP-03', label: '经营策略', summary: '判断经营重点并给出有依据的行动建议', level: 'plan', prompt: '请基于当前企业资料、主推产品、目标市场、本周任务、内容表现、询盘和投放数据，判断目前最重要的经营问题，并给出按优先级排列的策略建议。区分事实、推断和建议，说明依据、预期结果、风险与下一步；不要自动执行。' },
@@ -156,13 +158,41 @@ function normalizedQuickTaskText(value: string): string {
   return value.trim().replace(/\r\n?/gu, '\n').replace(/[ \t]+/gu, ' ');
 }
 
-/** Presentation-only classification; it never authorizes a task or mutation. */
-export function isAssistantHomeQuickTaskText(value: string): boolean {
+const NEWS_PROMPTS = new Set(['OP-02', 'OP-09', 'OP-11', 'OP-LEADER', 'OP-12']);
+const REFERENCE_PROMPTS = new Set(['OP-RATES', 'OP-TRADE']);
+
+export function assistantHomePromptIdForText(value: string): string | undefined {
   const text = normalizedQuickTaskText(value);
-  if (!text) return false;
-  if (/^(?:行业资讯：行业：.+，目标市场：.+|查询.+兑.+的最新参考汇率|查询\d{4}年.+HS\s*\d{2,6}(?:进口|出口)金额)/u.test(text)) return true;
-  return ASSISTANT_HOME_PROMPTS.some(entry => {
+  if (!text) return undefined;
+  if (/^行业资讯：行业：.+，目标市场：.+/u.test(text)) return 'OP-09';
+  if (/^查询.+兑.+的最新参考汇率/u.test(text)) return 'OP-RATES';
+  if (/^查询\d{4}年.+HS\s*\d{2,6}(?:进口|出口)金额/u.test(text)) return 'OP-TRADE';
+  return ASSISTANT_HOME_PROMPTS.find(entry => {
     const prompt = normalizedQuickTaskText(entry.prompt);
     return text === prompt || text.startsWith(`${prompt}\n`) || text.endsWith(`\n${prompt}`);
-  });
+  })?.id;
+}
+
+export function assistantReplyPresentationForPromptId(id: string): AssistantReplyPresentationKind | undefined {
+  if (NEWS_PROMPTS.has(id)) return 'news';
+  if (REFERENCE_PROMPTS.has(id)) return 'reference';
+  if (id === 'OP-04') return 'analytics';
+  if (id.startsWith('OP-')) return 'operations';
+  if (id.startsWith('IN-')) return 'inspiration';
+  if (id.startsWith('CO-')) return 'content';
+  if (id.startsWith('PU-')) return 'publishing';
+  if (id.startsWith('AD-')) return 'ads';
+  if (id.startsWith('CS-')) return 'customer';
+  if (id.startsWith('EN-') || id.startsWith('PL-')) return 'enterprise';
+  return undefined;
+}
+
+export function assistantReplyPresentationForText(value: string): AssistantReplyPresentationKind | undefined {
+  const id = assistantHomePromptIdForText(value);
+  return id ? assistantReplyPresentationForPromptId(id) : undefined;
+}
+
+/** Presentation-only classification; it never authorizes a task or mutation. */
+export function isAssistantHomeQuickTaskText(value: string): boolean {
+  return Boolean(assistantHomePromptIdForText(value));
 }

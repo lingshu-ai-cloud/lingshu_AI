@@ -14,16 +14,28 @@ import { LsCalendar } from '../ui/LsCalendar';
 import CreateContentPlanModal from './CreateContentPlanModal';
 import CreationTaskDetailDrawer, { creationLocalTime } from './CreationTaskDetailDrawer';
 import { beijingDay } from '../../lib/assistantScheduleProjection';
+import type { ContentGenerationQueueMetric, ContentGenerationQueueRequest, ContentGenerationQueueSource } from '../../lib/contentGenerationQueue';
 
 const selectedTask = () => readSocialContentNavigationQueryTaskId('socialInspiration',window.location.search)
   || readSocialContentNavigationTaskId('socialInspiration',window.history.state);
+const selectedFilter = (): CreationTaskCategory|'all' => {
+  const value = new URLSearchParams(window.location.search).get('taskFilter');
+  return value === 'completed' || value === 'creating' || value === 'confirmation' ? value : 'all';
+};
+const selectedMetric = ():ContentGenerationQueueMetric => {
+  const value=new URLSearchParams(window.location.search).get('taskMetric');
+  return value==='planned'||value==='producing'||value==='waiting_review'||value==='completed'||value==='scheduled'?value:'all';
+};
 
-export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalendar = false }:{data:DigitalEmployeeOverview;onRefresh:()=>void;embeddedCalendar?:boolean}) {
+export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalendar = false, request }:{data:DigitalEmployeeOverview;onRefresh:()=>void;embeddedCalendar?:boolean;request?:ContentGenerationQueueRequest}) {
+  const queueMode=Boolean(request);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [tasks,setTasks]=useState<SocialContentTaskSummary[]>([]),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
-  const [view,setView]=useState<'calendar'|'tasks'>(()=>!embeddedCalendar&&(selectedTask()||new URLSearchParams(window.location.search).get('view')==='tasks')?'tasks':'calendar');
+  const [view,setView]=useState<'calendar'|'tasks'>(()=>request?.view ?? (embeddedCalendar?'calendar':selectedTask()||new URLSearchParams(window.location.search).get('view')==='tasks'?'tasks':'calendar'));
   const [calendarPortalRevision,setCalendarPortalRevision]=useState(0);
-  const [filter,setFilter]=useState<CreationTaskCategory|'all'>('all'),[taskId,setTaskId]=useState<string|null>(()=>embeddedCalendar?null:selectedTask()),[rowKey,setRowKey]=useState<string|null>(null);
+  const [filter,setFilter]=useState<CreationTaskCategory|'all'>(()=>request?.status ?? (embeddedCalendar?'all':selectedFilter())),[taskId,setTaskId]=useState<string|null>(()=>request?.taskId ?? (embeddedCalendar?null:selectedTask())),[contentId,setContentId]=useState<string|null>(()=>request?.contentId||null),[rowKey,setRowKey]=useState<string|null>(null);
+  const [metric,setMetric]=useState<ContentGenerationQueueMetric>(()=>request?.metric ?? (embeddedCalendar?'all':selectedMetric()));
+  const [source,setSource]=useState<ContentGenerationQueueSource>(()=>request?.source||'all');
   const [exact,setExact]=useState<SocialContentTaskSummary|null>(null),[identity,setIdentity]=useState(productionNavigationIdentity);
   const loadedIdentity=useRef(identity);
   const reading=useRef(false),readGeneration=useRef(0);
@@ -31,21 +43,29 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
   const [unavailable,setUnavailable]=useState<NonNullable<SocialContentTaskPage['unavailableItems']>>([]);
   const refresh=()=>{setRevision(v=>v+1);onRefresh();};
   useEffect(()=>{
-    const navigation=()=>{if(embeddedCalendar)return;const target=selectedTask();setTaskId(target);setRowKey(null);if(target){setView('tasks');setFilter('all');}};
+    const navigation=()=>{if(embeddedCalendar||queueMode)return;const target=selectedTask();setTaskId(target);setRowKey(null);if(target){setView('tasks');setFilter('all');}};
     const calendarPortal=(event:Event)=>{
-      if(embeddedCalendar)return;
-      const detail=(event as CustomEvent<{page?:string;view?:string;navigationIdentity?:string}>).detail;
-      if(detail?.page!=='socialInspiration'||detail.view!=='calendar'||detail.navigationIdentity&&detail.navigationIdentity!==productionNavigationIdentity())return;
-      setView('calendar');setTaskId(null);setRowKey(null);setFilter('all');setCalendarPortalRevision(value=>value+1);
+      if(embeddedCalendar||queueMode)return;
+      const detail=(event as CustomEvent<{page?:string;view?:string;taskFilter?:string;taskMetric?:string;navigationIdentity?:string}>).detail;
+      if(detail?.page!=='socialInspiration'||detail.navigationIdentity&&detail.navigationIdentity!==productionNavigationIdentity())return;
+      const nextFilter:CreationTaskCategory|'all'=detail.taskFilter==='completed'||detail.taskFilter==='creating'||detail.taskFilter==='confirmation'?detail.taskFilter:'all';
+      const nextMetric:ContentGenerationQueueMetric=detail.taskMetric==='planned'||detail.taskMetric==='producing'||detail.taskMetric==='waiting_review'||detail.taskMetric==='completed'||detail.taskMetric==='scheduled'?detail.taskMetric:'all';
+      if(detail.view==='tasks'){setView('tasks');setTaskId(null);setContentId(null);setRowKey(null);setFilter(nextFilter);setMetric(nextMetric);return;}
+      if(detail.view==='calendar'){setView('calendar');setTaskId(null);setContentId(null);setRowKey(null);setFilter('all');setMetric(nextMetric);setCalendarPortalRevision(value=>value+1);}
     };
-    const reset=()=>{setTasks([]);setUnavailable([]);setProducts([]);setExact(null);setTaskId(null);setRowKey(null);setIdentity(productionNavigationIdentity());setRevision(v=>v+1);};
+    const reset=()=>{setTasks([]);setUnavailable([]);setProducts([]);setExact(null);setTaskId(null);setContentId(null);setRowKey(null);setIdentity(productionNavigationIdentity());setRevision(v=>v+1);};
     const changed=()=>setRevision(v=>v+1);
     window.addEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT,navigation);window.addEventListener('lingshu:navigate',calendarPortal);window.addEventListener('popstate',navigation);
     const timer=setInterval(()=>{if(document.visibilityState==='visible'&&!reading.current)changed();},12000);
     const storage=(event:StorageEvent)=>{if(event.key===null||event.key==='overseas_token')reset();};
     window.addEventListener('storage',storage);window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,reset);window.addEventListener(SOCIAL_CONTENT_TASK_REFRESH_EVENT,changed);
     return()=>{clearInterval(timer);window.removeEventListener('storage',storage);window.removeEventListener(SOCIAL_CONTENT_NAVIGATION_EVENT,navigation);window.removeEventListener('lingshu:navigate',calendarPortal);window.removeEventListener('popstate',navigation);window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,reset);window.removeEventListener(SOCIAL_CONTENT_TASK_REFRESH_EVENT,changed);};
-  },[embeddedCalendar]);
+  },[embeddedCalendar,queueMode]);
+  useEffect(()=>{
+    if(!request)return;
+    setView(request.view||'tasks');setFilter(request.status||'all');setMetric(request.metric||'all');setSource(request.source||'all');
+    setTaskId(request.taskId||null);setContentId(request.contentId||null);setRowKey(null);
+  },[request]);
   useEffect(()=>{
     if(embeddedCalendar||view!=='calendar'||new URLSearchParams(window.location.search).get('view')!=='calendar')return;
     const frame=requestAnimationFrame(()=>document.getElementById('content-creation-calendar')?.scrollIntoView({behavior:'smooth',block:'start'}));
@@ -70,28 +90,34 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
     return()=>{active=false;controller.abort();};
   },[taskId,identity]);
   const rows=useMemo(()=>creationTaskRows(loadedIdentity.current===identity?[...tasks,...(exact&&!tasks.some(t=>t.taskId===exact.taskId)?[exact]:[])]:[],(data.contentQueue?.items||[]).filter(item=>item.origin==='weekly_plan'||tasks.some(task=>task.taskId===item.socialContentTaskId)||item.socialContentTaskId===exact?.taskId),products,unavailable),[tasks,exact,data,identity,products,unavailable]);
-  const events=useMemo(()=>creationTaskCalendar(rows),[rows]);
-  const selected=rows.find(row=>taskId?row.taskId===taskId:row.key===rowKey)||null;
+  const sourceRows=useMemo(()=>rows.filter(row=>source==='all'||(source==='weekly'?row.sourceLabel==='周任务包':row.sourceLabel!=='周任务包')),[rows,source]);
+  const metricRows=useMemo(()=>sourceRows.filter(row=>metric==='all'||metric==='scheduled'?metric==='all'||Boolean(row.publishAt):metric==='planned'?['planned','queued'].includes(row.weekly?.status||'')||row.statusLabel==='待调度':metric==='producing'?row.weekly?.status==='producing'||row.statusLabel==='创作中':metric==='waiting_review'?row.weekly?.status==='waiting_review'||row.category==='confirmation':row.weekly?.status==='completed'||row.category==='completed'),[sourceRows,metric]);
+  const events=useMemo(()=>creationTaskCalendar(metricRows),[metricRows]);
+  const selected=rows.find(row=>taskId?row.taskId===taskId:contentId?row.contentId===contentId:row.key===rowKey)||null;
   const updateLocation=(next:'calendar'|'tasks',row?:CreationTaskRow)=>{
-    if(embeddedCalendar)return;
+    if(embeddedCalendar||queueMode)return;
     const url=new URL(window.location.href);url.searchParams.set('view',next);url.searchParams.delete('taskId');
+    if(next==='tasks'&&filter!=='all')url.searchParams.set('taskFilter',filter);else url.searchParams.delete('taskFilter');
+    if(metric!=='all')url.searchParams.set('taskMetric',metric);else url.searchParams.delete('taskMetric');
     if(row?.taskId)url.searchParams.set('socialContentTaskId',row.taskId);else url.searchParams.delete('socialContentTaskId');
     const state={...window.history.state};delete state.socialContentTaskId;delete state.socialContentPage;
     const detail={...state.productionDetail};delete detail.socialContentTaskId;delete detail.socialContentPage;
     window.history.replaceState(stampProductionHistoryState({...state,productionDetail:{...detail,page:'socialInspiration',view:next,...(row?.taskId?{socialContentTaskId:row.taskId,socialContentPage:'socialInspiration'}:{})}}),'',url);
   };
-  const open=(row:CreationTaskRow)=>{setTaskId(row.taskId||null);setRowKey(row.key);updateLocation(view,row);};
-  const close=()=>{setTaskId(null);setRowKey(null);updateLocation(view);};
+  const open=(row:CreationTaskRow)=>{setTaskId(row.taskId||null);setContentId(row.contentId||null);setRowKey(row.key);updateLocation(view,row);};
+  const close=()=>{setTaskId(null);setContentId(null);setRowKey(null);updateLocation(view);};
   return <section id="content-creation-calendar" aria-label="内容创作工作区" className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
-      {embeddedCalendar?<h3 className="text-sm font-semibold">内容发布排期</h3>:<span data-growth-tour="calendar"><Segmented<'calendar'|'tasks'> aria-label="内容创作视图" value={view} options={[{label:'发布日历',value:'calendar'},{label:'创作任务',value:'tasks'}]} onChange={value=>{setView(value);updateLocation(value,selected||undefined);}}/></span>}
+      {embeddedCalendar?<h3 className="text-sm font-semibold">内容发布排期</h3>:<span data-growth-tour="calendar"><Segmented<'calendar'|'tasks'> aria-label="内容生成队列视图" value={view} options={[{label:'任务列表',value:'tasks'},{label:'发布日历',value:'calendar'}]} onChange={value=>{setView(value);setTaskId(null);setContentId(null);setRowKey(null);updateLocation(value);}}/></span>}
       <div className="flex items-center gap-3"><Tag>{rows.length} 条任务</Tag><Button loading={loading} onClick={refresh}>刷新</Button></div>
     </header>
     {error&&<Alert className="m-4" type="warning" showIcon title={error}/>}
     {data.contentQueue?.sourceStatus!=='available'&&<Alert className="m-4" type="warning" title={data.contentQueue?.sourceNote||'周任务包暂时不可用，以下保留已读取的内容任务。'}/>}
+    {queueMode&&selected?<CreationTaskDetailDrawer key={`${identity}:${selected.key}`} inline row={selected} overview={data} onClose={close} onUpdated={refresh} onRecover={() => { close(); setRecoveryOpen(true); }}/>:<>
+    {!embeddedCalendar&&<div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3"><span className="text-sm text-text-secondary">任务来源</span><Segmented<ContentGenerationQueueSource> aria-label="任务来源筛选" value={source} options={[{label:'全部',value:'all'},{label:'周计划',value:'weekly'},{label:'临时单条',value:'single'}]} onChange={setSource}/></div>}
     {view==='tasks'?<>
-      <div className="px-5 py-4"><Segmented aria-label="创作任务状态筛选" value={filter} options={[{label:'全部',value:'all'},{label:'已完成',value:'completed'},{label:'创作中',value:'creating'},{label:'待确认',value:'confirmation'}]} onChange={setFilter}/></div>
-      <Table<CreationTaskRow> rowKey="key" loading={loading} onRow={row=>({onClick:()=>open(row),style:{cursor:'pointer'}})} dataSource={rows.filter(row=>filter==='all'||row.category===filter)} size="middle" scroll={{x:960}} pagination={{defaultPageSize:20,showSizeChanger:true,showTotal:total=>`共 ${total} 条`}} columns={[
+      <div className="flex flex-wrap items-center gap-3 px-5 py-4"><Segmented aria-label="内容生成任务状态筛选" value={filter} options={[{label:'全部',value:'all'},{label:'已完成',value:'completed'},{label:'创作中',value:'creating'},{label:'待确认',value:'confirmation'}]} onChange={value=>{const next=value as CreationTaskCategory|'all';setFilter(next);setMetric('all');if(queueMode)return;const url=new URL(window.location.href);url.searchParams.delete('taskMetric');if(next==='all')url.searchParams.delete('taskFilter');else url.searchParams.set('taskFilter',next);window.history.replaceState(window.history.state,'',url);}}/>{metric!=='all'&&<Tag closable onClose={()=>setMetric('all')}>来自计划数据：{{planned:'待制作',producing:'制作中',waiting_review:'待验收成片',completed:'已完成成片',scheduled:'已排期发布'}[metric]}</Tag>}</div>
+      <Table<CreationTaskRow> rowKey="key" loading={loading} onRow={row=>({onClick:()=>open(row),style:{cursor:'pointer'}})} dataSource={metricRows.filter(row=>filter==='all'||row.category===filter)} size="middle" scroll={{x:960}} pagination={{defaultPageSize:20,showSizeChanger:true,showTotal:total=>`共 ${total} 条`}} columns={[
         {title:'视频封面',key:'cover',width:106,render:(_,row)=><button aria-label={`查看任务：${row.title}`} onClick={()=>open(row)} className="flex h-16 w-20 items-center justify-center overflow-hidden rounded-md bg-surface-2 text-text-muted"><CreationTaskCover key={row.cover} row={row}/></button>},
         {title:'创作任务',key:'title',width:280,render:(_,row)=><button className="text-left font-semibold text-text-primary hover:text-accent" onClick={()=>open(row)}>{row.title}</button>},
         {title:'状态',key:'status',width:110,render:(_,row)=><Tag color={row.category==='confirmation'?'warning':row.category==='completed'?'success':'processing'}>{row.statusLabel}</Tag>},
@@ -102,10 +128,22 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
       ]}/>
     </>:<>
       <LsCalendar key={calendarPortalRevision} label="发布日历" events={events} initialView="timeGridWeek" initialDate={calendarPortalRevision||new URLSearchParams(window.location.search).get('view')==='calendar'?beijingDay():data.goal?.startsAt?.slice(0,10)} timeZone="Asia/Shanghai" showAllEvents showAllHours fixedHeight="auto" workspaceMode="expanded" onEventClick={event=>{const row=rows.find(item=>item.key===event.id);if(row)open(row);return true;}}/>
-      {rows.length>events.length&&<p className="px-5 py-3 text-xs text-text-muted">{rows.length-events.length} 条任务尚未安排发布时间，可在创作任务中查看。</p>}
-      {!rows.length&&!loading&&<Empty description="暂无创作任务"/>}
-    </>}
-    <CreationTaskDetailDrawer key={`${identity}:${selected?.key||''}`} row={selected} overview={data} onClose={close} onUpdated={refresh} onRecover={() => { close(); setRecoveryOpen(true); }}/>
+      {metricRows.length>events.length&&<p className="px-5 py-3 text-xs text-text-muted">{metricRows.length-events.length} 条任务尚未安排发布时间，可在任务列表中查看。</p>}
+      {!metricRows.length&&!loading&&<Empty description="暂无内容生成任务"/>}
+    </>}</>}
+    {!queueMode && (
+      <CreationTaskDetailDrawer
+        key={`${identity}:${selected?.key || ''}`}
+        row={selected}
+        overview={data}
+        onClose={close}
+        onUpdated={refresh}
+        onRecover={() => {
+          close();
+          setRecoveryOpen(true);
+        }}
+      />
+    )}
     <CreateContentPlanModal open={recoveryOpen} onCancel={() => setRecoveryOpen(false)} onCreated={taskId => { setRecoveryOpen(false); refresh(); setTaskId(taskId); setView('tasks'); }}/>
   </section>;
 }

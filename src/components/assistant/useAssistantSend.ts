@@ -27,9 +27,10 @@ import { assistantAttachmentKind } from './AssistantComposer';
 import { buildAssistantChatMessages, type UploadedAssistantAttachment } from './assistantChatPrompt';
 import { assistantProductionIntent, assistantCreationPortal } from './assistantProductionIntake';
 import { assistantImageReplicationPortal } from './assistantImageReplicationIntent';
-import { ASSISTANT_HOME_PROMPTS, isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
+import { ASSISTANT_HOME_PROMPTS, assistantReplyPresentationForPromptId, assistantReplyPresentationForText, isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
 import { runAssistantProductionRequest } from './assistantProductionRequest';
 import type { useContentTaskIntake } from './useContentTaskIntake';
+import type { AssistantHomePendingSubmission } from './useAssistantHomeAnchor';
 import { agentForOrbit, compactText, contextForOrbit, loadLiveIntegrationFacts,
   mergeConsecutiveAssistant, PRIMARY_ASSISTANT_THREAD, responseErrorMessage,
   type AssistantContext } from './globalAssistantRuntime';
@@ -71,12 +72,12 @@ type AssistantSendInput = {
   draftInput: string;
   pendingAttachments: File[];
   attachmentUploading: boolean;
-  weeklyPlanKickoffAvailable: boolean;
   uploadedAttachmentCacheRef: { current: WeakMap<File, UploadedAssistantAttachment> };
   setAttachmentError: Dispatch<SetStateAction<string>>;
   setAttachmentUploading: Dispatch<SetStateAction<boolean>>;
   setPendingAttachments: Dispatch<SetStateAction<File[]>>;
-  openWeeklyPlanFromAssistant: () => void;
+  prepareWeeklyPlan: () => Promise<string>;
+  pendingHomeSubmissionRef: { current: AssistantHomePendingSubmission | null };
 };
 
 const API_PATH: Record<AgentType, string> = {
@@ -94,9 +95,9 @@ export function useAssistantSend(input: AssistantSendInput) {
     setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, focusTaskCard, hydrateThread, setLoading,
     setFileGenerating, setReplyStreaming,
     setPipelineRefresh, persistThread, onSessionRefresh, requestId,
-    activeAgent, draftInput, pendingAttachments, attachmentUploading, weeklyPlanKickoffAvailable,
+    activeAgent, draftInput, pendingAttachments, attachmentUploading,
     uploadedAttachmentCacheRef, setAttachmentError, setAttachmentUploading, setPendingAttachments,
-    openWeeklyPlanFromAssistant } = input;
+    prepareWeeklyPlan, pendingHomeSubmissionRef } = input;
   const creationMode = useCreationMode();
   const send = useCallback(async (
     text: string,
@@ -183,6 +184,9 @@ export function useAssistantSend(input: AssistantSendInput) {
       : '';
     const visibleMessage = `${visibleText}${visibleAttachmentSummary}`;
     const responseMode = options.businessScene || isAssistantHomeQuickTaskText(visibleText) ? 'quick_task' : undefined;
+    const replyPresentation = responseMode
+      ? assistantReplyPresentationForText(visibleText) || (options.businessScene ? assistantReplyPresentationForPromptId(options.businessScene.sceneId) : undefined)
+      : undefined;
 
     const threadAgent = PRIMARY_ASSISTANT_THREAD;
     const thread = useAssistantStore.getState().threads[threadAgent];
@@ -394,6 +398,7 @@ export function useAssistantSend(input: AssistantSendInput) {
               retainedUserInstructions: conversationContext.retainedUserInstructions,
             },
             ...(responseMode ? { responseMode } : {}),
+            ...(replyPresentation ? { replyPresentation } : {}),
           } : {}),
         },
         controller,
@@ -445,21 +450,27 @@ export function useAssistantSend(input: AssistantSendInput) {
       if (files.length) { setAttachmentError('请先完成或取消当前任务问答，再发送附件。'); return; }
       void send(draft); return;
     }
-    if (!files.length && weeklyPlanKickoffAvailable && isWeeklyPlanKickoffRequest(draft)) {
+    if (!files.length && isWeeklyPlanKickoffRequest(draft)) {
       const current = useAssistantStore.getState().threads[activeAgent].messages;
       setDraftInput(activeAgent, '');
-      setMessages(activeAgent, [
-        ...current,
-        { role: 'user', content: draft.trim() },
-        { role: 'assistant', content: '可以。我先为你生成一份可预览的周计划；你核对平台、产量、预算和排期并确认后，数字员工才会开始生产。' },
-      ]);
+      setMessages(activeAgent, [...current, { role: 'user', content: draft.trim() }]);
       setFollowingLatest(activeAgent, true);
-      persistThread(activeAgent);
-      openWeeklyPlanFromAssistant();
+      setLoading(true);
+      try {
+        const summary = await prepareWeeklyPlan();
+        const latest = useAssistantStore.getState().threads[activeAgent].messages;
+        setMessages(activeAgent, [...latest, { role: 'assistant', content: summary }]);
+      } catch (cause) {
+        const latest = useAssistantStore.getState().threads[activeAgent].messages;
+        setMessages(activeAgent, [...latest, { role: 'assistant', content: cause instanceof Error ? cause.message : '周计划生成失败，请稍后重试。' }]);
+      } finally { setLoading(false); persistThread(activeAgent); }
       return;
     }
     if (!files.length) {
-      void send(draft);
+      const pending = pendingHomeSubmissionRef.current;
+      pendingHomeSubmissionRef.current = null;
+      const submitOptions = pending?.agent === activeAgent && pending.draft === draft ? pending.submitOptions : undefined;
+      void send(draft, currentPageAgent, undefined, [], undefined, submitOptions);
       return;
     }
 
@@ -500,7 +511,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       setAttachmentError(error instanceof Error ? error.message : '附件上传失败，请重试。');
       setAttachmentUploading(false);
     }
-  }, [contentIntake.active, activeAgent, draftInput, attachmentUploading, currentPageAgent, loading, openWeeklyPlanFromAssistant, pendingAttachments, persistThread, send, setDraftInput, setFollowingLatest, setMessages, weeklyPlanKickoffAvailable]);
+  }, [contentIntake.active, activeAgent, draftInput, attachmentUploading, currentPageAgent, loading, pendingAttachments, pendingHomeSubmissionRef, persistThread, prepareWeeklyPlan, send, setDraftInput, setFollowingLatest, setLoading, setMessages]);
 
   return { send, sendComposerMessage };
 }

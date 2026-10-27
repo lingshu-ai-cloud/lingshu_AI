@@ -67,7 +67,7 @@ test('token QA quote requires complete input and output usage envelopes', async 
 finally {
     f.clean();
 } });
-test('new runs do not reset task ceiling and absent approval or plan drift cannot reserve', async () => { const f = fixture(); try {
+test('new runs accumulate metered usage and absent approval still cannot reserve', async () => { const f = fixture(); try {
     await f.service.prepareAndReserve(scope);
     const next = { ...scope, runId: 'r2', planHash: 'c'.repeat(64) };
     f.plan.scope = next;
@@ -76,7 +76,7 @@ test('new runs do not reset task ceiling and absent approval or plan drift canno
     assert.equal((await f.service.prepareAndReserve(next)).status.retainedCny, 9.6);
     f.plan.scope = { ...next, runId: 'r3' };
     f.plan.paidOperations = [intent('new')];
-    await assert.rejects(f.service.prepareAndReserve(f.plan.scope), /exceeded/);
+    assert.equal((await f.service.prepareAndReserve(f.plan.scope)).status.retainedCny,10.4);
     f.plan.authorizationRef = '';
     await assert.rejects(f.service.prepareAndReserve(f.plan.scope), /approved_plan_missing/);
 }
@@ -110,7 +110,7 @@ test('accepted receipt recovery retains original funding without a fresh tariff 
         assert.equal(f.paidCalls, 0);
     } finally { f.clean(); }
 });
-test('formerly exempt tenant cannot reserve over the authorized production ceiling', async () => {
+test('all tenants can reserve valid quoted production without an amount ceiling', async () => {
     const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
     process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
     const f = fixture();
@@ -121,7 +121,7 @@ test('formerly exempt tenant cannot reserve over the authorized production ceili
         f.ports.readVerifiedTariff = async i => ({ ...i, currency: 'CNY', verifiedAccountPrice: true,
             evidenceRef: 'verified-expensive-tariff', checkedAt: '2026-01-01', validUntil: '2099-01-01',
             meters: { providerSeconds: { priceCny: 1.5, unitsPerPrice: 1, minimumUnits: 4, increment: 1 } } });
-        await assert.rejects(f.service.prepareAndReserve(exemptScope),/production_budget_decision_required/);
+        assert.equal((await f.service.prepareAndReserve(exemptScope)).status.retainedCny,12);
     } finally {
         f.clean();
         if (configured === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;

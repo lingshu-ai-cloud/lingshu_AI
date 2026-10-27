@@ -66,10 +66,10 @@ export default function AssistantBusinessSceneDialog({ sceneId, onClose, onConfi
   };
   const rewrite = sceneId === 'CO-07';
   return <LsFlowDialog open title={BUSINESS_SCENES[sceneId]} width={rewrite ? 760 : 600} current={savedIds.length ? 2 : draft ? 1 : 0}
-    steps={rewrite ? [{ title: '选择源稿与平台' }, { title: '编辑确认' }, { title: '保存草稿' }] : [{ title: '确认对象与日期' }, { title: '对话分析' }]}
+    steps={rewrite ? [{ title: '选择源稿与平台' }, { title: '编辑确认' }, { title: '保存草稿' }] : [{ title: '确认对象与日期' }, { title: '填入对话' }]}
     onCancel={onClose} closable={!busy} keyboard={!busy} maskClosable={!busy} footer={<>
       <Button disabled={busy} onClick={onClose}>{savedIds.length ? '完成' : '取消'}</Button>
-      {!savedIds.length && <Button type="primary" disabled={!options} loading={busy} onClick={() => void (rewrite ? draft ? save() : generate() : confirm())}>{rewrite ? draft ? unconfirmed ? '核对保存结果' : '确认保存创作草稿' : '生成平台版本' : '开始分析'}</Button>}
+      {!savedIds.length && <Button type="primary" disabled={!options} loading={busy} onClick={() => void (rewrite ? draft ? save() : generate() : confirm())}>{rewrite ? draft ? unconfirmed ? '核对保存结果' : '确认保存创作草稿' : '生成平台版本' : '填入输入框'}</Button>}
       {savedIds.map((id, index) => <Button key={id} onClick={() => { onClose(); continuePlatformRewrite(id); }}>{draft?.variants[index]?.platform || `第${index + 1}版`}：继续创作</Button>)}
     </>}>
     {error && <Alert className="mb-3" type="error" showIcon title={error} action={!options ? <Button onClick={() => setRevision(v => v + 1)}>重新读取</Button> : undefined}/>}

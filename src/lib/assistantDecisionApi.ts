@@ -13,6 +13,7 @@ import type {
 import { normalizeAssistantDecisionPage, normalizeAssistantDecisionExecutionReceipt } from '../../shared/contracts/assistantDecisionCenter';
 import { authHeader } from './auth';
 import { httpFailure, decisionCommand } from '../../shared/request-policy.mjs';
+import { newContentGenerationAuthorization } from '../../shared/contracts/contentGenerationAuthorization';
 
 const BASE = '/api/overseas/digital-employees/assistant/decision-center';
 
@@ -257,9 +258,13 @@ export async function executeAssistantDecision(input: {
   page: string;
   goalId?: string;
   note?: string;
+  contentGenerationAuthorized?: boolean;
   signal?: AbortSignal;
 }): Promise<AssistantDecisionActionResponse> {
-  const command: AssistantDecisionCommand = decisionCommand(input);
+  const command: AssistantDecisionCommand = {
+    ...decisionCommand(input),
+    ...(input.contentGenerationAuthorized ? { contentGenerationAuthorization: newContentGenerationAuthorization() } : {}),
+  };
   const params = new URLSearchParams({ page: normalizeAssistantDecisionPage(input.page) });
   if (input.goalId?.trim()) params.set('goalId', input.goalId.trim());
   const body = await request<AssistantDecisionActionResponse>(

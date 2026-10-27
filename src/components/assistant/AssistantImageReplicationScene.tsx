@@ -9,6 +9,12 @@ import type { SocialContentCreateRequest } from '../socialContent/SocialContentW
 
 const ImageReplicationConversation = lazy(() => import('../socialContent/ImageReplicationConversation'));
 
+export function assistantImageReplicationMessage(step: number) {
+  if (step >= 2) return '信息已收齐，请确认后生成首版。';
+  if (step === 1) return '参考图已选，请确认产品、平台和语言。';
+  return '已带入原帖，请选择参考图。';
+}
+
 /** Store only intake answers and task pointers in the existing assistant journal. */
 export default function AssistantImageReplicationScene({ portal, request }: {
   portal: AssistantCreationPortal; request: SocialContentCreateRequest;
@@ -16,7 +22,7 @@ export default function AssistantImageReplicationScene({ portal, request }: {
   const update = (intake: ImageReplicationIntake, reference?: ImageReplicationReferenceIdentity | null) => {
     const store = useAssistantStore.getState();
     store.setMessages(PRIMARY_ASSISTANT_THREAD, store.threads[PRIMARY_ASSISTANT_THREAD].messages.map(message =>
-      message.creationPortal?.id === portal.id ? { ...message, creationPortal: {
+      message.creationPortal?.id === portal.id ? { ...message, content: assistantImageReplicationMessage(intake.step), creationPortal: {
         ...message.creationPortal, imageReplication: { ...message.creationPortal.imageReplication, intake,
           ...(reference === null ? { reference: undefined } : reference ? { reference } : {}) },
       } } : message));

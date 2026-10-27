@@ -49,7 +49,7 @@ test('reference routing rejects registered tools that cannot honor duration or p
     adapter('runway_kling_motion', { maxDurationSeconds: 5, preserves: ['identity', 'motion'], qualityInspection: false, estimatedCostCnyPerSecond: 1 }),
     adapter('local_head_pipeline', { maxDurationSeconds: 15, preserves: ['identity', 'motion', 'product', 'background', 'composition'], qualityInspection: true, estimatedCostCnyPerSecond: 2 }),
   ];
-  assert.deepEqual(requiredReferencePreservation({ preserve: '保持动作、产品、背景和构图' }), ['identity', 'motion', 'product', 'background', 'composition']);
+  assert.deepEqual(requiredReferencePreservation({ preserve: '保持动作、产品、背景和构图' }), ['identity', 'motion']);
   const selected = selectReferenceAdapter({ adapters, candidates: ['runway_kling_motion', 'local_head_pipeline'], method: 'replace', targetDurationSeconds: 8,
     requiredPreservation: ['identity', 'motion', 'product', 'background', 'composition'] });
   assert.equal(selected.adapter?.id, 'local_head_pipeline'); assert.equal(selected.estimatedCostCny, 16);
@@ -59,20 +59,20 @@ test('reference routing rejects registered tools that cannot honor duration or p
   const unprofiled = { id: 'local_head_pipeline' as const, methods: ['replace' as const], async submit() { return { externalTaskId: 'x' }; }, async status() { return { state: 'pending' as const }; } };
   assert.equal(selectReferenceAdapter({ adapters: [unprofiled], candidates: ['local_head_pipeline'], method: 'replace', requiredPreservation: ['identity', 'background'] }).adapter, undefined);
   const overBudget = selectReferenceAdapter({ adapters: [adapters[1]], candidates: ['local_head_pipeline'], method: 'replace', targetDurationSeconds: 8, maxEstimatedCostCny: 10, requiredPreservation: ['identity'] });
-  assert.equal(overBudget.adapter, undefined); assert.match(overBudget.reason, /超出预算上限 ¥10\.00/);
+  assert.equal(overBudget.adapter?.id, 'local_head_pipeline'); assert.equal(overBudget.estimatedCostCny, 16);
   const unknownPrice = selectReferenceAdapter({ adapters: [unprofiled], candidates: ['local_head_pipeline'], method: 'replace', maxEstimatedCostCny: 10, requiredPreservation: ['identity'] });
-  assert.equal(unknownPrice.adapter, undefined); assert.match(unknownPrice.reason, /无法验证预算/);
+  assert.equal(unknownPrice.adapter?.id, 'local_head_pipeline'); assert.equal(unknownPrice.estimatedCostCny, null);
 });
 
 
-test('malformed production duration, budget or supplier price cannot admit a paid reference adapter', () => {
+test('duration and supplier price stay validated while legacy amount caps do not block reference adapters', () => {
   let submissions = 0;
   const adapter = { id: 'runway_act_two' as const, methods: ['reenact' as const],
     executionProfile: { maxDurationSeconds: 30, preserves: ['identity' as const], qualityInspection: true, estimatedCostCnyPerSecond: 2 },
     async submit() { submissions++; return { externalTaskId: 'must-not-submit' }; }, async status() { return { state: 'pending' as const }; } };
   const valid = { adapters: [adapter], candidates: ['runway_act_two'], method: 'reenact' as const, targetDurationSeconds: 6, maxEstimatedCostCny: 20, requiredPreservation: ['identity' as const] };
   for (const targetDurationSeconds of [0, -1, NaN, Infinity]) assert.equal(selectReferenceAdapter({ ...valid, targetDurationSeconds }).adapter, undefined);
-  for (const maxEstimatedCostCny of [-1, NaN, Infinity]) assert.equal(selectReferenceAdapter({ ...valid, maxEstimatedCostCny }).adapter, undefined);
+  for (const maxEstimatedCostCny of [-1, NaN, Infinity]) assert.equal(selectReferenceAdapter({ ...valid, maxEstimatedCostCny }).adapter?.id, adapter.id);
   for (const estimatedCostCnyPerSecond of [-1, NaN, Infinity, Number.MAX_VALUE]) assert.equal(selectReferenceAdapter({ ...valid, adapters: [{ ...adapter, executionProfile: { ...adapter.executionProfile, estimatedCostCnyPerSecond } }] }).adapter, undefined);
   for (const maxDurationSeconds of [0, -1, NaN, Infinity]) assert.equal(selectReferenceAdapter({ ...valid, adapters: [{ ...adapter, executionProfile: { ...adapter.executionProfile, maxDurationSeconds } }] }).adapter, undefined);
   const free = selectReferenceAdapter({ ...valid, maxEstimatedCostCny: 0, adapters: [{ ...adapter, executionProfile: { ...adapter.executionProfile, estimatedCostCnyPerSecond: 0 } }] });

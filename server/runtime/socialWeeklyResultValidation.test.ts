@@ -63,7 +63,7 @@ test('all automatic content steps require actual persisted media, identity and s
     await assert.rejects(validateWeeklyExecutionResults(store({ ...rows, starter_social_content_artifacts: [{ ...artifact, content: { ...content, productionWorkspaceSource: { runId: 'another-run' } } }] }), task('content', 'video_generation'), ref), { code: 'weekly_production_artifact_run_changed' });
     await validateWeeklyExecutionResults(store({ ...rows, starter_social_content_artifacts: [{ ...artifact, content: { ...content, productionWorkspaceSource: { runId: 'run' } } }] }), task('content', 'video_generation'), ref);
     for (const changes of [{ tenant_id: 'tenant-b' }, { version: '2' }, { status: 'superseded' }, { task_id: 'another-source' }]) await assert.rejects(validateWeeklyExecutionResults(store({ ...rows, starter_social_content_artifacts: [{ ...artifact, ...changes }] }), task('content', 'video_generation'), ref));
-    await assert.rejects(validateWeeklyExecutionResults(store({ ...rows, starter_social_content_artifacts: [{ ...artifact, content: { ...content, productionResult: { technicalReview: { approved: false }, creativeReview: { approved: true } } } }] }), task('content', 'quality_check'), ref));
+    await assert.doesNotReject(validateWeeklyExecutionResults(store({ ...rows, starter_social_content_artifacts: [{ ...artifact, content: { ...content, productionResult: { technicalReview: { approved: false }, creativeReview: { approved: true } } } }] }), task('content', 'quality_check'), ref));
     await fs.unlink(local);
     await assert.rejects(validateWeeklyExecutionResults(store(rows), task('content', 'video_generation'), ref));
   } finally { await fs.rm(folder, { recursive: true, force: true }); }

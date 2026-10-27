@@ -126,12 +126,12 @@ test('persisted archetype labels cannot override missing or forbidden material r
   assert.ok(rejected.includes('product_identity_mismatch'));
 });
 
-test('shared, synthetic or non-video rows can be indexed but never become production eligible', () => {
+test('shared rows are allowed by ownership policy while synthetic and non-video rows remain ineligible', () => {
   const built = profile({ sourceTenantId: 'shared', origin: 'shared_library', mediaType: 'image', synthetic: true });
   assert.ok(built.profile);
   assert.equal(built.profile.productionEligible, false);
-  assert.ok(built.rejectionReasons.includes('tenant_mismatch'));
-  assert.ok(built.rejectionReasons.includes('local_ownership_missing'));
+  assert.ok(!built.rejectionReasons.includes('tenant_mismatch'));
+  assert.ok(!built.rejectionReasons.includes('local_ownership_missing'));
   assert.ok(built.rejectionReasons.includes('non_video_source'));
   assert.ok(built.rejectionReasons.includes('synthetic_source'));
 });

@@ -7,6 +7,7 @@ import { configurationSnapshot, enterpriseProfileFromKnowledgeBinding } from '..
 import { buildWeeklyPlan, normalizeWeeklyGoal, validateWeeklyGoal } from '../digitalEmployees/domain.js';
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, type GoalRecord, type PlanRecord, type StoredRecord } from '../digitalEmployees/records.js';
 import type { DigitalEmployeeApplicationPorts } from '../digitalEmployees/applicationPorts.js';
+import { contentGenerationAuthorization } from '../../shared/contracts/contentGenerationAuthorization.js';
 
 export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplicationPorts, 'digitalEmployeesRouter' | 'configForTenant' | 'resolveCurrentConfiguration' | 'requiredCreate' | 'recommendPackageWithTenantEvidence' | 'appendAudit' | 'buildOverview' | 'approveGoalForReview'>) {
   const digitalEmployeesRouter = deps.digitalEmployeesRouter;
@@ -56,7 +57,7 @@ export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplic
         unit: goal.unit,
         starts_at: goal.startsAt,
         ends_at: goal.endsAt,
-        scope: goal.videoPlans ? { description: goal.scope, videoPlans: goal.videoPlans } : goal.scope,
+        scope: goal.videoPlans ? { description: goal.scope, videoPlans: goal.videoPlans, promotionPlans: goal.promotionPlans || [] } : goal.scope,
         constraints: goal.constraints,
         owner_id: userId,
         status: 'draft',
@@ -81,8 +82,16 @@ export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplic
   function registerPostGoalsGoalIdApprove() {
     digitalEmployeesRouter.post('/goals/:goalId/approve', async (req, res) => {
       const { tenantId, userId } = res.locals as AuthLocals;
+      const authorization = contentGenerationAuthorization(req.body?.contentGenerationAuthorization);
+      if (!authorization) {
+        res.status(400).json({
+          error: 'content_generation_authorization_required',
+          message: '开始任务前，请先确认授权数字员工调用已配置的内容生成模型；实际用量和费用只记录，不设创作预算上限。',
+        });
+        return;
+      }
       const members = await listTenantEmployees(res.locals as AuthLocals, req.headers.authorization);
-      const result = await approveGoalForReview(tenantId, userId, req.params.goalId, req.body?.packageRevision, members);
+      const result = await approveGoalForReview(tenantId, userId, req.params.goalId, req.body?.packageRevision, members, authorization);
       res.status(result.status).json(result.body);
     });
   }

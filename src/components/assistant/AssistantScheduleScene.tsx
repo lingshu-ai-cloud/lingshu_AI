@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Drawer, Select, Spin } from 'antd';
+import { Alert, Button, Select, Spin } from 'antd';
 import type { AssistantCreationPortal } from '../../../shared/contracts/assistantCreationPortal';
 import type { SocialContentTaskSummary } from '../../../shared/contracts/socialContentWorkflow';
 import type { DigitalEmployeeOverview } from '../../lib/digitalEmployees';
 import { digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
 import { socialContentApi } from '../../lib/socialContentApi';
+import { openContentGenerationQueue } from '../../lib/contentGenerationQueue';
 import { beijingDay, calendarWeek, shiftCalendarDay } from '../../lib/assistantScheduleProjection';
 import { creationTaskCalendar, creationTaskRows, type CreationTaskRow } from '../../lib/creationTaskWorkspace';
 import { useAssistantScenePortal } from './useAssistantScenePortal';
-import { LsCalendar } from '../ui/LsCalendar';
 import { productionPortalNavigation } from './AssistantProductionPortal';
 import { ASSISTANT_HOME_PROMPT_EVENT } from './useAssistantHomeAnchor';
 import AssistantScheduleChange from './AssistantScheduleChange';
@@ -17,7 +17,7 @@ import AssistantScheduleChange from './AssistantScheduleChange';
 export default function AssistantScheduleScene({portal}:{portal:AssistantCreationPortal}) {
   const {current,update,navigate}=useAssistantScenePortal(portal);
   const [data,setData]=useState<DigitalEmployeeOverview|null>(null),[tasks,setTasks]=useState<SocialContentTaskSummary[]>([]);
-  const [loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0),[open,setOpen]=useState(false);
+  const [loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
   const [platformFilter,setPlatformFilter]=useState(''),[accountFilter,setAccountFilter]=useState('');
   const date=portal.calendarDate||beijingDay(),goalId=portal.calendarGoalId||'';
   useEffect(()=>{
@@ -63,12 +63,7 @@ export default function AssistantScheduleScene({portal}:{portal:AssistantCreatio
       {!!undated.length&&<div><p className="text-sm font-semibold">发布时间待定 · {undated.length} 条</p>{undated.map(row=><div key={row.key} className="flex items-center justify-between py-1"><span className="truncate text-xs">{row.title}</span><Button disabled={!row.taskId} onClick={()=>openTask(row)}>查看详情</Button></div>)}</div>}
       <p className="text-xs text-text-secondary">这里展示计划发布时间。成片完成、实际发布及平台回执分别以原任务详情和发布记录为准。</p>
       <div className="flex justify-end gap-2">{!events.length&&<Button onClick={()=>{if(current())window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_PROMPT_EVENT,{detail:{prompt:'我想为一次活动准备内容，请帮我确认活动素材、产品优惠、对标视频和口播。',mode:'replace'}}));}}>安排本周内容</Button>}
-        <Button onClick={()=>setOpen(true)}>查看完整日历</Button><Button onClick={()=>setRevision(v=>v+1)}>刷新</Button></div>
+        <Button onClick={()=>openContentGenerationQueue({view:'calendar'})}>打开内容生成队列</Button><Button onClick={()=>setRevision(v=>v+1)}>刷新</Button></div>
     </>}
-    <Drawer title="发布日历" open={open} onClose={()=>setOpen(false)} size="large">
-      <LsCalendar label="完整发布日历" events={allEvents} date={week.start} initialView="timeGridWeek" firstDay={1} timeZone="Asia/Shanghai" showAllEvents detailsTitle="发布安排"
-        onDatesSet={info=>{const next=info.startStr.slice(0,10);if(next!==week.start)update({calendarDate:next});}}
-        renderDetails={event=><div className="space-y-3"><p>{event.title}</p><p>{event.description}</p><AssistantScheduleChange row={event.data as CreationTaskRow} rows={rows} goal={data?.goal||null} onChanged={()=>setRevision(v=>v+1)}/><Button disabled={!(event.data as CreationTaskRow).taskId} onClick={()=>openTask(event.data as CreationTaskRow)}>打开本条内容任务</Button></div>}/>
-    </Drawer>
   </section>;
 }

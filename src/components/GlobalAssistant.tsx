@@ -31,10 +31,13 @@ import { useAssistantQuickExecution } from './assistant/useAssistantQuickExecuti
 import { useAssistantTaskCardActions } from './assistant/useAssistantTaskCardActions';
 import { useAssistantDecisionDialog } from './assistant/useAssistantDecisionDialog';
 import { useAssistantPanelControls } from './assistant/useAssistantPanelControls';
-import { ASSISTANT_HOME_ACTIVITY_EVENT, useAssistantHomeAnchor, useAssistantHomeInteraction, useAssistantHomeMode } from './assistant/useAssistantHomeAnchor';
+import { ASSISTANT_HOME_ACTIVITY_EVENT, useAssistantHomeAnchor, useAssistantHomeInteraction, useAssistantHomeMode,
+  type AssistantHomePendingSubmission } from './assistant/useAssistantHomeAnchor';
 import { useAssistantLauncherRetraction } from './assistant/useAssistantLauncherRetraction';
 import { useAssistantDecisionCount, useAssistantPageContextSignal } from './assistant/useAssistantPageSignals';
 import { useAssistantContentTaskCard } from './assistant/useAssistantContentTaskCard';
+import { AssistantWeeklyPlanOverlay } from './assistant/AssistantWeeklyPlanExperience';
+import { useAssistantWeeklyPlanExperience } from './assistant/useAssistantWeeklyPlanExperience';
 import type { AssistantQuickExecution } from '../lib/assistantQuickEntries';
 import AssistantDecisionDialog from './assistant/AssistantDecisionDialog';
 import {
@@ -79,6 +82,7 @@ interface Props {
   onKickoffConsumed?: () => void;
   onAction?: AgentAction;
   onSessionRefresh?: () => void;
+  onNavigate?: (page: Page) => void;
 }
 
 function requestId() {
@@ -96,10 +100,11 @@ export default function GlobalAssistant({
   suppressForRightSidebar = false,
   onKickoffConsumed,
   onAction,
-  onSessionRefresh,
+  onSessionRefresh, onNavigate,
 }: Props) {
   const { modal, message: uiMessage } = AntApp.useApp();
   const reduceMotion = usePrefersReducedMotion();
+  const weeklyPlanExperience = useAssistantWeeklyPlanExperience();
   const [mode, setMode] = useState<'breathing' | 'chat'>('breathing');
   const inlineHome = page === 'strategy';
   const creationMode = useCreationMode();
@@ -124,6 +129,10 @@ export default function GlobalAssistant({
   }));
   const messageScrollRef = useRef<HTMLDivElement>(null);
   const assistantInputRef = useRef<HTMLTextAreaElement>(null);
+  const pendingHomeSubmissionRef = useRef<AssistantHomePendingSubmission | null>(null);
+  const setPendingHomeSubmission = useCallback((submission: AssistantHomePendingSubmission | null) => {
+    pendingHomeSubmissionRef.current = submission;
+  }, []);
   const launcherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
   const edgeLauncherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
   const { launcherRetracted, retractLauncher, restoreLauncher } = useAssistantLauncherRetraction(launcherButtonRef, edgeLauncherButtonRef);
@@ -230,12 +239,12 @@ export default function GlobalAssistant({
   const openWeeklyPlanFromAssistant = useCallback(() => {
     setWeeklyPlanPromptDismissed(true);
     setMode('breathing');
-    window.dispatchEvent(new CustomEvent('lingshu:open-weekly-plan', {
-      detail: { source: 'assistant' },
-    }));
-  }, []);
+    onNavigate?.('digitalEmployees');
+    window.setTimeout(()=>window.dispatchEvent(new CustomEvent('lingshu:open-weekly-plan', { detail: { source: 'assistant' } })),0);
+  }, [onNavigate]);
   const activeThread = threads[activeAgent];
-  useAssistantHomeInteraction(inlineHome, activeThread.messages.length, loading, activeAgent, setDraftInput, assistantInputRef, Boolean(activeThread.creationDraft));
+  useAssistantHomeInteraction(inlineHome, activeThread.messages.length, loading, activeAgent, setDraftInput, assistantInputRef,
+    Boolean(activeThread.creationDraft), setPendingHomeSubmission);
   const inlineHomeActive = inlineHome && Boolean(activeThread.messages.length || loading || activeThread.creationDraft);
   useEffect(() => {
     if (!inlineHome) return;
@@ -475,21 +484,18 @@ export default function GlobalAssistant({
   const { send, sendComposerMessage } = useAssistantSend({
     page, pageContext, currentPageAgent, enterpriseContext, loading, fileGenerating, replyStreaming,
     contentIntake, uiMessage, persistenceFenceRef, stablePersistenceScope, assistantAtomicMutationRef,
-    waitForInFlightThreadSave,
-    pendingMapFileRef, abortRef, openAgent, presentActionResponse,
+    waitForInFlightThreadSave, pendingMapFileRef, abortRef, openAgent, presentActionResponse,
     setMessages, setDraftInput, setFollowingLatest, upsertTaskCard, focusTaskCard, hydrateThread, setLoading,
     setFileGenerating, setReplyStreaming, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
     activeAgent, draftInput: activeThread.draftInput, pendingAttachments, attachmentUploading,
-    weeklyPlanKickoffAvailable, uploadedAttachmentCacheRef, setAttachmentError,
-    setAttachmentUploading, setPendingAttachments, openWeeklyPlanFromAssistant,
+    uploadedAttachmentCacheRef, setAttachmentError, setAttachmentUploading, setPendingAttachments,
+    prepareWeeklyPlan: weeklyPlanExperience.prepare, pendingHomeSubmissionRef,
   });
-
   const runQuickExecution = useAssistantQuickExecution({
     loading, fileGenerating, pipelineInFlightRef, pipelineModalOpenRef, persistenceFenceRef,
     openWeeklyPlanFromAssistant, contentIntake, modal, uiMessage, setMessages, upsertTaskCard,
     setMode, setLoading, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
   });
-
   const { handleTaskCardAction, toggleTaskPaused, handleContentArtifactDecision,
     handleContentDeliveryCreate, handleContentDeliveryDownload } = useAssistantTaskCardActions({
     activeAgent, currentPageAgent, page, focusedRunControl, loading, abortRef,
@@ -738,7 +744,7 @@ export default function GlobalAssistant({
         loading={loading} fileGenerating={fileGenerating} replyStreaming={replyStreaming}
         attachmentUploading={attachmentUploading} attachmentError={attachmentError}
         pendingAttachments={pendingAttachments} weeklyActionBusy={weeklyActionBusy}
-        weeklyPlanKickoffAvailable={weeklyPlanKickoffAvailable} pipelineEntries={pipelineEntries}
+        weeklyPlanKickoffAvailable={weeklyPlanKickoffAvailable} weeklyPlanExperience={weeklyPlanExperience} pipelineEntries={pipelineEntries}
         pendingCount={pendingCount} contentIntake={contentIntake}
         messageScrollRef={messageScrollRef} assistantInputRef={assistantInputRef}
         onAction={onAction} onSessionRefresh={onSessionRefresh} closeAssistant={closeAssistant}
@@ -753,7 +759,6 @@ export default function GlobalAssistant({
         setWeeklyActionBusy={setWeeklyActionBusy} setPendingAttachments={setPendingAttachments}
         setAttachmentError={setAttachmentError} persistThread={persistThread}
       />
-
       <AssistantDecisionDialog
         decisionDialog={decisionDialog}
         dialogTaskCard={dialogTaskCard}
@@ -775,11 +780,14 @@ export default function GlobalAssistant({
         handleContentDeliveryDownload={handleContentDeliveryDownload}
       />
 
+      <AssistantWeeklyPlanOverlay experience={weeklyPlanExperience} reduceMotion={reduceMotion}/>
+
       {!inlineHome && <AssistantLauncher
         retracted={launcherRetracted}
         chatOpen={mode === 'chat'}
         badgeCount={decisionTotal ?? pendingCount}
         reduceMotion={reduceMotion}
+        weeklyPlanOperating={weeklyPlanExperience.weeklyPlanOperating}
         launcherButtonRef={launcherButtonRef}
         edgeLauncherButtonRef={edgeLauncherButtonRef}
         onLauncherClick={handleLauncherClick}

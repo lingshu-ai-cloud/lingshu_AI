@@ -7,10 +7,10 @@ import { scenarioTaskInputs } from '../../lib/assistantScenarioIntake';
 import { resumeSceneTaskBatch } from '../../lib/assistantSceneTaskBatch';
 import { useAssistantScenePortal } from './useAssistantScenePortal';
 import AssistantTaskLinkCard from './AssistantTaskLinkCard';
-import { productionPortalNavigation } from './AssistantProductionPortal';
 import { useAssistantStore } from '../../stores/assistantStore';
 import AssistantSceneDateInput from './AssistantSceneDateInput';
 import { useDefaultVideoPublishTime } from '../../lib/useDefaultVideoPublishTime';
+import { openContentGenerationQueue } from '../../lib/contentGenerationQueue';
 
 const DIRECTIONS=[
   {label:'场景引入',value:'提出一个真实使用场景，衔接所选产品的已确认用途，结尾邀请用户咨询产品资料。'},
@@ -19,7 +19,7 @@ const DIRECTIONS=[
 ];
 /** Existing ordinary task form; hook and campaign now use the verified guided route. */
 export default function AssistantScenarioPlanner({portal}:{portal:AssistantCreationPortal}) {
-  const {current,update,navigate}=useAssistantScenePortal(portal);
+  const {current,update}=useAssistantScenePortal(portal);
   const suggestedTime=useDefaultVideoPublishTime(portal.sceneStep==='brief'&&portal.plannedPublishAt===undefined);
   useEffect(()=>{if(suggestedTime&&portal.plannedPublishAt===undefined&&current())update({plannedPublishAt:suggestedTime});},[suggestedTime,portal.plannedPublishAt]);
   const [products,setProducts]=useState<Array<{id:string;name:string}>>([]),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
@@ -41,7 +41,7 @@ export default function AssistantScenarioPlanner({portal}:{portal:AssistantCreat
     finally{lock.current=false;setBusy(false);}
   };
   if(portal.submissionLocked)return <section aria-label="场景任务确认结果" className="mt-3 space-y-3">
-    {receipts.map(receipt=><AssistantTaskLinkCard key={receipt.itemId} title={receipt.title} description={`内容任务 · ${{saved:'待调度',queued:'已入队',running:'执行中',blocked:'待介入'}[receipt.executionState||'saved']}`} onOpen={()=>navigate(productionPortalNavigation(receipt.taskId))}/>)}
+    {receipts.map(receipt=><AssistantTaskLinkCard key={receipt.itemId} title={receipt.title} description={`内容任务 · ${{saved:'待调度',queued:'已入队',running:'执行中',blocked:'待介入'}[receipt.executionState||'saved']}`} onOpen={()=>openContentGenerationQueue({view:'tasks',taskId:receipt.taskId})}/>)}
     {error&&<Alert type="warning" title={error}/>}
     {(!receipts.length||error||receipts.some(receipt=>!receipt.startRequested))&&<div className="flex justify-end"><Button loading={busy} onClick={()=>void submit()}>重试未完成项</Button></div>}
   </section>;

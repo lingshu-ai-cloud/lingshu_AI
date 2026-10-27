@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readableAssistantReply } from './assistantReadableReply';
-import { splitAssistantReply, assistantWantsDetailedReply, ASSISTANT_READABLE_POLICY } from './assistantReadableReply';
+import { splitAssistantReply, assistantWantsDetailedReply, ASSISTANT_READABLE_POLICY, ASSISTANT_QUICK_TASK_POLICY } from './assistantReadableReply';
 
 test('natural response policy does not impose three sentences or mandatory action templates', () => {
   assert.match(ASSISTANT_READABLE_POLICY, /不设三句话/);
   assert.match(ASSISTANT_READABLE_POLICY, /普通交流正常说话/);
   assert.equal(assistantWantsDetailedReply('请详细分析原因和不同方案'), true);
   assert.equal(assistantWantsDetailedReply('不要详细分析，直接给结果'), false);
+  assert.match(ASSISTANT_QUICK_TASK_POLICY, /250～500/);
+  assert.match(ASSISTANT_QUICK_TASK_POLICY, /产品20\/P20/);
 });
 
 test('optional details preserve full explanations and promote essential restrictions', () => {
@@ -49,6 +51,17 @@ test('customer reply translates internal statuses and removes raw evidence witho
   assert.match(result, /行动：重试采集，或提供2～3个竞品链接/);
 });
 
+test('common query states and provider failures are translated for customer-facing replies', () => {
+  const result = readableAssistantReply('账号状态 unavailable；任务 attention；执行 blocked。\n模型 doubao-seedance-2-0-fast-260128 not activated；no formal assets uploaded；image size must be ≥3686400 pixels。');
+  assert.match(result, /账号状态\s*暂未核验/);
+  assert.match(result, /任务\s*需要关注/);
+  assert.match(result, /执行\s*已阻塞/);
+  assert.match(result, /Seedance 视频能力尚未开通/);
+  assert.match(result, /尚未上传可用于正式制作的素材/);
+  assert.match(result, /图片清晰度不足，请上传高清原图/);
+  assert.doesNotMatch(result, /unavailable|attention|blocked|doubao-seedance|not activated|no formal assets uploaded|image size must be/);
+});
+
 test('technical-only details are hidden, failures and budget/approval limits remain honest', () => {
   const result = readableAssistantReply('内部：taskId=abc，expectedVersion=v1。\n错误：presenter_stack_blocked，生产失败。\n需要先确认费用200元，尚未批准发布。\n```json\n{"runId":"abc"}\n```');
   assert.doesNotMatch(result, /taskId|expectedVersion|presenter_stack|runId|json/);
@@ -64,4 +77,34 @@ test('product names, requested English copy, quick replies and verified source U
 test('streaming partial references and unclosed technical blocks cannot leak identifiers', () => {
   assert.equal(readableAssistantReply('采集失败。[记录:workflow_tasks/abc'), '采集失败。');
   assert.equal(readableAssistantReply('需要补齐产品资料。\n```json\n{"taskId":"private"'), '需要补齐产品资料。');
+});
+
+test('operations replies hide developer evidence and keep a compact business surface', () => {
+  const raw = `当前状态：
+本周目标是提升收藏和官网访问，重点产品聚焦于：
+- 积雪草精华（对应产品20：安肤修护水光液）
+- 唇釉（未在当前41款现货盘中查到，企业知识库无该SKU信息）
+目标链路尚未实际发布，没有效果数据回执。
+已完成：
+- 目标设定（已核验，\`weekly_goals\` 集合中 state: complete）
+待处理：
+- \`starter_social_content_tasks\` 共14条，plan_review 5条，asset_review 1条。
+阻塞项：
+- 无可用产品实拍素材。
+- 技术链路中断：404 model not activated、image size must be at least 3686400 pixels、fetch failed。
+今天最优先动作：
+- 上传P4/P33/P20的真实产品素材。
+\`\`\`next
+确认是否立即上传P4/P33/P20的实拍素材？
+是否需要我协助起草唇釉SKU的信息补录模板？
+\`\`\``;
+  const readable = readableAssistantReply(raw);
+  assert.doesNotMatch(readable, /产品20|P4|P33|P20|41款|weekly_goals|starter_social|state|plan_review|asset_review|404|model not activated|pixels|fetch failed/);
+  assert.match(readable, /当前产品目录|企业资料中暂未找到该规格|等待方案确认|视频制作暂不可用/);
+  const result = splitAssistantReply(readable, { presentation: 'operations' });
+  assert.ok(result.summary.length < 700);
+  assert.match(result.summary, /当前状态|已完成|待处理|阻塞项|今天最优先动作/);
+  assert.ok(result.details.length > 0);
+  assert.match(result.details.join('\n'), /积雪草精华/);
+  assert.match(result.summary, /```next[\s\S]*补录模板/);
 });

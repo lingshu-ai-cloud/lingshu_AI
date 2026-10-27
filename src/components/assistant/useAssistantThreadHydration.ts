@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Page } from '../../App';
 import { authHeader } from '../../lib/auth';
-import { readAssistantConversationKey } from '../../lib/assistantConversationIdentity';
-import { readAssistantThreadJournal, type AssistantJournalScope } from '../../lib/assistantThreadJournal';
+import { readAssistantConversationKey, writeAssistantConversationKey } from '../../lib/assistantConversationIdentity';
+import { clearAssistantThreadJournal, readAssistantThreadJournal, type AssistantJournalScope } from '../../lib/assistantThreadJournal';
 import { useAssistantStore, type AgentThreadState, type AssistantTaskCardInput, type OrbitAgentId } from '../../stores/assistantStore';
 import type { AssistantActionRequest, AssistantActionResponse } from '../../../shared/contracts/assistantActions';
 import { actionCardToTaskCard } from './assistantActionProjection';
@@ -16,6 +16,39 @@ import {
 
 export function hydratedFocusNeedsWorkspaceStatus(focusedTaskId: string | null): boolean {
   return Boolean(focusedTaskId && !focusedTaskId.startsWith('social-content:'));
+}
+
+type HydrationCandidate = Record<string, unknown> & {
+  agentId?: unknown;
+  deletedAt?: unknown;
+  id?: unknown;
+};
+
+const validConversationKey = (value: unknown): value is string => (
+  typeof value === 'string' && /^(?:business|conversation:[a-zA-Z0-9-]+)$/.test(value)
+);
+
+/**
+ * A browser can lose its active-conversation pointer while the durable rows
+ * remain intact. Never strand the home composer on a tombstone: prefer the
+ * newest active row returned by the server, and only allocate a new identity
+ * when the selected row is confirmed deleted and no active row remains.
+ */
+export function resolveAssistantConversationSelection(
+  requestedKey: string,
+  selected: HydrationCandidate | null,
+  activeItems: HydrationCandidate[],
+  freshKey: string,
+): { key: string; item: HydrationCandidate | null; changed: boolean } {
+  const selectedDeleted = Boolean(selected?.deletedAt);
+  const missingDefault = requestedKey === PRIMARY_ASSISTANT_THREAD && !selected?.id;
+  if (!selectedDeleted && !missingDefault) return { key: requestedKey, item: selected, changed: false };
+  const fallback = activeItems.find(item => validConversationKey(item.agentId) && !item.deletedAt) ?? null;
+  if (fallback && validConversationKey(fallback.agentId)) {
+    return { key: fallback.agentId, item: fallback, changed: fallback.agentId !== requestedKey };
+  }
+  if (!selectedDeleted) return { key: requestedKey, item: selected, changed: false };
+  return { key: freshKey, item: null, changed: freshKey !== requestedKey };
 }
 
 /** Recovers presentation state, then re-signs any focused action from the authoritative workspace. */
@@ -45,7 +78,11 @@ export function useAssistantThreadHydration(input: {
       stablePersistenceScope,
       PRIMARY_ASSISTANT_THREAD,
     );
-    const journal = storedJournal && (storedJournal.conversationKey || 'business') === conversationKey ? storedJournal : null;
+    const journal = storedJournal
+      && !storedJournal.deletedAt
+      && (storedJournal.conversationKey || 'business') === conversationKey
+      ? storedJournal
+      : null;
     // A keyed component instance starts from an empty scoped thread, then
     // recovers only the matching tenant + user + agent journal. This prevents
     // Zustand state from a prior login/support scope flashing into this one.
@@ -54,21 +91,41 @@ export function useAssistantThreadHydration(input: {
       journal ? { ...journal, conversationKey } : { ...emptyAssistantThread(), conversationKey },
     );
     const threadBeforeRequest = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
-    fetch(`/api/overseas/assistant-threads/${encodeURIComponent(conversationKey)}`, { headers: authHeader() })
+    const headers = authHeader();
+    fetch(`/api/overseas/assistant-threads/${encodeURIComponent(conversationKey)}`, { headers })
       .then(resp => resp.ok ? resp.json() : null)
-      .then(item => ({ items: item ? [item] : [] }))
-      .then(async data => {
+      .then(async (selected: HydrationCandidate | null) => {
+        const needsFallback = Boolean(selected?.deletedAt)
+          || (conversationKey === PRIMARY_ASSISTANT_THREAD && !selected?.id);
+        let activeItems: HydrationCandidate[] = [];
+        if (needsFallback) {
+          try {
+            const response = await fetch('/api/overseas/assistant-threads?page=1', { headers });
+            const payload = response.ok ? await response.json() as { items?: unknown } : null;
+            activeItems = Array.isArray(payload?.items) ? payload.items as HydrationCandidate[] : [];
+          } catch {
+            // A confirmed tombstone still receives a fresh local identity even
+            // when history listing is temporarily unavailable.
+          }
+        }
+        return resolveAssistantConversationSelection(
+          conversationKey,
+          selected,
+          activeItems,
+          `conversation:${crypto.randomUUID()}`,
+        );
+      })
+      .then(async selection => {
         if (cancelled) return;
+        if (selection.changed) {
+          clearAssistantThreadJournal(window.localStorage, stablePersistenceScope, PRIMARY_ASSISTANT_THREAD);
+          writeAssistantConversationKey(stablePersistenceScope, selection.key);
+        }
         const localChangedWhileLoading = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD] !== threadBeforeRequest;
         const latestLocal = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
-        if (!Array.isArray(data?.items)) {
-          if (journal) persistRecoveredThread();
-          setAssistantThreadHydrated(true);
-          return;
-        }
-        const item = data.items.find((candidate: ({ agentId?: unknown } & Record<string, unknown>) | null) => candidate?.agentId === conversationKey);
+        const item = selection.item;
         const persistedRemote = item ? persistedAssistantThread({
-          conversationKey,
+          conversationKey: selection.key,
           conversationResetVersion: item.conversationResetVersion,
           deletedAt: item.deletedAt,
           title: item.title,
@@ -88,15 +145,20 @@ export function useAssistantThreadHydration(input: {
             : null,
         }, emptyAssistantThread()) : null;
         const remote = persistedRemote;
-        const merged = remote
-          ? (journal || localChangedWhileLoading ? mergeAssistantThread(remote, latestLocal) : remote)
-          : latestLocal;
+        const merged = selection.changed
+          ? {
+            ...(remote ?? { ...emptyAssistantThread(), conversationKey: selection.key }),
+            ...(localChangedWhileLoading ? { draftInput: latestLocal.draftInput } : {}),
+          }
+          : remote
+            ? (journal || localChangedWhileLoading ? mergeAssistantThread(remote, latestLocal) : remote)
+            : latestLocal;
         hydrateThread(PRIMARY_ASSISTANT_THREAD, merged);
         const hydratedThread = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
         const persistedFocusedTaskId = hydratedThread.focusedTaskId;
         setAssistantThreadHydrated(true);
 
-        if (journal) persistRecoveredThread();
+        if (journal && !selection.changed) persistRecoveredThread();
 
         // Thread storage intentionally keeps presentation state only. Re-read
         // the authoritative workspace after hydration and place its freshly

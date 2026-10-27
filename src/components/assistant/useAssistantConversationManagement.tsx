@@ -21,6 +21,10 @@ type Input = {
   ready: boolean;
 };
 
+export function assistantConversationCanDelete(thread: AgentThreadState): boolean {
+  return Boolean(thread.version || thread.messages.length || thread.draftInput || thread.creationDraft);
+}
+
 export function useAssistantConversationManagement(input: Input) {
   const { modal, message } = App.useApp();
   const [busy, setBusy] = useState(false);
@@ -33,6 +37,30 @@ export function useAssistantConversationManagement(input: Input) {
   const [nextPage, setNextPage] = useState<number | null>(null);
   const thread = useAssistantStore(state => state.threads[agent]);
   const activeKey = thread.conversationKey || agent;
+  const recoveredDeletedKey = useRef('');
+  useEffect(() => {
+    if (!input.ready || !thread.deletedAt || recoveredDeletedKey.current === activeKey) return;
+    recoveredDeletedKey.current = activeKey;
+    input.fence.current.active = false;
+    input.fence.current = { scopeKey: input.fence.current.scopeKey, active: true };
+    input.abort.current?.abort(); input.abort.current = null; input.stop();
+    const queue = input.queues.current.get(agent);
+    if (queue?.retryTimer != null) window.clearTimeout(queue.retryTimer);
+    if (queue) { queue.retryTimer = null; queue.pending = null; }
+    input.pause.current = false;
+    lock.current = false;
+    setBusy(false);
+    input.reset();
+    const next = {
+      ...emptyAssistantThread(),
+      conversationKey: `conversation:${crypto.randomUUID()}`,
+      draftInput: thread.draftInput,
+    };
+    useAssistantStore.getState().hydrateThread(agent, next);
+    clearAssistantThreadJournal(window.localStorage, input.scope, agent);
+    writeAssistantConversationKey(input.scope, next.conversationKey);
+    void message.info('原会话已删除，已为你新建会话。');
+  }, [activeKey, input, message, thread.deletedAt]);
   useEffect(() => {
     const stopStaleReply = () => {
       input.fence.current.active = false;
@@ -162,7 +190,8 @@ export function useAssistantConversationManagement(input: Input) {
       { key: 'history', label: '历史会话', icon: <History size={15} /> },
       { type: 'divider' },
       { key: 'clear', label: '清空当前会话', icon: <Eraser size={15} />, disabled: !thread.messages.length && !thread.draftInput && !thread.creationDraft },
-      { key: 'delete', label: '删除会话', icon: <Trash2 size={15} />, danger: true, disabled: !thread.version && !thread.messages.length },
+      { key: 'delete', label: '删除会话', icon: <Trash2 size={15} />, danger: true,
+        disabled: !assistantConversationCanDelete(thread) },
     ], onClick: ({ key }) => {
       if (key === 'history') { setHistoryOpen(true); void refreshHistory(); }
       else if (key === 'new') void run('new');

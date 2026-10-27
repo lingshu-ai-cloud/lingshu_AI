@@ -80,7 +80,7 @@ export default function ImageReplicationConversation({ request, onShowCreations,
     image.onload = () => {
       if (!active) return;
       const ratio = imageReplicationReferenceRatio(image.naturalWidth, image.naturalHeight);
-      setMeasuredReference({ url: reference.url, ratio, error: ratio ? '' : '参考图画幅不属于可交付规格，请换一张同画幅图片。' });
+      setMeasuredReference({ url: reference.url, ratio, error: ratio ? '' : '参考图尺寸读取失败，请换一张可用图片。' });
       if (ratio) setAspectRatio(ratio);
     };
     image.onerror = () => { if (active) setMeasuredReference({ url: reference.url, ratio: null, error: '参考图尺寸读取失败，请换一张可用图片。' }); };
@@ -134,9 +134,6 @@ export default function ImageReplicationConversation({ request, onShowCreations,
     if (step === 0 && measuredReference?.error) { setError(measuredReference.error); return; }
     if (step === 1) {
       if (!product) { setError('请选择一个企业知识库中的产品。'); return; }
-      if (measuredReference?.ratio && aspectRatio !== measuredReference.ratio) {
-        setError(`当前参考图为 ${measuredReference.ratio}，请使用同画幅交付，或更换参考图。`); return;
-      }
       const issue = imageReplicationDraftIssue(draft());
       if (issue) { setError(issue); return; }
     }
@@ -186,7 +183,7 @@ export default function ImageReplicationConversation({ request, onShowCreations,
     <main className={embedded ? "min-w-0" : "min-h-0 flex-1 overflow-y-auto p-4 sm:p-6"}>
       <div className="mx-auto max-w-3xl space-y-5">
         {!embedded && request?.specialRequirements && <p className="whitespace-pre-wrap break-words text-sm text-text-secondary">创作需求：{request.specialRequirements}</p>}
-        {QUESTIONS.slice(0, step + 1).map((question, index) => <div key={question} className="space-y-3">
+        {!embedded && QUESTIONS.slice(0, step + 1).map((question, index) => <div key={question} className="space-y-3">
           <div className="ls-messenger-bubble ls-messenger-bubble--inbound"><span className="mb-1 block text-xs opacity-75">灵小枢</span>{question}</div>
           {index < step && answers[index] && <div className="ls-messenger-bubble ls-messenger-bubble--outbound whitespace-pre-wrap"><span className="mb-1 block text-xs opacity-75">已确认</span>{answers[index]}</div>}
         </div>)}
@@ -194,10 +191,10 @@ export default function ImageReplicationConversation({ request, onShowCreations,
         {loadError && <Alert type="warning" showIcon title={loadError} action={<Button size="small" onClick={() => setReload(value => value + 1)}>重新读取</Button>}/>}
         <form className="space-y-4" aria-label="图文复刻问答" onSubmit={event => { event.preventDefault(); if (step < 2) advance(); else void submit(); }}>
           {step === 0 && <>
-            <ImageReplicationReferencePicker items={references} reference={reference} disabled={busy || loading} unavailable={Boolean(loadError)} onReload={() => setReload(value => value + 1)}
+            <ImageReplicationReferencePicker compact={embedded} items={references} reference={reference} disabled={busy || loading} unavailable={Boolean(loadError)} onReload={() => setReload(value => value + 1)}
               onSelect={value => { setReference(value); setError(''); }} onConfirm={advance} onUpload={() => uploadInput.current?.click()}/>
-            {reference?.url && measuredReference?.url === reference.url && measuredReference.ratio &&
-              <p className="text-sm text-text-secondary">已按参考图画幅匹配交付规格：{measuredReference.ratio}</p>}
+            {!embedded && reference?.url && measuredReference?.url === reference.url && measuredReference.ratio &&
+              <p className="text-sm text-text-secondary">已自动适配为 {measuredReference.ratio} 交付画幅</p>}
             <input ref={uploadInput} type="file" accept="image/jpeg,image/png,image/webp" aria-label="上传参考图" className="sr-only" disabled={busy || loading}
               onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void upload(file); }}/>
           </>}

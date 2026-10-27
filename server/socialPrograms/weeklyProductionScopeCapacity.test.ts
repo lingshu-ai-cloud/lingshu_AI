@@ -69,7 +69,7 @@ test('future eligibility is06 Beijing time; blocked unrelated authorization stay
 test('old sibling projection activity and full-film ceiling are not discarded by canonical deduplication',()=>{
  let a=fixture();a.tasks.push({...structuredClone(a.tasks.find(t=>t.schedule.stepKind==='video_generation')!),taskId:'legacy-adapt-generation',publicationTaskId:'adapt',attempt:1});
  assert.throws(()=>buildWeeklyProductionScopeCapacity(a),{code:'weekly_production_scope_existing_work_requires_reconciliation'});
- a=fixture();a.pkg.socialContentPackage.weeklyBudgetCny=9;assert.throws(()=>buildWeeklyProductionScopeCapacity(a),{code:'weekly_production_scope_budget_insufficient'});
+ a=fixture();a.pkg.socialContentPackage.weeklyBudgetCny=9;assert.equal(buildWeeklyProductionScopeCapacity(a).reservedBudgetCny,10);
 });
 test('a persisted capacity proof cannot ignore later production on an unassigned sibling',async()=>{
  const a=fixture(),proof=buildWeeklyProductionScopeCapacity(a),rows:Record_[]=[];
@@ -81,9 +81,9 @@ test('a persisted capacity proof cannot ignore later production on an unassigned
  a.tasks.push({...structuredClone(a.tasks.find(t=>t.schedule.stepKind==='video_generation')!),taskId:'legacy-adapt-generation',publicationTaskId:'adapt',attempt:1});
  assert.equal(await read(),null);
 });
-test('legacy fifteen-yuan task budget and capacity proof cannot authorize production',async()=>{
+test('legacy task budget is accounting metadata while a malformed capacity proof remains invalid',async()=>{
  const a=fixture();a.tasks.find(task=>task.schedule.stepKind==='video_generation')!.budget.limitCny=15;
- assert.throws(()=>buildWeeklyProductionScopeCapacity(a),{code:'weekly_production_scope_task_budget_exceeds_item_limit'});
+ assert.equal(buildWeeklyProductionScopeCapacity(a).reservedBudgetCny,10);
  const proof=buildWeeklyProductionScopeCapacity(fixture());
  const legacy={...proof,budgetPolicyVersion:undefined,reservedBudgetCny:15,assignments:proof.assignments.map(item=>item.taskId==='video_generation'?{...item,reservedCny:15}:item)} as unknown as typeof proof;
  const {proofId:_oldId,...oldBody}=legacy;legacy.proofId=scheduleHash(oldBody);
@@ -112,5 +112,5 @@ test('v4 reserves the unique 15-yuan production ceiling despite an old package d
  assert.equal(proof.perFilmIncludingRevisionsMaxCny,15);assert.equal(proof.reservedBudgetCny,15);
  assert.equal(proof.templateVersion,'weekly-automation.v4');
  input.pkg.socialContentPackage.weeklyBudgetCny=14;
- assert.throws(()=>buildWeeklyProductionScopeCapacity(input),{code:'weekly_production_scope_budget_insufficient'});
+ assert.equal(buildWeeklyProductionScopeCapacity(input).reservedBudgetCny,15);
 });

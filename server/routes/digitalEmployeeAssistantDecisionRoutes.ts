@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { contentGenerationAuthorization } from '../../shared/contracts/contentGenerationAuthorization.js';
 import { listTenantEmployees } from './auth.js';
 import { type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { pauseContentExecutionJobsForRun } from '../contentExecution/durableQueue.js';
@@ -219,13 +220,17 @@ export function createDigitalEmployeeAssistantDecisionRoutes(deps: Pick<DigitalE
               });
             },
             approveAndStart: async selected => {
+              const generationAuthorization = contentGenerationAuthorization(req.body?.contentGenerationAuthorization);
+              if (!generationAuthorization) throw new AssistantDecisionCommandError('content_generation_authorization_required', 400, {
+                message: '开始任务前，请先确认授权数字员工调用已配置的内容生成模型；实际用量和费用只记录，不设创作预算上限。',
+              });
               const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, selected.subject.id, identity.tenantId);
               const plan = goal ? await first<PlanRecord>(COLLECTION.plans, { tenant_id: identity.tenantId, goal_id: goal.id }) : null;
               if (!goal || !plan) throw new AssistantDecisionCommandError('assistant_decision_context_missing', 409);
               assertAssistantDecisionVersion(selected, weeklyPlanDecisionVersion(goal, plan));
               const pack = jsonObject<Record<string, unknown>>(plan.plan, {}).businessPackage as WeeklyPackage | undefined;
               const members = await listTenantEmployees(identity, req.headers.authorization);
-              const result = await approveGoalForReview(identity.tenantId, identity.userId, goal.id, Number(pack?.revision || 0), members);
+              const result = await approveGoalForReview(identity.tenantId, identity.userId, goal.id, Number(pack?.revision || 0), members, generationAuthorization);
               if (result.status !== 200) {
                 const body = result.body as Record<string, unknown>;
                 throw new AssistantDecisionCommandError(String(body.error || 'plan_start_failed'), result.status, body);

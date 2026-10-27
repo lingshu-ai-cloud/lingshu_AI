@@ -99,6 +99,18 @@ test('two visibly different references drive distinct focal, copy and palette la
   /social_image_reference_structure_unsupported/);
 });
 
+test('ordinary 4:3 references adapt to a supported delivery canvas instead of blocking creation', async () => {
+  const bytes = await referenceImage('top_left', '#123358');
+  const inventory = await inventoryFor(bytes, 'top_left');
+  inventory.canvas = { ...inventory.canvas, width: 800, height: 600 };
+  const task = { deliverySpec: { aspectRatio: '1:1' } } as SocialImageCreationTask;
+  const graph = compileEvidenceGuidedSocialImage({ task, inventory,
+    productId: 'product-a', headline: 'New product claim', now });
+  assert.deepEqual(graph.canvas, { width: 1200, height: 1200, background: graph.canvas.background });
+  assert.ok(graph.layers.every(layer => layer.rect.x >= 0 && layer.rect.y >= 0
+    && layer.rect.x + layer.rect.width <= 1 && layer.rect.y + layer.rect.height <= 1));
+});
+
 test('large reference headline stays in the copy zone while the opposite visual region holds the product', async () => {
   const bytes = await referenceImage('top_left', '#dfb5c5');
   const inventory = await inventoryFor(bytes, 'top_left');
