@@ -138,7 +138,7 @@ export default function InspirationMaterialGallery({ materials, favoritingMateri
                 ) : visibleMaterialGalleryCount === 0 ? (
                   <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
                     <Search size={30} className="mx-auto mb-3 text-text-muted opacity-50" />
-                    <p className="text-sm font-bold text-text-primary">没有符合当前标签的素材</p>
+                    <p className="text-sm font-bold text-text-primary">{materialsLoading ? '正在加载并匹配其余素材…' : '没有符合当前标签的素材'}</p>
                     <button type="button" onClick={clearMaterialFilters} className="mt-2 text-xs font-bold text-accent">清空筛选条件</button>
                   </div>
                 ) : (
@@ -172,7 +172,7 @@ export default function InspirationMaterialGallery({ materials, favoritingMateri
                       <section aria-labelledby="ordinary-materials-title" className="order-1 space-y-3">
                         <div className="flex items-center justify-between gap-3">
                           <h2 id="ordinary-materials-title" className="ls-type-title-small text-text-primary">普通素材</h2>
-                          <span className="ls-type-body-small text-text-muted">共 {ordinaryFilteredTotal} 条 · 当前第 {materialPage} 页</span>
+                          <span className="ls-type-body-small text-text-muted">{materialsLoading ? '已加载' : '共'} {ordinaryFilteredTotal} 条{materialsLoading ? ' · 加载中' : ` · 当前第 ${materialPage} 页`}</span>
                         </div>
                         <LsMasonryGallery layout="masonry" items={pagedUngroupedFilteredMaterials.map(material => ({ id: material.id, content:
                           <article className="group relative overflow-hidden rounded-lg border border-border bg-surface shadow-none transition hover:border-border-bright focus-within:border-accent">
