@@ -128,12 +128,7 @@ export default function AssistantConversationPanel(props: Props) {
         id="global-assistant-panel"
         role="dialog"
         aria-modal="false"
-        data-assistant-view={expanded ? 'weekly-work' : 'conversation'}
-        onKeyDownCapture={event => {
-          if (!expanded) return;
-          if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setWorkExpanded(false); return; }
 
-        }}
         aria-labelledby="global-assistant-panel-title"
         aria-describedby="global-assistant-panel-description"
         tabIndex={-1}
@@ -143,6 +138,12 @@ export default function AssistantConversationPanel(props: Props) {
         transition={spatialTransition}
         className={`ls-assistant-panel ${expanded ? 'ls-assistant-panel--work-expanded' : ''} absolute bottom-14 right-0 z-10 flex max-h-[calc(100dvh-env(safe-area-inset-bottom)-96px)] max-w-[calc(100vw-32px)] flex-col overflow-hidden border border-border bg-surface outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' || inlineHomeBounds ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
         style={{ height: inlineHomeBounds?.height ?? assistantPanelHeight, width: inlineHomeBounds?.width ?? assistantPanelWidth, maxWidth: inlineHomeBounds ? '100%' : 'calc(100vw - 32px)' }}
+        onKeyDownCapture={event => {
+          if (!expanded) return;
+          if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setWorkExpanded(false); return; }
+
+        }}
+        data-assistant-view={expanded ? 'weekly-work' : 'conversation'}
       >
         {expanded && <button type="button" className="assistant-work-return-sector" aria-label="问问灵小枢，返回对话" title="返回灵小枢对话" onClick={() => {
           setWorkExpanded(false);
@@ -151,7 +152,7 @@ export default function AssistantConversationPanel(props: Props) {
           <span>问问灵小枢</span>
           <ArrowLeft size={14} aria-hidden="true"/>
         </button>}
-        {!inlineHome && <AssistantWorkBookmark expanded={expanded} onToggle={() => { setAssistantTool(null); returnToConversation(); setWorkExpanded(value => !value); }}/>}
+        {!inlineHome && !expanded && <AssistantWorkBookmark expanded={expanded} onToggle={() => { setAssistantTool(null); returnToConversation(); setWorkExpanded(value => !value); }}/>}
         {inlineHome && <div className="sr-only"><h2 id="global-assistant-panel-title">灵小枢创作对话</h2><p id="global-assistant-panel-description">描述创作需求，或添加图片、视频和音频参考。</p></div>}
         {inlineHome && <div className="flex shrink-0 justify-end px-3 pt-1" data-assistant-conversation-controls>{props.conversationControls}</div>}
         {activeThread.deletedAt && <p role="status" className="px-4 text-sm text-text-secondary">这条会话已删除，请从会话管理中新建会话。</p>}
