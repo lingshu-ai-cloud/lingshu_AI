@@ -2,6 +2,18 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前生产部署：前端冒烟修复 v0.5（2026-10-27）
+
+- 权威开发分支 `baseline/unified-20261026`；实际部署源码 `bbe406a08c7fdf394b364794f993e179d299c7af`。用户指定存档分支 `xixi1027部署v0.5、` 指向同一源码。原有 WorkBuddy 素材准入和视频维护脏改动保留，未纳入本次发布。
+- 修复会话新建/保存、清空/删除与撤销，以及恢复后的空焦点字段再写入失败；正式站仅用冒烟草稿完成删除→撤销→编辑保存→新建→历史读取→清空→撤销→再删除，原有六条消息会话保留。对话输入框默认高度实测 36px，附件、输入、发送同排。
+- 正式站验证账号健康可打开真实平台/账号配置表单，残缺历史任务可进入现有新建计划表单，Messenger 文案对应实际 App ID/App Secret。此前同批 3986917a 已验证鼠标视频播放（readyState=4、播放时间推进）、时长补零、素材首批加载提示和工厂筛选、8 个客服历史会话；本次未付费生成、对外发送或更改广告投放状态。
+- 干净验证工作树 `bbe406a0`：56/56 定向测试（含真实 PocketBase 会话回归）、类型检查、生产构建、架构预算与相对 3986917a 的 ratchet、207 项迁移清单只读检查通过。本次补发没有新增迁移；此前 3986917a 的新增迁移在生产库副本演练并确认 274 张业务表数量一致、完整性正常后上线。以上不是全部供应商真实 E2E 验收。
+- 经用户批准使用已连接腾讯云交互终端，现有 `/opt/lingshu_AI` HTTPS `git pull --ff-only` 后运行 `bash deploy/update.sh`。低并发构建成功；数据库冷启动超过脚本 180 秒上限，实际健康后从管理员初始化及服务启动检查点继续，`deploy-final-resume.exit=0`。最终 app、worker、PocketBase、Redis、Caddy 均 healthy。
+- 公网 `/api/overseas/ready` HTTP 200，`status=ready`、`issues=[]`，web `build.commitSha` 与 worker `buildSha`、`expectedBuildSha` 均为上述完整 SHA，worker `ready=true`。自动数字人发布、语义质检、清理 worker 等既有未配置能力仍不可用，不能用整体 ready 代替真实供应商验收。
+- 备份 `/opt/lingshu_AI/backups/smoke-fixes-20261027/` 保留 `data.before.db`、`data.before-final.db`、环境与业务 JSON、发布及恢复日志；上线后数据库 `integrity_check=ok`，素材/客服历史 JSON 的 SHA256 与发布前相同。用户明确批准删除未使用的 21287c57、pre-assistant-save-20261027 两组运行镜像；3986917a、53492e0f 回滚镜像及全部业务备份保留。构建缓存释放后根分区约 3.0GB 可用。
+- 已知待核对：名称含“仅草稿”的广告计划仍由平台报告为投放中（CNY 6.72 日预算），页面显示“投放状态待核对”；本轮未启动、暂停或修改它。历史残缺任务的原记录继续保留，新入口不会凭空恢复原制作记录。断网重试仅做源码/定向验证，未主动断开生产连接。
+- 本地证据目录 `/Users/julia1/.lingshu-ai/deployment-validation/`：`smoke-fixes-final-ready.json`、`smoke-fixes-final-tests.log`、`smoke-fixes-final-lint.log`、`smoke-fixes-final-build.log`、`smoke-fixes-composer-final-production.png`、`smoke-fixes-account-editor-final-production.png`、`smoke-fixes-task-recovery-final-production.png`。
+
 ## 当前统一开发基线：前端冒烟问题修复候选（2026-10-27）
 
 - 权威分支仍为 `baseline/unified-20261026`，本批源码候选 `f55aebb70472b5c6e00429ada45824af61e01bfe`；用户要求按冒烟清单修复并部署，追加对话状态底部输入栏收紧。原有 WorkBuddy 素材准入和视频维护的未提交改动保持原样，未纳入候选。
