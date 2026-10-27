@@ -4,6 +4,7 @@ import { readCompetitorAccounts } from '../../lib/competitorAccountsApi';
 import { authHeader } from '../../lib/auth';
 import type { InspirationImageCrawlPlatform } from '../../lib/inspirationImageCrawl';
 import type { ContentFormat, Platform, TrendVideo } from '../../lib/inspirationTypes';
+import type { ShootingNeed } from '../../lib/inspirationTypes';
 import { socialDiscoveryApi } from '../../lib/socialDiscoveryApi';
 import { runInspirationImageCrawl } from './inspirationImageCrawlAction';
 import { type FavoriteFilter } from './inspirationMaterialLibrary';
@@ -186,6 +187,7 @@ export function useInspirationDiscoveryInventory({ setMaterialMessage, setSelect
   };
 
   const [shootingVideos, setShootingVideos] = useState<TrendVideo[]>([]);
+  const [shootingNeeds, setShootingNeeds] = useState<ShootingNeed[]>([]);
   const [shootingVideosLoading, setShootingVideosLoading] = useState(false);
   const [shootingVideosError, setShootingVideosError] = useState('');
   const shootingRequestRef = useRef(0);
@@ -195,13 +197,10 @@ export function useInspirationDiscoveryInventory({ setMaterialMessage, setSelect
     shootingReadsInFlight.current += 1;
     setShootingVideosLoading(true);
     try {
-      const data = await readInspirationInventory(async (format, page) => {
-        const query = new URLSearchParams({ contentFormat: format, crawlRange: 'all', page: String(page), perPage: String(INSPIRATION_PAGE_SIZE) });
-        const response = await fetch(`/api/overseas/videos?${query}`, { headers: authHeader(), signal: AbortSignal.timeout(15000) });
-        if (!response.ok) throw new Error('高频需求来源读取失败，请重试');
-        return await response.json() as { items: CrawlerRecord[]; totalItems: number };
-      }, 'all', 1, true, item => item.id, () => requestId === shootingRequestRef.current);
-      if (requestId === shootingRequestRef.current) { setShootingVideos(recordsToVideos(data.items)); setShootingVideosError(''); }
+      const response = await fetch('/api/overseas/videos/shooting-needs', { headers: authHeader(), signal: AbortSignal.timeout(30000) });
+      if (!response.ok) throw new Error('高频需求来源读取失败，请重试');
+      const data = await response.json() as { needs: ShootingNeed[] };
+      if (requestId === shootingRequestRef.current) { setShootingNeeds(data.needs); setShootingVideosError(''); }
     } catch (error) {
       if (requestId === shootingRequestRef.current) setShootingVideosError(error instanceof Error ? error.message : '待拍来源读取失败');
     } finally { shootingReadsInFlight.current -= 1; if (requestId === shootingRequestRef.current) setShootingVideosLoading(false); }
@@ -212,7 +211,7 @@ export function useInspirationDiscoveryInventory({ setMaterialMessage, setSelect
     if (innerView !== 'shooting') return;
     void shootingRefreshRef.current();
     const refresh = () => { if (document.visibilityState !== 'hidden' && !shootingReadsInFlight.current) void shootingRefreshRef.current(); };
-    const timer = window.setInterval(refresh, 15000);
+    const timer = window.setInterval(refresh, 60000);
     window.addEventListener('focus', refresh);
     return () => { shootingRequestRef.current += 1; window.clearInterval(timer); window.removeEventListener('focus', refresh); };
   }, [innerView]);
@@ -411,7 +410,7 @@ export function useInspirationDiscoveryInventory({ setMaterialMessage, setSelect
   }, []);
 
   return {
-    shootingVideos, shootingVideosLoading, shootingVideosError, refreshShootingVideos,
+    shootingVideos, shootingNeeds, shootingVideosLoading, shootingVideosError, refreshShootingVideos,
     platform,
     setPlatform,
     search,

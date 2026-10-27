@@ -97,9 +97,9 @@ export function AuthenticatedImage({ src, alt, className, onReady, onError, onNa
     if (image.naturalWidth > 0 && image.naturalHeight > 0) onNaturalAspectRatio?.(image.naturalWidth / image.naturalHeight);
     onReady?.();
   };
-  if (isRemoteSignedUrl) return <LsProgressiveMedia src={src} alt={alt} className={className} decoding="async" preview={false} onLoad={event => reportReady(event.target as HTMLImageElement)} onError={onError} />;
+  if (isRemoteSignedUrl) return <LsProgressiveMedia src={src} alt={alt} className={className} loading="lazy" decoding="async" preview={false} onLoad={event => reportReady(event.target as HTMLImageElement)} onError={onError} />;
   return blobUrl
-    ? <img src={blobUrl} alt={alt} className={className} decoding="async" onLoad={event => reportReady(event.currentTarget)} onError={onError} />
+    ? <img src={blobUrl} alt={alt} className={className} loading="lazy" decoding="async" onLoad={event => reportReady(event.currentTarget)} onError={onError} />
     : <div className={`${className} bg-surface-2`} aria-label={alt} />;
 }
 

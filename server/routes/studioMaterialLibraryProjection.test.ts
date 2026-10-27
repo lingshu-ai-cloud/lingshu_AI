@@ -18,6 +18,7 @@ test('product scope, internal-asset exclusion and pagination use one determinist
   assert.equal(result.error, undefined);
   assert.equal(result.sceneMaterials.length, 4);
   assert.equal(result.total, 2);
+  assert.equal(result.inventoryTotal, 3);
   assert.equal(result.pageSize, 1);
   assert.deepEqual(result.pageItems.map(item => item.id), ['newest']);
   assert.deepEqual(result.filteredMaterials.map(item => item.id), ['newest', 'first']);

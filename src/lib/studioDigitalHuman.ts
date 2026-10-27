@@ -89,7 +89,7 @@ export type MaterialLibraryQuery = {
   page?: number;
   pageSize?: number;
 };
-export type MaterialLibraryState = { items?: Material[]; status: 'ready' | 'partial' | 'unavailable'; sources: Array<{ source: string; state: string; message: string }>; total?: number; page?: number; pageSize?: number; facets?: MaterialLibraryFacets; productSceneSlots?: ProductScenePreparationReadModel[] };
+export type MaterialLibraryState = { items?: Material[]; status: 'ready' | 'partial' | 'unavailable'; sources: Array<{ source: string; state: string; message: string }>; total?: number; inventoryTotal?: number; page?: number; pageSize?: number; facets?: MaterialLibraryFacets; productSceneSlots?: ProductScenePreparationReadModel[] };
 let latestMaterialLibraryState: MaterialLibraryState | null = null;
 export const getMaterialLibraryState = () => latestMaterialLibraryState;
 function publishMaterialLibraryState(state: MaterialLibraryState) { latestMaterialLibraryState = state; window.dispatchEvent(new CustomEvent('lingshu:material-library-status', { detail: state })); }

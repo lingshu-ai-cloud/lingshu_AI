@@ -56,7 +56,7 @@ export function createStudioMaterialReadRoutes(deps: Pick<StudioApplicationPorts
         sceneMaterials: productSceneProjectionMaterials,
         filteredMaterials: list,
         pageItems: sorted,
-        total, page, pageSize, facets, productIdFilter,
+        total, inventoryTotal, page, pageSize, facets, productIdFilter,
       } = projection;
       let usageByMaterial = new Map<string, MaterialUsageSummary>();
       try {
@@ -107,7 +107,7 @@ export function createStudioMaterialReadRoutes(deps: Pick<StudioApplicationPorts
         })
         : [];
       res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-      if (req.query.envelope === '1') res.status(inventory.status === 'unavailable' ? 503 : 200).json({ ...inventory, items: response, total, page, pageSize, facets, productSceneSlots });
+      if (req.query.envelope === '1') res.status(inventory.status === 'unavailable' ? 503 : 200).json({ ...inventory, items: response, total, inventoryTotal, page, pageSize, facets, productSceneSlots });
       else { res.setHeader('X-Material-Library-Status', inventory.status); res.json(response); }
     });
   }

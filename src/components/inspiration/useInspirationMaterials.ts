@@ -87,6 +87,7 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
 
   const {
     localMaterials, setLocalMaterials, materialsLoading, inventoryLoaded, inventoryError, materialPage, setMaterialPage, materialFacets,
+    ordinaryPageItems, ordinaryTotal, inventoryTotal, allMaterialsLoaded, refreshPage,
     productDetailProduct, productDetailMaterials, setProductDetailMaterials, productDetailSlots,
     setProductDetailSlots, productDetailLoading, productDetailError, productMaterialSummaries,
     setProductMaterialSummaries, setProductSummaryRefreshVersion, refreshMaterials,
@@ -243,6 +244,19 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
   }), [materialCategories, materialGroup, materialCategory, materialSearch, materialAssetTab, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialTheme, materialFavoriteFilter]);
 
   const hasMaterialFilters = Boolean(materialSearch.trim() || materialCategories.length || materialType !== 'all' || materialTheme !== 'all');
+  const needsCompleteInventory = Boolean(hasMaterialFilters || materialAssetTab !== 'all' || materialIndustry !== 'all'
+    || materialFunction !== 'all' || materialApplicability !== 'all' || materialOrientation !== 'all'
+    || materialSource !== 'all' || materialFavoriteFilter !== 'all' || materialProductFilterEnabled);
+  const lastRequestedOrdinaryPage = useRef(1);
+  useEffect(() => {
+    if (innerView !== 'library' || !inventoryLoaded) return;
+    if (needsCompleteInventory) {
+      if (!allMaterialsLoaded && !materialsLoading) void refreshMaterials();
+    } else if (!materialsLoading && (lastRequestedOrdinaryPage.current !== materialPage || allMaterialsLoaded)) {
+      lastRequestedOrdinaryPage.current = materialPage;
+      void refreshPage(materialPage, allMaterialsLoaded);
+    }
+  }, [innerView, inventoryLoaded, needsCompleteInventory, materialPage, allMaterialsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
   const detailView = projectProductMaterialView({ materials: productDetailMaterials, slots: productDetailSlots, loading: productDetailLoading, error: productDetailError }, activeMaterialFilters, productDetailProduct?.name || '');
   const filteredProductDetailMaterials = detailView.materials;
   const filteredProductDetailSlots = detailView.slots;
@@ -250,16 +264,7 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
     projectProductMaterialView(summary, activeMaterialFilters, materialProducts.find(product => product.id === id)?.name || ''),
   ]));
 
-  const {
-    materialFunctionOptions,
-    visibleProductGroups,
-    ordinaryFilteredTotal,
-    pagedUngroupedFilteredMaterials,
-    visibleProductGroupsForPage,
-    visibleMaterialTotal,
-    visibleMaterialGalleryCount,
-    materialTotal,
-  } = useMemo(() => projectMaterialGallery({
+  const galleryProjection = useMemo(() => projectMaterialGallery({
     materials: localMaterials,
     products: materialProducts,
     summaries: productMaterialSummaries,
@@ -268,6 +273,16 @@ export function useInspirationMaterials({ materialEntry, innerView, setMaterialM
     page: materialPage,
     pageSize: MATERIAL_LIBRARY_PAGE_SIZE,
   }), [localMaterials, materialProducts, productMaterialSummaries, activeMaterialFilters, materialProductFilterEnabled, materialProductId, materialProductRef, materialPage]);
+  const {
+    materialFunctionOptions,
+    visibleProductGroups,
+    visibleProductGroupsForPage,
+  } = galleryProjection;
+  const ordinaryFilteredTotal = needsCompleteInventory ? galleryProjection.ordinaryFilteredTotal : ordinaryTotal;
+  const pagedUngroupedFilteredMaterials = needsCompleteInventory ? galleryProjection.pagedUngroupedFilteredMaterials : ordinaryPageItems;
+  const visibleMaterialTotal = needsCompleteInventory ? galleryProjection.visibleMaterialTotal : inventoryTotal;
+  const visibleMaterialGalleryCount = visibleProductGroupsForPage.length + pagedUngroupedFilteredMaterials.length;
+  const materialTotal = inventoryTotal;
 
   useEffect(() => {
     const lastPage = Math.max(1, Math.ceil(ordinaryFilteredTotal / MATERIAL_LIBRARY_PAGE_SIZE));

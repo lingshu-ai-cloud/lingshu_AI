@@ -23,6 +23,7 @@ export interface StudioMaterialLibraryProjection<T> {
   filteredMaterials: T[];
   pageItems: T[];
   total: number;
+  inventoryTotal: number;
   page: number;
   pageSize: number;
   facets: { sources: Record<string, number>; themes: Record<string, number> };
@@ -53,9 +54,9 @@ export function projectStudioMaterialLibrary<T extends StudioMaterialProjectionI
       const association = resolveMaterialProductAssociation(material as unknown as Record<string, unknown>, input.productReferences);
       return association ? { ...material, productId: association.productId, productName: association.productName } : material;
     }) as T[];
-  if (error) return { sceneMaterials, filteredMaterials: [], pageItems: [], total: 0, page: 1, pageSize: 1, facets: { sources: {}, themes: {} }, productIdFilter, error };
+  if (error) return { sceneMaterials, filteredMaterials: [], pageItems: [], total: 0, inventoryTotal: 0, page: 1, pageSize: 1, facets: { sources: {}, themes: {} }, productIdFilter, error };
 
-  let list = filterMaterialsByProductAssociation(sceneMaterials, { productId: productIdFilter, excludeProductAssociated });
+  let list = sceneMaterials;
   const scope = String(q.scope || '');
   const purpose = String(q.purpose || 'library');
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
@@ -63,6 +64,8 @@ export function projectStudioMaterialLibrary<T extends StudioMaterialProjectionI
   list = list.filter(material => materialVisibleForPurpose(material as MaterialRecord, purpose));
   if (purpose === 'reference') list = list.filter(material => isReferenceOnlyMaterial(material) && !isWorkflowInternalMaterial(material));
   else if (purpose !== 'all') list = list.filter(material => !isReferenceOnlyMaterial(material) && !isWorkflowInternalMaterial(material));
+  const inventoryTotal = list.length;
+  list = filterMaterialsByProductAssociation(list, { productId: productIdFilter, excludeProductAssociated });
 
   const origin = String(q.origin || '');
   if (origin === 'generated' || assetGenerationKind || qualityState || q.reusableOnly === '1') {
@@ -91,5 +94,5 @@ export function projectStudioMaterialLibrary<T extends StudioMaterialProjectionI
   const page = Math.max(1, Number(q.page || 1));
   const ordered = list.sort((a, b) => (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0));
   const pageItems = paginated ? ordered.slice((page - 1) * pageSize, page * pageSize) : ordered;
-  return { sceneMaterials, filteredMaterials: list, pageItems, total, page, pageSize, facets, productIdFilter };
+  return { sceneMaterials, filteredMaterials: list, pageItems, total, inventoryTotal, page, pageSize, facets, productIdFilter };
 }

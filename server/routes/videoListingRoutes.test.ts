@@ -70,3 +70,48 @@ test('video and image list endpoints remain under auth and use only verified ten
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
+
+test('shooting needs returns a compact tenant summary and caches repeated reads', async () => {
+  const reads: Array<{ tenantId: string; contentFormat?: string; page: number }> = [];
+  const app = express();
+  app.use((_req, res, next) => { res.locals.tenantId = 'tenant-a'; next(); });
+  const router = express.Router();
+  registerVideoListingRoutes(router, {
+    listing: {
+      tenantInventoryTotal: async () => 0,
+      clearTenantVisibleListCache: () => {},
+      listPublicVideosForTenant: async input => {
+        reads.push({ tenantId: input.tenantId, contentFormat: input.contentFormat, page: input.page });
+        return { items: input.contentFormat === 'video' && input.page === 1
+          ? [{ id: 'video-1', platform: 'tiktok', title: 'Source', aiAnalysis: '{}' }] : [],
+        totalItems: input.contentFormat === 'video' ? 101 : 0,
+        totalPages: input.contentFormat === 'video' ? 2 : 1, page: input.page, perPage: input.perPage };
+      },
+    },
+    tenantAnalysisQueuePositions: async () => new Map(),
+    withSignedThumbnail: record => record,
+    loadShootingMaterials: async tenantId => { assert.equal(tenantId, 'tenant-a'); return []; },
+  });
+  app.use('/videos', router);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  try {
+    const url = `http://127.0.0.1:${address.port}/videos/shooting-needs`;
+    let firstNeeds: unknown;
+    for (let index = 0; index < 2; index += 1) {
+      const response = await fetch(url);
+      assert.equal(response.status, 200);
+      const body = await response.json() as { needs: unknown[] };
+      assert.ok(body.needs.length > 0);
+      if (index === 0) firstNeeds = body.needs;
+      else assert.deepEqual(body.needs, firstNeeds);
+    }
+    assert.deepEqual(reads, [
+      { tenantId: 'tenant-a', contentFormat: 'video', page: 1 },
+      { tenantId: 'tenant-a', contentFormat: 'video', page: 2 },
+      { tenantId: 'tenant-a', contentFormat: 'image', page: 1 },
+    ]);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
