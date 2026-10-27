@@ -70,7 +70,6 @@ assert.match(socialImageRoute, /reconcile-material/, 'existing paid image materi
 assert.match(socialImageRoute, /readMaterialLibrary\(tenantId\)\)\.items\.find/, 'quality preflight must read generated images stored in the local tenant library');
 assert.match(socialImageRoute, /social_image_paid_inputs_frozen/, 'task inputs must remain fixed while a paid unit is unresolved');
 assert.match(source, /runPreflight/, 'generated images must enter deterministic quality preflight');
-assert.match(source, /socialImageApi\.runDirectorReview\(/, 'the workbench must have a real server-owned director review continuation');
 assert.match(source, /socialImageApi\.decideCandidate\(/, 'the workbench must persist explicit adopt or reject actions');
 assert.doesNotMatch(source, /socialImageApi\.createDeliveryPackage\(/, 'the browser must not chain delivery after the final approval');
 assert.match(source, /socialImageApi\.continueTask\(task\)/, 'a restored run must ask the server to resume deterministic review or delivery nodes');
@@ -84,13 +83,16 @@ assert.match(reviewActions, /aria-label="逐项验收"/);
 assert.match(reviewActions, /全部采用后才会生成整包交付/);
 assert.doesNotMatch(reviewActions, /采用整组作品/);
 assert.match(source, /repairLayered/, 'review must support natural-language layer repair');
-assert.match(reviewActions, /按描述修改对应图层/);
-assert.match(reviewActions, /按检查结果优化一版/, 'automatic checks may offer an optional targeted repair path');
+assert.match(reviewActions, /提交一版/, 'image revisions use the written direction');
+assert.doesNotMatch(reviewActions, /提交编导复核|保存修改要求|按检查结果优化一版|onDecision\(reviewCandidate!, 'rejected'\)/,
+  'internal review and duplicate repair actions must not crowd the single-image review');
 assert.match(source, /SOCIAL_IMAGE_HARD_CHECKS/);
 assert.match(source, /自动检查（硬门禁）/);
 assert.match(source, /所有待处理信息都汇总在这里/);
 assert.match(source, /可只填写当前已知内容/);
-assert.match(source, /不影响成片生成和下载/);
+assert.match(source, /图片修改意见/);
+assert.match(source, /请核对本任务剩余预算/);
+assert.match(source, /saveNaturalLanguageRegeneration\(task, repairRequest\)/);
 assert.doesNotMatch(source, /请填写：\$\{missing\.join/);
 assert.doesNotMatch(source, /disabled=\{!task\?\.publishable\}/);
 assert.doesNotMatch(socialImageRoute, /Logo 图层尚未绑定可验证企业素材，未进入渲染/);
@@ -116,7 +118,8 @@ assert.match(source, /195_000/, 'image generation must have a finite client dead
 assert.match(source, /停止等待/, 'the user must be able to leave a long-running image request without reloading');
 assert.match(source, /请不要立即重复提交/, 'unknown provider outcomes must warn against duplicate billing');
 assert.match(source, /hasUnresolvedPaidImageJob\(sourceTask\)/, 'restored unresolved paid jobs must block another submission');
-assert.match(source, /disabled=\{busy \|\| !poster \|\| hasUnresolvedPaidImageJob\(task\)\}/, 'retry control must not submit while the prior outcome is unresolved');
+assert.match(source, /unresolvedJob: hasUnresolvedPaidImageJob\(task\)/, 'the generation pane must receive the server-owned unresolved-job state');
+assert.match(source, /disabled=\{busy \|\| generationView\.action === 'none'/, 'an unresolved paid request must disable submission');
 assert.match(source, /socialImageApi\.getTask\(activeTask\.id\)/, 'the browser must read the server-owned paid job outcome');
 assert.match(source, /socialImageApi\.reconcileMaterial\(task\.id, recoverableJob\.id\)/, 'an unresolved paid job may only recover an already persisted material');
 assert.match(source, /核对已落库成片（不重新生成）/, 'the recovery action must make its no-provider boundary clear');

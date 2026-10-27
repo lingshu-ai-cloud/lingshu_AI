@@ -27,6 +27,7 @@ import {compileSocialImageReferencePlan} from '../socialImage/socialImageReferen
 import { resolveSocialImageReviewSet } from '../socialImage/socialImageReviewSet.js';
 import { registerSocialImageFormalPlanRoutes } from './socialImageFormalPlanRoutes.js';
 import {SocialImageQualityPreflightError} from '../socialImage/socialImageQualityPreflight.js';
+import { acceptSocialImageQualityByHuman } from '../socialImage/socialImageHumanAcceptance.js';
 import { continueSocialImageProduction } from '../socialImage/socialImageProductionContinuation.js';
 
 export const socialImageRouter = Router();
@@ -167,6 +168,23 @@ socialImageRouter.post('/tasks/:id/director-review', async (req, res) => {
     res.json({ ok: true, task, snapshot: projectSocialImageProductionSnapshot(task) });
   } catch (error) {
     const failure = error instanceof SocialImageProductionRunError ? error : new SocialImageProductionRunError('social_image_director_review_failed', 503);
+    res.status(failure.status).json({ ok: false, code: failure.code, error: failure.code });
+  }
+});
+
+/** The user's explicit visual decision is bound to the exact stored candidate bytes. */
+socialImageRouter.post('/tasks/:id/quality/human-accept', async (req, res) => {
+  try {
+    if (req.body?.confirmed !== true) { res.status(400).json({ ok: false, code: 'social_image_human_confirmation_required' }); return; }
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const result = await acceptSocialImageQualityByHuman({ store, tenantId, userId, taskId: req.params.id,
+      expectedVersion: Number(req.body?.expectedVersion), candidateId: String(req.body?.candidateId || ''),
+      candidateVersion: Number(req.body?.candidateVersion),
+      expectedContentHash: String(req.body?.expectedContentHash || '').toLowerCase(), loadBytes: outputImageBytes });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ ok: true, ...result, snapshot: projectSocialImageProductionSnapshot(result.task) });
+  } catch (error) {
+    const failure = error instanceof SocialImageProductionRunError ? error : new SocialImageProductionRunError('social_image_human_review_failed', 503);
     res.status(failure.status).json({ ok: false, code: failure.code, error: failure.code });
   }
 });
