@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Empty, Segmented, Skeleton, Tag } from 'antd';
+import { Alert, Button, Segmented, Skeleton, Tag } from 'antd';
 import { Headphones, Megaphone, Sparkles } from 'lucide-react';
 import type { Page } from '../pageRegistry';
 import type { DigitalEmployeeOverview } from '../lib/digitalEmployees';
@@ -20,6 +20,7 @@ import CreationTaskCover from './socialContent/CreationTaskCover';
 import CreationTaskDetailDrawer, { creationLocalTime } from './socialContent/CreationTaskDetailDrawer';
 import AdPlanMetricsCell from './AdPlanMetricsCell';
 import CreateContentPlanModal from './socialContent/CreateContentPlanModal';
+import LsIllustratedEmpty from './ui/LsIllustratedEmpty';
 
 const columns = [
   { kind: 'content', label: '内容创作', page: 'socialInspiration', Icon: Sparkles },
@@ -110,7 +111,7 @@ function BusinessWork({ data, onNavigate, identity }: { data: DigitalEmployeeOve
           {item.dueAt && time(item.dueAt) && <p className="business-work__context">{item.kind === 'content' ? '计划发布' : '交接期限'}：{creationLocalTime(item.dueAt)}</p>}
           {item.kind === 'traffic' && <><p className="business-work__context">计划日预算 {item.task.currency} {item.task.configuration.dailyBudget ?? '—'}</p><AdPlanMetricsCell task={item.task} data={operating.items[item.task.id]} onRetry={() => operating.retryMetrics(item.task.id)} disabled={operating.loading}/></>}
           <footer><Button type="link" onClick={() => open(item)}>{item.action}</Button>{time(item.updatedAt) && <small>记录更新 {time(item.updatedAt)}</small>}</footer>
-        </article>)}</div> : available[kind] && !errors[kind] ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={mine ? '暂无需要你处理的记录' : '暂无进行中的业务记录'}/> : null}
+        </article>)}</div> : available[kind] && !errors[kind] ? <LsIllustratedEmpty icon={Icon} title={mine ? '暂无需要你处理的记录' : '暂无进行中的业务记录'} detail={`${label}的真实任务出现后，会在这里显示当前状态与下一步。`}/> : null}
         <Button type="text" className="business-work__all" onClick={() => onNavigate?.(page)}>查看全部{label}</Button>
       </section>;
     })}</div>

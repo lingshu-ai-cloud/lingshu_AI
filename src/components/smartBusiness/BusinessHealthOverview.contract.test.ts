@@ -8,7 +8,7 @@ const workspace = fs.readFileSync('src/components/ConfiguredDigitalEmployeeWorks
 assert.match(overview, /<DatePicker\.RangePicker/, 'health range selection must use the shared Ant RangePicker');
 assert.match(overview, /allowClear=\{false\}/, 'the selected health range must remain explicit');
 assert.match(overview, /startsAt:\s*dates\[0\]\.format\('YYYY-MM-DD'\)[\s\S]*endsAt:\s*dates\[1\]\.format\('YYYY-MM-DD'\)/, 'a complete range must be submitted as date-only API values');
-assert.match(overview, /\[refresh, snapshotStartsAt, snapshotEndsAt\]/, 'account performance must be synchronized again after the selected range changes');
+assert.match(overview, /\[refresh, snapshotStartsAt, snapshotEndsAt, previewScore, scoreOnly\]/, 'account performance must be synchronized again after the selected range changes');
 assert.match(page, /digitalEmployeeApi\.overview\(viewGoalId, nextRange\)/, 'range selection must reload the persisted overview rather than only changing its label');
 assert.match(page, /productionRangeRef\.current = nextRange;[\s\S]{0,120}setData\(next\)/, 'the accepted range and overview data must update only after a successful response');
 assert.match(workspace, /overviewRangeBusy=\{busy === "overview-range"\}[\s\S]{0,120}onOverviewRangeChange=\{changeOverviewDateRange\}/, 'the health range control must receive the real request state and handler');
