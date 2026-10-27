@@ -30,6 +30,12 @@ function WeeklyRangeVisual({ startsAt, endsAt }: { startsAt: string; endsAt: str
 }
 
 
+export type WeeklyCommandPreviewTotals = {
+  waitingReview: number; plannedVideos: number; durationSeconds: number;
+  budgetMin: number; budgetMax: number; estimatedCost: number; settledCost: number;
+  startsAt: string; endsAt: string;
+};
+
 const PAID_MEDIA_CAPABILITY_TOKENS = new Set(['ad', 'ads', 'traffic', 'promotion']);
 
 function isPaidMediaPlanTask(task: PlanTask) {
@@ -52,6 +58,7 @@ export function WeeklyCommandCenter({
   feedback,
   notice,
   onMetricClick,
+  previewTotals,
   className = "",
 }: {
   data: DigitalEmployeeOverview;
@@ -60,10 +67,12 @@ export function WeeklyCommandCenter({
   feedback?: ReactNode;
   notice?: ReactNode;
   onMetricClick?: (metric: WeeklyCommandMetricId) => void;
+  previewTotals?: WeeklyCommandPreviewTotals;
   className?: string;
 }) {
+  const [previewMetric, setPreviewMetric] = useState<WeeklyCommandMetricId | null>(null);
   const display = buildSmartBusinessDisplayModel(data);
-  const hasWeeklyPlan = Boolean(data.goal);
+  const hasWeeklyPlan = Boolean(data.goal || previewTotals);
   const contentQueue = data.contentQueue?.items || [];
   const operatingContext = data.plan?.businessPackage?.operatingContext;
   const packageBudget = weeklyVideoBudget(data);
@@ -91,6 +100,14 @@ export function WeeklyCommandCenter({
     packageBudget.max,
     !hasExplicitProductionRange && weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 1.25 : 0,
   );
+  const previewDetails: Record<WeeklyCommandMetricId, { title: string; note: string; rows: Array<[string, string]> }> | null = previewTotals ? {
+    waiting_review: { title: '待验收成片', note: '查看本周需要人工核对的成片方向。', rows: [['泡沫卸妆质地测试', '待验收'], ['包装打样镜头', '待验收'], ['低 MOQ 流程短片', '待验收']] },
+    planned_videos: { title: '本周计划视频', note: '按发布平台拆分的内容数量。', rows: [['TikTok', '12 条'], ['Instagram', '8 条'], ['Facebook', '7 条'], ['YouTube', '5 条']] },
+    planned_duration: { title: '本周视频总时长', note: '各平台成片预计总时长。', rows: [['TikTok', '360 秒'], ['Instagram', '240 秒'], ['Facebook', '280 秒'], ['YouTube', '200 秒']] },
+    budget_range: { title: '本周成本范围', note: '供当前周计划比较的制作成本区间。', rows: [['范围下限', `¥${previewTotals.budgetMin.toFixed(2)}`], ['范围上限', `¥${previewTotals.budgetMax.toFixed(2)}`]] },
+    estimated_cost: { title: '预计制作成本', note: '当前周计划的预计制作成本。', rows: [['预计合计', `¥${previewTotals.estimatedCost.toFixed(2)}`], ['成本范围', `¥${previewTotals.budgetMin.toFixed(0)}–${previewTotals.budgetMax.toFixed(0)}`]] },
+    settled_cost: { title: '已结算成本', note: '用于对比预计与已结算金额，不代表真实扣费记录。', rows: [['已结算', `¥${previewTotals.settledCost.toFixed(2)}`], ['预计制作', `¥${previewTotals.estimatedCost.toFixed(2)}`], ['差额', `¥${Math.max(0, previewTotals.estimatedCost - previewTotals.settledCost).toFixed(2)}`]] },
+  } : null;
 
   return <section className={`flex flex-col overflow-hidden bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
     <div className="flex flex-wrap items-start justify-between gap-3 px-6 pb-4 pt-5 text-text-primary xl:min-h-[112px]">
@@ -106,8 +123,8 @@ export function WeeklyCommandCenter({
                 : ["待确认", "准备中", "待处理", "等待外部服务", "已暂停"].includes(statusLabel)
                   ? "warning"
                   : "default"}>{statusLabel}</Tag>
-          {data.goal && (
-            <WeeklyRangeVisual startsAt={data.goal.startsAt} endsAt={data.goal.endsAt} />
+          {(previewTotals || data.goal) && (
+            <WeeklyRangeVisual startsAt={(previewTotals || data.goal)!.startsAt} endsAt={(previewTotals || data.goal)!.endsAt} />
           )}
         </div>
         {!hasWeeklyPlan && <p className="mt-2 text-sm text-text-secondary">通过灵小枢先确认本周经营目标、平台、内容数量、预算与工作排期。</p>}
@@ -117,15 +134,18 @@ export function WeeklyCommandCenter({
     {feedback && <div aria-label="周任务操作反馈" className="border-b border-border bg-white px-4 py-2.5">{feedback}</div>}
     <div className="grid auto-rows-[112px] gap-x-6 gap-y-6 bg-white px-6 pb-6 pt-3 sm:grid-cols-3">
       {[
-        { id: "waiting_review", label: "待验收成片", value: `${display.totals.waitingReviewCount} 条` },
-        { id: "planned_videos", label: "本周计划视频", value: `${plannedOutputCount} 条` },
-        { id: "planned_duration", label: "本周视频总时长", value: plannedDurationSeconds > 0 ? `${plannedDurationSeconds} 秒` : hasWeeklyPlan ? "待确认" : "0 秒" },
-        { id: "budget_range", label: "本周成本范围", value: budgetMax > 0 ? `¥${budgetMin.toFixed(0)}–${budgetMax.toFixed(0)}` : hasWeeklyPlan ? "待核算" : "¥0–0" },
-        { id: "estimated_cost", label: "预计制作成本", value: estimatedContentCost > 0 ? `¥${estimatedContentCost.toFixed(2)}` : hasWeeklyPlan ? "待核算" : "¥0.00" },
-        { id: "settled_cost", label: "已结算成本", value: settledContentCost > 0 ? `¥${settledContentCost.toFixed(2)}` : hasWeeklyPlan ? "暂无结算" : "¥0.00" },
-      ].map(item => <button key={item.id} type="button" aria-label={`查看${item.label}`} onClick={() => onMetricClick?.(item.id as WeeklyCommandMetricId)} disabled={!onMetricClick} className="group relative min-w-0 rounded-lg bg-white text-left outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-default disabled:hover:bg-white"><Statistic title={item.label} value={item.value} styles={{ title: { fontSize: 16, lineHeight: "24px", fontWeight: 400, color: "var(--color-text-secondary)", marginBottom: 12 }, content: { color: "var(--color-text-primary)", fontSize: 28, fontWeight: 600, lineHeight: "36px" } }}/>{onMetricClick && <ArrowRight aria-hidden size={16} className="absolute right-3 top-3 text-text-muted transition-colors group-hover:text-accent" />}</button>)}
+        { id: "waiting_review", label: "待验收成片", value: `${previewTotals?.waitingReview ?? display.totals.waitingReviewCount} 条` },
+        { id: "planned_videos", label: "本周计划视频", value: `${previewTotals?.plannedVideos ?? plannedOutputCount} 条` },
+        { id: "planned_duration", label: "本周视频总时长", value: previewTotals ? `${previewTotals.durationSeconds} 秒` : plannedDurationSeconds > 0 ? `${plannedDurationSeconds} 秒` : hasWeeklyPlan ? "待确认" : "0 秒" },
+        { id: "budget_range", label: "本周成本范围", value: previewTotals ? `¥${previewTotals.budgetMin.toFixed(0)}–${previewTotals.budgetMax.toFixed(0)}` : budgetMax > 0 ? `¥${budgetMin.toFixed(0)}–${budgetMax.toFixed(0)}` : hasWeeklyPlan ? "待核算" : "¥0–0" },
+        { id: "estimated_cost", label: "预计制作成本", value: previewTotals ? `¥${previewTotals.estimatedCost.toFixed(2)}` : estimatedContentCost > 0 ? `¥${estimatedContentCost.toFixed(2)}` : hasWeeklyPlan ? "待核算" : "¥0.00" },
+        { id: "settled_cost", label: "已结算成本", value: previewTotals ? `¥${previewTotals.settledCost.toFixed(2)}` : settledContentCost > 0 ? `¥${settledContentCost.toFixed(2)}` : hasWeeklyPlan ? "暂无结算" : "¥0.00" },
+      ].map(item => <button key={item.id} type="button" aria-label={`查看${item.label}`} onClick={() => previewTotals ? setPreviewMetric(item.id as WeeklyCommandMetricId) : onMetricClick?.(item.id as WeeklyCommandMetricId)} disabled={!onMetricClick && !previewTotals} className="group relative min-w-0 rounded-lg bg-white text-left outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-default disabled:hover:bg-white"><Statistic title={item.label} value={item.value} styles={{ title: { fontSize: 16, lineHeight: "24px", fontWeight: 400, color: "var(--color-text-secondary)", marginBottom: 12 }, content: { color: "var(--color-text-primary)", fontSize: 28, fontWeight: 600, lineHeight: "36px" } }}/>{(onMetricClick || previewTotals) && <ArrowRight aria-hidden size={16} className="absolute right-3 top-3 text-text-muted transition-colors group-hover:text-accent" />}</button>)}
     </div>
     {notice && <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/70 px-5 py-3">{notice}</div>}
+    <Drawer open={Boolean(previewMetric && previewDetails)} onClose={() => setPreviewMetric(null)} title={previewMetric && previewDetails?.[previewMetric]?.title} width={420} destroyOnHidden>
+      {previewMetric && previewDetails && <div className="space-y-4"><Tag color="processing">界面预览</Tag><p className="text-sm leading-6 text-text-secondary">{previewDetails[previewMetric].note}</p><dl className="divide-y divide-border rounded-xl border border-border px-4">{previewDetails[previewMetric].rows.map(([label, value]) => <div key={label} className="flex justify-between gap-4 py-3 text-sm"><dt className="text-text-secondary">{label}</dt><dd className="text-right font-medium text-text-primary">{value}</dd></div>)}</dl></div>}
+    </Drawer>
   </section>;
 }
 

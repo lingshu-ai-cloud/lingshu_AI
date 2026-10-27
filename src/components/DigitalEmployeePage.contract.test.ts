@@ -106,9 +106,9 @@ const productTableOnboardingSource = onboardingStepsSource.slice(
   onboardingStepsSource.indexOf('export function OnboardingProductsStep'),
   onboardingStepsSource.indexOf('export function OnboardingMarketStep'),
 );
-const currentPlanSource = pageSource.slice(
-  pageSource.indexOf('<div aria-label="当前周计划"'),
-  pageSource.indexOf('<Tabs className=', pageSource.indexOf('<div aria-label="当前周计划"')),
+const currentPlanSource = configuredWorkspaceSource.slice(
+  configuredWorkspaceSource.indexOf('const weeklyCommandCenter ='),
+  configuredWorkspaceSource.indexOf('<Modal open={healthDialogOpen}'),
 );
 const weeklyCommandCenterSource = weeklyPlanPresentationSource.slice(
   weeklyPlanPresentationSource.indexOf('export function WeeklyCommandCenter'),
@@ -124,7 +124,7 @@ const publishingCalendarSource = smartBusinessSource.slice(
 );
 const weeklyPlanControlsSource = pageSource.slice(
   pageSource.indexOf('const weeklyPlanControls'),
-  pageSource.indexOf('return (', pageSource.indexOf('const weeklyPlanControls')),
+  pageSource.indexOf('const weeklyCommandCenter =', pageSource.indexOf('const weeklyPlanControls')),
 );
 const matrixViewSource = smartBusinessSource.slice(
   smartBusinessSource.indexOf('function MatrixView'),
@@ -365,7 +365,7 @@ for (const label of ['制定周计划', '确认并开始生产', '暂停周任�
 assert.match(currentPlanSource, /<WeeklyCommandCenter[\s\S]{0,500}onMetricClick=\{goal \? metric =>/, 'the blank weekly state must retain the complete six-metric command center without inventing metric navigation');
 assert.doesNotMatch(currentPlanSource, /本周还没有计划|先制定并预览周计划/, 'the blank weekly state must not collapse into a text-only placeholder');
 assert.doesNotMatch(currentPlanSource, /本周还没有可执行计划[\s\S]{0,240}开始周任务/, 'the blank weekly state must not label plan creation as starting production');
-assert.match(pageSource, /workspaceView === "today" && <div className="pt-3"><DigitalEmployeeHomeWork data=\{data\} onNavigate=\{onNavigate\}\/>/, 'the three-column employee work surface must be visible directly in the default business overview');
+assert.match(pageSource, /workspaceView === "today" \? <BusinessOverviewLanding[\s\S]{0,700}<DigitalEmployeeHomeWork data=\{data\} onNavigate=\{onNavigate\}\/>/, 'the three-column employee work surface must be visible directly in the default business overview');
 assert.doesNotMatch(pageSource, /查看员工排期|返回经营总览/, 'the business overview must not require open or return buttons for the default employee work surface');
 assert.match(pageSource, /const recoverableProductionTask = data\.run\?\.goal_id === goal\?\.id[^]*?task\.run_id === data\.run!\.id && task\.task_key === "content_production"/, 'continue production must target only this goal and run’s production task');
 assert.match(controlWeeklyWorkSource, /if \(recoverableProductionTask\)[^]*?digitalEmployeeApi\.retryTask\(recoverableProductionTask\.id\)[^]*?return;/, 'recovering a failed production node must not create another weekly run');

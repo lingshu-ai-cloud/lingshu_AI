@@ -20,6 +20,7 @@ export type BusinessHealthOverviewRange = { startsAt: string; endsAt: string };
 
 type Props = {
   summaryOnly?: boolean;
+  scoreOnly?: boolean;
   detailsOnly?: boolean;
   accountOnly?: boolean;
   data: DigitalEmployeeOverview;
@@ -28,6 +29,7 @@ type Props = {
   onOverviewRangeChange?: (range: BusinessHealthOverviewRange) => void;
   onNavigate?: (page: Page) => void;
   onOpenAccountHealth?: () => void;
+  previewScore?: { score: number; criteria: Array<{ label: string; score: number | null }> };
 };
 
 function readPerformanceWithDeadline() {
@@ -145,7 +147,7 @@ function AccountJourney({ account }: { account: AccountHealthResult }) {
   </div>;
 }
 
-export default function BusinessHealthOverview({ data, selectedAccountId = '', overviewRangeBusy = false, onOverviewRangeChange, onNavigate, onOpenAccountHealth, summaryOnly = false, detailsOnly = false, accountOnly = false }: Props) {
+export default function BusinessHealthOverview({ data, selectedAccountId = '', overviewRangeBusy = false, onOverviewRangeChange, onNavigate, onOpenAccountHealth, previewScore, summaryOnly = false, scoreOnly = false, detailsOnly = false, accountOnly = false }: Props) {
   const [sources, setSources] = useState<BusinessHealthSources>({ performance: null, channelsLoaded: false, whatsappConnected: false, messengerPages: [] });
   const [loading, setLoading] = useState(false);
   const requestId = useRef(0);
@@ -181,8 +183,19 @@ export default function BusinessHealthOverview({ data, selectedAccountId = '', o
   }, [data]);
   const snapshotStartsAt = data.businessSnapshot?.range.startsAt || data.goal?.startsAt || '';
   const snapshotEndsAt = data.businessSnapshot?.range.endsAt || data.goal?.endsAt || '';
-  useEffect(() => { void refresh(); return () => { requestId.current += 1; }; }, [refresh, snapshotStartsAt, snapshotEndsAt]);
+  useEffect(() => {
+    if (previewScore && scoreOnly) { setLoading(false); return; }
+    void refresh();
+    return () => { requestId.current += 1; };
+  }, [refresh, snapshotStartsAt, snapshotEndsAt, previewScore, scoreOnly]);
   const model = useMemo(() => buildBusinessHealthModel(data, sources, selectedAccountId), [data, sources, selectedAccountId]);
+  const accountDimension = model.dimensions.find(dimension => dimension.key === 'accounts');
+  const headlineScore = scoreOnly ? previewScore?.score ?? accountDimension?.score ?? null : model.totalScore;
+  const headlineCoverage = scoreOnly
+    ? `${(previewScore?.criteria || accountDimension?.criteria || []).filter(item => item.score !== null).length}/${previewScore?.criteria.length ?? accountDimension?.criteria.length ?? 0} 项已评估`
+    : `${model.scoreCoverage}/4 领域已评估`;
+  const accountCriteria = previewScore?.criteria || accountDimension?.criteria || [];
+  const scoredAccountCriteria = accountCriteria.filter(item => item.score !== null && Number.isFinite(item.score)).length;
   const rangeValue = useMemo<[Dayjs, Dayjs] | null>(() => model.startsAt && model.endsAt
     ? [dayjs(model.startsAt), dayjs(model.endsAt)]
     : null, [model.endsAt, model.startsAt]);
@@ -190,8 +203,8 @@ export default function BusinessHealthOverview({ data, selectedAccountId = '', o
     {!detailsOnly && !accountOnly && <section className="overflow-hidden rounded-lg border border-border bg-white" aria-labelledby="business-health-title">
       <header className="flex flex-wrap items-start justify-between gap-3 px-6 pb-4 pt-5 xl:min-h-[112px]">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="w-full min-w-0"><h2 id="business-health-title" className="break-words text-xl leading-8 font-semibold text-text-primary">{data.config?.companyName?.trim() || '企业名称待完善'}</h2></div>{summaryOnly && (onOpenAccountHealth ? <button type="button" onClick={onOpenAccountHealth} aria-haspopup="dialog" className="group flex flex-wrap items-baseline gap-2 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-accent"><span className="text-sm text-text-secondary">企业经营分</span><strong className="text-[32px] font-semibold tabular-nums text-accent">{model.totalScore ?? '—'}</strong><span className="text-xs text-text-muted">/ 100 · {model.scoreCoverage}/4 领域已评估</span><span className="inline-flex items-center gap-1 text-xs font-medium text-accent">查看账号健康<ArrowRight size={13} className="transition-transform group-hover:translate-x-0.5"/></span></button> : <div className="flex items-baseline gap-2"><span className="text-sm text-text-secondary">企业经营分</span><strong className="text-[32px] font-semibold tabular-nums text-accent">{model.totalScore ?? '—'}</strong><span className="text-xs text-text-muted">/ 100 · {model.scoreCoverage}/4 领域已评估</span></div>)}
-          {!summaryOnly && <><DatePicker.RangePicker
+          <div className="w-full min-w-0"><h2 id="business-health-title" className="break-words text-xl leading-8 font-semibold text-text-primary">{data.config?.companyName?.trim() || '企业名称待完善'}</h2>{scoreOnly && <p className="mt-1 text-xs text-text-secondary">账号分</p>}</div>{(summaryOnly || scoreOnly) && (onOpenAccountHealth ? <button type="button" onClick={onOpenAccountHealth} aria-haspopup="dialog" className="group flex flex-wrap items-baseline gap-2 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-accent"><span className="text-sm text-text-secondary">{scoreOnly ? '当前分数' : '企业经营分'}</span><strong className="text-[32px] font-semibold tabular-nums text-accent">{headlineScore ?? '—'}</strong><span className="text-xs text-text-muted">/ 100 · {headlineCoverage}</span><span className="inline-flex items-center gap-1 text-xs font-medium text-accent">查看账号健康<ArrowRight size={13} className="transition-transform group-hover:translate-x-0.5"/></span></button> : <div className="flex items-baseline gap-2"><span className="text-sm text-text-secondary">{scoreOnly ? '当前分数' : '企业经营分'}</span><strong className="text-[32px] font-semibold tabular-nums text-accent">{headlineScore ?? '—'}</strong><span className="text-xs text-text-muted">/ 100 · {headlineCoverage}</span></div>)}
+          {!summaryOnly && !scoreOnly && <><DatePicker.RangePicker
             aria-label="经营健康统计时间段"
             value={rangeValue}
             allowClear={false}
@@ -205,9 +218,19 @@ export default function BusinessHealthOverview({ data, selectedAccountId = '', o
           />
           <span className="text-xs text-text-muted">北京时间 · {data.businessSnapshot?.range.timeZone || 'Asia/Shanghai'}</span></>}
         </div>
-        {!summaryOnly && <Button icon={<RefreshCcw size={14}/>} loading={loading || overviewRangeBusy} onClick={() => void refresh()}>同步健康度</Button>}
+        {!summaryOnly && !scoreOnly && <Button icon={<RefreshCcw size={14}/>} loading={loading || overviewRangeBusy} onClick={() => void refresh()}>同步健康度</Button>}
       </header>
-      <div className="grid grid-cols-2 auto-rows-[112px] gap-x-6 gap-y-6 bg-white px-6 pb-6 pt-3" aria-label="经营健康指标">
+      {scoreOnly && <div className="px-6 pb-5" aria-label="账号评分证据覆盖">
+        <div className="relative isolate overflow-hidden rounded-xl border border-border bg-surface-2 p-3">
+          <Users size={92} strokeWidth={1} aria-hidden="true" className="pointer-events-none absolute -bottom-7 -right-3 -z-10 text-accent/10"/>
+          <div className="flex items-center justify-between gap-2 text-xs text-text-secondary"><span>账号健康证据</span><span className="tabular-nums">{scoredAccountCriteria}/{accountCriteria.length} 项已评估</span></div>
+          <div className="mt-3 grid gap-1" style={{ gridTemplateColumns: `repeat(${Math.max(accountCriteria.length, 1)}, minmax(0, 1fr))` }} role="img" aria-label={`账号评分口径已评估 ${scoredAccountCriteria} 项，共 ${accountCriteria.length} 项`}>
+            {accountCriteria.length ? accountCriteria.map(item => <span key={item.label} title={`${item.label}：${item.score !== null && Number.isFinite(item.score) ? '已评估' : '待数据'}`} className={`h-2 rounded-full ${item.score !== null && Number.isFinite(item.score) ? 'bg-accent' : 'bg-border'}`}/>) : <span className="h-2 rounded-full bg-border"/>}
+          </div>
+          <p className="mt-3 text-xs leading-5 text-text-secondary">{headlineScore === null ? '等待账号配置与可核验表现；待数据不计为 0 分。' : '分数来自已评估口径，未覆盖项不推算得分。'}</p>
+        </div>
+      </div>}
+      {!scoreOnly && <div className="grid grid-cols-2 auto-rows-[112px] gap-x-6 gap-y-6 bg-white px-6 pb-6 pt-3" aria-label="经营健康指标">
         {!summaryOnly && <div className="col-span-2 min-w-0 bg-white">
           <h3 className="flex items-center gap-2 text-base leading-6 font-normal text-text-secondary"><Activity size={16} className="text-accent"/>企业经营分 <span className="text-xs">已评估项</span></h3>
           <p className="mt-3 flex items-baseline gap-1"><strong className="text-[32px] leading-10 font-semibold tabular-nums text-text-primary">{model.totalScore ?? '—'}</strong><span className="text-xs text-text-muted">/ 100</span></p>
@@ -218,10 +241,10 @@ export default function BusinessHealthOverview({ data, selectedAccountId = '', o
           <p className="mt-3 flex items-baseline gap-1"><strong className="text-[28px] leading-9 font-semibold tabular-nums text-text-primary">{dimension.score ?? '—'}</strong><span className="text-xs text-text-muted">/ 100</span></p>
           <p className="mt-2 text-xs text-text-secondary">{businessHealthStatus(dimension.score, dimension.criteria.filter(item => item.score !== null).length, dimension.criteria.length)} · {dimension.criteria.filter(item => item.score !== null).length}/{dimension.criteria.length} 项已评估</p>
         </div>; })}
-      </div>
+      </div>}
     </section>}
 
-    {(accountOnly || (!summaryOnly && !detailsOnly)) && <section className="overflow-hidden rounded-lg border border-border bg-white" aria-labelledby="account-growth-title">
+    {(accountOnly || (!summaryOnly && !scoreOnly && !detailsOnly)) && <section className="overflow-hidden rounded-lg border border-border bg-white" aria-labelledby="account-growth-title">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3"><h2 id="account-growth-title" className="ls-type-title-medium text-text-primary">账号健康与阶段目标</h2><span className="text-xs text-text-muted">{model.accountHealth.length} 个真实配置账号 · 目标来自账号自身</span></header>
       {!model.accountHealth.length ? <div className="p-4"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未配置经营账号">{onNavigate && <Button onClick={() => onNavigate('socialAccounts')}>配置账号</Button>}</Empty></div> : <>
         <div className="border-t border-border px-3"><Collapse ghost items={model.accountHealth.map(account => ({ key: `${account.platform}:${account.accountId}`, label: <div className="min-w-0 space-y-3 pr-1"><div className="flex flex-wrap items-center justify-between gap-2"><span className="flex min-w-0 items-center gap-2"><SocialPlatformIcon platform={account.platform} size={18}/><strong className="text-sm font-medium text-text-primary">{account.accountLabel}</strong></span><span className="flex items-center gap-2"><strong className="text-sm tabular-nums text-text-primary">{scoreLabel(account.currentScore)}</strong><Tag>{account.scoreCoverage}/{account.dimensions.length} 项已评估</Tag></span></div><div className="grid items-center gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">{account.currentScore === null ? <span className="text-xs text-text-muted">等待可核验的账号数据</span> : <LsGradientProgress percent={account.currentScore} showInfo={false} aria-label={`${account.accountLabel} 当前 ${scoreLabel(account.currentScore)}`}/>}<span className="text-xs text-text-muted">{account.milestones.filter(item => item.complete).length}/{account.milestones.length} 个阶段目标已达成</span></div></div>, children: <AccountJourney account={account}/> }))}/></div>
