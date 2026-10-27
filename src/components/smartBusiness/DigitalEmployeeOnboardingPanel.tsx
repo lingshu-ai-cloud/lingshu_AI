@@ -44,7 +44,7 @@ export function OnboardingPanel({
   activeRun = false,
   restartFromBeginning = false,
   initialStep = "start",
-  dismissible = false,
+  dismissible = false, initialSettingsOpen = false,
   onClose,
   onSave,
   onOpenReadiness,
@@ -57,7 +57,7 @@ export function OnboardingPanel({
   activeRun?: boolean;
   restartFromBeginning?: boolean;
   initialStep?: "start" | "presenter";
-  dismissible?: boolean;
+  dismissible?: boolean; initialSettingsOpen?: boolean;
   onClose?: () => void;
   onSave: (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string; onboardingConfirmation?: NonNullable<ReturnType<typeof validateEnterpriseOnboardingConfirmation>['confirmation']> }) => void | boolean | Promise<void | boolean>;
   onOpenReadiness: (item: BusinessReadinessItem) => void;
@@ -67,7 +67,7 @@ export function OnboardingPanel({
   const [form, setForm] = useState(() => completeConfig(initial));
   const [dependencyNotice, setDependencyNotice] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  const [settingsEditorOpen, setSettingsEditorOpen] = useState(false);
+  const [settingsEditorOpen, setSettingsEditorOpen] = useState(initialSettingsOpen);
   const [collectionPlatforms, setCollectionPlatforms] = useState(restoredRules.collectionPlatforms);
   const [collectionSources, setCollectionSources] = useState(restoredRules.collectionSources);
   const [collectionKeywords, setCollectionKeywords] = useState(restoredRules.collectionKeywords);

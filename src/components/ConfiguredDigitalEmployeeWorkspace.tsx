@@ -99,6 +99,8 @@ export interface ConfiguredDigitalEmployeeWorkspaceProps {
 
 export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmployeeWorkspaceProps) {
   const [healthDialogOpen, setHealthDialogOpen] = useState(false);
+  const [accountConfigurationOpen, setAccountConfigurationOpen] = useState(false);
+  const openAccountConfiguration = () => { setHealthDialogOpen(false); setAccountConfigurationOpen(true); };
   const {
     active, data, busy, error, activeRun, canCreateNextGoal, viewGoalId, workspaceView,
     businessLine, contentPlatform, selectedAccountId, selectedContentItemId,
@@ -306,10 +308,7 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
                     void controlWeeklyWork();
                     return;
                   }
-                  if (page === "socialAccounts") {
-                    setWorkspaceView("matrix");
-                    return;
-                  }
+                  if (page === "socialAccounts") { openAccountConfiguration(); return; }
                   onNavigate?.(page);
                 }} />}</Suspense>
             </main>
@@ -319,9 +318,13 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
       <Modal open={healthDialogOpen} title="账号健康与阶段目标" width={960} footer={null} destroyOnHidden onCancel={() => setHealthDialogOpen(false)}>
         <BusinessHealthOverview accountOnly data={data} selectedAccountId={selectedAccountId} onNavigate={page => {
           setHealthDialogOpen(false);
-          if (page === 'socialAccounts') { setWorkspaceView('matrix'); return; }
+          if (page === 'socialAccounts') { openAccountConfiguration(); return; }
           onNavigate?.(page);
         }}/>
+      </Modal>
+      <Modal open={accountConfigurationOpen} title="配置经营账号" width={960} footer={null} destroyOnHidden onCancel={() => setAccountConfigurationOpen(false)}>
+        <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} mode="rules" initialSettingsOpen activeRun={activeRun} onOpenReadiness={openReadiness}
+          onSave={async config => { const saved = await saveConfig(config); if (saved) setAccountConfigurationOpen(false); }} />
       </Modal>
       {active && applicationGuideOpen && (
         <OnboardingPanel
