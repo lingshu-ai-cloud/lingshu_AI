@@ -62,6 +62,7 @@ export function buildWeeklyOperatingContext(
       totalMinCny: Math.round((productionMinCny + paidMediaCny) * 100) / 100,
       totalMaxCny: Math.round((productionMaxCny + paidMediaCny) * 100) / 100,
     },
+    promotionPlans: goal.promotionPlans || [],
     cadence: {
       contentCount: videos.length || rows.reduce((sum, row) => sum + row.weeklyCount, 0),
       description: config.socialCadence || `${videos.length} 条 / 周`,
@@ -110,6 +111,7 @@ export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeC
   // stop; economy mode is applied only when the user explicitly chooses it.
   initialDirectorPlan.productionBudget = originalTarget * MASTER_VIDEO_COST_MAX_CNY;
   initialDirectorPlan.productionBudgetMax = originalTarget * MASTER_VIDEO_COST_MAX_CNY;
+  initialDirectorPlan.paidMediaBudget = Math.round((goal.promotionPlans || []).reduce((sum, item) => sum + item.budgetCny, 0) * 100) / 100;
   let recommended: WeeklyPackage = { revision: 1, maturity, operatingAssessment: normalizeAssessment(config.operatingAssessment), participation, tasks,
     ...(matrixPlan.length ? { matrixPlan } : {}),
     directorPlan: initialDirectorPlan,

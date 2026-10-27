@@ -576,18 +576,33 @@ export default function DigitalEmployeePage({
     recoverEnterpriseFactsChanged,
   });
 
+  const { confirmWeeklyPlan, launchWeeklyPlan, presentConfirmedWeeklyExecution, publishWeeklyWorkUpdate } = createDigitalEmployeeWeeklyLaunch({
+    data, busy, overviewRequestVersionRef, setData, setBusy, setError,
+    setWeeklyStartConflict, setWeeklyPlanOpen, setNewGoal, setWorkspaceView,
+    setSelectedTaskId, recoverEnterpriseFactsChanged,
+  });
+
   const createWeeklyOutline = async (goalInput: GoalDraft) => {
     setBusy("create-weekly-plan");
     setError("");
     try {
+      if (goalInput.videoPlans?.length) {
+        const defaults = await productionApi.defaults();
+        const presenterGate = presenterProductionGate(defaults);
+        setWeeklyPresenterGate(presenterGate);
+        if (!presenterGate.ready) {
+          setApplicationGuideEntry("presenter");
+          setApplicationGuideOpen(true);
+          throw new Error(presenterGate.message);
+        }
+      }
       const created = await digitalEmployeeApi.createGoal(goalInput);
       if (!created.goal) throw new Error("周计划未能创建，请重试。");
       overviewRequestVersionRef.current += 1;
       setData(created);
       setNewGoal(false);
       setWeeklyPlanOpen(false);
-      setWorkspaceView("today");
-      showActionSuccess("周计划已生成", "计划已显示在智能经营首页。核对平台、产量、预算和排期后，再确认开始生产。");
+      await launchWeeklyPlan(created);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "周目标生成失败");
       await load();
@@ -606,12 +621,6 @@ export default function DigitalEmployeePage({
       : "爆款参考、素材组合和编导分镜已经保存，刷新页面也不会丢失。");
     else showActionSuccess("制作准备已完成", `有 ${detail?.blockedCount || 0} 条任务需要先补素材、授权或预算。`);
   };
-
-  const { confirmWeeklyPlan, presentConfirmedWeeklyExecution, publishWeeklyWorkUpdate } = createDigitalEmployeeWeeklyLaunch({
-    data, busy, overviewRequestVersionRef, setData, setBusy, setError,
-    setWeeklyStartConflict, setWeeklyPlanOpen, setNewGoal, setWorkspaceView,
-    setSelectedTaskId, recoverEnterpriseFactsChanged,
-  });
 
   const returnToLatest = async () => {
     setViewGoalId("");

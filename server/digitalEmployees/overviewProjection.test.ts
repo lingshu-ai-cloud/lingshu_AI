@@ -7,7 +7,7 @@ const goal: GoalRecord = {
   id: 'goal-1', tenant_id: 'tenant-1', owner_id: 'owner-1', title: 'Increase leads', objective: 'Qualify customers',
   business_line: 'legacy-line', content_platforms: JSON.stringify(['facebook', 'youtube']),
   metric: 'qualified_leads', baseline: 1, target: 10, unit: 'leads', starts_at: '2026-10-19', ends_at: '2026-10-25',
-  scope: JSON.stringify({ description: 'North America', videoPlans: [{ id: 'video-1' }] }), constraints: JSON.stringify(['No auto-send']),
+  scope: JSON.stringify({ description: 'North America', videoPlans: [{ id: 'video-1' }], promotionPlans: [{ contentId: 'video-1', budgetCny: 120 }] }), constraints: JSON.stringify(['No auto-send']),
   status: 'active', version: 2, created_at: '2026-10-18T00:00:00Z', updated_at: '2026-10-20T00:00:00Z',
 };
 
@@ -17,6 +17,7 @@ test('overview goal projection keeps legacy line safe and strips persistence met
   assert.deepEqual(publicRecord.contentPlatforms, ['facebook', 'youtube']);
   assert.equal(publicRecord.scope, 'North America');
   assert.deepEqual(publicRecord.videoPlans, [{ id: 'video-1' }]);
+  assert.deepEqual(publicRecord.promotionPlans, [{ contentId: 'video-1', budgetCny: 120 }]);
   assert.deepEqual(publicRecord.constraints, ['No auto-send']);
   assert.equal(publicRecord.version, 2);
   const input = goalInput(goal);

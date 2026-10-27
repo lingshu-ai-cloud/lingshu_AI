@@ -56,7 +56,7 @@ export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplic
         unit: goal.unit,
         starts_at: goal.startsAt,
         ends_at: goal.endsAt,
-        scope: goal.videoPlans ? { description: goal.scope, videoPlans: goal.videoPlans } : goal.scope,
+        scope: goal.videoPlans ? { description: goal.scope, videoPlans: goal.videoPlans, promotionPlans: goal.promotionPlans || [] } : goal.scope,
         constraints: goal.constraints,
         owner_id: userId,
         status: 'draft',

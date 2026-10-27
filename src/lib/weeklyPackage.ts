@@ -1,5 +1,6 @@
 import type { ReviewTodo } from './reviewTodos';
 import type { VideoCreationPlan } from './videoCreationPlan';
+import type { WeeklyPromotionPlan } from '../../shared/contracts/weeklyPromotionPlan';
 import { matrixIssues, type MatrixAccountPlan } from './weeklyMatrix';
 import { directorIssues, type ContentDirectorPlan } from './contentDirector';
 
@@ -60,6 +61,7 @@ export interface WeeklyOperatingContext {
     totalMinCny?: number;
     totalMaxCny?: number;
   };
+  promotionPlans?: WeeklyPromotionPlan[];
   cadence: {
     contentCount: number;
     description: string;
