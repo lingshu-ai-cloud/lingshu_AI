@@ -35,6 +35,7 @@ import { verifySupportAccessToken } from '../lib/supportAccess.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { isLocalDemoAuthorization, verifyLocalIdentity } from '../auth/localIdentity.js';
 import { bindDataAuthority, currentDataAuthority } from './dataAuthority.js';
+import { pocketBaseWriteData } from './pbWriteData.js';
 import { pocketBaseCasClaimSchemaVerified, pocketBaseUniqueOwnerSchemaVerified } from './pbCasCapability.js';
 import {
   createLocalDataTenant,
@@ -533,7 +534,7 @@ export const pbStore: DataStore = {
     const authority = currentDataAuthority();
     if (authority === 'local') return localCreate<T>(collection, data);
     try {
-      const remote = await pbCreateStrict(collection, data) as T | null;
+      const remote = await pbCreateStrict(collection, pocketBaseWriteData(collection, data)) as T | null;
       return remote;
     } catch (error) {
       if (!authority && localFallbacksEnabled()) return localCreate<T>(collection, data);
@@ -545,6 +546,7 @@ export const pbStore: DataStore = {
     const authority = currentDataAuthority();
     if (authority === 'local') return localUpdate(collection, id, data);
     try {
+      data = pocketBaseWriteData(collection, data);
       const claim = await acquirePocketBaseTargetClaim(collection, id, { kind: 'update', data });
       if (!claim.ownsClaim) {
         const current = await pbGetStrict(collection, id) as Record<string, unknown> | null;
@@ -583,6 +585,7 @@ export const pbStore: DataStore = {
       ));
     }
     try {
+      data = pocketBaseWriteData(collection, data);
       const claim = await acquirePocketBaseTargetClaim(collection, id, {
         kind: 'compare_and_swap',
         expected,
