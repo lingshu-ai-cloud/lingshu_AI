@@ -40,12 +40,25 @@ export function socialImageBuyerVisibleTexts(poster: BuyerPosterCopy): string[] 
     ...(poster.bottomBar || []), poster.cta].map(value => String(value || '').trim()).filter(Boolean);
 }
 
+/** The text and seal reserve space before the model places the product hero. */
+export function socialImageBuyerLayout(poster: BuyerPosterCopy): {
+  copyRight: number; sealLeft: number; heroCenter: number;
+} {
+  const longestFact = Math.max(0, ...(poster.sellingPoints || []).map(item => item.trim().length));
+  const denseCopy = longestFact > 27 || (poster.subheadline || '').trim().length > 28
+    || (poster.headline || '').trim().length > 19;
+  const copyRight = denseCopy ? .44 : .40;
+  const sealLeft = .90 - .083;
+  return { copyRight, sealLeft, heroCenter: (copyRight + sealLeft) / 2 + .03 };
+}
+
 function productSeal(width: number, height: number, poster: BuyerPosterCopy, scale: number,
   font: (size: number) => number, tone: BuyerPosterTone): string {
   const net = poster.bottomBar?.[0] || '';
   if (!net) return '';
-  const cx = Math.round(width * .85), cy = Math.round(height * .155);
-  const radius = Math.round(Math.min(width, height) * .108);
+  // Keep the seal in the outer corner; the right-hand product hero owns the inner edge.
+  const cx = Math.round(width * .90), cy = Math.round(height * .155);
+  const radius = Math.round(Math.min(width, height) * .083);
   const point = (angle: number, distance: number) => `${(cx + Math.cos(angle) * distance).toFixed(1)},${(cy + Math.sin(angle) * distance).toFixed(1)}`;
   const scallop = Array.from({ length: 48 }, (_, index) => point(index * Math.PI / 24,
     radius * (index % 2 ? .955 : 1))).join(' ');
@@ -75,14 +88,15 @@ function productSeal(width: number, height: number, poster: BuyerPosterCopy, sca
 export function socialImageBuyerOverlaySvg(width: number, height: number, poster: BuyerPosterCopy,
   highContrast = false, tone: BuyerPosterTone = 'cool'): Buffer {
   const colors = TONES[tone];
+  const layout = socialImageBuyerLayout(poster);
   const scale = Math.min(width, height) / 1200;
   const font = (size: number) => Math.max(10, Math.round(size * scale));
   const x = Math.round(width * .057), right = Math.round(width * .943);
   const brand = lines(poster.originBadge || '', 22);
   const wideGlyphs = /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(poster.headline || '');
-  const heading = lines(poster.headline || '', Math.max(7, Math.floor(width * .33 / font(60) * (wideGlyphs ? .9 : 1.9))));
-  const supporting = lines(poster.subheadline || '', Math.max(12, Math.floor(width * .48 / font(27) * 1.5)));
-  const facts = (poster.sellingPoints || []).flatMap(item => lines(item, Math.max(12, Math.floor(width * .30 / font(23) * 1.8))));
+  const heading = lines(poster.headline || '', Math.max(7, Math.floor(width * (layout.copyRight - .07) / font(60) * (wideGlyphs ? .9 : 1.9))));
+  const supporting = lines(poster.subheadline || '', Math.max(12, Math.floor(width * (layout.copyRight - .05) / font(27) * 1.5)));
+  const facts = (poster.sellingPoints || []).flatMap(item => lines(item, Math.max(12, Math.floor(width * (layout.copyRight - .10) / font(23) * 1.8))));
   const [netContent = '', label = '', question = ''] = poster.bottomBar || [];
   const cta = lines(poster.cta || '', Math.max(12, Math.floor(width * .60 / font(36) * 1.7)));
   const inquiry = lines(question, Math.max(12, Math.floor(width * .38 / font(22) * 1.7)));
@@ -110,7 +124,7 @@ export function socialImageBuyerOverlaySvg(width: number, height: number, poster
       <radialGradient id="sealFace"><stop stop-color="${colors.sealLight}"/><stop offset="1" stop-color="${colors.seal}"/></radialGradient>
     </defs>
     <rect width="${width}" height="${Math.round(height * .44)}" fill="url(#topWash)"/>
-    ${facts.length ? `<rect x="${x - font(18)}" y="${factPanelTop}" width="${Math.round(width * .31)}" height="${factPanelHeight}" rx="${font(18)}" fill="#fff" fill-opacity="${highContrast ? '.97' : '.91'}" stroke="${colors.pale}" stroke-width="${Math.max(1, Math.round(2 * scale))}"/>` : ''}
+    ${facts.length ? `<rect x="${x - font(18)}" y="${factPanelTop}" width="${Math.round(width * (layout.copyRight - .09))}" height="${factPanelHeight}" rx="${font(18)}" fill="#fff" fill-opacity="${highContrast ? '.97' : '.91'}" stroke="${colors.pale}" stroke-width="${Math.max(1, Math.round(2 * scale))}"/>` : ''}
     <rect y="${footerTop}" width="${width}" height="${height - footerTop}" fill="${highContrast ? colors.footerStrong : colors.footer}"/>
     <line x1="0" y1="${footerTop}" x2="${width}" y2="${footerTop}" stroke="${colors.pale}" stroke-width="${Math.max(2, Math.round(3 * scale))}"/>
     ${brand.map((line, index) => `<text x="${x}" y="${topY + font(30) + index * font(34)}" fill="${colors.ink}" font-family="${fontFamily}" font-size="${font(28)}" font-weight="700" letter-spacing="1">${xml(line)}</text>`).join('')}

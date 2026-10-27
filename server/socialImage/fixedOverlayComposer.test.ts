@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import sharp from 'sharp';
 import { composeFixedSocialLayers } from './fixedOverlayComposer.js';
-import { socialImageBuyerOverlaySvg } from './socialImageBuyerOverlay.js';
+import { socialImageBuyerLayout, socialImageBuyerOverlaySvg } from './socialImageBuyerOverlay.js';
+import { buildSocialImagePosterPlatePrompt } from './socialImagePosterPlatePrompt.js';
 
 test('fixed GIF compositor preserves exact canvas and produces a visible product overlay', async () => {
   const background = await sharp({ create: { width: 320, height: 400, channels: 3, background: '#376b9f' } }).png().toBuffer();
@@ -37,8 +38,11 @@ test('approved B2B fallback draws verified buyer information over the existing s
   const center = await sharp(result).extract({ left: 600, top: 600, width: 1, height: 1 }).raw().toBuffer();
   const original = await sharp(scene).extract({ left: 600, top: 600, width: 1, height: 1 }).raw().toBuffer();
   assert.deepEqual([...center.subarray(0, 3)], [...original.subarray(0, 3)], 'the real product stage is not obscured by a synthetic box');
-  const seal = await sharp(result).extract({ left: 1020, top: 180, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  const seal = await sharp(result).extract({ left: 1040, top: 180, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
   assert.ok(seal[0]! < 80 && seal[1]! < 150, 'the top-right buyer facts sit inside a visible dark product seal');
+  const heroEdge = await sharp(result).extract({ left: 920, top: 180, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  assert.ok(heroEdge[0]! > 170 && heroEdge[1]! > 190,
+    'the outer-corner seal leaves the inner edge of the right-hand product hero unobscured');
   const footer = await sharp(result).extract({ left: 600, top: 1150, width: 1, height: 1 }).raw().toBuffer();
   assert.notDeepEqual([...footer.subarray(0, 3)], [...original.subarray(0, 3)], 'the buyer footer is present');
   const footerCorner = await sharp(result).extract({ left: 10, top: 1090, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
@@ -64,6 +68,25 @@ test('mist poster reserves a readable upper-left OEM/ODM block without covering 
   const source = await sharp(product).resize(1200, 1200, { fit: 'cover', position: 'attention' })
     .extract({ left: 600, top: 700, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
   assert.deepEqual([...center], [...source]);
+});
+
+test('buyer copy density changes both the reserved text zone and the product placement request', () => {
+  const compact = { originBadge: 'GUIANFA', headline: 'DEEP SEA MIST',
+    sellingPoints: ['Facial mist', 'Request OEM/ODM info'], bottomBar: ['180 ml', 'OEM / ODM', 'Ask us'],
+    cta: 'Message us' };
+  const dense = { ...compact, sellingPoints: ['Verified custom packaging consultation available'] };
+  const compactLayout = socialImageBuyerLayout(compact);
+  const denseLayout = socialImageBuyerLayout(dense);
+  assert.ok(denseLayout.copyRight > compactLayout.copyRight);
+  assert.ok(denseLayout.heroCenter > compactLayout.heroCenter);
+  assert.ok(compactLayout.heroCenter + .12 < compactLayout.sealLeft,
+    'a typical single bottle has a gap before the top-right badge');
+  const compactPrompt = buildSocialImagePosterPlatePrompt({ ratio: '1:1', buyerPoster: compact });
+  const densePrompt = buildSocialImagePosterPlatePrompt({ ratio: '1:1', buyerPoster: dense });
+  assert.match(compactPrompt, /left 40%/);
+  assert.match(densePrompt, /left 44%/);
+  assert.match(compactPrompt, /complete product near 64% width/);
+  assert.match(densePrompt, /complete product near 66% width/);
 });
 
 test('a different peach product changes the buyer poster color family', async () => {

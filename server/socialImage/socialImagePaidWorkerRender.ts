@@ -104,7 +104,7 @@ export async function renderSocialImagePaidWorker(input: {
     headline: frozen.poster.headline, imagePrompt: frozen.imagePrompt });
   if (commercialIssue) throw new Error(commercialIssue);
   const prompt = buildSocialImagePosterPlatePrompt({ ratio: frozen.ratio, recipe: task.replicationRecipe,
-    buyerLayout: isSocialImageBuyerPoster(frozen.poster) });
+    buyerPoster: isSocialImageBuyerPoster(frozen.poster) ? frozen.poster : undefined });
   const ratio = frozen.ratio as SocialImageAspectRatio;
   const quality = normalizeImageGenerationQuality(frozen.imageQuality);
   const inputHash = createHash('sha256').update(JSON.stringify({ prompt, ratio, quality,
