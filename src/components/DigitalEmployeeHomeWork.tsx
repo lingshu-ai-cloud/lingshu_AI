@@ -19,6 +19,7 @@ import { dispatchDigitalEmployeeDeepLink } from '../lib/digitalEmployeeNavigatio
 import CreationTaskCover from './socialContent/CreationTaskCover';
 import CreationTaskDetailDrawer, { creationLocalTime } from './socialContent/CreationTaskDetailDrawer';
 import AdPlanMetricsCell from './AdPlanMetricsCell';
+import CreateContentPlanModal from './socialContent/CreateContentPlanModal';
 
 const columns = [
   { kind: 'content', label: '内容创作', page: 'socialInspiration', Icon: Sparkles },
@@ -43,6 +44,7 @@ function BusinessWork({ data, onNavigate, identity }: { data: DigitalEmployeeOve
   const [unavailable, setUnavailable] = useState<NonNullable<SocialContentTaskPage['unavailableItems']>>([]);
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [productError, setProductError] = useState('');
   const [selectedContent, setSelectedContent] = useState<string | null>(null);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const plans = useAdPlanTasks(authHeader().Authorization || '');
   const customerList = useCustomers(revision, false);
   const refresh = () => { setRevision(value => value + 1); plans.retry(); };
@@ -112,6 +114,7 @@ function BusinessWork({ data, onNavigate, identity }: { data: DigitalEmployeeOve
         <Button type="text" className="business-work__all" onClick={() => onNavigate?.(page)}>查看全部{label}</Button>
       </section>;
     })}</div>
-    {data && <CreationTaskDetailDrawer row={selected} overview={data} onClose={() => setSelectedContent(null)} onUpdated={refresh}/>}
+    {data && <CreationTaskDetailDrawer row={selected} overview={data} onClose={() => setSelectedContent(null)} onUpdated={refresh} onRecover={() => { setSelectedContent(null); setRecoveryOpen(true); }}/>}
+    <CreateContentPlanModal open={recoveryOpen} onCancel={() => setRecoveryOpen(false)} onCreated={() => { setRecoveryOpen(false); refresh(); }}/>
   </section>;
 }
