@@ -5,6 +5,10 @@ import { canProcessVideo } from '../../lib/inspirationDataQuality';
 import type { TrendVideo } from '../../lib/inspirationTypes';
 import { cachedProductInspirationCandidate, resumeOrCreateInspirationTask, soleInspirationCreationAccount } from '../../lib/socialInspirationTask';
 import type { Material } from '../../lib/studioApi';
+import { useAssistantStore } from '../../stores/assistantStore';
+import { assistantImageReplicationPortal } from '../assistant/assistantImageReplicationIntent';
+import { PRIMARY_ASSISTANT_THREAD } from '../assistant/globalAssistantRuntime';
+import { ASSISTANT_HOME_ACTIVITY_EVENT } from '../assistant/useAssistantHomeAnchor';
 import { getAnalysis, inspirationCreationAvailability } from './inspirationAnalysisProjection';
 import { type InspirationDashboardProps, type StateSetter } from './inspirationDashboardContracts';
 import { visibleMaterialTags } from './inspirationMaterialLibrary';
@@ -113,33 +117,40 @@ export function useInspirationCreation({ onEnterWorkflow, setMaterialMessage, se
       return;
     }
     if (video.contentFormat === 'image') {
-      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
-        page: 'smartAssets',
-        view: 'create',
-        directStudio: false,
-        contentCreationRequest: {
-          requestId: Date.now(),
-          themeId: 'product_value',
-          mode: 'instant',
-          creationPath: 'viral_replication',
-          materialInput: video.thumbnail ? 'ready' : 'limited',
-          managedMode: 'one_click_managed',
-          prefill: {
-            title: `${video.title || '图文作品'} · 爆款复刻`,
-            topic: video.title || '',
-            referenceLinks: [video.sourceUrl || ''].filter(Boolean),
-            platforms: video.platform ? [video.platform] : undefined,
-          },
-          sourceContext: {
-            originLabel: '来自灵感中心',
-            referenceTitle: video.title || '已选对标图文',
-            referenceThumbnail: video.thumbnail,
-            referenceMediaUrl: video.aiAnalysis?.imageUrls?.[0] || video.thumbnail,
-            referenceContentType: 'image', referenceCaption: video.aiAnalysis?.caption || '',
-            referenceLayerBlueprints: video.aiAnalysis?.imageEvidence?.layerBlueprints || [],
+      const title = String(video.title || '已选爆款图文').trim().slice(0, 180);
+      const prompt = `请参考这条已采集图文继续创作图片和配文：${title}`;
+      const portal = assistantImageReplicationPortal(prompt);
+      const sourceRecordId = String(video.recordId || video.id.replace(/^crawl-/, '')).trim().slice(0, 200);
+      if (!portal || !sourceRecordId) {
+        setMaterialMessage('这条图文缺少可核验的来源记录，请刷新素材后重试。');
+        return;
+      }
+      const imageUrls = video.aiAnalysis?.imageUrls || [];
+      const matchedImageIndex = imageUrls.findIndex(url => url === video.thumbnail);
+      const referencedPortal = {
+        ...portal,
+        imageReplication: {
+          ...portal.imageReplication,
+          reference: {
+            sourceRecordId,
+            imageIndex: matchedImageIndex >= 0 ? matchedImageIndex : 0,
+            name: title,
           },
         },
-      } }));
+      };
+      const store = useAssistantStore.getState();
+      store.setMessages(PRIMARY_ASSISTANT_THREAD, [
+        ...store.threads[PRIMARY_ASSISTANT_THREAD].messages,
+        {
+          role: 'assistant',
+          content: '已带入原帖，请选择参考图。',
+          creationPortal: referencedPortal,
+        },
+      ]);
+      store.setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true);
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'strategy' } }));
+      window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_ACTIVITY_EVENT, { detail: { active: true } }));
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent('lingshu:assistant-home-reference')), 0);
       return;
     }
     if (video.id.startsWith('material-')) {

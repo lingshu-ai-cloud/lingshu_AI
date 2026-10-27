@@ -4,8 +4,8 @@ import {assistantScenarioIntake,scenarioTaskInputs} from './assistantScenarioInt
 import {assistantCreationPortalSchema} from '../../shared/contracts/assistantCreationPortal';
 import {assistantHomePromptById} from './assistantHomeQuickPrompts';
 
-test('all three approved prompts resolve to distinct persisted scenes without task mutation',()=>{
-  for(const [id,scenario] of [['CO-HOOK','hook_first'],['CO-CAMPAIGN','campaign'],['OP-CALENDAR','weekly_calendar']]){
+test('guided creation prompts resolve to distinct persisted scenes without task mutation',()=>{
+  for(const [id,scenario] of [['CO-HOOK','hook_first'],['CO-CAMPAIGN','campaign']]){
     const portal=assistantScenarioIntake(assistantHomePromptById(id)!.prompt)!;
     assert.equal(portal.scenario,scenario);assert.equal(portal.confirmedTaskId,undefined);
     assert.deepEqual(assistantCreationPortalSchema.parse(portal),portal);

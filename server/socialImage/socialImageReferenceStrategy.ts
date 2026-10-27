@@ -105,9 +105,19 @@ export async function prepareSocialImageReferenceStrategy(input: {
 
 function referenceLayout(inventory: SocialImageElementInventory, ratio: SocialImageCreationTask['deliverySpec']['aspectRatio']) {
   const canvas = socialImageCanvasForAspectRatio(ratio);
-  if (!inventory.canvas.width || !inventory.canvas.height || Math.abs(inventory.canvas.width / inventory.canvas.height - canvas.aspectRatio) > .035) {
+  if (!Number.isFinite(inventory.canvas.width) || !Number.isFinite(inventory.canvas.height)
+    || inventory.canvas.width <= 0 || inventory.canvas.height <= 0) {
     throw new SocialImageProductionRunError('social_image_reference_ratio_unsupported', 422);
   }
+  const sourceAspectRatio = inventory.canvas.width / inventory.canvas.height;
+  const fitBoxToDelivery = (box: SocialImageNormalizedRect): SocialImageNormalizedRect => {
+    if (sourceAspectRatio > canvas.aspectRatio) {
+      const scale = canvas.aspectRatio / sourceAspectRatio;
+      return { x: box.x, y: (1 - scale) / 2 + box.y * scale, width: box.width, height: box.height * scale };
+    }
+    const scale = sourceAspectRatio / canvas.aspectRatio;
+    return { x: (1 - scale) / 2 + box.x * scale, y: box.y, width: box.width * scale, height: box.height };
+  };
   const ranked = [...inventory.regions].sort((a, b) => Number(b.toolScores.saliency || 0) - Number(a.toolScores.saliency || 0));
   const weakest = ranked.at(-1);
   const text = inventory.ocrBlocks.filter(block => unitBox(block.bbox) && block.confidence >= .75
@@ -128,8 +138,8 @@ function referenceLayout(inventory: SocialImageElementInventory, ratio: SocialIm
     x: clamp(box.x + box.width / 2 - width / 2, 1 - width - .025),
     y: clamp(box.y + box.height / 2 - height / 2, 1 - height - .025), width, height,
   });
-  const product = centered(focal.bbox, .38, .48);
-  const headline = centered(text.bbox, .36, .14);
+  const product = centered(fitBoxToDelivery(focal.bbox), .38, .48);
+  const headline = centered(fitBoxToDelivery(text.bbox), .36, .14);
   if (overlap(product, headline) / (product.width * product.height) > .04) {
     throw new SocialImageProductionRunError('social_image_reference_regions_collide', 422);
   }

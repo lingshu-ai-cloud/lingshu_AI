@@ -32,6 +32,13 @@ test('the launcher row starts with concrete high-frequency actions', () => {
   );
 });
 
+test('the weekly plan launcher starts with the current plan instead of the publishing calendar', () => {
+  const entry = assistantHomePromptById('OP-CALENDAR')!;
+  assert.equal(entry.label, '查看周计划');
+  assert.match(entry.summary, /任务、排期、预算/);
+  assert.doesNotMatch(`${entry.label}${entry.summary}`, /发布日历/);
+});
+
 test('launchers expose bounded task cards with a financial source entry', () => {
   assert.equal(new Set(ASSISTANT_HOME_QUICK_LAUNCHERS.map(entry => entry.id)).size, ASSISTANT_HOME_QUICK_LAUNCHERS.length);
   for (const launcher of ASSISTANT_HOME_QUICK_LAUNCHERS) {

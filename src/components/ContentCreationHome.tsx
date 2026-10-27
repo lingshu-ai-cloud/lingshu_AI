@@ -85,7 +85,17 @@ export default function ContentCreationHome({ inspirationWorkspace, sessionScope
     () => ASSISTANT_HOME_QUICK_LAUNCHERS.find(entry => entry.id === activeLauncherId) || null,
     [activeLauncherId],
   );
-  const activePrompts = useMemo(() => resolveLauncherPrompts(activeLauncher), [activeLauncher]);
+  const activePrompts = useMemo(() => {
+    const prompts = resolveLauncherPrompts(activeLauncher);
+    if (activeLauncher?.id !== 'weekly-plan' || !firstRunLoaded || overview?.goal && overview.plan) return prompts;
+    return prompts.map(entry => entry.id === 'OP-CALENDAR' ? {
+      ...entry,
+      label: '创建周计划',
+      summary: '当前没有周计划，通过对话生成本周目标、任务、预算和排期',
+      prompt: '请帮我创建本周计划。',
+      level: 'plan' as const,
+    } : entry);
+  }, [activeLauncher, firstRunLoaded, overview]);
   const canvasCollapsed = activeLauncher === null;
   const showFirstRun = firstRunLoaded && !firstRunError && firstRunProgress.entered && (!overview?.config || !firstRunProgress.growthCompleted);
 
