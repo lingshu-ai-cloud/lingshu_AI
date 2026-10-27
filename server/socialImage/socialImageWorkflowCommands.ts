@@ -19,6 +19,7 @@ import { inspectSocialImageCandidateFactors, prepareSocialImageReferenceStrategy
 import { localProductOcrReadiness, recognizeProductImageLocally, recognizeProductImageTokensLocally } from '../lib/localProductOcr.js';
 import { runSocialImageVisualPreflight } from '../socialImage/socialImageQualityPreflight.js';
 import { continueSocialImageProduction } from '../socialImage/socialImageProductionContinuation.js';
+import { isSocialImageBuyerPoster, socialImageBuyerVisibleTexts } from './socialImageBuyerOverlay.js';
 export class ImageQuotaResponseHandled extends Error {
 }
 export class ImageWorkflowError extends Error {
@@ -272,9 +273,12 @@ export async function preflightImage(input: ImageWorkflowInput) {
         // can then be recomposed from the saved plate without buying a QA call
         // for a candidate that already fails a hard local gate.
         const pixelChecks = await socialImageCandidatePixelChecks({ bytes: generated.bytes, aspectRatio: task.deliverySpec.aspectRatio });
+        const expectedTexts = task.renderBrief && !plannedUnit && isSocialImageBuyerPoster(task.renderBrief)
+            ? socialImageBuyerVisibleTexts(task.renderBrief)
+            : [String(plannedUnit?.poster.headline || task.imageTextContract.headline),
+                String(plannedUnit?.poster.subheadline || task.imageTextContract.supportingText || ''), task.imageTextContract.cta || ''];
         const ocrCheck = await socialImageCandidateOcrCheck({ bytes: generated.bytes, mimeType: generated.mimeType,
-            expectedTexts: [String(plannedUnit?.poster.headline || task.imageTextContract.headline),
-                String(plannedUnit?.poster.subheadline || task.imageTextContract.supportingText || ''), task.imageTextContract.cta || ''],
+            expectedTexts,
             recognize: recognizeProductImageLocally });
         localByOutput.set(output.id, { generated, pixelChecks, ocrCheck });
         if ([...pixelChecks, ocrCheck].some(check => check.severity === 'hard'
@@ -314,9 +318,12 @@ export async function preflightImage(input: ImageWorkflowInput) {
             ? [await socialImageGifAnimationCheck({ bytes: generated.bytes, aspectRatio: task.deliverySpec.aspectRatio,
                     expectedFrames: task.renderPlan?.units.length || 0,
                     expectedFrameBytes: expectedFrameBytes.every(Boolean) ? expectedFrameBytes as Buffer[] : [] })] : [];
+        const expectedTexts = task.renderBrief && !plannedUnit && isSocialImageBuyerPoster(task.renderBrief)
+            ? socialImageBuyerVisibleTexts(task.renderBrief)
+            : [String(plannedUnit?.poster.headline || task.imageTextContract.headline),
+                String(plannedUnit?.poster.subheadline || task.imageTextContract.supportingText || ''), task.imageTextContract.cta || ''];
         const ocrCheck = local?.ocrCheck || await socialImageCandidateOcrCheck({ bytes: generated.bytes, mimeType: generated.mimeType,
-            expectedTexts: [String(plannedUnit?.poster.headline || task.imageTextContract.headline),
-                String(plannedUnit?.poster.subheadline || task.imageTextContract.supportingText || ''), task.imageTextContract.cta || ''],
+            expectedTexts,
             recognize: recognizeProductImageLocally });
         const localChecks = new Map([...pixelChecks, ocrCheck, ...animationCheck].map(check => [check.key, check]));
         const deterministicForOutput = deterministic.filter(check => output.role === 'gif_output'

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import sharp from 'sharp';
 import { composeFixedSocialLayers } from './fixedOverlayComposer.js';
+import { socialImageBuyerOverlaySvg } from './socialImageBuyerOverlay.js';
 
 test('fixed GIF compositor preserves exact canvas and produces a visible product overlay', async () => {
   const background = await sharp({ create: { width: 320, height: 400, channels: 3, background: '#376b9f' } }).png().toBuffer();
@@ -21,6 +23,68 @@ test('integrated scene receives copy without pasting a second product photo', as
     poster: { headline: 'CREAM' }, width: 320, height: 320, productTreatment: 'integrated_scene' });
   const rgb = await sharp(result).extract({ left: 160, top: 190, width: 1, height: 1 }).raw().toBuffer();
   assert.deepEqual([...rgb.subarray(0, 3)], [65, 109, 183], 'scene pixels remain intact; no rectangular source overlay');
+});
+
+test('approved B2B fallback draws verified buyer information over the existing scene', async () => {
+  const scene = await sharp({ create: { width: 1200, height: 1200, channels: 3, background: '#d9eaf3' } }).png().toBuffer();
+  const poster = { originBadge: 'GUIANFA', headline: 'Sorbet Cream', subheadline: 'Cool-touch sorbet texture',
+    sellingPoints: ['Face cream', 'Cool-touch sorbet texture', 'SKU: GUIANFA-RS-005'],
+    bottomBar: ['50g', 'B2B SOURCING', 'Ask about order size, packaging & timing'],
+    cta: 'Message us for catalog and quote' };
+  const result = await composeFixedSocialLayers({ background: scene, products: [], poster,
+    width: 1200, height: 1200, productTreatment: 'integrated_scene' });
+  assert.deepEqual((await sharp(result).metadata()).width, 1200);
+  const center = await sharp(result).extract({ left: 600, top: 600, width: 1, height: 1 }).raw().toBuffer();
+  const original = await sharp(scene).extract({ left: 600, top: 600, width: 1, height: 1 }).raw().toBuffer();
+  assert.deepEqual([...center.subarray(0, 3)], [...original.subarray(0, 3)], 'the real product stage is not obscured by a synthetic box');
+  const seal = await sharp(result).extract({ left: 1020, top: 180, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  assert.ok(seal[0]! < 80 && seal[1]! < 150, 'the top-right buyer facts sit inside a visible dark product seal');
+  const footer = await sharp(result).extract({ left: 600, top: 1150, width: 1, height: 1 }).raw().toBuffer();
+  assert.notDeepEqual([...footer.subarray(0, 3)], [...original.subarray(0, 3)], 'the buyer footer is present');
+  const footerCorner = await sharp(result).extract({ left: 10, top: 1090, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  const footerFarCorner = await sharp(result).extract({ left: 1190, top: 1090, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  assert.deepEqual([...footerCorner], [...footerFarCorner], 'CTA is a solid full-width rectangular block');
+  assert.ok(footerCorner[0]! < 50 && footerCorner[1]! < 100, 'the cool-blue CTA block is distinctly darker than the scene');
+});
+
+test('mist poster reserves a readable upper-left OEM/ODM block without covering the product center', async () => {
+  const product = readFileSync(new URL('../../fixtures/beauty-showcase/media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-03.png', import.meta.url));
+  const poster = { originBadge: 'GUIANFA', headline: 'DEEP SEA MIST',
+    sellingPoints: ['Facial mist', 'Request OEM/ODM info', 'SKU: GUIANFA-RS-003'],
+    bottomBar: ['180 ml', 'OEM / ODM', 'Order size · Packaging · Timing?'],
+    cta: 'Message us for catalog and quote' };
+  const svg = socialImageBuyerOverlaySvg(1200, 1200, poster).toString();
+  assert.match(svg, /<text[^>]+font-size="54"[^>]*>OEM \/ ODM<\/text>/);
+  assert.match(svg, /<text[^>]+font-size="60"[^>]*>DEEP SEA<\/text>/);
+  assert.match(svg, /<text[^>]+font-size="60"[^>]*>MIST<\/text>/);
+  assert.match(svg, /<rect x="50" y="261" width="372"/);
+  const result = await composeFixedSocialLayers({ background: product, products: [product], poster,
+    width: 1200, height: 1200, productTreatment: 'integrated_scene' });
+  const center = await sharp(result).extract({ left: 600, top: 700, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  const source = await sharp(product).resize(1200, 1200, { fit: 'cover', position: 'attention' })
+    .extract({ left: 600, top: 700, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  assert.deepEqual([...center], [...source]);
+});
+
+test('a different peach product changes the buyer poster color family', async () => {
+  const product = readFileSync(new URL('../../fixtures/beauty-showcase/media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-06.png', import.meta.url));
+  const poster = { originBadge: 'GUIANFA', headline: 'PEACH ICE FROST',
+    sellingPoints: ['Face cream', 'SKU: GUIANFA-RS-006'],
+    bottomBar: ['50 g', 'B2B SOURCING', 'Order size · Packaging · Timing?'],
+    cta: 'Message us for catalog and quote' };
+  const result = await composeFixedSocialLayers({ background: product, products: [product], poster,
+    width: 1200, height: 1200, productTreatment: 'integrated_scene' });
+  const footer = await sharp(result).extract({ left: 10, top: 1090, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  assert.ok(footer[0]! > footer[1]!, 'peach packaging selects a warm CTA, rather than the previous cream’s blue');
+  const copyBacking = await sharp(result).extract({ left: 200, top: 420, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  const originalBacking = await sharp(product).resize(1200, 1200, { fit: 'cover', position: 'attention' })
+    .extract({ left: 200, top: 420, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  assert.ok(copyBacking[1]! > originalBacking[1]! + 80,
+    'the fact card lifts copy off the dark package without changing the source file');
+  const center = await sharp(result).extract({ left: 600, top: 750, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  const source = await sharp(product).resize(1200, 1200, { fit: 'cover', position: 'attention' })
+    .extract({ left: 600, top: 750, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  assert.deepEqual([...center], [...source], 'the actual product is not repainted');
 });
 
 test('single poster frame preserves the source product label pixels instead of cutting out white packaging', async () => {

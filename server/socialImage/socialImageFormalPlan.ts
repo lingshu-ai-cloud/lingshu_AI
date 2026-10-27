@@ -7,6 +7,7 @@ import { socialImagePlanSourceHash } from './socialImageDurablePlan.js';
 import { socialImageV3PaidPrerequisiteIssue, socialImageV3RenderSpecInputHash } from './socialImagePaidPrerequisites.js';
 import { assertSocialImageCurrentContentTask, recordSocialImageNodeOutput, SocialImageProductionRunError } from './socialImageProductionRun.js';
 import { readSocialImageTask } from './socialImageTask.js';
+import { isSocialImageBuyerPoster } from './socialImageBuyerOverlay.js';
 
 type PlannerPoster = NonNullable<SocialImageCreationTask['renderBrief']>;
 export interface SocialImageFormalPlannerResult {
@@ -182,6 +183,11 @@ export async function compileSocialImageV3PaidPlan(input: {
       quality: task.deliverySpec.imageGeneration?.quality || 'low', pendingRepairs },
     textLayers: [{ role: 'headline', text: poster.headline, region: 'headline' },
       ...(poster.subheadline ? [{ role: 'supporting', text: poster.subheadline, region: 'subheadline' }] : []),
+      ...(isSocialImageBuyerPoster(poster) ? [
+        { role: 'brand', text: poster.originBadge, region: 'corner-badge' },
+        ...poster.sellingPoints.map((text, index) => ({ role: `buyer-fact-${index + 1}`, text, region: 'buyer-facts' })),
+        ...poster.bottomBar.map((text, index) => ({ role: `buyer-footer-${index + 1}`, text, region: 'bottom-bar' })),
+      ] : []),
       ...(poster.cta ? [{ role: 'cta', text: poster.cta, region: 'cta' }] : [])],
     subjectConstraints: [...task.contentBrief.productNames],
     factorTargets: task.hookFactorSpec?.factors.map(factor => ({ factorId: factor.factorId,

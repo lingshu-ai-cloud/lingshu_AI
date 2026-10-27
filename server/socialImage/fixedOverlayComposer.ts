@@ -3,12 +3,35 @@ import type { SocialImageReplicationRecipe } from '../../shared/contracts/social
 import { socialImageRectOverlapRatio } from '../../shared/contracts/socialImageLayerGraph.js';
 import { connectedBorderToAlpha } from './layerRenderer.js';
 import { normalizeSocialImageReferenceLayerBlueprints } from './socialImageTask.js';
+import { isSocialImageBuyerPoster, socialImageBuyerOverlaySvg } from './socialImageBuyerOverlay.js';
+import type { BuyerPosterTone } from './socialImageBuyerOverlay.js';
+
+/** Pick a broad color family from the selected product pixels, not from the benchmark brand. */
+async function buyerPosterTone(bytes: Buffer): Promise<BuyerPosterTone> {
+  const { data } = await sharp(bytes).rotate().resize(80, 80, { fit: 'inside' })
+    .removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const scores = { cool: 0, warm: 0, botanical: 0 };
+  for (let index = 0; index < data.length; index += 3) {
+    const r = data[index]! / 255, g = data[index + 1]! / 255, b = data[index + 2]! / 255;
+    const max = Math.max(r, g, b), delta = max - Math.min(r, g, b);
+    if (delta < .16 || max < .2 || max > .95) continue;
+    const sector = max === r ? ((g - b) / delta) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
+    const hue = (sector * 60 + 360) % 360;
+    if (hue >= 300 || hue < 40) scores.warm += delta;
+    else if (hue >= 40 && hue < 170) scores.botanical += delta;
+    else scores.cool += delta;
+  }
+  const winner = Object.entries(scores).sort((left, right) => right[1] - left[1])[0];
+  return winner && winner[1] > 0 ? winner[0] as BuyerPosterTone : 'cool';
+}
 
 type PosterCopy = {
   headline?: string;
   subheadline?: string;
   originBadge?: string;
   cta?: string;
+  sellingPoints?: string[];
+  bottomBar?: string[];
 };
 
 type ReferenceTextRegion = 'top_left' | undefined;
@@ -135,9 +158,12 @@ export async function composeFixedSocialLayers(input: {
 }): Promise<Buffer> {
   const { width, height } = input;
   if (input.productTreatment === 'integrated_scene') {
+    const overlay = isSocialImageBuyerPoster(input.poster)
+      ? socialImageBuyerOverlaySvg(width, height, input.poster, Boolean(input.repairContrast),
+        await buyerPosterTone(input.products[0] || input.background))
+      : copyOverlaySvg(width, height, input.poster, input.recipe, input.referenceTextRegion, input.repairContrast);
     return sharp(input.background).rotate().resize(width, height, { fit: 'cover', position: 'attention' })
-      .composite([{ input: copyOverlaySvg(width, height, input.poster, input.recipe,
-        input.referenceTextRegion, input.repairContrast), left: 0, top: 0 }])
+      .composite([{ input: overlay, left: 0, top: 0 }])
       .png({ compressionLevel: 9 }).toBuffer();
   }
   const stage = input.referenceTextRegion === 'top_left'

@@ -7,6 +7,7 @@ import { conformSocialImageToCanvas, socialImageCanvasForAspectRatio, type Socia
 import { completeSocialImagePaidJob, socialImageOwnedMaterialUrl } from './socialImagePaidJob.js';
 import { SOCIAL_IMAGE_HARD_CHECKS, type SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
 import { composeFixedSocialLayers } from './fixedOverlayComposer.js';
+import { isSocialImageBuyerPoster } from './socialImageBuyerOverlay.js';
 
 /** Shared provider/material/receipt path for the workbench and durable image worker. */
 export async function submitClaimedSocialImageSingleRender(input: {
@@ -44,7 +45,8 @@ export async function submitClaimedSocialImageSingleRender(input: {
       promptSha256: createHash('sha256').update(input.prompt).digest('hex'),
       socialImageTaskId: input.task.id, socialImageJobId: input.jobId,
       socialImageInputHash: input.inputHash, model: generated.model, qualityStatus: 'needs_review',
-      ...(input.composition ? { localComposition: 'integrated-scene-and-copy-v1',
+      ...(input.composition ? { localComposition: isSocialImageBuyerPoster(input.composition.poster)
+        ? 'integrated-scene-b2b-v2' : 'integrated-scene-and-copy-v1',
         backgroundMaterialId: plateMaterial?.id,
         plateSha256: createHash('sha256').update(plate).digest('hex'),
         productSha256: createHash('sha256').update(input.composition.productBytes).digest('hex') } : {}) },
