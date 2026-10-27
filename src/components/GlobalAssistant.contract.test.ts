@@ -74,6 +74,7 @@ assert.doesNotMatch(assistantRootMarkup, /5\.5rem/, '制作页不得通过额外
 assert.match(conversationPanelSource, /assistantUsesMobileClearance[\s\S]{0,240}viewport\.height - \(assistantUsesMobileClearance \? 160 : 96\)/, '移动端抬高入口时必须同步收紧对话高度，不能把面板顶部裁掉');
 assert.match(launcherSource, /const closedLabel = weeklyPlanOperating \? '周计划正在运营中' : '周计划待生成'/, '右下角入口必须根据真实周运行状态给出明确文案');
 assert.match(weeklyPlanHookSource, /digitalEmployeeApi\.createGoal\(defaultWeeklyGoal\(next\.config\)\.draft\)/, '提示词必须复用真实周计划生成接口');
+assert.match(weeklyPlanHookSource, /请先点击上方『让灵小枢认识我』完成基础资料/, '缺少初始资料时必须直接告知用户可操作的页面入口');
 assert.match(weeklyPlanSource, /确认无误，开始运行/, '完整周计划弹窗必须在用户确认后才启动');
 assert.match(weeklyPlanHookSource, /confirmedWeeklyExecution/, '启动成功必须由真实运行与任务回执确认');
 assert.match(weeklyPlanSource, /assistant-weekly-plan-celebration/, '确认成功后必须提供有限时长的庆祝与收束反馈');

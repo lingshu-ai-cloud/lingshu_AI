@@ -31,7 +31,7 @@ export function useAssistantWeeklyPlanExperience() {
     setError('');
     let next = await digitalEmployeeApi.overview();
     if (!next.goal || !next.plan) {
-      if (!next.config) throw new Error('请先完成企业资料和数字员工设置，我才能按真实业务信息生成本周计划。');
+      if (!next.config) throw new Error('请先点击上方『让灵小枢认识我』完成基础资料');
       const { defaultWeeklyGoal } = await import('../../lib/defaultWeeklyGoal');
       next = await digitalEmployeeApi.createGoal(defaultWeeklyGoal(next.config).draft);
     }
