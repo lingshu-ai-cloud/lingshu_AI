@@ -61,6 +61,7 @@ export function createImageExecutionPorts(store: DataStore, job: ContentExecutio
                     await planStudioPoster({ store, tenantId: job.tenantId,
                         body: { imageTaskId: task.id, expectedImageTaskVersion: task.version },
                         packagingHint,
+                        enterpriseProfile: readTenantEnterpriseProfile,
                         enterpriseCtx: async () => buildEnterpriseContext(await readTenantEnterpriseProfile(job.tenantId)), allowPaidCall,
                         beforeProviderCall: async () => {
                             // Only pre-transport claims are uncertain. Validation and

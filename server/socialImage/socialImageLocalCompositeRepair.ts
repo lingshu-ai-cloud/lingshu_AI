@@ -63,7 +63,8 @@ export async function repairSocialImageLocalComposite(input: {
   const job = task.generationJobs.find(item => item.id === jobId && item.status === 'completed' && item.inputHash === inputHash);
   if (!plateId || !job || !job.outputNodeIds.includes(old.id) || !productId
     || original.sourceType !== 'ai_generated_marketing_image' || provenance?.socialImageTaskId !== task.id
-    || !['fixed-product-and-copy-v1', 'fixed-product-and-copy-v2', 'integrated-scene-and-copy-v1'].includes(String(provenance?.localComposition || ''))
+    || !['fixed-product-and-copy-v1', 'fixed-product-and-copy-v2', 'integrated-scene-and-copy-v1', 'integrated-scene-b2b-v2',
+      'identity-locked-b2b-v1'].includes(String(provenance?.localComposition || ''))
     || !validHash(original.contentSha256) || old.contentHash !== original.contentSha256
     || !validHash(provenance?.plateSha256) || !validHash(provenance?.productSha256)) {
     throw new Error('social_image_local_repair_lineage_invalid');
@@ -83,10 +84,12 @@ export async function repairSocialImageLocalComposite(input: {
   const oldVersion = String(provenance.localComposition);
   const bytes = await composeFixedSocialLayers({ background, products: [product.bytes], poster: task.renderBrief!,
     width: canvas.width, height: canvas.height, recipe: task.replicationRecipe,
-    productTreatment: oldVersion === 'integrated-scene-and-copy-v1' ? 'integrated_scene' : 'framed_source',
+    productTreatment: oldVersion === 'integrated-scene-and-copy-v1' || oldVersion === 'integrated-scene-b2b-v2'
+      ? 'integrated_scene' : 'framed_source',
     referenceTextRegion: task.hookFactorSpec?.factors.some(factor => factor.factorId === 'reference-text-hierarchy'
       && factor.validator.observableTarget === 'top_left') ? 'top_left' : undefined,
-    repairContrast: oldVersion === 'fixed-product-and-copy-v2' || oldVersion === 'integrated-scene-and-copy-v1' });
+    repairContrast: oldVersion === 'identity-locked-b2b-v1' || oldVersion === 'fixed-product-and-copy-v2' || oldVersion === 'integrated-scene-and-copy-v1'
+      || oldVersion === 'integrated-scene-b2b-v2' });
   const digest = hash(bytes);
   if (digest === original.contentSha256) throw new Error('social_image_local_repair_no_pixel_change');
   const material = await (input.writeMaterial || createGeneratedImageMaterial)({
@@ -96,7 +99,9 @@ export async function repairSocialImageLocalComposite(input: {
     provenance: { socialImageTaskId: task.id, socialImageJobId: jobId, socialImageInputHash: inputHash,
       backgroundMaterialId: plateId, plateSha256: hash(background), productSha256: hash(product.bytes),
       originalOutputId: old.id, originalMaterialId: original.id,
-      localComposition: oldVersion === 'integrated-scene-and-copy-v1' ? 'integrated-scene-and-copy-v2-contrast'
+      localComposition: oldVersion === 'identity-locked-b2b-v1' ? 'identity-locked-b2b-v2-contrast'
+        : oldVersion === 'integrated-scene-b2b-v2' ? 'integrated-scene-b2b-v3-contrast'
+        : oldVersion === 'integrated-scene-and-copy-v1' ? 'integrated-scene-and-copy-v2-contrast'
         : oldVersion === 'fixed-product-and-copy-v1' ? 'fixed-product-and-copy-v2' : 'fixed-product-and-copy-v3-contrast',
       qualityStatus: 'needs_review', model: plateProvenance?.model },
   });

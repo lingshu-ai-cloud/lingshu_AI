@@ -8,6 +8,7 @@ import { listAdAutomationRules, saveAdAutomationRule, AD_AUTOMATION_RUNS } from 
 import { store } from '../storage/index.js';
 import { createAdApproval, decideAdApproval, listAdApprovals, reconcileAdApproval } from '../platformAds/approvals.js';
 import { listAdLaunches, saveAdLaunch, reconcileAdLaunch } from '../platformAds/launch.js';
+import { enqueueConversationPlan, conversationLaunchSchema } from '../platformAds/conversationLaunch.js';
 
 export const platformAdsRouter = Router();
 const safeRead = (handler: RequestHandler, taskScoped = false): RequestHandler => (req, res, next) => {
@@ -34,6 +35,13 @@ platformAdsRouter.post('/tasks/ai-plan', async (req, res) => {
     console.error('[platform-ads:ai-plan]', error);
     res.status(503).json({ error: 'AI 方案生成失败，未创建投放计划，请稍后重试' });
   }
+});
+platformAdsRouter.post('/tasks/:id/conversation-launch', async (req, res) => {
+  const parsed = conversationLaunchSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: '请补齐有效的执行配置和明确确认。' }); return; }
+  const { tenantId, userId } = res.locals as AuthLocals;
+  try { res.status(201).json(await enqueueConversationPlan(tenantId, userId, req.params.id, parsed.data)); }
+  catch (error) { res.status(error instanceof PlatformAdTaskConflictError ? 409 : error instanceof PlatformAdTaskValidationError ? 400 : 503).json({ error: error instanceof PlatformAdTaskValidationError ? error.message : '入队结果尚未确认，请到计划管理核对原记录。', taskId: req.params.id }); }
 });
 
 platformAdsRouter.post('/tasks/:id/management', async (req, res) => {

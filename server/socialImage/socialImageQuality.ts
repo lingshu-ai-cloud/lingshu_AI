@@ -7,6 +7,7 @@ import {
   type SocialImageQualityCheckKey,
 } from '../../shared/contracts/socialImageCreation.js';
 import { socialImageCanvasForAspectRatio } from './referenceCanvas.js';
+import { isSocialImageBuyerPoster, socialImageBuyerVisibleTexts } from './socialImageBuyerOverlay.js';
 
 const uncertain = (key: SocialImageQualityCheckKey, note: string, repairSuggestion?: string): SocialImageQualityCheck => ({
   key, verdict: 'uncertain', severity: 'hard', note, checker: 'deterministic', repairSuggestion,
@@ -19,7 +20,10 @@ const uncertain = (key: SocialImageQualityCheckKey, note: string, repairSuggesti
 export function socialImageDeterministicChecks(task: SocialImageCreationTask): SocialImageQualityCheck[] {
   const productIds = new Set(task.enterpriseAssets.filter(asset => asset.role === 'product' && asset.source === 'enterprise_knowledge_base').map(asset => asset.assetId));
   const productsBound = task.contentBrief.productRefs.length > 0 && task.contentBrief.productRefs.every(id => productIds.has(id));
-  const text = [task.imageTextContract.headline, task.imageTextContract.supportingText, task.imageTextContract.cta].filter(Boolean).join(' ');
+  const text = (task.renderBrief && isSocialImageBuyerPoster(task.renderBrief)
+    ? socialImageBuyerVisibleTexts(task.renderBrief)
+    : [task.imageTextContract.headline, task.imageTextContract.supportingText, task.imageTextContract.cta])
+    .filter(Boolean).join(' ');
   const factReady = task.contentBrief.factuality === 'verified' && task.fieldsToConfirm.length === 0 && task.imageTextContract.requiredFacts.every(Boolean);
   const referenceReady = task.creationPath !== 'viral_replication' || Boolean(task.referenceSnapshot?.imageUrls.length && task.replicationRecipe);
 

@@ -3,8 +3,28 @@ import type { AuthLocals } from '../middleware/auth.js';
 import { publicVideoRecord } from './videoPublicRecordProjection.js';
 import { type ContentFormat } from './videoRecordVisibility.js';
 import { createVideoTenantListing, withImagePublicBaselines } from './videoTenantListing.js';
+import { readMaterialLibrary } from '../lib/materialLibrary.js';
+import { readTenantEnterpriseProfile } from './enterprise.js';
+import { enterpriseProductMaterials } from './studioMaterialProjection.js';
+import { projectStudioMaterialLibrary } from './studioMaterialLibraryProjection.js';
+import { productIdentity } from '../digitalEmployees/contentProductionPlanning.js';
+import { recordsToVideos, type CrawlerRecord } from '../../src/components/inspiration/inspirationVideoProjection.js';
+import { buildShootingNeeds } from '../../src/components/inspiration/inspirationShootingNeeds.js';
+import type { Material } from '../../src/lib/studioApi.js';
 
 type TenantListing = ReturnType<typeof createVideoTenantListing>;
+
+async function shootingMaterialsForTenant(tenantId: string): Promise<Material[]> {
+  const [inventory, profile] = await Promise.all([readMaterialLibrary(tenantId), readTenantEnterpriseProfile(tenantId)]);
+  if (inventory.status === 'unavailable') throw new Error('Material inventory unavailable');
+  const productReferences = (profile.products.items || []).map((product, index) => ({
+    id: productIdentity(product, index), name: String(product.name || '').trim(), sku: String(product.sku || '').trim(),
+  })).filter(product => product.name);
+  return projectStudioMaterialLibrary({
+    enterpriseMaterials: enterpriseProductMaterials(tenantId, profile) as unknown as Material[],
+    inventoryMaterials: inventory.items as Material[], productReferences, tenantId, query: { purpose: 'library' },
+  }).filteredMaterials;
+}
 
 // Express 4 does not consume rejected async handlers. A failed strict store
 // read must return an unavailable response instead of terminating the server.
@@ -24,9 +44,11 @@ export function registerVideoListingRoutes(router: Router, input: {
   listing: TenantListing;
   tenantAnalysisQueuePositions: (tenantId: string) => Promise<Map<string, number>>;
   withSignedThumbnail: (record: Record<string, unknown>, tenantId: string) => Record<string, unknown>;
+  loadShootingMaterials?: (tenantId: string) => Promise<Material[]>;
 }): void {
   const { listPublicVideosForTenant, tenantInventoryTotal } = input.listing;
   const { tenantAnalysisQueuePositions, withSignedThumbnail } = input;
+  const shootingCache = new Map<string, { expiresAt: number; needs: ReturnType<typeof buildShootingNeeds> }>();
 
 // ─── GET /videos ──────────────────────────────────────────────────────────────
 // Query: page, perPage, platform, status, contentFormat(video|image)
@@ -41,6 +63,27 @@ router.get('/inventory-summary', listingRead(async (_req, res) => {
   ]);
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
   res.json({ contentFormat, totalItems, visibleItems: visible.totalItems });
+}));
+
+router.get('/shooting-needs', listingRead(async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const cached = shootingCache.get(tenantId);
+  if (cached && cached.expiresAt > Date.now()) { res.json({ needs: cached.needs }); return; }
+  const materials = await (input.loadShootingMaterials || shootingMaterialsForTenant)(tenantId);
+  const records: CrawlerRecord[] = [];
+  for (const contentFormat of ['video', 'image'] as const) {
+    const first = await listPublicVideosForTenant({ tenantId, contentFormat, page: 1, perPage: 100, crawlRange: 'all' });
+    records.push(...first.items.filter(item => typeof item.id === 'string') as unknown as CrawlerRecord[]);
+    for (let page = 2; page <= first.totalPages; page += 4) {
+      const batch = await Promise.all(Array.from({ length: Math.min(4, first.totalPages - page + 1) }, (_, index) =>
+        listPublicVideosForTenant({ tenantId, contentFormat, page: page + index, perPage: 100, crawlRange: 'all' })));
+      for (const result of batch) records.push(...result.items.filter(item => typeof item.id === 'string') as unknown as CrawlerRecord[]);
+    }
+  }
+  const needs = buildShootingNeeds(recordsToVideos(records), materials);
+  shootingCache.set(tenantId, { expiresAt: Date.now() + 60_000, needs });
+  res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+  res.json({ needs });
 }));
 
 router.get('/', listingRead(async (req, res) => {

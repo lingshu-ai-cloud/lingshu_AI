@@ -22,6 +22,7 @@ import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfi
 import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
 import { readHistoricalCustomers } from '../customerService/historicalConversations.js';
 import { appendLocalCustomerMessage, readLocalCustomerConversations } from '../customerService/localConversations.js';
+import { appendLocalFollowupPreviewMessage, readLocalFollowupPreviewCustomers, saveLocalFollowupPreviewDraft } from '../customerService/localFollowupPreview.js';
 
 export const customerSuggestionsRouter = Router();
 customerSuggestionsRouter.use(requireAuth);
@@ -69,7 +70,7 @@ customerSuggestionsRouter.get('/', requireAuth, async (req, res) => {
     : source === 'instagram' ? getInstagramCustomers(tenantId)
       : [...(await readAuthorizedWhatsAppCustomers(tenantId)), ...(await readAuthorizedMessengerCustomers(tenantId)), ...getInstagramCustomers(tenantId)].sort((a, b) => b.lastActiveAt - a.lastActiveAt);
   const localItems = source ? [] : readLocalCustomerConversations(tenantId).filter(local => !liveItems.some(live => live.id === local.id));
-  const items = source ? liveItems : [...liveItems, ...localItems, ...readHistoricalCustomers(tenantId)]
+  const items = source ? liveItems : [...liveItems, ...localItems, ...readHistoricalCustomers(tenantId), ...await readLocalFollowupPreviewCustomers(tenantId)]
     .sort((a, b) => Number(b.lastActiveAt || 0) - Number(a.lastActiveAt || 0));
   res.json({ items, source: source || 'all' });
 });
@@ -129,6 +130,14 @@ customerSuggestionsRouter.patch('/:id', enforceSupportSessionReadOnly, async (re
     res.status(422).json({ error: '请通过订单台账登记和更新订单，客户备注不再接受订单状态修改', code: 'use_order_ledger' }); return;
   }
   const patch = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+  if (customerId.startsWith('preview_followup_')) {
+    if (Object.keys(patch).length !== 1 || !('pendingDraft' in patch) || !(patch.pendingDraft === null || typeof patch.pendingDraft === 'string' && patch.pendingDraft.length <= 12000)) { res.status(400).json({error:'local_followup_preview_draft_invalid'}); return; }
+    try {
+      const saved = await saveLocalFollowupPreviewDraft(tenantId, customerId, patch.pendingDraft as string | null);
+      res.status(saved ? 200 : 404).json(saved ? {ok:true} : {error:'customer_not_found'});
+    } catch { res.status(503).json({error:'local_followup_preview_save_failed'}); }
+    return;
+  }
   if (Object.prototype.hasOwnProperty.call(patch, 'tagCorrection')) {
     const parsed = customerTagCorrectionInput.safeParse(patch.tagCorrection);
     if (!parsed.success || Object.keys(patch).length !== 1) { res.status(400).json({error:'customer_tag_correction_invalid'}); return; }
@@ -216,6 +225,14 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
   if(!/^[a-zA-Z0-9_-]{8,120}$/.test(requestId)){res.status(400).json({error:'channel_send_request_id_required'});return;}
   if (!customerId || !body) {
     res.status(400).json({ error: 'customer_id_and_body_required' });
+    return;
+  }
+  if (customerId.startsWith('preview_followup_')) {
+    try {
+      const receipt = await appendLocalFollowupPreviewMessage(tenantId, customerId, body, requestId);
+      if (!receipt) { res.status(404).json({error:'customer_not_found'}); return; }
+      res.json({ok:true, localPreview:true, outboxId:receipt.id, requestId, status:'sent'});
+    } catch (error) { res.status(409).json({error:error instanceof Error ? error.message : 'local_followup_preview_save_failed'}); }
     return;
   }
   const localReceipt = appendLocalCustomerMessage(tenantId, customerId, body, requestId);

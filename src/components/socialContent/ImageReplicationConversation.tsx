@@ -16,6 +16,7 @@ import { createImageReplicationDraft, imageReplicationDraftIssue,
   type ImageReplicationDraft, type ImageReplicationReference } from '../../lib/imageReplicationDraft';
 
 import { readImageReplicationReferences } from '../../lib/imageReplicationReferences';
+import { imageReplicationReferenceRatio } from '../../lib/imageReplicationReferenceRatio';
 
 const QUESTIONS = [
   '先确认要复刻哪张参考图。可以选择已采集的图文帖子，或上传一张图片。',
@@ -37,6 +38,7 @@ export default function ImageReplicationConversation({ request, onShowCreations,
     url: context.referenceMediaUrl || context.referenceThumbnail!, title: context.referenceTitle,
     caption: context.referenceCaption, layerBlueprints: context.referenceLayerBlueprints,
   } : null);
+  const [measuredReference, setMeasuredReference] = useState<{ url: string; ratio: ImageReplicationDraft['aspectRatio'] | null; error: string } | null>(null);
   const [products, setProducts] = useState<AssistantCatalogProduct[]>([]);
   const [references, setReferences] = useState<ImageReplicationReference[]>([]);
   const [productId, setProductId] = useState(checkpoint?.productId || '');
@@ -71,6 +73,20 @@ export default function ImageReplicationConversation({ request, onShowCreations,
   const isCurrent = () => alive.current && identity.current === productionNavigationIdentity();
 
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => {
+    if (!reference?.url) return;
+    let active = true;
+    const image = new Image();
+    image.onload = () => {
+      if (!active) return;
+      const ratio = imageReplicationReferenceRatio(image.naturalWidth, image.naturalHeight);
+      setMeasuredReference({ url: reference.url, ratio, error: ratio ? '' : '参考图画幅不属于可交付规格，请换一张同画幅图片。' });
+      if (ratio) setAspectRatio(ratio);
+    };
+    image.onerror = () => { if (active) setMeasuredReference({ url: reference.url, ratio: null, error: '参考图尺寸读取失败，请换一张可用图片。' }); };
+    image.src = reference.url;
+    return () => { active = false; image.onload = null; image.onerror = null; };
+  }, [reference?.url]);
   useEffect(() => {
     let active = true; setLoading(true); setLoadError('');
     void Promise.all([readAssistantProductCatalog(), readImageReplicationReferences(context?.referenceSourceRecordId), checkpoint?.imageTaskId ? socialImageApi.getTask(checkpoint.imageTaskId) : undefined]).then(async ([catalog, collected, restored]) => {
@@ -114,8 +130,13 @@ export default function ImageReplicationConversation({ request, onShowCreations,
     if (busy || loading || submitted) return;
     if (!isCurrent()) { setError('登录状态已变化，请重新打开创作。'); return; }
     if (step === 0 && !reference?.url) { setError('请先选择或上传一张参考图。'); return; }
+    if (step === 0 && measuredReference?.url !== reference?.url) { setError('正在核对参考图画幅，请稍后确认。'); return; }
+    if (step === 0 && measuredReference?.error) { setError(measuredReference.error); return; }
     if (step === 1) {
       if (!product) { setError('请选择一个企业知识库中的产品。'); return; }
+      if (measuredReference?.ratio && aspectRatio !== measuredReference.ratio) {
+        setError(`当前参考图为 ${measuredReference.ratio}，请使用同画幅交付，或更换参考图。`); return;
+      }
       const issue = imageReplicationDraftIssue(draft());
       if (issue) { setError(issue); return; }
     }
@@ -175,6 +196,8 @@ export default function ImageReplicationConversation({ request, onShowCreations,
           {step === 0 && <>
             <ImageReplicationReferencePicker items={references} reference={reference} disabled={busy || loading} unavailable={Boolean(loadError)} onReload={() => setReload(value => value + 1)}
               onSelect={value => { setReference(value); setError(''); }} onConfirm={advance} onUpload={() => uploadInput.current?.click()}/>
+            {reference?.url && measuredReference?.url === reference.url && measuredReference.ratio &&
+              <p className="text-sm text-text-secondary">已按参考图画幅匹配交付规格：{measuredReference.ratio}</p>}
             <input ref={uploadInput} type="file" accept="image/jpeg,image/png,image/webp" aria-label="上传参考图" className="sr-only" disabled={busy || loading}
               onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void upload(file); }}/>
           </>}

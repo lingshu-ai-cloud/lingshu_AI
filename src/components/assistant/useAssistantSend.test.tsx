@@ -6,6 +6,7 @@ import { useAssistantStore } from '../../stores/assistantStore';
 import { emptyAssistantThread, mergeConsecutiveAssistant } from './globalAssistantRuntime';
 import { useAssistantSend } from './useAssistantSend';
 import { assistantHomePromptById } from '../../lib/assistantHomeQuickPrompts';
+import { navigationPortalForAnswer } from '../../lib/assistantNavigationPortal';
 
 type SendInput = Parameters<typeof useAssistantSend>[0];
 test('inline business selectors and scoped replies are never merged away on hydration',()=>{
@@ -93,6 +94,12 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
     assert.equal(requests, 2, 'confirmation reveals a portal without any model or task mutation');
     assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.taskPortal?.phase, 'ready');
     assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.taskPortal?.taskId, 'socialtask_verified');
+    store.hydrateThread('business', { messages: [{role:'assistant',content:'确认前往投流页检查授权状态？'}] });
+    await send('确认');
+    assert.equal(requests,2,'page confirmation reveals navigation without a model call or task execution');
+    const navigationMessages=useAssistantStore.getState().threads.business.messages;
+    assert.equal(navigationPortalForAnswer(navigationMessages,navigationMessages.length-1)?.page,'adsPlans');
+
     store.hydrateThread('business', { messages: [{ role: 'assistant', content: '已核验的资讯回答。', sources: [{ title: '已核验来源', uri: 'https://example.com/original' }] }] });
     await send('查看本次回答的信息来源');
     assert.equal(requests, 2, 'source lookup reuses this answer, without searching again');

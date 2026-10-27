@@ -350,6 +350,29 @@ test('bound English poster rejects a different package variant and mixed-languag
   assert.doesNotMatch(JSON.stringify(response),/Mousse|Ophthalmologist|卸妆 product/);
 });
 
+test('bound B2B planning freezes only selected product facts and inquiry copy',async()=>{
+  const {store,task}=await preparedViralTask('product_poster','paid','en');
+  const response=await planStudioPoster({store,tenantId:'tenant-a',
+    body:{imageTaskId:task.id,expectedImageTaskVersion:task.version},
+    packagingHint:'GUIANFA\nSORBET CREAM',
+    enterpriseCtx:async()=>`公司名称：示例企业\n产品1：${task.contentBrief.productNames[0]}`,
+    enterpriseProfile:async()=>({factVersion:{id:'enterprise-facts-v1'},
+      brand:{name:'GUIANFA'},knowledge:'已确认产品目录',
+      products:{items:[{id:'product-a',sku:'GUIANFA-RS-005',name:'冰沙面霜',category:'面霜',brand:'GUIANFA',
+        attributes:{净含量:'50g'}},{id:'other',sku:'other',name:'竞品',attributes:{净含量:'100g'}}]}} as any),
+    allowPaidCall:async()=>true,
+    callPlanner:async()=>JSON.stringify({poster:{headline:'Product overview',subheadline:'OEM ready',cta:'Contact'},
+      caption:'Explore the product.',hashtags:[]}),
+  });
+  assert.equal(response?.poster.headline,'SORBET CREAM');
+  assert.deepEqual(response?.poster.sellingPoints,['Face cream','Sorbet-like texture','SKU: GUIANFA-RS-005']);
+  assert.equal(response?.poster.bottomBar[0],'50 g');
+  assert.equal(response?.poster.cta,'Message us for catalog and quote');
+  assert.doesNotMatch(JSON.stringify(response?.poster),/OEM|100g/);
+  const saved=await readSocialImageTask(store,'tenant-a',task.id);
+  assert.deepEqual(saved?.renderBrief?.sellingPoints,response?.poster.sellingPoints);
+});
+
 test('a bound task does not turn broad model marketing claims into confirmed image copy',async()=>{
   const {store,task}=await preparedViralTask('product_poster','paid','en');
   const response=await planStudioPoster({store,tenantId:'tenant-a',
@@ -407,11 +430,9 @@ test('durable image worker claims one frozen GPT Image 2 unit and never submits 
       referenceBytes:async()=>({bytes:referenceBytes,mimeType:'image/png'}),
       submit:async(request:Parameters<typeof import('./socialImagePaidSingleRender.js').submitClaimedSocialImageSingleRender>[0])=>{
         submitted++;
-        assert.equal(request.references.length, 2, 'the model receives the product before the benchmark');
-        assert.equal(Buffer.from(request.references[0]!.base64, 'base64').compare(productBytes), 0);
-        assert.equal(Buffer.from(request.references[1]!.base64, 'base64').compare(referenceBytes), 0);
-        assert.match(request.prompt,/one photograph/);
-        assert.doesNotMatch(request.prompt,/BACKGROUND ONLY/);
+        assert.equal(request.references.length, 0, 'the model receives no product or benchmark identity pixels');
+        assert.match(request.prompt,/BACKGROUND PLATE ONLY/);
+        assert.match(request.prompt,/Do not draw any product/);
         assert.ok(request.composition?.productBytes.equals(productBytes));
         assert.equal(request.task.generationJobs.at(-1)?.status,'running');
         const saved=await completeSocialImagePaidJob({store,tenantId:'tenant-a',taskId:request.task.id,

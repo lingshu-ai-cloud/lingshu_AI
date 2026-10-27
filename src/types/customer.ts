@@ -120,6 +120,7 @@ export interface OrderRecord {
 }
 
 export interface CustomerProfile extends LocalCustomerProfileAnalysis {
+  localFollowupPreview?: boolean;
   contextTagCorrections?: CustomerTagCorrection[];
   localSimulation?: {sessionId:string;itemHash?:string;approvedBody?:string};
   contextTagEvidence?: Array<{ tag: string; messageId: string; excerpt: string }>;

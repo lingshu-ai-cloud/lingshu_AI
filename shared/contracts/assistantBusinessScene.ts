@@ -8,7 +8,7 @@ export const BUSINESS_SCENES = {
   'CO-07': '改写成多平台版本',
 } as const;
 export type BusinessSceneId = keyof typeof BUSINESS_SCENES;
-export const businessScenePromptSchema = z.object({ sceneId: z.enum(Object.keys(BUSINESS_SCENES) as [BusinessSceneId, ...BusinessSceneId[]]), preferredId: z.string().max(150).optional() }).strict();
+export const businessScenePromptSchema = z.object({ sceneId: z.enum(Object.keys(BUSINESS_SCENES) as [BusinessSceneId, ...BusinessSceneId[]]), preferredId: z.string().max(150).optional(), createdTaskId: z.string().min(1).max(150).optional() }).strict();
 export type BusinessScenePrompt = z.infer<typeof businessScenePromptSchema>;
 export const isBusinessScene = (id: string): id is BusinessSceneId => Object.hasOwn(BUSINESS_SCENES, id);
 const id = z.string().trim().min(1).max(150);

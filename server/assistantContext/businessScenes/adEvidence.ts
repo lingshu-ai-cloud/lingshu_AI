@@ -8,9 +8,10 @@ import { getAdTaskMetricHistory } from '../../platformAds/metricSnapshots.js';
 import { getMetaPerformanceReport } from '../../platformAds/metaPerformance.js';
 import type { BusinessSceneSelection } from '../../../shared/contracts/assistantBusinessScene.js';
 import { BusinessSceneError, object, pick } from './readScope.js';
+import type { AssistantWork } from '../../../shared/contracts/assistantWork.js';
 export const adSceneOptions = async (tenantId: string) => (await listPlatformAdTasks(tenantId)).map(t => ({ id: t.id, label: t.name }));
 export const adReaders = { task: getPlatformAdTask, connections: (tenant: string) => listConnections(tenant, true), executions: listAllAdExecutions, approvals: (tenant: string, task: string) => listAdApprovals(tenant, task, true), launches: (tenant: string, task: string) => listAdLaunches(tenant, task, true), creatives: (tenant: string, task: string) => listPlatformAdCreatives(tenant, task, true), history: getAdTaskMetricHistory, report: getMetaPerformanceReport };
-export async function adSceneEvidence(tenantId: string, selection: BusinessSceneSelection, read = adReaders) {
+export async function adSceneEvidence(tenantId: string, selection: BusinessSceneSelection, read = adReaders, progress?: (event: AssistantWork) => void) {
   if (!selection.adTaskId) {
     if (['AD-01', 'AD-06'].includes(selection.sceneId)) throw new BusinessSceneError('scene_ad_required', 400, '请选择投放计划。');
     const accounts = await read.connections(tenantId);
@@ -18,9 +19,12 @@ export async function adSceneEvidence(tenantId: string, selection: BusinessScene
   }
   const task = await read.task(tenantId, selection.adTaskId);
   if (!task) throw new BusinessSceneError('scene_ad_not_found', 404, '所选投放计划不可访问。');
+  progress?.({ id: 'ad-records', label: '读取计划、素材与执行记录', detail: '读取当前计划关联的快照、授权和真实回执', status: 'running' });
   const [connections, executions, approvals, launches, creatives, history] = await Promise.all([
     read.connections(tenantId), read.executions(tenantId, task.id), read.approvals(tenantId, task.id), read.launches(tenantId, task.id), read.creatives(tenantId, task.id), read.history(tenantId, task.id, selection.from, selection.to),
   ]);
+  progress?.({ id: 'ad-records', label: '读取计划、素材与执行记录', detail: `取得 ${executions.length} 条执行记录、${creatives.length} 条素材记录；计划币种 ${task.currency}`, status: 'completed' });
+  progress?.({ id: 'ad-reports', label: '核对投放报告口径', detail: '按计划、广告组、广告层级分别读取；不同币种和归因口径分开处理', status: 'running' });
   const creates = executions.filter(e => e.action === 'create' && e.status === 'VERIFIED');
   if (creates.length > 20) throw new BusinessSceneError('scene_ad_scope_large', 422, '计划关联的广告较多，请到投流页按广告筛选后查看。');
   const reports = await Promise.all(creates.map(async execution => {
@@ -32,6 +36,7 @@ export async function adSceneEvidence(tenantId: string, selection: BusinessScene
     }));
     return { executionId: execution.id, levels };
   }));
+  progress?.({ id: 'ad-reports', label: '核对投放报告口径', detail: `已处理 ${creates.length} 条创建回执关联的报告；未核验成功或不支持的数据在报告中单列`, status: 'completed' });
   return { task: { ...pick(task, ['id', 'version', 'name', 'goal', 'market', 'budget', 'currency', 'status', 'managementMode', 'updatedAt']), configuration: pick(object(task.configuration), ['startsAt', 'endsAt', 'dailyBudget', 'audience', 'placements', 'accountConnectionId']), authorization: pick(object(task.authorization), ['version', 'status', 'expiresAt', 'maxTotalBudget', 'maxDailyBudget']) },
     accounts: connections.map(c => ({ ...pick(c, ['id', 'provider', 'accountId', 'name', 'currency', 'status', 'updatedAt', 'timezoneName', 'resourceSyncedAt']), authorization: pick(object(c.authorization), ['status', 'expiresAt', 'lastCheckedAt', 'revokedAt']) })),
     executions: executions.map(e => pick(e, ['id', 'action', 'status', 'connectionId', 'resourceId', 'createdAt'])),

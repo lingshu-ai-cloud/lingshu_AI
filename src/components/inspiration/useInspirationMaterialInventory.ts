@@ -4,6 +4,7 @@ import type { MaterialLibraryFacets } from '../../lib/studioDigitalHuman';
 import { materialMatchesProduct, type ProductMaterialGroupProduct, type ProductScenePreparationSlotView } from '../material-library/ProductMaterialGroup';
 import type { MaterialSourceFilter, MaterialThemeFilter } from '../material-library/MaterialTaxonomyFilters';
 import { MATERIAL_LIBRARY_FETCH_PAGE_SIZE, fetchCompleteProductMaterialInventory, type ProductMaterialSummary } from './inspirationProductMaterialInventory';
+import { MATERIAL_LIBRARY_PAGE_SIZE } from './inspirationDashboardContracts';
 
 // Own the library inventory and exact-product reads together so refreshes,
 // drawer cancellation and summary invalidation use the same request fences.
@@ -29,7 +30,39 @@ export function useInspirationMaterialInventory({ innerView, materialSource, mat
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [materialPage, setMaterialPage] = useState(1);
   const [materialFacets, setMaterialFacets] = useState<MaterialLibraryFacets | null>(null);
+  const [ordinaryPageItems, setOrdinaryPageItems] = useState<Material[]>([]);
+  const [ordinaryTotal, setOrdinaryTotal] = useState(0);
+  const [inventoryTotal, setInventoryTotal] = useState(0);
+  const [allMaterialsLoaded, setAllMaterialsLoaded] = useState(false);
   const materialLibraryRequestRef = useRef(0);
+  const lastInventoryReadAtRef = useRef(0);
+
+  const refreshPage = async (page = materialPage, compact = false): Promise<Material[]> => {
+    const requestId = ++materialLibraryRequestRef.current;
+    inFlightRef.current += 1;
+    setMaterialsLoading(true);
+    try {
+      const ordinary = await studioApi.listMaterialLibrary('library', { excludeProductAssociated: true, page, pageSize: MATERIAL_LIBRARY_PAGE_SIZE });
+      if (requestId !== materialLibraryRequestRef.current) return ordinaryPageItems;
+      if (!allMaterialsLoaded || compact) setLocalMaterials(ordinary.items);
+      setInventorySlots(ordinary.productSceneSlots || []);
+      setOrdinaryPageItems(ordinary.items);
+      setOrdinaryTotal(Number(ordinary.total ?? ordinary.items.length));
+      setInventoryTotal(Number(ordinary.inventoryTotal ?? ordinary.total ?? ordinary.items.length));
+      if (compact) setAllMaterialsLoaded(false);
+      setInventoryLoaded(true);
+      setInventoryError('');
+      setMaterialFacets(ordinary.facets || null);
+      lastInventoryReadAtRef.current = Date.now();
+      return ordinary.items;
+    } catch (error) {
+      if (requestId === materialLibraryRequestRef.current) setInventoryError(error instanceof Error ? error.message : '素材读取失败');
+      return ordinaryPageItems;
+    } finally {
+      inFlightRef.current -= 1;
+      if (requestId === materialLibraryRequestRef.current) setMaterialsLoading(false);
+    }
+  };
 
   const refreshMaterials = async (page?: number): Promise<Material[]> => {
     const requestId = ++materialLibraryRequestRef.current;
@@ -51,8 +84,8 @@ export function useInspirationMaterialInventory({ innerView, materialSource, mat
           studioApi.listMaterialLibrary('library', { page: next + index, pageSize: MATERIAL_LIBRARY_FETCH_PAGE_SIZE })));
         if (requestId !== materialLibraryRequestRef.current) return localMaterials;
         additionalPages.push(...batch);
-        if (progressive) setLocalMaterials([...new Map([inventory, ...additionalPages]
-          .flatMap(result => result.items).map(material => [material.id, material])).values()]);
+        // Keep the first page usable while the remaining pages load. Publishing
+        // every batch re-runs the gallery filters and all product summaries.
       }
       const materials = [...new Map([inventory, ...additionalPages]
         .flatMap(result => result.items)
@@ -63,6 +96,9 @@ export function useInspirationMaterialInventory({ innerView, materialSource, mat
       setInventoryError('');
       setInventoryLoaded(true);
       setMaterialFacets(inventory.facets || null);
+      setInventoryTotal(materials.length);
+      setAllMaterialsLoaded(true);
+      lastInventoryReadAtRef.current = Date.now();
       if (page !== undefined) setMaterialPage(page);
       return materials;
     } catch (error) {
@@ -112,8 +148,8 @@ export function useInspirationMaterialInventory({ innerView, materialSource, mat
     setProductDetailLoading(false);
   };
 
-  const refreshRef = useRef(refreshMaterials);
-  refreshRef.current = refreshMaterials;
+  const refreshRef = useRef(refreshPage);
+  refreshRef.current = refreshPage;
   const initialRead = useRef(false);
   useEffect(() => {
     if (!initialRead.current || (innerView === 'library' || innerView === 'shooting')) {
@@ -126,20 +162,25 @@ export function useInspirationMaterialInventory({ innerView, materialSource, mat
     if (innerView !== 'library' && innerView !== 'shooting') return;
     const refresh = (event?: Event) => {
       if ((event as CustomEvent | undefined)?.detail?.origin === 'inspiration-library') return;
-      if (document.visibilityState !== 'hidden' && !inFlightRef.current) void refreshRef.current();
+      if (event?.type !== 'lingshu:materials-updated' && Date.now() - lastInventoryReadAtRef.current < 30_000) return;
+      if (document.visibilityState !== 'hidden' && !inFlightRef.current) {
+        if (event?.type === 'lingshu:materials-updated' && allMaterialsLoaded) void refreshMaterials();
+        else void refreshRef.current();
+      }
     };
     window.addEventListener('lingshu:materials-updated', refresh);
     window.addEventListener('focus', refresh);
     document.addEventListener('visibilitychange', refresh);
     const pending = localMaterials.some(item => ['pending', 'analyzing'].includes(String(item.segmentAnalysisStatus)));
-    const timer = window.setInterval(refresh, pending ? 3000 : 15000);
+    // Poll only the visible page; full inventory is loaded on explicit filters.
+    const timer = window.setInterval(refresh, pending ? 30_000 : 120_000);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener('lingshu:materials-updated', refresh);
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [innerView, localMaterials.some(item => ['pending', 'analyzing'].includes(String(item.segmentAnalysisStatus)))]);
+  }, [innerView, allMaterialsLoaded, localMaterials.some(item => ['pending', 'analyzing'].includes(String(item.segmentAnalysisStatus)))]);
 
   useEffect(() => {
     setProductMaterialSummaries(Object.fromEntries(materialProducts.map(product => [product.id, {
@@ -156,6 +197,7 @@ export function useInspirationMaterialInventory({ innerView, materialSource, mat
 
   return {
     localMaterials, setLocalMaterials, materialsLoading, inventoryLoaded, inventoryError, materialPage, setMaterialPage, materialFacets,
+    ordinaryPageItems, ordinaryTotal, inventoryTotal, allMaterialsLoaded, refreshPage,
     productDetailProduct, productDetailMaterials, setProductDetailMaterials, productDetailSlots,
     setProductDetailSlots, productDetailLoading, productDetailError, productMaterialSummaries,
     setProductMaterialSummaries, setProductSummaryRefreshVersion, refreshMaterials,

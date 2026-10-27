@@ -49,12 +49,13 @@ export function useConversionSessionEffects({
       setSelectedId(customerId);
       const customer = customers.find(item => item.id === customerId)!;
       setView(customer.stage === 'won' ? 'won' : ['silent30', 'silent60'].includes(customer.stage) ? 'silent' : 'leads');
-      deepLinkConsumedRef.current = true;
+      if (selectedId === customerId && customersInActiveView.some(item => item.id === customerId)) deepLinkConsumedRef.current = true;
     }
-  }, [customers]);
+  }, [customers, selectedId, customersInActiveView]);
 
   useEffect(() => {
     if(deliveryHandoff?.businessRef.followupItemId)return;
+    if (!deepLinkConsumedRef.current && new URLSearchParams(window.location.search).get('customer')) return;
     if (agentProductionActive && window.__agentProductionTarget?.customerId) {
       setSelectedId(window.__agentProductionTarget.customerId);
       return;
@@ -176,7 +177,7 @@ export function useConversionSessionEffects({
   }, []);
 
   useEffect(() => {
-    if (agentProductionActive || deliveryHandoff || customerPendingCount <= 0) return;
+    if (agentProductionActive || deliveryHandoff || customerPendingCount <= 0 || new URLSearchParams(window.location.search).get('followupDraft') === '1') return;
     const today = new Date().toISOString().slice(0, 10);
     const key = 'lingshu:briefing:lastShown';
     if (localStorage.getItem(key) === today) return;

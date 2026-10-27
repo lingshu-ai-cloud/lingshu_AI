@@ -137,8 +137,8 @@ export const ASSISTANT_HOME_QUICK_LAUNCHERS: AssistantHomeQuickLauncher[] = [
   { id: 'external-news', label: '查看外部资讯', description: '查看行业、社媒和政策平台信号', promptIds: ['OP-02', 'OP-LEADER', 'OP-09', 'OP-11', 'OP-12', 'OP-RATES', 'OP-TRADE'] },
   { id: 'business-analysis', label: '分析经营数据', description: '分析经营、账号、投放和客户数据', promptIds: ['OP-04', 'OP-06', 'PU-04', 'AD-01', 'CS-05'] },
   { id: 'viral-script', label: '内容创作', description: '选择视频创作或图文爆款复刻场景', promptIds: ['CO-REPLICATE', 'CO-HOOK', 'CO-07', 'CO-13', 'CO-SPEECH-HIGHLIGHT'] },
-  { id: 'customer-followup', label: '跟进重点客户', description: '梳理重点客户、会话、回复和跟进计划', promptIds: ['CS-01', 'CS-02', 'CS-03', 'CS-07', 'CS-09'] },
-  { id: 'traffic-optimization', label: '优化智能投流', description: '分析投放并准备渠道、预算和执行方案', promptIds: ['AD-01', 'AD-02', 'AD-03', 'AD-04', 'AD-06'] },
+  { id: 'customer-followup', label: '跟进重点客户', description: '查看今日优先客户并进入会话跟进', promptIds: ['CS-01'] },
+  { id: 'traffic-optimization', label: '优化智能投流', description: '分析投放并准备新计划和优化方案', promptIds: ['AD-01', 'AD-02'] },
 ];
 
 export const ASSISTANT_HOME_LEVEL_LABELS: Record<AssistantHomePromptLevel, string> = {

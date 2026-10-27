@@ -85,3 +85,20 @@ test('文件请求先等待完整正文，再生成可下载文件标记', async
   assert.equal(received.text, '');
   assert.match(delivered, new RegExp(`<!--assistant-file:${fileId}-->`));
 });
+
+test('public analysis events stream in order, reject private fields, and only finalize after DONE', async () => {
+  const events: string[] = []; let completed = 0;
+  globalThis.fetch = async () => streamResponse(
+    'data: {"analysisWork":{"id":"read","label":"读取数据","detail":"真实记录","status":"running"}}\n',
+    'data: {"analysisWork":{"id":"read","label":"读取数据","detail":"已完成","status":"completed"}}\n',
+    'data: {"analysisWork":{"id":"secret","label":"x","detail":"x","status":"completed","reasoning":"private"}}\n',
+    'data: {"text":"报告正文","analysisComplete":true}\n',
+    'data: [DONE]\n',
+  );
+  await streamAssistantReply(request({ onAnalysisWork: e => events.push(e.status), onAnalysisComplete: () => { completed++; } }).input);
+  assert.deepEqual(events, ['running', 'completed']); assert.equal(completed, 1);
+  completed = 0;
+  globalThis.fetch = async () => streamResponse('data: {"text":"部分报告","analysisComplete":true}\n');
+  await assert.rejects(streamAssistantReply(request({ onAnalysisComplete: () => { completed++; } }).input), /传输中断/);
+  assert.equal(completed, 0, 'an incomplete report must never enable export');
+});

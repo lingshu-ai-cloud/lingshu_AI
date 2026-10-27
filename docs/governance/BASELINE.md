@@ -2,6 +2,92 @@
 
 更新时间：2026-10-27（Asia/Shanghai）
 
+## 当前本机集成基线：兼容合入 xixi 快捷卡片（2026-10-27）
+
+- 本机工作树 `/Users/jiejie/Documents/lingshu-AI`、分支 `节节1025服务器上传`，从干净提交 `7479897d345529a3f3c73ef0a1011fef138e3fd8` 合入远端 `xixi快捷卡片` / `0ca19acf4641826612a94471c7da70765d19d229`；本合并提交另记。远端 SHA 与用户提供值一致。
+- 只读预检发现 6 个冲突并按用户确认的兼容方案处理：保留当前系统公告、客户目录和周计划控制；经营总览采用来源分支已拆分的 `BusinessOverviewAnalytics` 新结构，接入快捷卡片、每日五位重点客户、可编辑跟进回复、分析门户与对话式投流计划；两边治理记录均保留。没有遗留冲突标记。
+- 本机实际执行相关定向测试 53/53，通过快捷卡片、导航门户、客户跟进、投流计划创建、经营总览、系统公告和客服开关；`ARCHITECTURE_BASE_REF=HEAD pnpm run check:architecture` 通过 3052 个生产 TypeScript 文件及预算棘轮；暂存差异检查通过。相对合入前基线没有迁移文件、迁移清单、锁文件或依赖变化，因此未重复迁移检查。
+- 按用户要求未运行全量 TypeScript、完整投流回归、生产构建、全仓 quality/verify 或真实供应商 E2E。未推送、部署、执行数据库迁移、改广告状态或写入生产数据；来源分支记录的既有验证保留为来源证据，不替代本机运行验收。安全恢复点为 `7479897d345529a3f3c73ef0a1011fef138e3fd8`。
+
+## 当前统一开发基线：首页快捷卡片与对话投流计划（2026-10-27）
+
+- 权威工作树及 `baseline/unified-20261026` 从 `8cecbd02` 快进至源码 `0e9872a05fa3f4f5959f65269f3429e844db4095`；本治理补记单独提交后继续快进。仅纳入当前快捷卡片任务 54 个文件，43 个任务外脏文件逐字节保留。
+- 每批五位重点客户与可编辑推荐回复、分析报告与导出、确认后门户、对话式投流计划创建及经营总览裁切完成。隔离候选 67/67 定向测试、76 个投流测试文件、TypeScript、构建、3052 文件架构棘轮、207 项迁移只读检查和 diff 检查通过；无新增迁移。
+- 用户指定远端分支 `xixi快捷卡片`，使用非强制推送并核对远端 SHA；未部署。未运行全仓 quality/verify 或真实供应商 E2E。详见 [合入记录](QUICK-CARDS-INTEGRATION-20261027.md)。
+
+## 当前统一开发基线：背景同色文字衬底与空质检回执封存（2026-10-27）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `9270b79b3609e2f50c8578c1b4bb9d777f14857c` 依次快进到取色提交 `0e4f19166ab57d71737731277fbf94ddbba87b0c` 和质检提交 `0a9ba67ca51f676b513f7a9e981393c35a002ade`。本治理记录另行提交。前一次快进保留了原 72 项未提交内容，已跟踪补丁 SHA-256 `8fa26b8f53be146c270426c47a3d522f731e66c98a93c9bf34409e9ea1a76ef7`、未跟踪路径清单 SHA-256 `2f40491c6175a4a00b04971afb754b78d252c1a7026e22477628a34b10012f42` 均不变。第二次快进期间其他开发现场继续新增未提交内容，已跟踪补丁 SHA-256 前后仍为 `5d0c564d62e36d7a51181e3248f4cffb8c0a2f40dfcdea86c667f4411bd9861d`；未跟踪路径清单由 `e3152dc424cdd5c6e7a9fd0a1a4d0d45dadaec276cabc263d28b94d35387c9e0` 变为 `e2707c67a6f3f0d0f6012e78ad4df03578c9a598a5d0dc4799be141b5175b439`，数量 78→79，未纳入本次提交。该并行变化不作为本次来源内容。
+- 确需文字衬底时，从真实底图文案区取中位背景色并保留色相，只提亮到深色文字可读程度；局部 OCR 修复沿用同一颜色，不再贴纯白卡。上一条 RS-016 底图的免费离线重排 `~/.lingshu-ai/image-b2b-e2e-20261027/rs016-offline-v4-background-card.png` 本地 OCR 通过，属于排版验证，不是新任务验收。
+- 基于 `0e4f1916` 的隔离 Web/正常 worker，同版运行。用户通过正常会话选择历史 Apify 参考 `history-image-4e4496cdadb6b43e8af7b695` 第 1 张、RS-016 御龄紧致青春面霜、Facebook／英语／1:1，设置单任务上限 5 元后提交；内容任务 `socialtask_766293976499fb5bd6e767fc`、图片 `img81f01cbc132a`、作业 `ca6c97f3c81cf4a`。worker 领取并完成一次 GPT Image 2 底图出图、原产品合成和 OCR；候选素材 `c0df68ac-8fcc-567e-932f-543a8698f307` 的卡片为背景暖米色，标签来自原图，文字 OCR 为 `pass`。任务自然停在 `blocked` / `user_input_required:social_image_quality_requires_review`；无人工推进、重试或发布。精确供应商费用回执未取得，不推断剩余额度。
+- 断点是付费 Qwen 视觉质检记录 `completed` 却返回空检查列表，导致产品身份等硬检查维持 `uncertain`，候选 `repair_required`。参考爆点软检查也返回 `fail`，仍需正常视觉证据与用户验收；不能将此图称为已交付。随后源码 `0a9ba67c` 缩短视觉质检响应格式要求，并把空/缺项结果封存为未决、明确错误码，禁止假完成和自动重试。该源码修复尚无新付费 E2E，旧任务不回写、不补质检。
+- 取色版图文管线 100/100、HTTP 1/1、合同／治理 2/2、TypeScript、架构检查 3042 个生产 TypeScript 文件、207 项迁移清单只读检查、`git diff --check` 通过；质检版定向 19/19、图文管线 101/101 加 HTTP／合同／治理、TypeScript、相对 `0e4f1916` 的架构检查和 `git diff --check` 通过。未新增迁移；未运行全仓 `quality/verify`、推送、部署或发布。较大前端 `test:social-content-frontend` 在此前已知的 `socialContentManualBridge.contract.test.ts:75` 产品绑定断言未通过，本轮未重跑，不把局部回归写为整体验收。
+
+## 当前统一开发基线：图文参考画幅与局部文字复核（2026-10-27）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `a614c71053e73a2a6c58cc2b987826d3e2772f8d` 分两次快进至源码提交 `9fb7cb2e`；提交 `a970222e` 先修复会话参考图画幅，`9fb7cb2e` 再修复质检与排版。合入前后另一个开发现场的 44 项未提交内容均未纳入；已跟踪补丁 SHA-256 均为 `6276409689a978ab0578fe2c0f875f1cfad0a973c298288638ba8d6475fe85a3`，未跟踪路径清单 SHA-256 均为 `e94212b6b855e502add040c13fb47fee4aa3fe05ed4d2884b34e9740e6c58735`。
+- 第一条 RS-016 正常会话任务 `socialtask_b0fb7f7906110147b5418a64`、图像 `imgd140962eca0b`、作业 `f9074c9ce2e3cbb`：参考图实际 590×590，会话误用默认 4:5，免费预检以 `social_image_reference_ratio_unsupported` 阻塞，未进入出图。修复后会话读取选定参考图的真实尺寸并自动匹配 1:1，异常和手动改成不匹配画幅均在入队前提示。
+- 第二条在单任务 5 元上限内经同一产品入口入队：`socialtask_64d4f2f6a4589015934344b2`、`img714c8cebf174`、作业 `53fb0903764d1bd`，RS-016 御龄紧致青春面霜、历史采集参考 `history-image-4e4496cdadb6b43e8af7b695` 第 1 张、Facebook／英语／1:1。正常 worker 完成策划、一次 GPT Image 2 底图出图和一次本地文字修复后，因全图 OCR 漏读 `50 g` 自然停在 `blocked` / `user_input_required:social_image_quality_requires_review`；没有发布或人工推进生产节点。正式候选 `03fb9d45-dc52-529c-8690-8e6f39ba4fc1` 保留产品原包装与背景细节，但修复态有两块白卡接缝；不能视为合格成片。精确费用回执尚未取得，不推断剩余额度。
+- 在第二条任务停止后，源码将局部修复改为一块半透明文案衬底，净含量同时显示在 SKU 信息行；质检从最终候选像素分别读取全图与确定性左侧文案区域，不用策划文字代替实图证据。同一付费底图的离线副本 `~/.lingshu-ai/image-b2b-e2e-20261027/rs016-offline-v3.png` 已通过本地 OCR，仅为免费设计回归，不是新源码的真实调度验收。该任务保持原状态且未重试；新源码的再次付费 E2E 尚待独立预算确认。
+- 定向画幅测试 5/5、图文执行／合成／质量 39/39、完整图文管线 99/99 加 HTTP 1/1、合同／治理 2/2、`pnpm run lint`、相对 `13e7c666` 的架构检查（3042 个生产 TypeScript 文件）、207 项迁移清单只读检查和 `git diff --check` 通过。较大前端回归脚本 `test:social-content-frontend` 停在 `socialContentManualBridge.contract.test.ts:75` 的既有产品绑定断言，未把该脚本写为通过；未运行全仓 `quality/verify`。没有新增迁移、推送、部署或发布。
+
+## 当前统一开发基线：图文身份保真与文字衬底自适应（2026-10-27）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `13e7c666217498dfce33c3da559e260be415cd3e` 快进至源码提交 `0ccec34b39a46be176b9b94c42ec2157a9faafc2`。快进前，另一开发现场新增一项未提交的经营总览 CSS，故实际为 42 项而非较早记录的 41 项；这些脏改动均未纳入提交。快进前后已跟踪补丁 SHA-256 均为 `ddac517c23ca19f9e9cf229234df2c334416d584acca71dace9d655002e7f580`，未跟踪路径清单 SHA-256 均为 `e94212b6b855e502add040c13fb47fee4aa3fe05ed4d2884b34e9740e6c58735`。
+- B2B 单图只让 GPT Image 2 生成无产品、无包装、无文字的场景底图；冻结企业产品原图在本地羽化合成，模型不再接收产品与对标原始像素。左侧根据底图亮度和细节选无卡、局部衬底或实底，已确认文案、徽章和 CTA 仍由确定性合成器绘制。旧任务不变；决定记录在 [ADR](../architecture/adr/2026-10-27-social-image-identity-locked-composition.md)。
+- 图文主回归、HTTP 集成与合同、执行队列定向 20/20、`pnpm run lint`、相对 `13e7c666` 的架构检查（3041 个生产 TypeScript 文件）、207 项迁移清单只读检查和 `git diff --check` 均通过。RS-016 原图在隔离数据中已核对字节；免费本地排版预览为 `~/.lingshu-ai/image-b2b-e2e-20261027/rs016-identity-locked-free-layout.png`，仅说明静态合成版式，不是供应商或真实任务验收。本节记录时新 SKU 真实联调尚未开始；无新增迁移，未推送、部署、发布或运行全仓 `quality/verify`。
+
+## 当前统一开发基线：智能经营与灵小枢周任务视图（2026-10-27）
+
+- 权威工作树与 `baseline/unified-20261026` 不变；实际起点 `40a35534`，功能来源 `feature/intelligent-analytics-page-20261027` / `4fcaed5d`，源码候选 `0b72de2c`，本治理补记另行提交。旧 `cd5222e6` 是祖先，后续图文修复完整保留。
+- 经营总览布局及 Meta 统计、企业目录本地补充、原灵小枢对话框展开周任务视图与扇形返回按钮合入；展开隐藏侧边书签，返回保留草稿。私有目录数据、媒体、数据库及凭据不纳入 Git。
+- 干净候选 28/28 定向测试、全量 TypeScript、相对 `40a35534` 的架构预算（3041 文件）、207 项迁移清单与 checksum guard、双端构建、diff 检查通过；无迁移变更。原 41 项未提交内容在快进前后逐字节复核，不纳入提交。
+- 未运行全仓 quality/verify、真实供应商 E2E、推送、部署或数据库迁移；基线源码不等于预览/生产环境已更新。详见 [本轮合入记录](BUSINESS-OVERVIEW-INTEGRATION-20261027.md)。
+
+## 当前统一开发基线：图文背景细节保留（2026-10-27）
+
+- 本轮新 SKU 真实联调基于 `2c5d71ab49dc014906c0c9252658efc41c7833cd`、独立本地数据、同版 Web/worker，经正常会话入口选取历史 Apify 参考 `history-image-4e4496cdadb6b43e8af7b695` 第 1 张和另一款产品 `GUIANFA-RS-006` 蜜桃冰雪霜，Facebook／英文／1:1，单任务上限 5 元。用户经界面确认后正常入队：内容任务 `socialtask_55ba41a32afb2715293ee51e`、图片任务 `img32295a0a7e7f`、作业 `58a10bc7ff58fdf`。观察期间未改任务、手动推进、重试或发布；作业自然停于 `blocked` / `user_input_required:social_image_quality_requires_review`，图片任务 `review_required`，候选图不可视为合格交付。供应商精确费用回执未取得，不能确认剩余预算，也未追加付费请求。
+- 真实候选图卡片外背景保留花枝与台面细节，原先大面积白雾问题改善；仍发现左上标题越出卡片、底图字样透出、瓶身品牌生成错误，硬质检未全部通过，参考结构软指标也有不确定项。本轮仅在该任务停止后修复标题按宽度自适应、单卡不透明底和包装可核实的 `FROST` 英文名；源码提交 `f74197a9712e98367061cd908a97eb5e9fdfaf5f`。使用已生成底图免费重排的 `~/.lingshu-ai/image-b2b-e2e-20261027/rs006-title-layout-local-preview.png` 只证明版式修复，未经过新一轮真实模型与质检，不是任务成片。瓶身品牌漂移仍为待解决质量断点。
+- 后续版式修复的定向 buyer-copy 5/5、图文管线 95/95、HTTP 集成 1/1、路由／工作区／治理合同、`pnpm run lint`、相对 `2c5d71ab` 的架构检查（3030 个生产 TypeScript 文件）、207 项迁移清单只读检查、`git diff --check` 通过。没有新迁移；未运行全仓 `quality/verify`、再次付费复验、推送、部署或发布。源码通过不代表真实 E2E 通过。
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `5881f498` 分步快进至源码提交 `f74197a9712e98367061cd908a97eb5e9fdfaf5f`。原有 41 项未提交改动未纳入；每次合入前后已跟踪补丁 SHA-256 `2f8bbbec2c100c85c6ae68916819b6ff08325f57490751a7bd8adde96c683d93`、未跟踪路径清单 SHA-256 `e94212b6b855e502add040c13fb47fee4aa3fe05ed4d2884b34e9740e6c58735` 均不变。
+- B2B 单图的标题、企业信息和产品事实改为同一块紧凑白卡；删除覆盖画面上方 44% 的渐变白雾。出图提示保持场景细节，卡片外背景像素回归验证通过。图文管线 94 项及其路由/合同/治理检查、TypeScript、相对 `5881f498` 的架构检查（3030 个生产 TypeScript 文件）、207 项迁移清单只读检查、`git diff --check` 均通过。没有新增迁移。
+- 原 RS-003 底图的免费本地合成预览在 `~/.lingshu-ai/image-b2b-e2e-20261027/rs003-single-copy-card-local-preview.png`，仅用于前一阶段版式检查；后续 RS-006 真实联调结果见本节首段。未推送、部署或发布。
+- 正常对话入口还发现历史图文图片走受保护媒体路由，未带鉴权的 `<img>` 被判不可用。工作区的共享 `ReviewImage` 改为对同源 `/api/` 图片鉴权读取、生成临时预览 URL 并在卸载时释放；浏览器中同一历史图已从“暂不可用”变为可选。图文复刻 26/26、工作区合同、TypeScript、相对 `a31a737d` 的架构扫描（3030 个生产 TypeScript 文件）及 `git diff --check` 通过。此时仍未新建本轮付费任务。
+
+## 当前统一开发基线：图文 B2B 构图与 RS-003 真实联调（2026-10-27）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `cd5222e6` 快进至源码提交 `53e8ba20cc86d23618e48a859a883140e77ce8c2`。原有 41 项未提交变更未纳入，合入前后已跟踪补丁 SHA-256 `2f8bbbec2c100c85c6ae68916819b6ff08325f57490751a7bd8adde96c683d93`、未跟踪路径清单 SHA-256 `e94212b6b855e502add040c13fb47fee4aa3fe05ed4d2884b34e9740e6c58735` 均不变。
+- 图文 B2B 版式在付费出图前由已确认文案计算左侧占位及产品目标位置；同一布局规则驱动确定性合成。右上徽章移到外角，避免遮住瓶盖；提示词用一句话约束产品与场景的光线、反射和接触阴影。隔离分支在最新基线上通过图文管线（93 项主用例及路由/合同/治理）、`pnpm run lint`、`ARCHITECTURE_BASE_REF=cd5222e6 pnpm run check:architecture`（3030 个生产 TS 文件）、207 项迁移清单只读检查和 `git diff --check`。未运行全仓 `quality/verify`。
+- 独立本地数据与同版 Web/worker 在先前源码 `1f0ca7e3` 下执行新产品 `GUIANFA-RS-003`：任务 `socialtask_af525e2eb8ddbb86d254ab72`、图像任务 `imgb4dd3cb203b4`、作业 `0d120eaff90b22d`。获批单任务上限 5 元；一次 Qwen 策划、一次 GPT Image 2 低质量出图、一次视觉质检均完成。成片 `1349a707-058d-5976-8c27-f740bce46ab9` 因视觉统一硬检查失败，停在 `review_required`，不视为合格成品；参考结构软检查为 uncertain，待用户验收。原作业与回执保留，未自动重试。用已付费底图做的徽章修复预览 `~/.lingshu-ai/image-b2b-e2e-20261027/rs003-revised-badge-local-preview.png` 未发生新付费请求，亦未取得正式质检。
+- 精确供应商账单及余额尚未核实，不能断言 5 元实际消费或再购买一张图。新构图规则 `53e8ba20` 尚未经过同版真实付费出图验收；源码验证、本地预览与真实供应商质量状态分别记录。未推送、部署、发布、采用成品或运行目标库迁移。
+
+## 当前统一开发基线：智能问数版本安全合入（2026-10-27）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`。用户明确要求合入 GitHub `节节智能问数待优化`；拉取核对来源提交 `cdfbab8dac65cb8c01be5995aea98635f6dc0fa7`、代码树 `e78e96bc30f25979857b96769cffa7bea68d6af8`，均与用户提供前缀一致。
+- 本轮以实际最新 HEAD `1f0ca7e36d52db5736bc3dcc33fec501c6eb7124` 为起点，包含页面分页优化及后续 B2B 图文文案/可读布局改动；旧治理首节停在 `5b531400`，本节补齐该差异。独立候选 `/Users/julia1/Documents/ChatGPT/基线管理/analytics-safe-20261027`、分支 `integration/analytics-safe-20261027`，双亲源码合并 `ce83f310293e4c3df941ba5e10e315852e954cfd`；本治理补记另行提交。
+- 合入经营总览与明细、仅本地开发可启用的示例数据、客户目录、维护公告及环境配置、本地心跳集合保留上限和原子写入清理。源码无冲突；唯一冲突为本文件并行新增记录，两边完整保留。以下其他机器的“当前”章节仅作历史来源，不改变本机权威工作树。
+- 干净候选验证：功能定向 26/26、存储/CAS/锁/原基线分页与图文/账号配置回归 47/47；`pnpm run lint` 全量 TypeScript、`ARCHITECTURE_BASE_REF=1f0ca7e3 pnpm run check:architecture`（3030 个生产 TS）、`pnpm run test:architecture-ratchet`、`pnpm run check:digital-employee-migrations`（207 项）、`pnpm run test:migration-guard`、`pnpm run check:container-contract`、`pnpm run build`、`pnpm run build:account-hub`、`git diff --check 1f0ca7e3 HEAD` 全部通过。迁移及 checksum 清单相对起点无变化。构建仍有大 chunk 提示，Studio 预算 373271/485000 字节通过。
+- 未执行全仓 `quality/verify`、浏览器真实业务验收、付费供应商、推送、部署或数据库迁移；源码合并通过不代表这些项目已验收。原基线 26 项已跟踪改动及 15 个未跟踪文件不纳入本次提交；快进前后核对补丁与未跟踪字节哈希，保护开发现场。
+- 恢复分支 `backup/pre-analytics-20261027-1f0ca7e3`；证据和原补丁/未跟踪文件备份位于 `/Users/julia1/.codex/integration-evidence/20261027-analytics/`。来源分支保留；候选树保留供复核。具体命令和边界见 [本次合并记录](ANALYTICS-INTEGRATION-20261027.md)。
+
+## 当前统一开发基线：页面大库存读取优化（2026-10-27）
+
+- 权威工作树 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`、分支 `baseline/unified-20261026`，从 `505afce8` 合入隔离提交 `2c8d164c`，源码提交 `5b531400c0c8d85b1e752ee479a619563b91f5e4`。原有 26 项已跟踪改动及未跟踪文件均保留；合入前后的已跟踪补丁与未跟踪路径清单哈希一致。
+- 素材库首屏与翻页只读当前普通素材 20 条，服务端返回整库计数和产品场景封面；复杂筛选、产品详情和爆款收藏关联仍可按需读取完整素材。待拍页面改为服务器按租户汇总缺口，前端只接收汇总结果，每 60 秒刷新。成片库空闲轮询降为 60 秒，素材图片懒加载。
+- 隔离树定向 12/12、视频领域 171/172（旧主墙全量读取断言与新目标冲突，更新后该文件 5/5）、TypeScript、架构扫描 3017 文件、207 项迁移清单只读检查、生产构建与 `git diff --check` 通过。基线合入后定向 17/17、架构扫描 3024 文件及 207 项迁移清单只读检查通过；正式站新版本的实际时延和浏览器主线程耗时仍需部署后量化验收。
+- 本次源码不含生产数据迁移。服务器现有 Git checkout `/opt/lingshu_AI` 位于 `xixi做小程序` / `bbe406a0`，已跟踪文件干净，存在不与本次路径重叠的未跟踪文件，远端分支落后本地 1029 个提交。部署仅按仓库交互 SSH、GitHub HTTPS 快进拉取和 `bash deploy/update.sh` 执行；完成前不可声明正式站已更新。
+
+## 当前生产部署：前端冒烟修复 v0.5（2026-10-27）
+
+- 权威开发分支 `baseline/unified-20261026`；实际部署源码 `bbe406a08c7fdf394b364794f993e179d299c7af`。用户指定存档分支 `xixi1027部署v0.5、` 指向同一源码。原有 WorkBuddy 素材准入和视频维护脏改动保留，未纳入本次发布。
+- 修复会话新建/保存、清空/删除与撤销，以及恢复后的空焦点字段再写入失败；正式站仅用冒烟草稿完成删除→撤销→编辑保存→新建→历史读取→清空→撤销→再删除，原有六条消息会话保留。对话输入框默认高度实测 36px，附件、输入、发送同排。
+- 正式站验证账号健康可打开真实平台/账号配置表单，残缺历史任务可进入现有新建计划表单，Messenger 文案对应实际 App ID/App Secret。此前同批 3986917a 已验证鼠标视频播放（readyState=4、播放时间推进）、时长补零、素材首批加载提示和工厂筛选、8 个客服历史会话；本次未付费生成、对外发送或更改广告投放状态。
+- 干净验证工作树 `bbe406a0`：56/56 定向测试（含真实 PocketBase 会话回归）、类型检查、生产构建、架构预算与相对 3986917a 的 ratchet、207 项迁移清单只读检查通过。本次补发没有新增迁移；此前 3986917a 的新增迁移在生产库副本演练并确认 274 张业务表数量一致、完整性正常后上线。以上不是全部供应商真实 E2E 验收。
+- 经用户批准使用已连接腾讯云交互终端，现有 `/opt/lingshu_AI` HTTPS `git pull --ff-only` 后运行 `bash deploy/update.sh`。低并发构建成功；数据库冷启动超过脚本 180 秒上限，实际健康后从管理员初始化及服务启动检查点继续，`deploy-final-resume.exit=0`。最终 app、worker、PocketBase、Redis、Caddy 均 healthy。
+- 公网 `/api/overseas/ready` HTTP 200，`status=ready`、`issues=[]`，web `build.commitSha` 与 worker `buildSha`、`expectedBuildSha` 均为上述完整 SHA，worker `ready=true`。自动数字人发布、语义质检、清理 worker 等既有未配置能力仍不可用，不能用整体 ready 代替真实供应商验收。
+- 备份 `/opt/lingshu_AI/backups/smoke-fixes-20261027/` 保留 `data.before.db`、`data.before-final.db`、环境与业务 JSON、发布及恢复日志；上线后数据库 `integrity_check=ok`，素材/客服历史 JSON 的 SHA256 与发布前相同。用户明确批准删除未使用的 21287c57、pre-assistant-save-20261027 两组运行镜像；3986917a、53492e0f 回滚镜像及全部业务备份保留。构建缓存释放后根分区约 3.0GB 可用。
+- 已知待核对：名称含“仅草稿”的广告计划仍由平台报告为投放中（CNY 6.72 日预算），页面显示“投放状态待核对”；本轮未启动、暂停或修改它。历史残缺任务的原记录继续保留，新入口不会凭空恢复原制作记录。断网重试仅做源码/定向验证，未主动断开生产连接。
+- 本地证据目录 `/Users/julia1/.lingshu-ai/deployment-validation/`：`smoke-fixes-final-ready.json`、`smoke-fixes-final-tests.log`、`smoke-fixes-final-lint.log`、`smoke-fixes-final-build.log`、`smoke-fixes-composer-final-production.png`、`smoke-fixes-account-editor-final-production.png`、`smoke-fixes-task-recovery-final-production.png`。
 ## 当前本机集成基线：三分支顺序合入（2026-10-27）
 
 本节指定 `/Users/jiejie/Documents/lingshu-AI` / `节节1025服务器上传` 为本机源码基线；以下其他工作树的“当前基线”与部署记录均为当时来源历史。起点 `5341ac4c3527d2462fc4d2e56d715d1b8ff695d4`，合入前工作区干净。三个来源都以该提交为共同祖先，且各来源工作树的已跟踪文件没有未提交修改。

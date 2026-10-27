@@ -18,6 +18,22 @@ function inventory() {
 const material = (id: string) => ({ id, name: id, url: `/${id}.mp4` }) as Material;
 const page = (items: Material[], total = items.length) => ({ status: 'ready' as const, sources: [], items, total });
 
+test('opening and paging the ordinary gallery reads only the requested page', async () => {
+  const original = studioApi.listMaterialLibrary;
+  const calls: Array<Parameters<typeof original>[1]> = [];
+  studioApi.listMaterialLibrary = async (_purpose, query) => {
+    calls.push(query);
+    return { ...page([material(`page-${query?.page}`)], 2463), inventoryTotal: 2463, productSceneSlots: [] };
+  };
+  try {
+    const current = inventory();
+    assert.deepEqual((await current.refreshPage(1)).map(item => item.id), ['page-1']);
+    assert.deepEqual((await current.refreshPage(4)).map(item => item.id), ['page-4']);
+    assert.deepEqual(calls.map(query => [query?.page, query?.pageSize, query?.excludeProductAssociated]),
+      [[1, 20, true], [4, 20, true]]);
+  } finally { studioApi.listMaterialLibrary = original; }
+});
+
 test('library refresh reads all material pages, including product assets, and deduplicates before returning preview candidates', async () => {
   const original = studioApi.listMaterialLibrary;
   const calls: Array<Parameters<typeof original>[1]> = [];

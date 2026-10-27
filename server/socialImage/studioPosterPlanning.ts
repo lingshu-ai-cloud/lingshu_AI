@@ -11,6 +11,8 @@ import { readSocialImageTask } from '../socialImage/socialImageTask.js';
 import { socialImageV3PaidPrerequisiteIssue } from '../socialImage/socialImagePaidPrerequisites.js';
 import { recordSocialImageV3DirectorBrief, socialImageV3TrustedPlanningRequest, type SocialImageFormalPlannerResult } from '../socialImage/socialImageFormalPlan.js';
 import { socialImageEnglishTitleMatchesPackaging } from './socialImagePackagingLabel.js';
+import { socialImageBuyerCopy } from './socialImageBuyerCopy.js';
+import type { EnterpriseProfile } from '../routes/enterpriseProfileContracts.js';
 import { assertSocialImageCurrentContentTask, SocialImageProductionRunError } from '../socialImage/socialImageProductionRun.js';
 export interface PosterPlanningInput {
     imageTaskId?: string;
@@ -46,6 +48,7 @@ export async function planStudioPoster(input: {
     callPlanner?: typeof callLLM;
     beforeProviderCall?: () => Promise<void>;
     packagingHint?: string;
+    enterpriseProfile?: (tenantId: string) => Promise<EnterpriseProfile>;
 }) {
     const { store, tenantId, body, enterpriseCtx, allowPaidCall, callPlanner = callLLM, beforeProviderCall } = input;
     const imageTaskId = String(body?.imageTaskId || '').trim();
@@ -115,12 +118,22 @@ export async function planStudioPoster(input: {
         });
     }
     const productEnterprise = confirmedEnterpriseContextForProduct(productInfo, enterprise);
+    const buyerProfile = boundTask?.imageType === 'product_poster' && input.enterpriseProfile
+        ? await input.enterpriseProfile(tenantId) : null;
+    if (buyerProfile?.factVersion?.id && buyerProfile.factVersion.id
+        !== boundTask?.productionRuntime?.binding?.taskContextSnapshot?.factVersionId) {
+        throw new PosterPlanningError(409, { ok: false, code: 'social_image_enterprise_facts_changed',
+            error: '任务确认后企业资料已更新，请重新建立图文任务。' });
+    }
+    const buyerCopy = buyerProfile && boundTask?.contentBrief.productRefs[0]
+        ? socialImageBuyerCopy(buyerProfile, boundTask.contentBrief.productRefs[0], language, input.packagingHint || null) : null;
     const taskConfirmedFacts = Object.entries(confirmedFields && typeof confirmedFields === 'object' && !Array.isArray(confirmedFields) ? confirmedFields : {}).slice(0, 20).map(([field, value]) => {
         const safeField = String(field || '').replace(/[\r\n：:]/g, ' ').trim().slice(0, 80);
         const safeValue = String(value || '').replace(/[\r\n]/g, ' ').trim().slice(0, 500);
         return safeField && safeValue ? `${safeField}：${safeValue}` : '';
     }).filter(Boolean).join('\n');
-    const commercialEvidence = [productEnterprise, taskConfirmedFacts ? `本次任务由用户确认的商业事实：\n${taskConfirmedFacts}` : ''].filter(Boolean).join('\n');
+    const commercialEvidence = [productEnterprise, buyerCopy?.auditEvidence,
+        taskConfirmedFacts ? `本次任务由用户确认的商业事实：\n${taskConfirmedFacts}` : ''].filter(Boolean).join('\n');
     const unconfirmedProductFields = unconfirmedEnterpriseProductFields(productInfo, enterprise);
     if (unconfirmedProductFields.length) {
         throw new PosterPlanningError(422, {
@@ -168,7 +181,7 @@ Hard rules:
 - Shape the composition for the requested finished image (${deliverableType}); do not silently change it into another asset type.- Poster text should be concise enough for a dense B2B product-information poster.
 - Use exact English text for poster fields when language is English.
 - If the package has a readable English product name, keep its product-type word exactly; do not rename Honey to Mousse, or introduce another variant.
-- Make the visible headline at most 42 characters, supporting text at most 60 characters and CTA at most 42 characters. Put longer explanations in the caption, not the image.
+- Make the visible headline at most ${buyerCopy ? 20 : 42} characters, supporting text at most 60 characters and CTA at most 42 characters. For a B2B product poster, keep the verified product-type word and use a short title that fits beside the product. Put longer explanations in the caption, not the image.
 - Return ONLY valid JSON. No markdown.
 
 Schema:
@@ -292,12 +305,22 @@ Schema:
                     // per-task claim contract and verifier are available.
                     safeDraft = {
                         ...safeDraft,
-                        poster: { ...safeDraft.poster, subheadline: neutral.subheadline, cta: neutral.cta },
+                        poster: normalizePosterBrief({ headline: buyerCopy?.poster.headline || safeDraft.poster.headline,
+                            subheadline: buyerCopy ? buyerCopy.poster.subheadline : neutral.subheadline,
+                            originBadge: buyerCopy?.poster.originBadge || '',
+                            sellingPoints: buyerCopy?.poster.sellingPoints || [],
+                            bottomBar: buyerCopy?.poster.bottomBar || [],
+                            cta: buyerCopy?.poster.cta || neutral.cta }),
                         caption: neutral.caption,
                         hashtags: [],
                         commentCta: '',
                         dmOpening: '',
                     };
+                    const frozenCopyAudit = auditCommercialClaims(userFacingPosterText(safeDraft), commercialEvidence);
+                    if (frozenCopyAudit.issues.length || frozenCopyAudit.fieldsToConfirm.length) {
+                        throw new PosterPlanningError(422, { ok: false, code: 'social_image_buyer_copy_evidence_invalid',
+                            error: '采购海报文字与企业已确认事实不一致，未保存策划结果。' });
+                    }
                 }
                 const publishable = fieldsToConfirm.length === 0;
                 return await respond({

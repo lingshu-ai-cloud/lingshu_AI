@@ -3,6 +3,7 @@ import { readAuthorizedMessengerCustomers } from '../../messenger/authorizedCust
 import { getInstagramCustomers } from '../../instagram/conversations.js';
 import { readHistoricalCustomers } from '../../customerService/historicalConversations.js';
 import { readLocalCustomerConversations } from '../../customerService/localConversations.js';
+import { readLocalFollowupPreviewCustomers } from '../../customerService/localFollowupPreview.js';
 import type { BusinessSceneSelection } from '../../../shared/contracts/assistantBusinessScene.js';
 import { BusinessSceneError, inWindow, object, pick, text } from './readScope.js';
 
@@ -10,7 +11,7 @@ export async function readSceneCustomers(tenantId: string) {
   const [whatsapp, messenger] = await Promise.all([readAuthorizedWhatsAppCustomers(tenantId), readAuthorizedMessengerCustomers(tenantId)]);
   const live = [...whatsapp, ...messenger, ...getInstagramCustomers(tenantId)].map(object);
   const local = readLocalCustomerConversations(tenantId).filter(row => !live.some(item => item.id === row.id));
-  const rows: Record<string, unknown>[] = [...live, ...local, ...readHistoricalCustomers(tenantId)].map(object);
+  const rows: Record<string, unknown>[] = [...live, ...local, ...readHistoricalCustomers(tenantId), ...await readLocalFollowupPreviewCustomers(tenantId)].map(object);
   const ids = new Set<string>();
   return rows.map(row => {
     if (typeof row.id !== 'string' || ids.has(row.id) || row.tenantId !== undefined && row.tenantId !== tenantId) throw new BusinessSceneError('scene_customer_scope_invalid', 503, '客户归属或身份不唯一，请到客户页核对。');

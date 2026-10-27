@@ -26,7 +26,7 @@ import { inspirationViewFromSearch, type BusinessModelFilter, type CrawlTimeRang
 import { initialMaterialLibraryEntry, isFavoriteMaterial, resolveLinkedFavoriteMaterialId, type FavoriteFilter } from './inspiration/inspirationMaterialLibrary';
 import { resolveInspirationReference } from './inspiration/inspirationReferenceResolver';
 import { initialInspirationReferenceTarget, parseInspirationReferenceTarget, videoMatchesReference, type InspirationReferenceTarget } from './inspiration/inspirationReferenceTarget';
-import { pendingShootingTaskCount, buildShootingNeeds } from './inspiration/inspirationShootingNeeds';
+import { pendingShootingTaskCount } from './inspiration/inspirationShootingNeeds';
 import { ACTIVE_PLATFORMS, heatValue, inspirationScoresForVideo, median, recordsToVideos, reliablePublicViews, specialRecommendationForVideo, supplyItemsToVideos, timeValue, type CrawlerRecord } from './inspiration/inspirationVideoProjection';
 import { useInspirationAnalysis } from './inspiration/useInspirationAnalysis';
 import { useInspirationCreation } from './inspiration/useInspirationCreation';
@@ -325,7 +325,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const localPagination = serverDiscoveryFilterActive || completeInventory;
   const resultPage = pageInspirationResults(filtered, discoveryPage, INSPIRATION_PAGE_SIZE);
 
-  const shootingNeeds = useMemo(() => buildShootingNeeds(discovery.shootingVideos, localMaterials), [discovery.shootingVideos, localMaterials]);
+  const shootingNeeds = discovery.shootingNeeds;
+
+  useEffect(() => {
+    if (inspirationFavoriteFilter === 'favorite') void refreshMaterials();
+  }, [inspirationFavoriteFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleWatch = (video: TrendVideo) => {
     watchTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -339,12 +343,17 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
   const favoriteMaterial = async (video: TrendVideo, quiet = false) => {
     if (favoritingMaterialIds.includes(video.id)) return;
-    const linkedMaterialId = resolveLinkedFavoriteMaterialId(video, localMaterials);
-    const linkedMaterial = localMaterials.find(material => material.id === linkedMaterialId);
-    const currentlyFavorite = favoritedVideoIds.includes(video.id) || Boolean(linkedMaterial?.pinned);
+    let linkedMaterialId = resolveLinkedFavoriteMaterialId(video, localMaterials);
+    let linkedMaterial = localMaterials.find(material => material.id === linkedMaterialId);
     setFavoritingMaterialIds(ids => [...ids, video.id]);
     if (!quiet) setMaterialMessage('');
     try {
+      if (!linkedMaterialId && video.sourceUrl) {
+        const complete = await refreshMaterials();
+        linkedMaterialId = resolveLinkedFavoriteMaterialId(video, complete);
+        linkedMaterial = complete.find(material => material.id === linkedMaterialId);
+      }
+      const currentlyFavorite = favoritedVideoIds.includes(video.id) || Boolean(linkedMaterial?.pinned);
       if (currentlyFavorite) {
         if (!linkedMaterial) {
           setMaterialMessage('收藏正在保存，请稍后再取消。');
@@ -352,7 +361,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         }
         const result = await studioApi.setMaterialPinned(linkedMaterial.id, false);
         if (!result.ok) throw new Error(result.error || '取消收藏失败');
-        setLocalMaterials(items => items.map(item => item.id === linkedMaterial.id ? { ...item, pinned: false } : item));
+        const linkedId = linkedMaterial.id;
+        setLocalMaterials(items => items.map(item => item.id === linkedId ? { ...item, pinned: false } : item));
         setFavoritedVideoIds(ids => ids.filter(id => id !== video.id));
         setMaterialMessage(`已取消收藏：${video.title}`);
         showActionSuccess('已取消收藏', video.title);

@@ -3,7 +3,7 @@ import { Button } from 'antd';
 import { ArrowRight, CalendarRange, ExternalLink, Loader2, Play } from 'lucide-react';
 import type { AgentAction, Message, Page } from '../../App';
 import type { AssistantProductionContext } from '../../lib/assistantProductionDecision';
-import type { AssistantTaskCard } from '../../stores/assistantStore';
+import { useAssistantStore, type AssistantTaskCard } from '../../stores/assistantStore';
 import type { AssistantDecisionFeed } from '../../../shared/contracts/assistantDecisionCenter';
 import { assistantWantsDetailedReply } from '../../../shared/assistantReadableReply';
 import AgentReply from '../AgentReply';
@@ -16,7 +16,10 @@ import { ThumbnailImage, VideoThumbnail } from '../inspiration/InspirationMedia'
 import AssistantMascot from './AssistantMascot';
 import CompanyReportCard from './CompanyReportCard';
 import { isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
+import { AssistantAnalysisWork, AssistantReportExport } from './AssistantAnalysisWork';
 import AssistantBusinessSceneChoice from './AssistantBusinessSceneChoice';
+import AssistantNavigationPortalCard from './AssistantNavigationPortalCard';
+import { navigationPortalForAnswer } from '../../lib/assistantNavigationPortal';
 
 interface Props {
   inlineHome?: boolean;
@@ -98,6 +101,7 @@ export default function AssistantConversationBubbles(props: Props) {
             </article>}
             <div className={inlineHome ? 'ls-assistant-flow__prompt whitespace-pre-line' : 'ls-messenger-bubble ls-messenger-bubble--outbound whitespace-pre-line'}>{msg.content}</div>
           </div> : <div className={inlineHome ? 'ls-assistant-flow__answer' : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
+            {msg.analysisWork?.length ? <AssistantAnalysisWork events={msg.analysisWork} complete={msg.analysisComplete}/> : null}
             {msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction}
               compact={inlineHome && isAssistantHomeQuickTaskText(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
               detailExpanded={assistantWantsDetailedReply(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
@@ -105,8 +109,10 @@ export default function AssistantConversationBubbles(props: Props) {
             {msg.creationPortal && <AssistantCreationPortalCard key={msg.creationPortal.id} portal={msg.creationPortal} />}
             {msg.taskPortal && <AssistantTaskPortalCard key={`${msg.taskPortal.taskId}:${msg.taskPortal.phase}`} portal={msg.taskPortal} />}
             {msg.sourcePortal && <AssistantSourcePortalCard portal={msg.sourcePortal} />}
+            {navigationPortalForAnswer(messages, index) && <AssistantNavigationPortalCard portal={navigationPortalForAnswer(messages, index)!}/>}
             {msg.companyReport && <CompanyReportCard report={msg.companyReport}/>}
-            {msg.businessScenePrompt && <AssistantBusinessSceneChoice request={msg.businessScenePrompt}/>}
+            {msg.businessScene?.sceneId === 'AD-01' && msg.analysisComplete && msg.content && <AssistantReportExport content={msg.content} events={msg.analysisWork || []} period={`${msg.businessScene.from} 至 ${msg.businessScene.to}`}/>}
+            {msg.businessScenePrompt && <AssistantBusinessSceneChoice key={`${useAssistantStore.getState().threads.business.conversationKey || ''}:${index}`} request={msg.businessScenePrompt}/>}
           </div>}
         </div>
       ))}

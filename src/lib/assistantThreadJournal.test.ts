@@ -129,3 +129,14 @@ assert.deepEqual(inlineChoice.messages[0].businessScenePrompt,{sceneId:'CS-02',p
 assert.deepEqual(scopedThread.messages[0].businessScene, selectedScene);
 assert.equal(scopedThread.messages[1].businessScene, undefined);
 assert.equal(scopedThread.messages[2].businessScene, undefined);
+
+const workThread = sanitizeAssistantThreadForJournal({ ...thread, messages: [{ role: 'assistant', content: '投放分析报告', businessScene: { sceneId: 'AD-01', adTaskId: 'plan', from: '2026-10-21', to: '2026-10-27' }, analysisWork: [{ id: 'read', label: '读取数据', detail: '当前租户内记录', status: 'completed' }], analysisComplete: true }] });
+assert.equal(workThread.messages[0].analysisComplete, true);
+assert.equal(workThread.messages[0].analysisWork?.[0].id, 'read');
+const invalidWork = sanitizeAssistantThreadForJournal({ ...thread, messages: [{ role: 'assistant', content: 'x', analysisWork: [{ id: 'read', label: '读取数据', detail: 'x', status: 'completed', reasoning: 'private' }] as any }] });
+assert.equal(invalidWork.messages[0].analysisWork, undefined, 'private reasoning never persists as a public work event');
+const interruptedWork = sanitizeAssistantThreadForJournal({ ...thread, messages: [{ role: 'assistant', content: '部分报告', analysisWork: [{ id: 'read', label: '读取数据', detail: '进行中', status: 'running' }], analysisComplete: false }] });
+assert.equal(interruptedWork.messages[0].analysisWork?.[0].status, 'failed', 'reload cannot pretend an interrupted request is still running');
+
+const savedAdPlanThread = sanitizeAssistantThreadForJournal({ ...thread, messages:[{role:'assistant',content:'恭喜计划创建成功。',businessScenePrompt:{sceneId:'AD-02',createdTaskId:'saved-plan'}}] });
+assert.equal(savedAdPlanThread.messages[0].businessScenePrompt?.createdTaskId,'saved-plan');

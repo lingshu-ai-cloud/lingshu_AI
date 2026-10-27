@@ -303,6 +303,7 @@ export interface BusinessSnapshot {
     outreachFailed: BusinessMetric;
   };
   social: {
+    exposure?: import('./businessExposure').OrganicExposure;
     accountCount: BusinessMetric;
     platformCount: BusinessMetric;
     views: BusinessMetric;

@@ -1,3 +1,4 @@
+import { assistantWorksSchema } from '../../shared/contracts/assistantWork';
 import { sceneSelectionSchema, businessScenePromptSchema } from '../../shared/contracts/assistantBusinessScene';
 import { assistantCreationPortalSchema } from '../../shared/contracts/assistantCreationPortal';
 import { assistantTaskPortalSchema } from '../../shared/contracts/assistantTaskPortal';
@@ -125,6 +126,7 @@ function sanitizeMessage(value: Message): Message {
   const taskPortal = assistantTaskPortalSchema.safeParse(sanitizeValue(value.taskPortal, 0, 4, 32, 1200));
   const sourcePortal = assistantSourcePortalSchema.safeParse(sanitizeValue(value.sourcePortal, 0, 4, 32, 2400));
   const companyReport = companyReportSchema.safeParse(sanitizeValue(value.companyReport, 0, 10, 128, 6000));
+  const analysisWork = assistantWorksSchema.safeParse(value.analysisWork);
   const businessScene = sceneSelectionSchema.safeParse(value.businessScene);
   const businessScenePrompt = businessScenePromptSchema.safeParse(value.businessScenePrompt);
   const media = value.referenceMedia;
@@ -141,6 +143,7 @@ function sanitizeMessage(value: Message): Message {
       }
     : undefined;
   return {
+    ...(analysisWork.success && value.role === 'assistant' ? { analysisWork: analysisWork.data.map(event => value.analysisComplete !== true && event.status === 'running' ? { ...event, status: 'failed' as const, detail: '上次分析未完成，请重新发起；已取得的内容仍保留。' } : event), analysisComplete: value.analysisComplete === true } : {}),
     ...(businessScene.success && value.role === 'assistant' ? { businessScene: businessScene.data } : {}),
     ...(businessScenePrompt.success && value.role === 'assistant' ? { businessScenePrompt: businessScenePrompt.data } : {}),
     ...(creation.success ? { creation: creation.data } : {}),

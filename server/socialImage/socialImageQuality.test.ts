@@ -3,6 +3,7 @@ import test from 'node:test';
 import { defaultSocialImageTask } from './socialImageTask.js';
 import sharp from 'sharp';
 import { socialImageCandidateOcrCheck, socialImageCandidatePixelChecks, socialImageDeterministicChecks } from './socialImageQuality.js';
+import { recognizeSocialImageCandidateText } from './socialImageWorkflowCommands.js';
 
 test('deterministic preflight passes only evidence it can prove', () => {
   const task = defaultSocialImageTask({
@@ -37,6 +38,22 @@ test('candidate pixel and OCR gates inspect actual bytes and exact target dimens
     recognize: async () => 'PRODUCT A' });
   assert.equal(ocr.verdict, 'pass');
   assert.ok(ocr.evidence?.some(item => item.startsWith('candidate-sha256:')));
+});
+
+test('buyer OCR checks the composed copy region as well as the full poster', async () => {
+  const bytes = await sharp({ create: { width: 1200, height: 1200, channels: 3, background: '#e8d6c5' } }).png().toBuffer();
+  const poster = { originBadge: 'GUIANFA', headline: 'FACE CREAM', sellingPoints: ['Face cream'],
+    bottomBar: ['50 g', 'B2B SOURCING', 'Ask about packaging'], cta: 'Message us' };
+  const dimensions: string[] = [];
+  const observed = await recognizeSocialImageCandidateText({ bytes, mimeType: 'image/png' }, poster, async image => {
+    const meta = await sharp(image.bytes).metadata();
+    dimensions.push(`${meta.width}x${meta.height}`);
+    return dimensions.length === 1 ? 'GUIANFA Face cream B2B SOURCING Ask about packaging Message us' : 'FACE CREAM 50 g';
+  });
+  assert.deepEqual(dimensions, ['1200x1200', '486x552']);
+  const check = await socialImageCandidateOcrCheck({ bytes, mimeType: 'image/png', expectedTexts: ['FACE CREAM', '50 g'],
+    recognize: async () => observed });
+  assert.equal(check.verdict, 'pass');
 });
 
 test('viral replication without a benchmark image cannot pass reference preflight', () => {

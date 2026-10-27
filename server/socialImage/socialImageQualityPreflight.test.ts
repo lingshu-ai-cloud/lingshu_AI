@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { DataStore } from '../storage/datastore.js';
 import { defaultSocialImageTask } from './socialImageTask.js';
 import { runSocialImageVisualPreflight } from './socialImageQualityPreflight.js';
+import { SOCIAL_IMAGE_VISUAL_KEYS } from '../agents/socialImageQwen.js';
 
 function fixture() {
   const task = defaultSocialImageTask({ title: '预检凭据' });
@@ -31,12 +32,26 @@ test('identical visual preflight reuses its durable result without another quota
   let quota = 0, provider = 0;
   const input = { store: f.store, tenantId: 'tenant-a', taskId: 'image-a', outputId: 'candidate-a',
     visualInput: f.visualInput, allowPaidCall: async () => { quota += 1; return true; },
-    qualityCheck: async () => { provider += 1; return []; } };
+    qualityCheck: async () => { provider += 1; return SOCIAL_IMAGE_VISUAL_KEYS.map(key => ({
+      key, verdict: 'uncertain' as const, severity: 'hard' as const, note: '像素证据不足', checker: 'multimodal' as const,
+    })); } };
   assert.ok(await runSocialImageVisualPreflight(input));
   assert.ok(await runSocialImageVisualPreflight(input));
   assert.equal(quota, 1);
   assert.equal(provider, 1);
   assert.equal(f.read().outputs[0]?.qualityPreflight?.status, 'completed');
+});
+
+test('empty visual response is unresolved and never recorded as completed or retried', async () => {
+  const f = fixture();
+  let provider = 0;
+  const input = { store: f.store, tenantId: 'tenant-a', taskId: 'image-a', outputId: 'candidate-a',
+    visualInput: f.visualInput, allowPaidCall: async () => true,
+    qualityCheck: async () => { provider += 1; return []; } };
+  await assert.rejects(runSocialImageVisualPreflight(input), /social_image_quality_response_invalid/);
+  assert.equal(f.read().outputs[0]?.qualityPreflight?.status, 'outcome_unknown');
+  await assert.rejects(runSocialImageVisualPreflight(input), /social_image_quality_outcome_unresolved/);
+  assert.equal(provider, 1);
 });
 
 test('unknown provider outcome is fenced and never automatically retried', async () => {

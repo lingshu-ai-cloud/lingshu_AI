@@ -57,6 +57,7 @@ export default function ContentLibrary({ exportsOnly = false, onPublish, onOpenP
   const [project, setProject] = useState('');
   const [currentOnly, setCurrentOnly] = useState(false);
   const [previewItem, setPreviewItem] = useState<any | null>(null);
+  const loadingRef = useRef(false);
   useEffect(() => {
     const dialog = exportDialog.current;
     if (!dialog) return;
@@ -65,20 +66,24 @@ export default function ContentLibrary({ exportsOnly = false, onPublish, onOpenP
   }, [exportsOpen]);
 
   const load = async () => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     try {
       const [library, exports] = await Promise.all([request('library'), request('exports')]);
       setItems(library.items);
       setJobs(exports.items);
     } catch (error) {
       setNotice((error as Error).message);
+    } finally {
+      loadingRef.current = false;
     }
   };
 
   useEffect(() => {
     void load();
-    const id = setInterval(() => void load(), 5000);
+    const id = setInterval(() => { if (!document.hidden) void load(); }, jobs.some(job => job.status === 'running') ? 5_000 : 60_000);
     return () => clearInterval(id);
-  }, []);
+  }, [jobs.some(job => job.status === 'running')]);
 
   const shown = items.filter(item =>
     (!query || [item.title, item.product, item.platform, item.taskId].join(' ').toLowerCase().includes(query.toLowerCase()))

@@ -73,6 +73,7 @@ export function useConversionDraftEffects({
 
   useEffect(() => {
     if (!selected || selected.isHistorical) return;
+    if (new URLSearchParams(window.location.search).get('followupDraft') === '1') return;
     if (!customerServiceStatus?.enabled) return;
     const lastBuyer = [...selected.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && event.actor === 'buyer');
     if (!lastBuyer) return;

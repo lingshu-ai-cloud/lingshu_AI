@@ -1,3 +1,4 @@
+import { usePriorityFollowupDraft } from './customers/usePriorityFollowupDraft';
 import { LocalCustomerSimulationLauncher } from './customers/LocalCustomerSimulation';
 import { saveLocalCustomerDraft } from '../lib/localCustomerSimulation';
 import CustomerReplyRecovery from './customers/CustomerReplyRecovery';
@@ -56,7 +57,6 @@ interface Props {
   includeMockCustomers?: boolean;
   mockCustomerScope?: string;
 }
-
 
 export default function ConversionPage({ onLeaveConversation: _onLeaveConversation, isDemo = false, includeMockCustomers = false, mockCustomerScope = 'admin' }: Props) {
   const { modal } = App.useApp();
@@ -173,7 +173,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const savePendingDraft = useCallback((customer: CustomerProfile, draft?: string) => {
     const pendingDraft = draft?.trim() || undefined;
     updateCustomer(customer.id, { pendingDraft });
-    if (customer.isMock) {void saveLocalCustomerDraft(customer.id,pendingDraft??null).catch(error=>showToast(error.message));return;}
+    if (customer.isMock && !customer.localFollowupPreview) {void saveLocalCustomerDraft(customer.id,pendingDraft??null).catch(error=>showToast(error.message));return;}
     void fetch(`/api/overseas/customers/${encodeURIComponent(customer.id)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
@@ -195,11 +195,9 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     customerPendingCount, customerTodoItems, translationRequestRef, setDraftSuggestion, setDraftMeta,
     setLastDraftKey, setInput, setTranslatedInput, updateTimelineEvent, savePendingDraft,
   });
+  usePriorityFollowupDraft({ customer: selected, buyerId: selectedLatestBuyerId, text: input, setText: setInput, setMeta: setDraftMeta, save: savePendingDraft, notice: value => showToast(value) });
 
-  const showToast = (message: string) => {
-    setToast(message);
-    window.setTimeout(() => setToast(current => current === message ? null : current), 2200);
-  };
+  const showToast = (message: string) => { setToast(message); window.setTimeout(() => setToast(current => current === message ? null : current), 2200); };
 
   const changeCustomerServiceEnabled = async (enabled: boolean) => {
     if (customerServiceSaving) return;
@@ -618,7 +616,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     customerServiceStatus, customerServiceStatusLoadFailed, partialAutoReplyActive,
   );
 
-
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
     {selected && <LocalCustomerSimulationLauncher customer={selected} onPatch={patch=>persistCustomerPatch(selected.id,patch)}/>}
@@ -668,6 +665,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           onOpen={openCustomer}
           onViewChange={(nextView) => { filterEmptySelectionRef.current = false; setView(nextView); }}
           onVisibleSelectionChange={(id, filteredEmpty) => {
+            if (!deepLinkConsumedRef.current && new URLSearchParams(window.location.search).get('customer')) return;
             filterEmptySelectionRef.current = filteredEmpty;
             setSelectedId(id);
           }}
@@ -693,7 +691,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
             setSavingDraft(true);
             void (async () => {
               try {
-                if (customer.isMock) await saveLocalCustomerDraft(customer.id,pendingDraft);
+                if (customer.isMock && !customer.localFollowupPreview) await saveLocalCustomerDraft(customer.id,pendingDraft);
                 else {
                   const response = await fetch(`/api/overseas/customers/${encodeURIComponent(customer.id)}`, {
                     method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeader() },
@@ -720,7 +718,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           bridgeOnly={draftMeta?.replyConfidence?.level === 'bridge_only'}
           draftMeta={draftMeta}
           sending={sendingReply}
-          channelReady={Boolean(selected?.isMock ? selected.localSimulation?.approvedBody : (selected?.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : selected?.source === 'instagram' ? customerServiceStatus?.instagramAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)}
+          channelReady={Boolean(selected?.isMock ? selected.localFollowupPreview || selected.localSimulation?.approvedBody : (selected?.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : selected?.source === 'instagram' ? customerServiceStatus?.instagramAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)}
           onInsertQuoteReply={(text) => {
             if (!selected || selected.isHistorical) return;
             reportManualActive();
@@ -774,11 +772,12 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         <DailyBriefing customers={customers.filter(customer => !customer.isHistorical)} onSelectCustomer={openCustomer} onClose={() => setDailyBriefingOpen(false)} />
       )}
       {toast && (
-        <div role="status" className="fixed bottom-24 left-1/2 z-[70] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-md border border-border bg-surface-2 px-4 py-2 text-xs font-bold text-text-primary">
-          {toast}
+        <div role="status" className="flex shrink-0 flex-wrap items-center gap-3 border-t border-border bg-surface-2 px-4 py-2 text-xs text-text-primary">
+          <span className="min-w-0 flex-1 break-words">{toast}</span>
           {learnCandidate && (
             <Button htmlType="button" onClick={() => { setToast(null); setLearnDialogOpen(true); }} className="!h-auto min-h-9 !whitespace-normal rounded-full bg-surface px-2.5 py-1 text-xs font-semibold text-text-primary">存进知识库</Button>
           )}
+          <button type="button" aria-label="关闭提示" onClick={() => setToast(null)} className="shrink-0 rounded px-2 py-1 text-text-secondary hover:bg-surface">关闭</button>
         </div>
       )}
       <Modal open={Boolean(learnCandidate && learnDialogOpen)} title="存进知识库" width={560} mask={{ closable: false }} onCancel={() => { if (!learnCandidate?.saving) { setLearnCandidate(null); setLearnDialogOpen(false); } }} footer={<div className="flex justify-end gap-2">

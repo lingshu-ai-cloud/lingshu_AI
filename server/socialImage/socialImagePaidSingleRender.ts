@@ -7,6 +7,7 @@ import { conformSocialImageToCanvas, socialImageCanvasForAspectRatio, type Socia
 import { completeSocialImagePaidJob, socialImageOwnedMaterialUrl } from './socialImagePaidJob.js';
 import { SOCIAL_IMAGE_HARD_CHECKS, type SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
 import { composeFixedSocialLayers } from './fixedOverlayComposer.js';
+import { isSocialImageBuyerPoster } from './socialImageBuyerOverlay.js';
 
 /** Shared provider/material/receipt path for the workbench and durable image worker. */
 export async function submitClaimedSocialImageSingleRender(input: {
@@ -32,7 +33,7 @@ export async function submitClaimedSocialImageSingleRender(input: {
   const bytes = input.composition ? await composeFixedSocialLayers({ background: plate,
     products: [input.composition.productBytes], poster: input.composition.poster,
     width: canvas.width, height: canvas.height, recipe: input.composition.recipe,
-    productTreatment: 'integrated_scene', referenceTextRegion: input.composition.referenceTextRegion }) : plate;
+    productTreatment: 'framed_source', referenceTextRegion: input.composition.referenceTextRegion }) : plate;
   const material = await createGeneratedImageMaterial({
     title: `AI 图文海报 · ${input.task.renderBrief?.headline || 'Product overview'}`.slice(0, 120),
     bytes, mimeType: 'image/png', source: generated.source, tenantId: input.tenantId,
@@ -44,7 +45,8 @@ export async function submitClaimedSocialImageSingleRender(input: {
       promptSha256: createHash('sha256').update(input.prompt).digest('hex'),
       socialImageTaskId: input.task.id, socialImageJobId: input.jobId,
       socialImageInputHash: input.inputHash, model: generated.model, qualityStatus: 'needs_review',
-      ...(input.composition ? { localComposition: 'integrated-scene-and-copy-v1',
+      ...(input.composition ? { localComposition: isSocialImageBuyerPoster(input.composition.poster)
+        ? 'identity-locked-b2b-v1' : 'fixed-product-and-copy-v1',
         backgroundMaterialId: plateMaterial?.id,
         plateSha256: createHash('sha256').update(plate).digest('hex'),
         productSha256: createHash('sha256').update(input.composition.productBytes).digest('hex') } : {}) },

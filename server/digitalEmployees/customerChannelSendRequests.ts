@@ -11,6 +11,10 @@ import {publicationInstant} from '../socialPrograms/publicationDeadlines.js';
 import {SocialProgramError} from '../socialPrograms/service.js';
 import type {CustomerChannelSendRequest,CustomerChannelSendReceipt,SignedChannelMessageReceipt} from '../../shared/contracts/customerChannelSendRequest.js';
 export const CHANNEL_SEND_REQUESTS='customer_channel_send_requests';
+/** Tenant-scoped internal reporting; caller must authorize the business-scene read. */
+export async function readCustomerChannelSendEvidence(store:DataStore,tenantId:string,channel:'messenger'|'instagram',requestId:string){
+ const item=await read(store,tenantId,requestId,channel);return item?publicRequest(item.p):null;
+}
 const hash=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const fail=(code:string,status=409):never=>{throw new SocialProgramError(code,status,code);};
 function check(v:unknown,code:string):asserts v{if(!v)fail(code);}

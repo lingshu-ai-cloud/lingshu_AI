@@ -3,7 +3,7 @@ import { exactQwenScope } from './exactQwenScope.js';
 import { createQwenClient } from './qwenClient.js';
 import type { SocialImageQualityCheck, SocialImageQualityCheckKey } from '../../shared/contracts/socialImageCreation.js';
 
-const imageKeys: SocialImageQualityCheckKey[] = [
+export const SOCIAL_IMAGE_VISUAL_KEYS: SocialImageQualityCheckKey[] = [
   'product_identity', 'packaging_visibility', 'subject_visibility', 'label_ocr', 'fact_consistency', 'copy_visual_consistency',
   'brand_consistency', 'text_overflow', 'safe_zone', 'visual_cohesion', 'reference_structure_similarity',
 ];
@@ -29,7 +29,7 @@ export async function qualityCheckSocialImageWithQwen(input: {
   const model = (exactQwenScope()?.model || process.env.QWEN_EXACT_VL_MODEL || 'qwen3-vl-plus').trim();
   const candidateHash = createHash('sha256').update(input.generated.bytes).digest('hex');
   const productHashes = input.products.map(product => createHash('sha256').update(product.bytes).digest('hex'));
-  const prompt = `只根据图像像素和 EXPECTED 判定，不得把看不清或缺少对照的项目判为 pass。返回 JSON {"checks":[{"key":"key","verdict":"pass|fail|uncertain","note":"可观察证据","score":0.0,"region":{"x":0.0,"y":0.0,"width":1.0,"height":1.0},"evidence":["证据"],"repairSuggestion":"失败时的局部修复建议"}]}。region 必须是待检成片上的归一化证据区域；无法定位时 verdict 必须为 uncertain。必须返回这些 key：${imageKeys.join(',')}。逐像素比较 GENERATED OUTPUT 与 AUTHORITATIVE PRODUCT，核对产品身份、包装/瓶盖/泵头/标签可见性、主体遮挡、文字 OCR、事实表达、图文主题、品牌视觉、文字裁切、安全边距。visual_cohesion 必须单独判断产品与场景的光线、阴影、色温、透视和边缘是否统一；可见的方形贴图、边缘光晕或悬浮主体应判 fail，不能被 copy_visual_consistency 的 pass 覆盖。只有存在对标图时比较结构，否则 reference_structure_similarity 为 uncertain。EXPECTED.language 是新增海报文字的目标语言，包装原文保持原样。EXPECTED.facts 是允许使用的已核实事实边界，不要求每条事实都写在海报上；仅核查海报实际出现的事实是否受支持。跨语言同义表达可以一致，不能要求英文海报逐字出现中文事实。特别核查新写的产品名称是否与权威产品包装的可辨识名称矛盾；如包装可见 Honey 而新标题写 Mousse，应将 fact_consistency 判为 fail。EXPECTED=${JSON.stringify(input.expected)}`;
+  const prompt = `只根据图片像素判定，不能看清时选 uncertain。必须返回纯 JSON：{"checks":[{"key":"...","verdict":"pass|fail|uncertain","note":"不超过20字","region":{"x":0,"y":0,"width":1,"height":1}}]}。按顺序恰好返回以下 ${SOCIAL_IMAGE_VISUAL_KEYS.length} 项，每项一次：${SOCIAL_IMAGE_VISUAL_KEYS.join(',')}。region 是成片上的归一化位置；pass 必须有可定位 region，uncertain 可省略。比较 GENERATED OUTPUT 与 AUTHORITATIVE PRODUCT：品牌、包装文字和瓶盖要保真，不能用相似产品替代；检查遮挡、文字、事实、安全边距，以及主体与背景的光线、透视、边缘是否自然。背景贴图接缝、光晕或悬浮主体使 visual_cohesion=fail。ORIGINAL BENCHMARK 只用于结构比较。EXPECTED.language 只约束新写文字，原包装文字保持原样。EXPECTED.facts 是允许事实边界，不要求全部写出；产品名称不能与可见包装冲突。EXPECTED=${JSON.stringify(input.expected)}`;
   const completion = await createQwenClient().chat.completions.create({
     model,
     messages: [{ role: 'user', content: [
@@ -45,7 +45,7 @@ export async function qualityCheckSocialImageWithQwen(input: {
     if (!raw || typeof raw !== 'object') return [];
     const row = raw as Record<string, unknown>;
     const key = String(row.key || ''), verdict = String(row.verdict || 'uncertain');
-    if (!imageKeys.includes(key as SocialImageQualityCheckKey) || seen.has(key) || !['pass', 'fail', 'uncertain'].includes(verdict)) return [];
+    if (!SOCIAL_IMAGE_VISUAL_KEYS.includes(key as SocialImageQualityCheckKey) || seen.has(key) || !['pass', 'fail', 'uncertain'].includes(verdict)) return [];
     seen.add(key);
     const checkedKey = key as SocialImageQualityCheckKey;
     const regionRow = row.region && typeof row.region === 'object' ? row.region as Record<string, unknown> : null;

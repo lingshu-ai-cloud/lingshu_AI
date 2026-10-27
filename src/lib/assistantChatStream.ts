@@ -1,3 +1,4 @@
+import { assistantWorkSchema } from '../../shared/contracts/assistantWork';
 import type { Message } from '../App';
 import type { AssistantFileIntent } from '../../shared/assistantFileIntent';
 import { assistantFileMarker } from '../../shared/assistantFileIntent';
@@ -37,6 +38,8 @@ export async function streamAssistantReply(input: {
   onStart: () => void;
   onText: (text: string) => void;
   onSources: (sources: NonNullable<Message['sources']>) => void;
+  onAnalysisWork?: (event: import('../../shared/contracts/assistantWork').AssistantWork) => void;
+  onAnalysisComplete?: () => void;
   onTaskPortal?: (portal: NonNullable<Message['taskPortal']>) => void;
   onCompanyReport?: (report: NonNullable<Message['companyReport']>, text: string) => void;
   onCompanyReportProgress?: (phase: string) => void;
@@ -51,6 +54,7 @@ export async function streamAssistantReply(input: {
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let fileBody = '';
   let fileStreamError = '';
+  let analysisCompleteSeen = false;
   try {
     const response = await withAssistantTimeout(
       fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal }),
@@ -71,6 +75,8 @@ export async function streamAssistantReply(input: {
       try {
         const event = completion.accept(line.slice(6).trim());
         if (!event) return;
+        if (event.analysisWork !== undefined) { const work = assistantWorkSchema.safeParse(event.analysisWork); if (work.success) input.onAnalysisWork?.(work.data); }
+        if (event.analysisComplete === true) analysisCompleteSeen = true;
         if (typeof event.companyReportProgress === 'string' && COMPANY_REPORT_PHASES.some(phase => phase === event.companyReportProgress)) input.onCompanyReportProgress?.(event.companyReportProgress);
         if (event.companyReport !== undefined) {
           const report = companyReportSchema.safeParse(event.companyReport);
@@ -105,6 +111,7 @@ export async function streamAssistantReply(input: {
     buffer += decoder.decode();
     if (buffer.trim()) consumeLine(buffer);
     completion.assertComplete();
+    if (analysisCompleteSeen && isCurrent()) input.onAnalysisComplete?.();
     if (!fileIntent || !isCurrent()) return;
     if (fileStreamError || !fileBody.trim()) throw new Error('文件内容未完整生成，请重试。');
     const file = await withAssistantTimeout(

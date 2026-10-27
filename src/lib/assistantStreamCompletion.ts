@@ -3,7 +3,7 @@ export class AssistantStreamCompletion {
   error = '';
   accept(payload: string) {
     if (payload === '[DONE]') { this.done = true; return null; }
-    let event: { text?: string; error?: string; code?: string; publicMessage?: string; taskPortal?: unknown; companyReport?: unknown; companyReportProgress?: unknown; sources?: { title: string; uri: string }[] };
+    let event: { text?: string; error?: string; code?: string; publicMessage?: string; taskPortal?: unknown; companyReport?: unknown; companyReportProgress?: unknown; analysisWork?: unknown; analysisComplete?: unknown; sources?: { title: string; uri: string }[] };
     try { event = JSON.parse(payload); }
     catch { this.error = '回答传输异常，已保留收到的部分。请重新提问。'; return null; }
     if (!event || typeof event !== 'object') { this.error = '回答传输异常，请重新提问。'; return null; }

@@ -1,0 +1,60 @@
+/* Compact the overview in layout space, preserving browser/text zoom and mobile reflow. */
+@media (min-width: 1024px) {
+  /* Match the overview crop; advice and topics must not stretch its frame. */
+  .business-overview-summary {
+    aspect-ratio: 1.72;
+    max-height: 90dvh;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+  }
+
+  .business-overview-summary .weekly-command-header {
+    min-height: 0;
+    padding: 14px 20px 10px;
+  }
+
+  .business-overview-summary .weekly-command-header h2 { font-size: 18px; }
+  .business-overview-summary .weekly-command-header p { margin-top: 4px; font-size: 12px; }
+
+  .business-overview-summary .weekly-command-metrics {
+    grid-auto-rows: 60px;
+    gap: 10px 20px;
+    padding: 8px 20px 14px;
+  }
+
+  .business-overview-summary .ant-statistic-title {
+    font-size: 12px !important;
+    line-height: 18px !important;
+    margin-bottom: 4px !important;
+  }
+
+  .business-overview-summary .ant-statistic-content {
+    font-size: 24px !important;
+    line-height: 30px !important;
+  }
+
+  .business-overview-today { padding: 16px 20px; }
+  .business-overview-today > dl { margin-top: 12px; }
+  .business-overview-today > dl > div { padding: 8px 12px; }
+  .business-overview-today > dl dd { margin-top: 4px; font-size: 20px; line-height: 26px; }
+  .business-overview-today > .grid { margin-top: 12px; gap: 12px; }
+  .business-overview-today h2 { font-size: 16px; line-height: 24px; }
+  .business-overview-today [role="status"] { min-height: 110px; padding: 12px; }
+  .business-overview-today [role="status"] > .shrink-0 { width: 36px; height: 36px; }
+  .business-overview-today [role="status"] > .shrink-0 svg { width: 20px; height: 20px; }
+  .business-overview-today [role="status"] > div + div { margin-top: 6px; }
+
+  .business-overview-summary [aria-label="今日数据经营解读"] { margin-top: 12px; }
+  .business-overview-summary [aria-label="经营解读"] { margin: 0; padding: 10px 0 0; }
+  .business-overview-summary [aria-label="经营解读"] > .mt-3 { margin-top: 8px; line-height: 24px; }
+
+  .business-overview-summary [aria-labelledby="business-health-title"] > header {
+    min-height: 0;
+    padding: 16px 20px 10px;
+  }
+  .business-overview-summary #business-health-title { font-size: 16px; line-height: 24px; }
+  .business-overview-summary [aria-label="账号评分证据覆盖"] { padding: 0 20px 14px; }
+  .business-overview-summary [aria-labelledby="business-topics-title"] { padding: 14px 20px; }
+}

@@ -208,6 +208,7 @@ export function cloneAssistantThread(thread: AgentThreadState): AgentThreadState
       ...(message.creationPortal ? { creationPortal: { ...message.creationPortal, platforms: [...message.creationPortal.platforms] } } : {}),
       ...(message.taskPortal ? { taskPortal: { ...message.taskPortal } } : {}),
       ...(message.sourcePortal ? { sourcePortal: { ...message.sourcePortal } } : {}),
+      ...(message.analysisWork ? { analysisWork: message.analysisWork.map(event => ({ ...event })) } : {}),
       ...(message.companyReport ? { companyReport: structuredClone(message.companyReport) } : {}),
     })),
     taskCards: Object.fromEntries(Object.entries(thread.taskCards).map(([id, card]) => [id, {
