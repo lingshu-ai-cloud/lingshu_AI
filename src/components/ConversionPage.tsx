@@ -659,6 +659,8 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           headerActions={<CustomerServiceSwitch enabled={Boolean(customerServiceStatus?.enabled)}
             unavailable={!customerServiceStatus || customerServiceStatusLoadFailed} saving={customerServiceSaving}
             summary={`${customerServiceLabel}。${customerServiceSummary}`}
+            customers={customers}
+            onOpenCustomer={openCustomer}
             onChange={enabled => void changeCustomerServiceEnabled(enabled)} />}
           view={view}
           selectedId={selectedId}

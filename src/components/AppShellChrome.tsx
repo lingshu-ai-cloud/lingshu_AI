@@ -47,7 +47,7 @@ export default function AppShellChrome({
           />
         </Suspense>
       </OptionalFeatureErrorBoundary>
-      <RuntimeVersionBanner />
+      <RuntimeVersionBanner showSystemAnnouncement={page === 'strategy'} />
       {sessionRefreshError && <div role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">{sessionRefreshError} <button type="button" className="ml-2 font-semibold underline" onClick={onSessionRefresh}>立即重试</button></div>}
       {starterMode && isSocialTaskContextPage(page) && (
         <Suspense fallback={null}>
