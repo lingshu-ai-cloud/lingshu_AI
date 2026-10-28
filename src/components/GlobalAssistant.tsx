@@ -480,7 +480,7 @@ export default function GlobalAssistant({
     onFinish: () => { setMode('chat'); },
   });
 
-  const { send, sendComposerMessage } = useAssistantSend({
+  const { send, sendComposerMessage, sendWeeklyPlanGuidanceAnswer } = useAssistantSend({
     page, pageContext, currentPageAgent, enterpriseContext, loading, fileGenerating, replyStreaming,
     contentIntake, uiMessage, persistenceFenceRef, stablePersistenceScope, assistantAtomicMutationRef,
     waitForInFlightThreadSave, pendingMapFileRef, abortRef, openAgent, presentActionResponse,
@@ -488,7 +488,8 @@ export default function GlobalAssistant({
     setFileGenerating, setReplyStreaming, setPipelineRefresh, persistThread, onSessionRefresh, requestId,
     activeAgent, draftInput: activeThread.draftInput, pendingAttachments, attachmentUploading,
     uploadedAttachmentCacheRef, setAttachmentError, setAttachmentUploading, setPendingAttachments,
-    prepareWeeklyPlan: weeklyPlanExperience.prepare, pendingHomeSubmissionRef,
+    prepareWeeklyPlan: weeklyPlanExperience.prepare, weeklyPlanGuidanceActive: weeklyPlanExperience.guidanceActive, answerWeeklyPlan: weeklyPlanExperience.answer,
+    pendingHomeSubmissionRef,
   });
   const runQuickExecution = useAssistantQuickExecution({
     loading, fileGenerating, pipelineInFlightRef, pipelineModalOpenRef, persistenceFenceRef,
@@ -750,7 +751,7 @@ export default function GlobalAssistant({
         returnToConversation={returnToConversation} openDecisionDialog={openDecisionDialog}
         handleDecisionFeedChange={handleDecisionFeedChange}
         openWeeklyPlanFromAssistant={openWeeklyPlanFromAssistant} send={send}
-        sendComposerMessage={sendComposerMessage} runQuickExecution={runQuickExecution}
+        sendComposerMessage={sendComposerMessage} sendWeeklyPlanGuidanceAnswer={sendWeeklyPlanGuidanceAnswer} runQuickExecution={runQuickExecution}
         setAssistantTool={setAssistantTool} setScrollPosition={setScrollPosition}
         setFollowingLatest={setFollowingLatest} focusTaskCard={focusTaskCard}
         setMessages={setMessages} setDraftInput={setDraftInput}

@@ -16,6 +16,11 @@ import { repairSocialImageLocalComposite } from './socialImageLocalCompositeRepa
 import type { ImageExecutionPorts } from './socialImageExecution.js';
 import type { SocialImageElementInventory } from '../../shared/contracts/socialImageProduction.js';
 import { requireSocialImageBudgetLimit } from './socialImageBudgetGate.js';
+export function socialImagePlanningFailureCode(error: unknown): string {
+    if (error && typeof error === 'object' && 'body' in error)
+        return String((error as { body?: { code?: string } }).body?.code || 'social_image_planning_failed');
+    return error instanceof Error && error.message ? error.message : 'social_image_planning_failed';
+}
 export function createImageExecutionPorts(store: DataStore, job: ContentExecutionJob): ImageExecutionPorts {
     const assets = imageWorkflowAssets(store);
     const allowPaidCall = async () => {
@@ -43,8 +48,9 @@ export function createImageExecutionPorts(store: DataStore, job: ContentExecutio
             const inventory = task.productionRuntime?.nodeOutputs.filter(node => node.nodeId === 'element_inventory'
                 && node.status === 'completed').sort((left, right) => right.version - left.version)[0];
             if (!inventory) throw new Error('social_image_reference_evidence_incomplete');
-            // Prove that the selected reference can produce the requested canvas
-            // before the first paid planning request is claimed or submitted.
+            // Resolve the reference layout locally before the first paid request.
+            // Weak OCR/saliency evidence uses the auditable system fallback layout;
+            // it is not a customer-input blocker and must not strand the queue.
             compileEvidenceGuidedSocialImage({ task, inventory: inventory.value as SocialImageElementInventory,
                 productId: task.contentBrief.productRefs[0] || '', headline: 'layout preflight' });
             if (task.productionRuntime?.nodes.find(node => node.nodeId === 'director_brief')?.status !== 'completed') {
@@ -70,9 +76,7 @@ export function createImageExecutionPorts(store: DataStore, job: ContentExecutio
                             providerCallStarted = true;
                         } });
                 } catch (error) {
-                    const code = error && typeof error === 'object' && 'body' in error
-                        ? String((error as { body?: { code?: string } }).body?.code || 'social_image_planning_failed')
-                        : 'social_image_planning_failed';
+                    const code = socialImagePlanningFailureCode(error);
                     if (providerCallStarted)
                         await recordCurrentContentExecutionCheckpoint({ ...claim, payload: { state: 'outcome_unknown', code } });
                     throw new Error(code);

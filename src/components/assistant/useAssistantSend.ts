@@ -77,6 +77,8 @@ type AssistantSendInput = {
   setAttachmentUploading: Dispatch<SetStateAction<boolean>>;
   setPendingAttachments: Dispatch<SetStateAction<File[]>>;
   prepareWeeklyPlan: () => Promise<string>;
+  weeklyPlanGuidanceActive: boolean;
+  answerWeeklyPlan: (value: string) => Promise<string | null>;
   pendingHomeSubmissionRef: { current: AssistantHomePendingSubmission | null };
 };
 
@@ -97,7 +99,7 @@ export function useAssistantSend(input: AssistantSendInput) {
     setPipelineRefresh, persistThread, onSessionRefresh, requestId,
     activeAgent, draftInput, pendingAttachments, attachmentUploading,
     uploadedAttachmentCacheRef, setAttachmentError, setAttachmentUploading, setPendingAttachments,
-    prepareWeeklyPlan, pendingHomeSubmissionRef } = input;
+    prepareWeeklyPlan, weeklyPlanGuidanceActive, answerWeeklyPlan, pendingHomeSubmissionRef } = input;
   const creationMode = useCreationMode();
   const send = useCallback(async (
     text: string,
@@ -441,6 +443,25 @@ export function useAssistantSend(input: AssistantSendInput) {
     }
   }, [creationMode, assistantAtomicMutationRef, waitForInFlightThreadSave, replyStreaming, fileGenerating, contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, focusTaskCard, hydrateThread, loading, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard, stablePersistenceScope]);
 
+  const sendWeeklyPlanGuidanceAnswer = useCallback(async (value: string, visibleLabel = value) => {
+    if (loading || !weeklyPlanGuidanceActive) return;
+    const current = useAssistantStore.getState().threads[activeAgent].messages;
+    setDraftInput(activeAgent, '');
+    setMessages(activeAgent, [...current, { role: 'user', content: visibleLabel.trim() }]);
+    setFollowingLatest(activeAgent, true);
+    setLoading(true);
+    try {
+      const reply = await answerWeeklyPlan(value);
+      if (reply) {
+        const latest = useAssistantStore.getState().threads[activeAgent].messages;
+        setMessages(activeAgent, [...latest, { role: 'assistant', content: reply }]);
+      }
+    } catch (cause) {
+      const latest = useAssistantStore.getState().threads[activeAgent].messages;
+      setMessages(activeAgent, [...latest, { role: 'assistant', content: cause instanceof Error ? cause.message : '周计划信息暂时无法保存。' }]);
+    } finally { setLoading(false); persistThread(activeAgent); }
+  }, [activeAgent, answerWeeklyPlan, loading, persistThread, setDraftInput, setFollowingLatest, setLoading, setMessages, weeklyPlanGuidanceActive]);
+
   const sendComposerMessage = useCallback(async () => {
     if (loading || attachmentUploading) return;
     const draft = draftInput;
@@ -449,6 +470,10 @@ export function useAssistantSend(input: AssistantSendInput) {
     if (contentIntake.active) {
       if (files.length) { setAttachmentError('请先完成或取消当前任务问答，再发送附件。'); return; }
       void send(draft); return;
+    }
+    if (!files.length && weeklyPlanGuidanceActive) {
+      await sendWeeklyPlanGuidanceAnswer(draft);
+      return;
     }
     if (!files.length && isWeeklyPlanKickoffRequest(draft)) {
       const current = useAssistantStore.getState().threads[activeAgent].messages;
@@ -511,7 +536,10 @@ export function useAssistantSend(input: AssistantSendInput) {
       setAttachmentError(error instanceof Error ? error.message : '附件上传失败，请重试。');
       setAttachmentUploading(false);
     }
-  }, [contentIntake.active, activeAgent, draftInput, attachmentUploading, currentPageAgent, loading, pendingAttachments, pendingHomeSubmissionRef, persistThread, prepareWeeklyPlan, send, setDraftInput, setFollowingLatest, setLoading, setMessages]);
+  }, [activeAgent, contentIntake.active, currentPageAgent, draftInput, attachmentUploading, loading, pendingAttachments,
+    pendingHomeSubmissionRef, persistThread, prepareWeeklyPlan, send, sendWeeklyPlanGuidanceAnswer, setAttachmentError,
+    setAttachmentUploading, setDraftInput, setFollowingLatest, setLoading, setMessages, setPendingAttachments,
+    weeklyPlanGuidanceActive]);
 
-  return { send, sendComposerMessage };
+  return { send, sendComposerMessage, sendWeeklyPlanGuidanceAnswer };
 }

@@ -71,6 +71,7 @@ type Props = {
   openWeeklyPlanFromAssistant: () => void;
   send: ReturnType<typeof useAssistantSend>['send'];
   sendComposerMessage: ReturnType<typeof useAssistantSend>['sendComposerMessage'];
+  sendWeeklyPlanGuidanceAnswer: ReturnType<typeof useAssistantSend>['sendWeeklyPlanGuidanceAnswer'];
   runQuickExecution: ReturnType<typeof useAssistantQuickExecution>;
   setAssistantTool: Dispatch<SetStateAction<'knowledge-intake' | null>>;
   setScrollPosition: StoreActions['setScrollPosition'];
@@ -95,7 +96,7 @@ export default function AssistantConversationPanel(props: Props) {
     weeklyPlanKickoffAvailable, weeklyPlanExperience, pipelineEntries, pendingCount, contentIntake,
     messageScrollRef, assistantInputRef, onAction, onSessionRefresh, closeAssistant,
     returnToConversation, openDecisionDialog, handleDecisionFeedChange,
-    openWeeklyPlanFromAssistant, send, sendComposerMessage, runQuickExecution,
+    openWeeklyPlanFromAssistant, send, sendComposerMessage, sendWeeklyPlanGuidanceAnswer, runQuickExecution,
     setAssistantTool, setScrollPosition, setFollowingLatest, focusTaskCard, setMessages,
     setDraftInput, setDecisionFeedRevision, setMode, setWeeklyActionBusy,
     setPendingAttachments, setAttachmentError, persistThread } = props;
@@ -224,6 +225,7 @@ export default function AssistantConversationPanel(props: Props) {
                 weeklyPlanKickoffAvailable={weeklyPlanKickoffAvailable}
                 onOpenWeeklyPlan={openWeeklyPlanFromAssistant}
                 weeklyPlanExperience={weeklyPlanExperience}
+                onWeeklyPlanObjective={sendWeeklyPlanGuidanceAnswer}
               />
               {inlineHome && creationMode === 'free' && activeThread.creationDraft?.guided && <GuidedCreationChoices key={activeThread.creationDraft.referenceId} reply={creationReply}/>}
               {inlineHome && creationMode === 'free' && !activeThread.creationDraft?.guided && creationReply && <ContentCreationChoices reply={creationReply} busy={loading || replyStreaming}

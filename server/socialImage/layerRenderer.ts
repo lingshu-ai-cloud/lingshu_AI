@@ -87,7 +87,7 @@ export async function connectedBorderToAlpha(input: Buffer): Promise<Buffer> {
 
 function fullCanvasSvg(graph: SocialImageLayerGraph): Buffer {
   const { width, height } = graph.canvas;
-  if (graph.templateId === 'reference-evidence-layout-v1') {
+  if (graph.templateId === 'reference-evidence-layout-v1' || graph.templateId === 'system-product-layout-v1') {
     const background = /^#[0-9a-f]{6}$/i.test(graph.canvas.background) ? graph.canvas.background : '#202020';
     return Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="${background}"/></svg>`);
   }

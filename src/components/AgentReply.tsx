@@ -13,6 +13,8 @@ import AssistantFileCard from './assistant/AssistantFileCard';
 import AssistantSourceLink from './assistant/AssistantSourceLink';
 import type { ReplySource } from '../lib/assistantSourceLinks';
 import { assistantDraftSuggestion } from '../../shared/assistantDraftSuggestion';
+import { openContentGenerationQueue } from '../lib/contentGenerationQueue';
+import { openAssistantWeeklyPlan } from '../lib/assistantWeeklyPlanEvents';
 import {
   ASSISTANT_REPLY_PRESENTATIONS,
   type AssistantReplyPresentationKind,
@@ -184,12 +186,12 @@ export function splitReplySourceFooter(content: string): { body: string; footer:
   return { body: lines.slice(0, boundary).join('\n').trimEnd(), footer: lines.slice(boundary).join('\n') };
 }
 
-type ReplyNavigation = { label: string; page: string; view?: string };
+type ReplyNavigation = { label: string; page: string; view?: string } | { label: string; action: 'weekly-plan' | 'content-tasks' };
 
 const REPLY_NAVIGATION: Partial<Record<AssistantReplyPresentationKind, ReplyNavigation[]>> = {
   operations: [
-    { label: '查看经营总览', page: 'digitalEmployees' },
-    { label: '查看内容任务', page: 'smartAssets' },
+    { label: '查看当前周计划', action: 'weekly-plan' },
+    { label: '查看内容任务', action: 'content-tasks' },
   ],
   analytics: [{ label: '打开经营总览', page: 'digitalEmployees' }],
   inspiration: [{ label: '打开灵感集市', page: 'inspirationMarket' }],
@@ -213,8 +215,10 @@ function ReplyNavigationLinks({ kind }: { kind: AssistantReplyPresentationKind }
   const links = REPLY_NAVIGATION[kind] ?? [];
   if (!links.length) return null;
   return <nav className="my-2 flex flex-wrap gap-2" aria-label="相关工作区">
-    {links.map(link => <button key={`${link.page}:${link.view || ''}`} type="button"
-      onClick={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: link }))}
+    {links.map(link => <button key={'action' in link ? link.action : `${link.page}:${link.view || ''}`} type="button"
+      onClick={() => 'action' in link
+        ? link.action === 'weekly-plan' ? openAssistantWeeklyPlan() : openContentGenerationQueue({ view: 'tasks' })
+        : window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: link }))}
       className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-accent/40 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
       {link.label}<ArrowRight size={12} aria-hidden="true"/>
     </button>)}
@@ -405,6 +409,9 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
   flush();
 
   const presentationMeta = presentation ? ASSISTANT_REPLY_PRESENTATIONS[presentation] : undefined;
+  if (!blocks.length && presentation === 'operations') {
+    blocks.push(<p key="operations-summary" className="leading-relaxed my-1 whitespace-pre-wrap">已读取当前周计划和内容任务。你可以在当前页面分别查看计划详情与任务进度；查看不会自动启动、修改或创建任务。</p>);
+  }
   const visibleSources = allowSources && presentationMeta?.showSources && (sourcePresentation.footer || sources?.length);
   const sourceLinks = sources?.slice(0, 3) ?? [];
   const remainingSources = sources?.slice(3) ?? [];

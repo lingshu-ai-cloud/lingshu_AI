@@ -72,7 +72,7 @@ async function inventoryFor(bytes: Buffer, focal: 'top_left' | 'bottom_right') {
     ocr: async () => [{ text: 'OLD BRAND', bbox: textBox(focal), confidence: .94 }] });
 }
 
-test('two visibly different references drive distinct focal, copy and palette layouts; unsupported structure rejects', async () => {
+test('two visibly different references drive distinct focal, copy and palette layouts; unsupported structure falls back', async () => {
   const left = await referenceImage('top_left', '#123358');
   const right = await referenceImage('bottom_right', '#e4ddd2');
   const task = { deliverySpec: { aspectRatio: '1:1' }, contentBrief: { coreClaim: 'New product claim' } } as SocialImageCreationTask;
@@ -94,9 +94,18 @@ test('two visibly different references drive distinct focal, copy and palette la
   assert.notEqual(leftGraph.canvas.background, rightGraph.canvas.background);
   assert.equal(leftGraph.templateId, 'reference-evidence-layout-v1');
   const uniform = await sharp({ create: { width: 300, height: 300, channels: 3, background: '#777777' } }).png().toBuffer();
-  await assert.rejects(async () => compileEvidenceGuidedSocialImage({ task,
-    inventory: await inventoryFor(uniform, 'top_left'), productId: 'product-a', headline: 'New product claim' }),
-  /social_image_reference_structure_unsupported/);
+  const fallback = compileEvidenceGuidedSocialImage({ task,
+    inventory: await inventoryFor(uniform, 'top_left'), productId: 'product-a', headline: 'New product claim', now });
+  assert.equal(fallback.templateId, 'system-product-layout-v1');
+  assert.equal(fallback.layers.find(layer => layer.id === 'headline')?.evidenceRefs, undefined);
+  assert.equal(fallback.layers.find(layer => layer.id === 'product-hero')?.evidenceRefs, undefined);
+  const headline = fallback.layers.find(layer => layer.id === 'headline')!.rect;
+  const product = fallback.layers.find(layer => layer.id === 'product-hero')!.rect;
+  const overlapWidth = Math.max(0, Math.min(headline.x + headline.width, product.x + product.width)
+    - Math.max(headline.x, product.x));
+  const overlapHeight = Math.max(0, Math.min(headline.y + headline.height, product.y + product.height)
+    - Math.max(headline.y, product.y));
+  assert.equal(overlapWidth * overlapHeight, 0);
 });
 
 test('ordinary 4:3 references adapt to a supported delivery canvas instead of blocking creation', async () => {

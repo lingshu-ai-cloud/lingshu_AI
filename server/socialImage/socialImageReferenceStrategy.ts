@@ -103,11 +103,11 @@ export async function prepareSocialImageReferenceStrategy(input: {
   return recordSocialImageHookStrategy({ ...input, hookFactorSpec: hooks, adaptationSpec: adaptation });
 }
 
-function referenceLayout(inventory: SocialImageElementInventory, ratio: SocialImageCreationTask['deliverySpec']['aspectRatio']) {
+function measuredReferenceLayout(inventory: SocialImageElementInventory, ratio: SocialImageCreationTask['deliverySpec']['aspectRatio']) {
   const canvas = socialImageCanvasForAspectRatio(ratio);
   if (!Number.isFinite(inventory.canvas.width) || !Number.isFinite(inventory.canvas.height)
     || inventory.canvas.width <= 0 || inventory.canvas.height <= 0) {
-    throw new SocialImageProductionRunError('social_image_reference_ratio_unsupported', 422);
+    return null;
   }
   const sourceAspectRatio = inventory.canvas.width / inventory.canvas.height;
   const fitBoxToDelivery = (box: SocialImageNormalizedRect): SocialImageNormalizedRect => {
@@ -132,7 +132,7 @@ function referenceLayout(inventory: SocialImageElementInventory, ratio: SocialIm
     && region.layerRole.split('_')[1] !== textColumn);
   if (!focal || !weakest || Number(focal.toolScores.saliency || 0) - Number(weakest.toolScores.saliency || 0) < .045
     || !text || !textRegion) {
-    throw new SocialImageProductionRunError('social_image_reference_structure_unsupported', 422);
+    return null;
   }
   const centered = (box: SocialImageNormalizedRect, width: number, height: number): SocialImageNormalizedRect => ({
     x: clamp(box.x + box.width / 2 - width / 2, 1 - width - .025),
@@ -141,29 +141,59 @@ function referenceLayout(inventory: SocialImageElementInventory, ratio: SocialIm
   const product = centered(fitBoxToDelivery(focal.bbox), .38, .48);
   const headline = centered(fitBoxToDelivery(text.bbox), .36, .14);
   if (overlap(product, headline) / (product.width * product.height) > .04) {
-    throw new SocialImageProductionRunError('social_image_reference_regions_collide', 422);
+    return null;
   }
   const rawRgb = inventory.colorAndLighting.meanRgb;
   if (!Array.isArray(rawRgb) || rawRgb.length < 3 || rawRgb.slice(0, 3).some(value => !Number.isFinite(Number(value)))) {
-    throw new SocialImageProductionRunError('social_image_reference_color_evidence_missing', 422);
+    return null;
   }
   const color = `#${rawRgb.slice(0, 3).map(value => Math.round(Math.max(0, Math.min(255, Number(value)))).toString(16).padStart(2, '0')).join('')}`;
   return { canvas, focal, textRegion, product, headline, color };
 }
 
+function systemFallbackLayout(inventory: SocialImageElementInventory,
+  ratio: SocialImageCreationTask['deliverySpec']['aspectRatio']) {
+  const canvas = socialImageCanvasForAspectRatio(ratio);
+  const rawRgb = inventory.colorAndLighting.meanRgb;
+  const color = Array.isArray(rawRgb) && rawRgb.length >= 3
+    && rawRgb.slice(0, 3).every(value => Number.isFinite(Number(value)))
+    ? `#${rawRgb.slice(0, 3).map(value => Math.round(Math.max(0, Math.min(255, Number(value))))
+      .toString(16).padStart(2, '0')).join('')}`
+    : '#f7f8fa';
+  if (canvas.aspectRatio > 1.2) return {
+    canvas, color,
+    headline: { x: .06, y: .14, width: .38, height: .24 },
+    product: { x: .54, y: .1, width: .4, height: .8 },
+  };
+  if (canvas.aspectRatio < .8) return {
+    canvas, color,
+    headline: { x: .08, y: .08, width: .84, height: .16 },
+    product: { x: .16, y: .3, width: .68, height: .62 },
+  };
+  return {
+    canvas, color,
+    headline: { x: .08, y: .08, width: .84, height: .16 },
+    product: { x: .22, y: .3, width: .56, height: .62 },
+  };
+}
+
 export function compileEvidenceGuidedSocialImage(input: {
   task: SocialImageCreationTask; inventory: SocialImageElementInventory; productId: string; headline: string; now?: string;
 }): SocialImageLayerGraph {
-  const layout = referenceLayout(input.inventory, input.task.deliverySpec.aspectRatio);
+  const measured = measuredReferenceLayout(input.inventory, input.task.deliverySpec.aspectRatio);
+  const layout = measured || systemFallbackLayout(input.inventory, input.task.deliverySpec.aspectRatio);
+  const templateId = measured ? 'reference-evidence-layout-v1' : 'system-product-layout-v1';
   const graph: SocialImageLayerGraph = {
-    schemaVersion: 'social-image-layer-graph.v1', templateId: 'reference-evidence-layout-v1',
+    schemaVersion: 'social-image-layer-graph.v1', templateId,
     canvas: { width: layout.canvas.width, height: layout.canvas.height, background: layout.color },
     layers: [
-      { id: 'background', kind: 'background', zIndex: 0, rect: { x: 0, y: 0, width: 1, height: 1 }, styleToken: 'reference-measured-color' },
+      { id: 'background', kind: 'background', zIndex: 0, rect: { x: 0, y: 0, width: 1, height: 1 },
+        styleToken: measured ? 'reference-measured-color' : 'system-fallback-color' },
       { id: 'headline', kind: 'text', zIndex: 20, rect: layout.headline, content: input.headline,
-        styleToken: 'reference-adaptive-headline', evidenceRefs: [layout.textRegion.evidenceRef.id] },
+        styleToken: 'reference-adaptive-headline', ...(measured ? { evidenceRefs: [measured.textRegion.evidenceRef.id] } : {}) },
       { id: 'product-hero', kind: 'product', zIndex: 30, rect: layout.product, sourceAssetId: input.productId,
-        fit: 'contain', protectedAnchors: ['cap', 'brand', 'label', 'product_body'], evidenceRefs: [layout.focal.evidenceRef.id] },
+        fit: 'contain', protectedAnchors: ['cap', 'brand', 'label', 'product_body'],
+        ...(measured ? { evidenceRefs: [measured.focal.evidenceRef.id] } : {}) },
     ],
     protectedRegions: [layout.product], overlayAllowedRegions: [layout.headline],
     fontManifest: [{ token: 'reference-adaptive-headline', family: 'Arial', fileHash: 'system-font-arial-v1' }],
@@ -204,17 +234,21 @@ export async function compileSocialImageReferencePlan(input: {
   if (!headline) throw new SocialImageProductionRunError('social_image_headline_missing', 422);
   const graph = compileEvidenceGuidedSocialImage({ task, inventory: inventoryNode!.value, productId, headline, now: input.now });
   const graphHash = sha(graph);
+  const usesMeasuredReferenceLayout = graph.templateId === 'reference-evidence-layout-v1';
   const director = await recordSocialImageNodeOutput({ ...input, expectedVersion: task.version,
     nodeId: 'director_brief', status: 'completed',
     value: { objective: task.contentBrief.coreClaim, singleCoreClaim: task.contentBrief.coreClaim,
       headline, supportingText: '', caption: task.imageTextContract.caption, cta: '',
       requiredFacts: task.imageTextContract.requiredFacts, prohibitedInferences: task.imageTextContract.prohibitedInferences,
       visualMustShow: [input.productName], visualMustNotImply: task.imageTextContract.visualMustNotImply,
-      compositionIntent: `参考显著区 ${graph.layers.find(layer => layer.kind === 'product')?.evidenceRefs?.[0]} 与文字留白区 ${graph.layers.find(layer => layer.kind === 'text')?.evidenceRefs?.[0]}`,
-      imageTextRelation: 'measured_reference_layout', visualProof: 'enterprise_product_asset',
+      compositionIntent: usesMeasuredReferenceLayout
+        ? `参考显著区 ${graph.layers.find(layer => layer.kind === 'product')?.evidenceRefs?.[0]} 与文字留白区 ${graph.layers.find(layer => layer.kind === 'text')?.evidenceRefs?.[0]}`
+        : '参考图结构不可可靠复用，采用系统通用产品版式；不沿用参考图布局、品牌或文案',
+      imageTextRelation: usesMeasuredReferenceLayout ? 'measured_reference_layout' : 'system_product_layout',
+      visualProof: 'enterprise_product_asset',
       brandAndOriginalityRules: task.adaptationSpec!.originalityConstraints,
-      acceptanceCriteria: task.hookFactorSpec!.factors.map(factor => ({ criterionId: factor.factorId,
-        observableTarget: factor.validator.observableTarget, validator: factor.validator.kind })),
+      acceptanceCriteria: usesMeasuredReferenceLayout ? task.hookFactorSpec!.factors.map(factor => ({ criterionId: factor.factorId,
+        observableTarget: factor.validator.observableTarget, validator: factor.validator.kind })) : [],
       factorSpecRef: nodeRef(hookNode!), adaptationSpecRef: nodeRef(adaptationNode!) },
     inputRefs: [nodeRef(hookNode!), nodeRef(adaptationNode!), nodeRef(manifestNode!)],
     evidenceRefs: task.hookFactorSpec.factors.flatMap(factor => factor.evidenceRefs),
@@ -227,7 +261,8 @@ export async function compileSocialImageReferencePlan(input: {
     nodeId: 'execution_plan', status: 'completed', value: {
       productionStrategy: 'compose_assets', selectedAssetRefs: [nodeRef(manifestNode!)],
       assetRoles: [{ assetRef: nodeRef(manifestNode!), role: 'enterprise_product' }],
-      renderRoute: 'local_evidence_guided_layer_compositor', candidateCount: 1,
+      renderRoute: usesMeasuredReferenceLayout ? 'local_evidence_guided_layer_compositor'
+        : 'local_system_fallback_layer_compositor', candidateCount: 1,
       layerPlan: graph.layers.map(layer => ({ layerId: layer.id, role: layer.kind,
         sourceRef: layer.kind === 'product' ? nodeRef(manifestNode!) : null })),
       estimatedCost: { currency: 'CNY', amount: 0 }, estimatedDurationSeconds: null,
@@ -243,8 +278,8 @@ export async function compileSocialImageReferencePlan(input: {
       layoutConstraints: { graphHash, templateId: graph.templateId, inventoryRef: nodeRef(inventoryNode!) },
       textLayers: [{ role: 'headline', text: headline, region: graph.layers.find(layer => layer.id === 'headline')?.evidenceRefs?.[0] || '' }],
       subjectConstraints: ['enterprise_product_required'],
-      factorTargets: task.hookFactorSpec!.factors.map(factor => ({ factorId: factor.factorId,
-        observableTarget: factor.validator.observableTarget })),
+      factorTargets: usesMeasuredReferenceLayout ? task.hookFactorSpec!.factors.map(factor => ({ factorId: factor.factorId,
+        observableTarget: factor.validator.observableTarget })) : [],
       negativeConstraints: task.adaptationSpec!.excludedElements,
       providerAdapterVersion: 'local-evidence-layered.v1', seedPolicy: 'fixed',
       idempotencyKey: sha({ taskId: task.id, graphHash }), inputHash: socialImageV3RenderSpecInputHash(task, graph),
@@ -262,6 +297,7 @@ export async function inspectSocialImageCandidateFactors(input: {
   task: SocialImageCreationTask; bytes: Buffer; mimeType: string; ocr?: SocialImageOcrPort;
 }): Promise<SocialImageQualityCheck[]> {
   if (input.task.creationPath !== 'viral_replication') return [];
+  if (input.task.layerGraph?.templateId === 'system-product-layout-v1') return [];
   const inventoryNode = latest(input.task, 'element_inventory') as InventoryEnvelope | undefined;
   if (inventoryNode?.status !== 'completed' || !input.task.hookFactorSpec) return [];
   const candidateHash = createHash('sha256').update(input.bytes).digest('hex');

@@ -20,7 +20,7 @@ import { AssistantAnalysisWork, AssistantReportExport } from './AssistantAnalysi
 import AssistantBusinessSceneChoice from './AssistantBusinessSceneChoice';
 import AssistantNavigationPortalCard from './AssistantNavigationPortalCard';
 import { navigationPortalForAnswer } from '../../lib/assistantNavigationPortal';
-import { AssistantWeeklyPlanCard } from './AssistantWeeklyPlanExperience';
+import { AssistantWeeklyObjectiveChoices, AssistantWeeklyPlanCard } from './AssistantWeeklyPlanExperience';
 import type { AssistantWeeklyPlanExperience } from './useAssistantWeeklyPlanExperience';
 
 interface Props {
@@ -47,6 +47,7 @@ interface Props {
   weeklyPlanKickoffAvailable: boolean;
   onOpenWeeklyPlan: () => void;
   weeklyPlanExperience: AssistantWeeklyPlanExperience;
+  onWeeklyPlanObjective: (value: string, visibleLabel?: string) => void;
 }
 
 /** The conversation's visual sequence; all mutations remain in the parent. */
@@ -56,7 +57,7 @@ export default function AssistantConversationBubbles(props: Props) {
     welcomeBubbleVisible, activeAgentLabel, messages, onAction, onSuggest,
     reduceMotion,
     contentIntakeNode, loading, focusedTaskCard, onOpenTaskDetail,
-    weeklyPlanKickoffAvailable, onOpenWeeklyPlan, weeklyPlanExperience } = props;
+    weeklyPlanKickoffAvailable, onOpenWeeklyPlan, weeklyPlanExperience, onWeeklyPlanObjective } = props;
   return (
     <div className={inlineHome ? 'ls-assistant-flow' : 'space-y-4'}>
       {!inlineHome && <div key={`decision-feed-${decisionFeedRevision}`}
@@ -121,6 +122,10 @@ export default function AssistantConversationBubbles(props: Props) {
           </div>}
         </div>
       ))}
+
+      <AssistantWeeklyObjectiveChoices experience={weeklyPlanExperience} busy={loading}
+        onSelect={onWeeklyPlanObjective}
+        onCustom={() => onSuggest('我的本周经营目标是：')}/>
 
       {contentIntakeNode}
 

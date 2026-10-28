@@ -51,7 +51,8 @@ test('query scenes keep decision-critical text visible and personalize details, 
   const operations = renderToStaticMarkup(createElement(AgentReply, { content: longOperations, compact: true, presentation: 'operations' }));
   assert.doesNotMatch(operations, /详细分析/);
   assert.match(operations, /第8项/);
-  assert.match(operations, /查看经营总览/);
+  assert.match(operations, /查看当前周计划/);
+  assert.match(operations, /查看内容任务/);
 
   const news = renderToStaticMarkup(createElement(AgentReply, {
     content: '本周平台规则有一项变化。\n```details\n检索范围与次要背景。\n```',
@@ -70,7 +71,16 @@ test('operations scene removes internal product and provider diagnostics before 
   assert.doesNotMatch(html, /产品20|P4|P33|P20|41款|weekly_goals|state|plan_review|404|model not activated|fetch failed/);
   assert.match(html, /当前状态|已完成|待处理|阻塞项|今天最优先动作/);
   assert.match(html, /逐项任务与判断依据/);
-  assert.match(html, /查看经营总览/);
+  assert.match(html, /查看当前周计划/);
+});
+
+test('empty operations replies keep explanatory text and modal actions', () => {
+  const html = renderToStaticMarkup(createElement(AgentReply, { content: '', compact: true, presentation: 'operations' }));
+  assert.match(html, /已读取当前周计划和内容任务/);
+  assert.match(html, /查看不会自动启动、修改或创建任务/);
+  assert.match(html, /查看当前周计划/);
+  assert.match(html, /查看内容任务/);
+  assert.doesNotMatch(html, /查看经营总览/);
 });
 
 test('source-like text in code is preserved; no-source replies do not gain an empty disclosure', async () => {

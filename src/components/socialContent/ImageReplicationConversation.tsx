@@ -3,7 +3,6 @@ import { Alert, Button, Input, InputNumber, Select, Spin } from 'antd';
 import LsPageHeader from '../ui/LsPageHeader';
 import ImageReplicationReferencePicker from './ImageReplicationReferencePicker';
 import { IMAGE_LANGUAGE_OPTIONS, imageLanguageLabel } from '../../../shared/contracts/imageLanguages';
-import { openImageCreationTask } from '../../lib/imageCreationTaskNavigation';
 import type { SocialContentCreateRequest } from './SocialContentWorkspace';
 import type { SocialImageCreationTask } from '../../../shared/contracts/socialImageCreation';
 import { readAssistantProductCatalog, type AssistantCatalogProduct } from '../../lib/assistantProductCatalog';
@@ -17,6 +16,7 @@ import { createImageReplicationDraft, imageReplicationDraftIssue,
 
 import { readImageReplicationReferences } from '../../lib/imageReplicationReferences';
 import { imageReplicationReferenceRatio } from '../../lib/imageReplicationReferenceRatio';
+import ImageCreationTaskExecution from './ImageCreationTaskExecution';
 
 const QUESTIONS = [
   '先确认要复刻哪张参考图。可以选择已采集的图文帖子，或上传一张图片。',
@@ -60,8 +60,6 @@ export default function ImageReplicationConversation({ request, onShowCreations,
   const [reload, setReload] = useState(0);
   const [created, setCreated] = useState<SocialImageCreationTask>();
   const [submitted, setSubmitted] = useState(checkpoint?.submitted || false);
-  const startNew = useRef(false);
-  const handedOff = useRef('');
   const checkpointWriter = useRef(onCheckpoint); checkpointWriter.current = onCheckpoint;
   const alive = useRef(true);
   const identity = useRef(productionNavigationIdentity());
@@ -158,6 +156,7 @@ export default function ImageReplicationConversation({ request, onShowCreations,
   const submit = async () => {
     if (locked.current || step !== 2 || !reference || !product) return;
     if (!isCurrent()) { setError('登录状态已变化，请重新打开创作。'); return; }
+    if (budgetLimitCny == null) { setError('请先确认本次单条费用上限；确认后，系统会自动完成后续制作节点。'); return; }
     frozen.current ||= structuredClone(draft());
     setObjective(frozen.current.objective); setAudience(frozen.current.audience); setCallToAction(frozen.current.callToAction);
     locked.current = true; setBusy(true); setSubmitted(true); setError('');
@@ -167,16 +166,17 @@ export default function ImageReplicationConversation({ request, onShowCreations,
         ports: { createTask: socialContentApi.createTask, createOrResumeRun: socialImageApi.createOrResumeRun, updateTask: socialImageApi.updateTask } });
       if (!isCurrent()) return;
       const queued = await socialImageApi.enqueueExecution(task);
-      if (isCurrent()) { startNew.current = true; setCreated(queued.task); }
+      if (isCurrent()) setCreated(queued.task);
     } catch (cause) { if (isCurrent()) setError(cause instanceof Error ? cause.message : '复刻任务保存失败，请重试'); }
     finally { locked.current = false; if (isCurrent()) setBusy(false); }
   };
 
-  useEffect(() => {
-    if (!created || !startNew.current || handedOff.current === created.id || !isCurrent()) return;
-    handedOff.current = created.id; openImageCreationTask(created);
-  }, [created]);
-  if (created) return <Button onClick={() => openImageCreationTask(created)}>进入创作任务</Button>;
+  if (created) {
+    const contentTaskId = created.productionRuntime?.binding?.contentTaskId;
+    return contentTaskId
+      ? <ImageCreationTaskExecution contentTaskId={contentTaskId}/>
+      : <Alert type="error" showIcon title="图文任务缺少内容任务关联，暂时无法读取制作进度。"/>;
+  }
 
   return <div className={embedded ? "min-w-0 space-y-3" : "flex h-full min-h-0 flex-col bg-surface"} data-image-replication-conversation>
     {!embedded && <LsPageHeader title="图文爆款复刻" extra={<Button onClick={onShowCreations} disabled={busy}>我的创作</Button>}/>}
@@ -220,12 +220,12 @@ export default function ImageReplicationConversation({ request, onShowCreations,
               <div><dt className="text-text-secondary">受众安排</dt><dd>{audience || '由系统依据企业资料策划，资料不足时使用通用产品介绍'}</dd></div>
               <div><dt className="text-text-secondary">交付规格</dt><dd>{PLATFORM_LABELS[platform]} · {aspectRatio} · {imageLanguageLabel(language)} · 一张图片、帖子配文与话题标签</dd></div>
               <div><dt className="text-text-secondary">客户行动</dt><dd>{resolved.callToAction}</dd></div></dl>
-            <label className="block space-y-2 text-sm"><span>单条费用上限（元）</span><InputNumber aria-label="单条费用上限" className="w-full" min={0.01} precision={2} value={budgetLimitCny} onChange={setBudgetLimitCny} placeholder="可稍后设置" disabled={submitted}/></label>
-            <p className="text-sm text-text-secondary">确认后任务会先入队。未设置费用上限时，付费策划、出图和质检会暂停；设置后仍须通过执行前的费用核验。生成结果由你审阅采用。</p>
+            <label className="block space-y-2 text-sm"><span>单条费用上限（元，必填）</span><InputNumber aria-label="单条费用上限" className="w-full" min={0.01} precision={2} value={budgetLimitCny} onChange={setBudgetLimitCny} placeholder="请输入本次可接受的费用上限" disabled={submitted}/></label>
+            <p className="text-sm text-text-secondary">费用上限只授权本次任务。确认入队后，系统会自动完成策划、制作和质检；生成结果仍由你审阅采用。</p>
           </section>}
           {error && <Alert type="error" showIcon title={error}/>}
           <div className="flex flex-wrap gap-3">
-            {step > 0 && <Button type="primary" htmlType="submit" loading={busy} disabled={loading || (step === 1 && !product)}>{step === 1 ? '确认并继续' : submitted ? '恢复本次复刻任务' : '确认并生成首版'}</Button>}
+            {step > 0 && <Button type="primary" htmlType="submit" loading={busy} disabled={loading || (step === 1 && !product) || (step === 2 && budgetLimitCny == null)}>{step === 1 ? '确认并继续' : submitted ? '恢复本次复刻任务' : '确认并生成首版'}</Button>}
             {step > 0 && !submitted && <Button disabled={busy} onClick={() => { setStep(value => value - 1); setError(''); }}>返回修改</Button>}
           </div>
         </form>

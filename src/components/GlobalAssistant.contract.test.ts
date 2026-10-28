@@ -76,12 +76,23 @@ assert.match(assistantRootMarkup, /bottom-\[calc\(env\(safe-area-inset-bottom\)\
 assert.doesNotMatch(assistantRootMarkup, /5\.5rem/, '制作页不得通过额外抬高灵小枢入口制造底部空白');
 assert.match(conversationPanelSource, /assistantUsesMobileClearance[\s\S]{0,240}viewport\.height - \(assistantUsesMobileClearance \? 160 : 96\)/, '移动端抬高入口时必须同步收紧对话高度，不能把面板顶部裁掉');
 assert.match(launcherSource, /const closedLabel = weeklyPlanOperating \? '周计划正在运营中' : '周计划待生成'/, '右下角入口必须根据真实周运行状态给出明确文案');
-assert.doesNotMatch(weeklyPlanHookSource, /digitalEmployeeApi\.createGoal|defaultWeeklyGoal/, '打开周计划时不得在后台默默创建或保存默认计划');
-assert.match(weeklyPlanHookSource, /digitalEmployeeApi\.overview\(\)[\s\S]{0,420}next\.goal && next\.plan[\s\S]{0,180}setProposal\(next\);setModalOpen\(true\)/, '已有周计划时必须在当前会话打开同一份真实计划');
+assert.match(weeklyPlanHookSource, /function guidanceQuestions[\s\S]{0,1200}missingQuestions\.slice\(0, 2\)[\s\S]{0,120}weeklyObjective/, '缺少资料时最多补充两项资料，并始终保留经营目标确认');
+assert.match(weeklyPlanHookSource, /const prepare[\s\S]{0,1200}setGuidance\([\s\S]{0,280}questions\[0\]/, '打开周计划只能进入第一道逐项问答，不能后台创建计划');
+assert.match(weeklyPlanHookSource, /const answer[\s\S]{0,1500}setDraft\(guidedDraft[\s\S]{0,220}setModalOpen\(true\)/, '收集完成后必须先生成本地方案草案并打开确认弹窗');
+assert.match(weeklyPlanHookSource, /const confirmPlan[\s\S]{0,900}completeOnboarding[\s\S]{0,300}digitalEmployeeApi\.createGoal\(draft\)[\s\S]{0,260}setStage\('budget'\)/, '用户确认方案后才能保存补充资料、创建计划并进入预算确认');
+assert.match(weeklyPlanHookSource, /digitalEmployeeApi\.overview\(\)[\s\S]{0,700}next\.goal && next\.plan[\s\S]{0,220}setProposal\(next\);[\s\S]{0,100}setModalOpen\(true\)/, '已有周计划时必须在当前会话打开同一份真实计划');
 assert.doesNotMatch(weeklyPlanHookSource, /const prepare[\s\S]{0,900}lingshu:navigate|const prepare[\s\S]{0,900}lingshu:open-weekly-plan/, '首页发送创建周计划后不得跳转到经营总览');
-assert.match(weeklyPlanHookSource, /我们就在这里制定本周计划，不会跳转页面[\s\S]{0,260}在你最终确认前不会保存或启动/, '新周计划必须留在当前会话逐项引导并保持用户确认边界');
-assert.match(weeklyPlanHookSource, /请先点击上方『让灵小枢认识我』完成基础资料/, '缺少初始资料时必须直接告知用户可操作的页面入口');
-assert.match(weeklyPlanSource, /确认周计划/, '完整周计划弹窗必须只显示直接的计划确认动作');
+assert.doesNotMatch(weeklyPlanHookSource, /我们就在这里制定本周计划|每次只问一个问题，最多 3 个/, '不得把内部流程说明直接回复给用户');
+assert.match(weeklyPlanHookSource, /function suggestedWeeklyObjectives[\s\S]{0,700}return \[[\s\S]{0,500}\];/, '缺少经营目标时必须生成三个企业上下文建议');
+assert.match(weeklyPlanHookSource, /objectiveChoices:[\s\S]{0,500}recommended: index === 0/, '经营目标必须暴露为三个结构化选项，并标记唯一推荐项');
+assert.match(weeklyPlanHookSource, /weeklyObjectivePrompt[\s\S]{0,260}请选择一个，也可以自定义/, '经营目标提问必须引导直接点选，不得要求用户回复编号');
+assert.match(weeklyPlanHookSource, /function resolveWeeklyObjective[\s\S]{0,700}采用推荐[\s\S]{0,500}return null/, '经营目标确认必须把推荐项解析为真实目标，并保留修改分支');
+assert.match(weeklyPlanSource, /AssistantWeeklyObjectiveChoices[\s\S]{0,900}objectiveChoices\.map[\s\S]{0,500}type=\{choice\.recommended \? 'primary' : 'default'\}[\s\S]{0,900}自定义目标/, '三个经营目标必须直接渲染为可键盘操作的选项，且同一区域只有推荐项是主操作');
+assert.match(conversationBubblesSource, /<AssistantWeeklyObjectiveChoices[\s\S]{0,220}onSelect=\{onWeeklyPlanObjective\}[\s\S]{0,180}我的本周经营目标是：/, '经营目标选项必须紧随当前对话，并允许自定义目标直接回填输入框');
+assert.match(sendHookSource, /const sendWeeklyPlanGuidanceAnswer[\s\S]{0,500}visibleLabel[\s\S]{0,600}answerWeeklyPlan\(value\)/, '点击经营目标必须复用周计划回答链路并把选择写入对话');
+assert.match(conversationPanelSource, /onWeeklyPlanObjective=\{sendWeeklyPlanGuidanceAnswer\}/, '对话面板必须接通经营目标的直接选择动作');
+assert.match(weeklyPlanHookSource, /企业基础档案尚未建立。请先完成首页的新手卡片/, '完全缺少企业档案时必须指向真实新手入口，不能伪造企业资料');
+assert.match(weeklyPlanSource, /确认方案，查看预算[\s\S]*确认预算并开始运营/, '周计划弹窗必须分开确认执行方案和预算启动');
 assert.doesNotMatch(weeklyPlanSource, /Checkbox|generationAuthorized|确认授权/, '周计划弹窗不得增加独立授权复选框或授权按钮');
 assert.match(weeklyPlanHookSource, /confirmedWeeklyExecution/, '启动成功必须由真实运行与任务回执确认');
 assert.match(weeklyPlanHookSource, /approveGoal\(current\.goal\.id, current\.plan\.businessPackage\.revision, true\)/, '周计划确认必须发送显式生成授权');
@@ -587,7 +598,7 @@ assert.match(assistantStylesSource, /@media \(forced-colors:\s*active\)[\s\S]*\.
 assert.match(composerSource, /h-11 min-w-11[\s\S]{0,520}aria-label="添加附件"/, '附件操作必须保留至少 44px 的可访问触控目标');
 assert.match(composerSource, /h-11 w-11[\s\S]{0,400}aria-label=\{uploading \? '正在上传附件' : '发送消息'\}/, '发送操作必须保留 44×44px 的可访问触控目标');
 
-const attachmentSendSource = sourceSection('const sendComposerMessage = useCallback', 'return { send, sendComposerMessage }', '附件发送流程', sendHookSource);
+const attachmentSendSource = sourceSection('const sendComposerMessage = useCallback', 'return { send, sendComposerMessage, sendWeeklyPlanGuidanceAnswer }', '附件发送流程', sendHookSource);
 assert.match(attachmentSendSource, /studioApi\.uploadMaterialFile/, '附件必须通过真实的我的素材上传接口持久化');
 assert.match(attachmentSendSource, /if \(!result\.ok \|\| !result\.material\?\.id\)/, '没有真实素材编号时不得展示上传成功');
 assert.match(attachmentSendSource, /uploadedAttachmentCacheRef\.current\.set/, '部分上传成功后必须缓存真实回执，重试不得重复上传');

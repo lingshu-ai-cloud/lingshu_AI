@@ -11,6 +11,11 @@
   text-rendering: optimizeLegibility;
 }
 .ls-design-system :where(button, input, textarea, select) { font: inherit; }
+.ls-design-system .ant-select .ant-select-input {
+  background: transparent;
+  box-shadow: none;
+}
+.ls-design-system .ant-select .ant-select-selection-item { color: var(--ls-text); }
 .ls-design-system :where(h1, h2, h3, h4, h5, h6) {
   color: var(--ls-text);
   letter-spacing: normal;
