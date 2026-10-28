@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Input, Select, Space, Spin } from 'antd';
-import { ChevronDown, Zap } from 'lucide-react';
 import { assistantWeeklyActionsApi, weeklyActionScopeTokens, type WeeklyAssistantAction, type WeeklyActionContext, type WeeklyActionReceipt, type WeeklyCapacityProposal } from '../../lib/assistantWeeklyActionsApi';
 import type { WeeklyScheduleCapacityInput, WeeklyScheduleProposal } from '../../../shared/contracts/socialWeeklyScheduleRevision';
 import { isContentProductionPlatform } from '../../../shared/contracts/contentProductionPlatforms';
@@ -37,13 +36,12 @@ export function weeklyActionsForPage(page: string): WeeklyAssistantAction[] {
   return [];
 }
 
-type Props = { page: string; scopeKey: string; disabled: boolean; onReceipt: (receipt: WeeklyActionReceipt) => void; onBusyChange?: (busy: boolean) => void };
+type Props = { page: string; scopeKey: string; disabled: boolean; actionRequest?: { action: WeeklyAssistantAction; id: number } | null; onReceipt: (receipt: WeeklyActionReceipt) => void; onBusyChange?: (busy: boolean) => void };
 type Answers = { packageKey: string; productId: string; goal: string; accountId: string; platform: string; dueAt: string; targetId: string; note: string; publishingAccountId: string; publishAt: string };
 const emptyAnswers = (): Answers => ({ packageKey: '', productId: '', goal: '', accountId: '', platform: '', dueAt: '', targetId: '', note: '', publishingAccountId: '', publishAt: '' });
 
 /** Explicit intake is deliberately separate from free-form chat and model output. */
-export default function AssistantWeeklyActions({ page, scopeKey, disabled, onReceipt, onBusyChange }: Props) {
-  const [expanded, setExpanded] = useState(false);
+export default function AssistantWeeklyActions({ page, scopeKey, disabled, actionRequest, onReceipt, onBusyChange }: Props) {
   const [action, setAction] = useState<WeeklyAssistantAction | null>(null);
   const [context, setContext] = useState<WeeklyActionContext | null>(null);
   const [answers, setAnswers] = useState<Answers>(emptyAnswers);
@@ -64,7 +62,7 @@ export default function AssistantWeeklyActions({ page, scopeKey, disabled, onRec
   const actions = weeklyActionsForPage(page);
   useEffect(() => {
     fence.current += 1; controller.current?.abort(); locked.current = false;
-    setAction(null); setContext(null); setExpanded(false); setAnswers(emptyAnswers()); setError(''); setReceipt(null); setBusy(false);
+    setAction(null); setContext(null); setAnswers(emptyAnswers()); setError(''); setReceipt(null); setBusy(false);
     setCreateInput(null); setCapacityProposal(null); setBudgetText(''); setScheduleInput(null); setScheduleProposal(null);
     setLegacyBudgetText('');
     onBusyChange?.(false);
@@ -88,6 +86,7 @@ export default function AssistantWeeklyActions({ page, scopeKey, disabled, onRec
     } catch (e) { if (fence.current === generation) setError(e instanceof Error ? e.message : '无法读取周任务。'); }
     finally { if (fence.current === generation) { setBusy(false); locked.current = false; onBusyChange?.(false); } }
   };
+  useEffect(() => { if (actionRequest && actions.includes(actionRequest.action)) void begin(actionRequest.action); }, [actionRequest?.id]);
   const update = <K extends keyof Answers>(key: K, value: Answers[K]) => { setAnswers(current => ({ ...current, [key]: value })); setError(''); };
   const selectedPackage = context?.packages.find(item => item.packageId === answers.packageKey);
   const standaloneCreate = action === 'create' && answers.packageKey === STANDALONE_CONTENT_PACKAGE_KEY;
@@ -136,7 +135,7 @@ export default function AssistantWeeklyActions({ page, scopeKey, disabled, onRec
         const product = selectableProducts.find(item => item.id === answers.productId);
         if (!product || !STANDALONE_PLATFORM_OPTIONS.some(item => item.value === answers.platform)) return;
         window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: standaloneContentNavigation({ requestId: Date.now(), product, goal: answers.goal, platform: answers.platform }) }));
-        setExpanded(false); setAction(null); setContext(null); setAnswers(emptyAnswers()); setStep(0);
+        setAction(null); setContext(null); setAnswers(emptyAnswers()); setStep(0);
         return;
       }
       if (!selectedPackage || (!legacyCreate && !selectedAccount) || !selectableProducts.some(p => p.id === answers.productId)) return;
@@ -193,15 +192,10 @@ export default function AssistantWeeklyActions({ page, scopeKey, disabled, onRec
     } catch (e) { if (generation === fence.current) setError(e instanceof Error ? e.message : '排期操作未完成，请查看周任务状态。'); }
     finally { if (generation === fence.current) { locked.current = false; setBusy(false); onBusyChange?.(false); } }
   };
-  if (!actions.length) return null;
+  if (!actions.length || !action) return null;
   return <section className="shrink-0 bg-surface px-3 py-2" aria-label="周任务行动入口">
-    <div className="flex items-center justify-between gap-2">
-      <Button type="text" icon={<Zap size={14} />} disabled={disabled || busy} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>执行任务</Button>
-      {expanded && <Button type="text" aria-label="收起执行任务" title="收起执行任务" icon={<ChevronDown size={16} />} onClick={() => setExpanded(false)} />}
-    </div>
-    {expanded && <div className="max-h-[45dvh] space-y-3 overflow-y-auto py-2">
-      {!action ? <Space wrap>{actions.map(item => <Button key={item} disabled={disabled} onClick={() => void begin(item)}>{WEEKLY_ACTION_LABELS[item]}</Button>)}</Space>
-        : <>
+    <div className="max-h-[45dvh] space-y-3 overflow-y-auto py-2">
+      <>
           <div className="flex items-center justify-between gap-2"><strong>{WEEKLY_ACTION_LABELS[action]}</strong><Button type="text" disabled={busy} onClick={() => { setAction(null); setError(''); }}>取消</Button></div>
           {busy && !context ? <Spin tip="正在读取真实周任务" /> : receipt ? <Alert type={receipt.state.includes('fail') ? 'error' : 'info'} title={receipt.message} /> : capacityProposal ? <>
             {!scheduleInput ? <>
@@ -240,7 +234,7 @@ export default function AssistantWeeklyActions({ page, scopeKey, disabled, onRec
             <Space><Button disabled={busy || step === 0} onClick={() => { setStep(value => value - 1); setError(''); }}>上一步</Button><Button type="primary" loading={busy} disabled={disabled} onClick={() => current === 'confirm' ? void submit() : next()}>{current === 'confirm' ? standaloneCreate ? '新建自由任务' : action === 'revise' && target?.model === 'legacy' ? '进入原制作页面修改' : needsPublishingConfiguration ? '确认账号与发布时间' : action === 'publish' ? '确认进入发布流程' : '确认提交周任务' : '下一步'}</Button></Space>
           </>}
           {error && <Alert type="error" title={error} action={!context ? <Button disabled={busy} onClick={() => void begin(action)}>重新读取</Button> : undefined} />}
-        </>}
-    </div>}
+        </>
+    </div>
   </section>;
 }

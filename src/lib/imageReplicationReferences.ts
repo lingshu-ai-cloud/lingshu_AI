@@ -54,3 +54,12 @@ export async function readImageReplicationReferences(selectedId?: string): Promi
   }
   return items;
 }
+
+/** Explicitly requested once for an old collected post; a transport failure is never replayed automatically. */
+export async function reanalyzeCollectedImageReference(sourceRecordId: string): Promise<void> {
+  const response = await fetch(`/api/overseas/videos/${encodeURIComponent(sourceRecordId)}/reanalyze-image`, {
+    method: 'POST', headers: authHeader(), cache: 'no-store',
+  });
+  const result = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
+  if (!response.ok || result.ok !== true) throw new Error(result.error || `参考图补充分析失败（HTTP ${response.status}）`);
+}

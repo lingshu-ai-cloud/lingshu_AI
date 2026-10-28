@@ -21,7 +21,7 @@ export const socialImageApi = {
   confirmReferenceProduct: (task:SocialImageCreationTask,decision:'auto'|'present'|'absent') => request<{ok:true;task:SocialImageCreationTask}>(`/tasks/${encodeURIComponent(task.id)}/reference-product-check`,{method:'POST',body:JSON.stringify({expectedVersion:task.version,decision})}),
   enqueueExecution: (task:SocialImageCreationTask) => request<{ok:true;task:SocialImageCreationTask;execution:SocialImageExecutionReceipt}>(`/tasks/${encodeURIComponent(task.id)}/execution`,{method:'POST',body:JSON.stringify({expectedVersion:task.version})}),
   retryExecution: (task:SocialImageCreationTask) => request<{ok:true;task:SocialImageCreationTask;execution:SocialImageExecutionReceipt}>(`/tasks/${encodeURIComponent(task.id)}/execution/retry`,{method:'POST',body:JSON.stringify({expectedVersion:task.version})}),
-  getContentExecution: (contentId:string) => request<{ok:true;task:SocialImageCreationTask;execution:SocialImageExecutionReceipt|null}>(`/content-tasks/${encodeURIComponent(contentId)}/execution`),
+  getContentExecution: (contentId:string) => request<{ok:true;task:SocialImageCreationTask;execution:SocialImageExecutionReceipt|null;durationHistorySeconds:number[]}>(`/content-tasks/${encodeURIComponent(contentId)}/execution`),
   createOrResumeRun: (contentTaskId: string, input: {
     expectedContentTaskVersion: string;
     idempotencyKey: string;

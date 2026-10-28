@@ -304,8 +304,8 @@ export async function browserTaskWorkspace(scope: BrowserScope): Promise<Browser
   return browserApplication.browserTaskWorkspace(scope);
 }
 
-export async function approveGoalForReview(tenantId: string, userId: string, goalId: string, packageRevision: number | undefined, members: Array<{id: string}>, authorization?: import('../../shared/contracts/contentGenerationAuthorization.js').ContentGenerationAuthorization) {
-  return goalActivationApplication.approveGoalForReview(tenantId, userId, goalId, packageRevision, members, authorization);
+export async function approveGoalForReview(tenantId: string, userId: string, goalId: string, packageRevision: number | undefined, members: Array<{id: string}>, authorization?: import('../../shared/contracts/contentGenerationAuthorization.js').ContentGenerationAuthorization, overBudgetQuoteKey = '') {
+  return goalActivationApplication.approveGoalForReview(tenantId, userId, goalId, packageRevision, members, authorization, overBudgetQuoteKey);
 }
 
 export async function configureWorkflowFollowupTemplate(

@@ -149,7 +149,9 @@ export const digitalEmployeeApi = {
     }),
   weeklyReferenceReadiness: (goalId: string) => request<{
     ready: boolean; requiredCount: number; boundCount: number; missingCount: number;
+    videoMissingCount: number; imageMissingCount: number;
   }>(`/goals/${encodeURIComponent(goalId)}/reference-readiness`),
+  rebindWeeklyImageReferences: (goalId: string) => request<DigitalEmployeeOverview>(`/goals/${encodeURIComponent(goalId)}/rebind-image-references`, { method: 'POST' }),
   rebuildGoalFromLatestFacts,
   recommendPackage: (goalId: string) => request<WeeklyPackage>(`/goals/${encodeURIComponent(goalId)}/package/recommend`, { method: "POST" }),
   generatePackageDetails: (goalId: string) => request<DigitalEmployeeOverview>(
@@ -181,12 +183,13 @@ export const digitalEmployeeApi = {
   ),
   linkTaskProject: (runId: string, taskId: string, projectId: string) => request<DigitalEmployeeOverview>(`/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/link-project`, { method: "POST", body: JSON.stringify({ projectId }) }),
   packageOptions: () => request<{ members: Array<{ id: string; name: string }>; projects: Array<{ id: string; title: string }>; customers: Array<{ id: string; name: string }> }>("/package-options"),
-  approveGoal: (goalId: string, packageRevision?: number, contentGenerationAuthorized = false) =>
+  approveGoal: (goalId: string, packageRevision?: number, contentGenerationAuthorized = false, finishedFilmOverBudgetQuoteKey = '') =>
     request<DigitalEmployeeOverview>(
       `/goals/${encodeURIComponent(goalId)}/approve`,
       {
         method: "POST",
-        body: JSON.stringify({ packageRevision, ...(contentGenerationAuthorized ? { contentGenerationAuthorization: newContentGenerationAuthorization() } : {}) }),
+        body: JSON.stringify({ packageRevision, ...(contentGenerationAuthorized ? { contentGenerationAuthorization: newContentGenerationAuthorization() } : {}),
+          ...(finishedFilmOverBudgetQuoteKey ? { finishedFilmOverBudgetQuoteKey } : {}) }),
         // Starting a week persists the run before the first Agent pass. That
         // pass can include provider and browser work, so do not leave the UI
         // waiting indefinitely for the same HTTP response. The page treats an

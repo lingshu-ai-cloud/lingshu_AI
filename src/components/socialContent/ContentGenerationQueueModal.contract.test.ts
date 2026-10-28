@@ -37,15 +37,13 @@ assert.equal(modalMountCount, 1, '内容生成队列弹窗必须只在全局应�
 assert.match(shell, /<ContentGenerationQueueModal\s*\/>/, '应用壳必须承载唯一的全局队列弹窗');
 assert.match(modal, /const show=[^\n]+setRequest\(detail\);setSettingsOpen\(false\);setOpen\(true\)/, '统一事件必须携带请求并打开弹窗');
 assert.match(modal, /addEventListener\(CONTENT_GENERATION_QUEUE_OPEN_EVENT,show\)/, '任意入口必须通过同一全局事件打开弹窗');
-assert.match(modal, /request\.source==='weekly'\?'周任务包':'内容生成队列'/, '弹窗标题必须反映周任务包或统一队列范围');
-assert.match(modal, /request\.source==='weekly'\?'本周全部计划任务':'周计划 \+ 临时单条'/, '弹窗必须明确当前任务来源范围');
-assert.match(modal, /request\.source==='weekly'\?<WeeklyTaskPackageView data=\{overview\}\/>:<CreationTaskWorkspace/, '周任务包入口必须展示全部真实周计划任务，不能继续复用内容生成队列');
-assert.match(modal, /本周经营目标、全部计划阶段、任务依赖、负责 Agent 和真实运行状态/, '周任务包说明必须覆盖完整计划范围');
-assert.match(assistantWorkBookmark, /aria-label="打开周任务包"[\s\S]{0,240}<span>周任务包<\/span>/, '助手侧边入口必须使用周任务包名称并保留可访问名称');
-assert.match(assistantWorkBookmark, /openContentGenerationQueue\(\{ view: 'tasks', source: 'weekly' \}\)/, '周任务包书签必须只打开真实周计划任务');
+assert.match(modal, /settingsOpen\?'Agent 设置':'内容生成队列'/, '任务队列不再展示另一份周计划详情');
+assert.doesNotMatch(modal, /WeeklyTaskPackageView/, '旧周任务包弹窗不得继续展示');
+assert.match(assistantWorkBookmark, /aria-label="打开本周运营计划"[\s\S]{0,240}<span>本周运营计划<\/span>/, '助手入口必须使用统一周计划名称');
+assert.match(assistantWorkBookmark, /onClick=\{openAssistantWeeklyPlan\}/, '助手入口必须打开统一周计划弹窗');
 assert.doesNotMatch(assistantWorkBookmark, /打开内容生成队列|<span>内容生成队列<\/span>/, '助手侧边入口不得继续暴露旧的内容生成队列名称');
 for (const entrypoint of entrypointSources) {
-  assert.match(entrypoint.source, /openContentGenerationQueue\(/, `${entrypoint.relativePath} 必须打开全局统一队列`);
+  if (entrypoint.relativePath !== '../assistant/AssistantWorkBookmark.tsx') assert.match(entrypoint.source, /openContentGenerationQueue\(/, `${entrypoint.relativePath} 必须打开全局统一队列`);
   assert.doesNotMatch(entrypoint.source, /<CreationTaskWorkspace\b/, `${entrypoint.relativePath} 不得嵌入第二份内容队列`);
 }
 const contentCreationOverview = fs.readFileSync(new URL('../ContentCreationOverviewPage.tsx', import.meta.url), 'utf8');
@@ -53,7 +51,7 @@ assert.match(contentCreationOverview, /<CreationTaskWorkspace data=\{overview\} 
 assert.doesNotMatch(contentCreationOverview, /openContentGenerationQueue\(/, '内容创作页不得再通过按钮打开任务弹窗');
 
 assert.match(workspace, /aria-label="内容生成队列视图"[\s\S]{0,240}label:'任务列表'[\s\S]{0,120}label:'发布日历'/, '统一弹窗必须在同一工作区切换任务列表和发布日历');
-assert.match(workspace, /aria-label="任务来源筛选"[\s\S]{0,260}label:'周计划'[\s\S]{0,120}label:'临时单条'/, '统一弹窗必须提供周计划和临时单条来源筛选');
+assert.doesNotMatch(workspace, /aria-label="任务来源筛选"|aria-label="内容生成任务状态筛选"/, '任务列表不再展示来源和状态筛选');
 
 assert.match(helper, /taskId\?: string;[\s\S]{0,80}contentId\?: string;/, '统一入口请求必须支持任务和内容标识');
 assert.match(helper, /detail: \{ requestId: requestSequence, view: 'tasks', metric: 'all', source: 'all', status: 'all', \.\.\.request \}/, '统一入口必须原样保留调用方传入的聚焦详情请求');

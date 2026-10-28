@@ -24,6 +24,11 @@ test('only real execution blockers and reviews need confirmation; saved draft pr
   for(const status of ['delivered','awaiting_publish','awaiting_metrics','reviewed'] as const)assert.equal(creationTaskState({...task,status}).category,'completed');
   assert.equal(creationTaskState({...task,status:'producing',runId:'r1',readiness:{complete:true,missing:[]}}).statusLabel,'创作中');
 });
+test('completed tasks lead the default queue without changing newest-first order within each group',()=>{
+  const newer={...task,taskId:'newer',createdAt:'2026-10-28T00:00:00Z'};
+  const completed={...task,taskId:'completed',status:'delivered',createdAt:'2026-10-25T00:00:00Z'};
+  assert.deepEqual(creationTaskRows([task,newer,completed],[]).map(row=>row.taskId),['completed','newer','t1']);
+});
 test('calendar and task table share identity, omit undated tasks and preserve date-only entries',()=>{
   const rows=creationTaskRows([task],[{...weekly,socialContentTaskId:'',origin:'weekly_plan'},{...weekly,id:'w3',contentId:'c3',socialContentTaskId:'',plannedPublishDate:''}]);
   const events=creationTaskCalendar(rows);

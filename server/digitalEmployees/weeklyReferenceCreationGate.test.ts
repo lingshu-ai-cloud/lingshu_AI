@@ -19,7 +19,7 @@ const evidence = (id: string) => ({ id, duration: 3, updatedAt: '2026-10-12T00:0
 
 test('new weekly task reports the exact shortage before establishing an empty-library plan', () => {
   assert.deepEqual(weeklyReferenceCreationGate(pack(plan('one'), plan('two')), []), {
-    ready: false, requiredCount: 2, boundCount: 0, missingCount: 2,
+    ready: false, requiredCount: 2, boundCount: 0, missingCount: 2, videoMissingCount: 2, imageMissingCount: 0,
   });
 });
 
@@ -28,7 +28,7 @@ test('only distinct bound and production-admissible references count', () => {
   assert.equal(weeklyReferenceCreationGate(pack(plan('one', 'good'), plan('two', 'good')), library).missingCount, 1);
   assert.equal(weeklyReferenceCreationGate(pack(plan('one', 'good'), plan('two', 'summary-only')), library).missingCount, 1);
   assert.deepEqual(weeklyReferenceCreationGate(pack(plan('one', 'good')), library), {
-    ready: true, requiredCount: 1, boundCount: 1, missingCount: 0,
+    ready: true, requiredCount: 1, boundCount: 1, missingCount: 0, videoMissingCount: 0, imageMissingCount: 0,
   });
 });
 
@@ -44,4 +44,10 @@ test('goal creation checks the proposed reference bindings before persisting a g
   assert.ok(creation.indexOf('weeklyReferenceCreationGate(recommendedPackage, referenceLibrary.items)') > 0);
   assert.ok(creation.indexOf("error: 'weekly_reference_shortage'") < creation.indexOf('requiredCreate<GoalRecord>'));
   assert.ok(creation.indexOf('requiredCreate<GoalRecord>') < creation.indexOf('requiredCreate<PlanRecord>'));
+});
+
+test('weekly reference matching does not confuse missing production assets with missing video analysis', () => {
+  const source = readFileSync(new URL('./weeklyPackagePreparation.ts', import.meta.url), 'utf8');
+  assert.match(source, /const producibleReferences = videos\.items\.filter\(hasParseableExactVideoAnalysis\)/);
+  assert.doesNotMatch(source, /referenceCoveredByProductionEvidence/);
 });

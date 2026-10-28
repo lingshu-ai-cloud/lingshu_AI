@@ -10,7 +10,7 @@ import WeeklyStartConflictAlert from './WeeklyStartConflictAlert';
 import WeeklyProductionStudioEntry from './smartBusiness/WeeklyProductionStudioEntry';
 import PlanHistoryDialog from './PlanHistoryDialog';
 import { Suspense, useEffect, useState, type Dispatch, type SetStateAction } from 'react';
-import { SmartBusinessDashboard, WeeklyCommandCenter, WeeklyPlanDetailsDrawer, BusinessInterpretation, deferredWorkspaceFallback } from './digitalEmployeeDeferredViews';
+import { SmartBusinessDashboard, WeeklyCommandCenter, BusinessInterpretation, deferredWorkspaceFallback } from './digitalEmployeeDeferredViews';
 import BusinessOverviewLanding from './smartBusiness/BusinessOverviewLanding';
 import BusinessOverviewDetailDrawer from './smartBusiness/BusinessOverviewDetailDrawer';
 import { BusinessOverviewSampleInterpretation } from './smartBusiness/BusinessOverviewSampleWork';
@@ -20,6 +20,7 @@ import { digitalEmployeeApi, buildTaskDeepLink, dispatchDigitalEmployeeDeepLink,
 import type { WeeklyStartConflict } from '../lib/weeklyStartValidation';
 import { weeklyWorkStatus } from '../lib/weeklyWorkStatus';
 import { AGENT_SETTINGS_OPEN_EVENT, openContentGenerationQueue } from '../lib/contentGenerationQueue';
+import { openAssistantWeeklyPlan } from '../lib/assistantWeeklyPlanEvents';
 
 export type WorkspaceView = 'today' | 'matrix' | 'overview' | 'live' | 'review' | 'rules';
 type Setter<T> = Dispatch<SetStateAction<T>>;
@@ -63,7 +64,6 @@ export interface ConfiguredDigitalEmployeeWorkspaceProps {
   weeklyPlanOpen: boolean;
   newGoal: boolean;
   planHistoryOpen: boolean;
-  weeklyPlanDetailsOpen: boolean;
   applicationGuideOpen: boolean;
   applicationGuideEntry: 'start' | 'presenter';
   weeklyStartDialogOpen: boolean;
@@ -77,7 +77,6 @@ export interface ConfiguredDigitalEmployeeWorkspaceProps {
   setWeeklyPlanOpen: Setter<boolean>;
   setNewGoal: Setter<boolean>;
   setPlanHistoryOpen: Setter<boolean>;
-  setWeeklyPlanDetailsOpen: Setter<boolean>;
   setApplicationGuideOpen: Setter<boolean>;
   setApplicationGuideEntry: Setter<'start' | 'presenter'>;
   setWeeklyStartDialogOpen: Setter<boolean>;
@@ -107,12 +106,12 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
     active, data, busy, error, activeRun, canCreateNextGoal, viewGoalId, workspaceView,
     businessLine, contentPlatform, selectedAccountId, selectedContentItemId,
     weeklyStudioContentId, weeklyStartConflict, weeklyPlanOpen, newGoal,
-    planHistoryOpen, weeklyPlanDetailsOpen, applicationGuideOpen,
+    planHistoryOpen, applicationGuideOpen,
     applicationGuideEntry, weeklyStartDialogOpen,
     onboardingWelcomeOpen, setError, setViewGoalId,
     setWorkspaceView, setSelectedTaskId, setSelectedContentItemId,
     setWeeklyStudioContentId, setWeeklyPlanOpen, setNewGoal, setPlanHistoryOpen,
-    setWeeklyPlanDetailsOpen, setApplicationGuideOpen, setApplicationGuideEntry,
+    setApplicationGuideOpen, setApplicationGuideEntry,
     setWeeklyStartDialogOpen, setOnboardingWelcomeOpen, onNavigate, onOpenMonitor,
     load, act, returnToLatest, openWeeklyStartConfirmation,
     presentConfirmedWeeklyExecution, publishWeeklyWorkUpdate,
@@ -121,11 +120,11 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
   } = props;
   useEffect(() => {
     const openSettings = () => {
-      setWeeklyPlanOpen(false);setWeeklyPlanDetailsOpen(false);setPlanHistoryOpen(false);setWorkspaceView('rules');
+      setWeeklyPlanOpen(false);setPlanHistoryOpen(false);setWorkspaceView('rules');
     };
     window.addEventListener(AGENT_SETTINGS_OPEN_EVENT, openSettings);
     return () => window.removeEventListener(AGENT_SETTINGS_OPEN_EVENT, openSettings);
-  }, [setPlanHistoryOpen,setWeeklyPlanDetailsOpen,setWeeklyPlanOpen,setWorkspaceView]);
+  }, [setPlanHistoryOpen,setWeeklyPlanOpen,setWorkspaceView]);
   if (!data.config) return null;
   const goal = data.goal;
     const dashboardView = workspaceView === "matrix"
@@ -264,7 +263,6 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
       </div>
     ) : undefined;
     const weeklyPlanControls = <>
-      {goal && !viewGoalId && <Button data-growth-tour="weekly-task" onClick={() => setWeeklyPlanDetailsOpen(true)} icon={<CalendarRange size={15}/>}>查看当前周计划</Button>}
       <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>
       <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={!activeRun && (!goal || canCreateNextGoal) ? <CalendarRange size={15}/> : activeRun && !recoverableProductionTask && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
     </>;
@@ -278,9 +276,9 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
       onMetricClick={goal ? metric => {
         setSelectedContentItemId("");
         if (metric === "waiting_review") { openContentGenerationQueue({view:'tasks',metric:'waiting_review',source:'weekly'}); return; }
-        if (metric === "planned_videos" || metric === "planned_duration") { openContentGenerationQueue({view:'tasks',source:'weekly'}); return; }
+        if (metric === "planned_videos" || metric === "planned_duration") { openAssistantWeeklyPlan(); return; }
         if (metric === "settled_cost") { setWorkspaceView("review"); return; }
-        setWeeklyPlanDetailsOpen(true);
+        openAssistantWeeklyPlan();
       } : undefined}
       notice={!activeRun && !viewGoalId && missingReferenceMasters.length > 0
         ? <><p className="mr-auto text-xs leading-5 text-text-secondary"><strong className="text-warning">参考不足：</strong>本周 {missingReferenceMasters.length} 条复刻视频尚未绑定通过逐镜精确分析的爆款参考，当前不能开始生产。先完成参考分析，再重新匹配计划。</p><Button size="small" onClick={() => onNavigate?.('inspirationMarket')}>查看爆款参考</Button></>
@@ -379,7 +377,6 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
         </section>
       </div>}
       {planHistoryOpen&&<PlanHistoryDialog goals={data.goals} onClose={()=>setPlanHistoryOpen(false)}/>}
-      {weeklyPlanDetailsOpen&&<Suspense fallback={deferredWorkspaceFallback}><WeeklyPlanDetailsDrawer data={data} open onClose={()=>setWeeklyPlanDetailsOpen(false)}/></Suspense>}
       <BusinessOverviewDetailDrawer detail={sampleWeeklyPlanOpen && sampleWeekly ? {
         title: '本周经营计划',
         summary: '当前页面的计划概览。制定周计划会进入实际编辑流程，预览数字不会写入业务数据。',

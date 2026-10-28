@@ -349,7 +349,7 @@ assert.match(layoutSource, /resetHomeFirstRun\(pagePreferenceScope\(activeSessio
 assert.match(appPageSlotSource, /firstRunRequestKey=\{session\.demo\?\.guideTrigger \? session\.demo\.guideScope : undefined\}/, 'an account guide reset must restore the hi assistant home first-run cards on the next verified session');
 assert.match(pageSource, /addEventListener\('lingshu:open-digital-employee-guide'/, 'Smart Business must respond to the sidebar guide entry');
 assert.doesNotMatch(pageSource, /SMART OPERATIONS/, 'the redundant Smart Operations masthead must be removed');
-assert.match(weeklyPlanControlsSource, /查看当前周计划/, 'the current-plan controls must expose the user-requested read-only current plan action');
+assert.doesNotMatch(weeklyPlanControlsSource, /查看当前周计划/, 'the redundant current-plan button must be removed');
 assert.doesNotMatch(weeklyPlanControlsSource, /Agent 设置/, 'Agent settings must not remain in the weekly-plan header');
 assert.match(weeklyPlanControlsSource, /历史计划[\s\S]{0,1500}weeklyControlLabel/, 'the current-plan controls must retain history and the primary execution action');
 assert.match(currentPlanSource, /actions=\{weeklyPlanControls\}/, 'the current-plan header must receive the weekly-plan controls');
@@ -383,8 +383,8 @@ for (const removedCopy of ['本周计划详情', '确认本周视频计划', '�
   assert.doesNotMatch(pageSource, new RegExp(removedCopy), `the removed weekly-plan detail flow must not retain: ${removedCopy}`);
 }
 assert.match(pageSource, /aria-label="周计划生成"/, 'new and next-week goals may retain a dedicated editing flow');
-assert.match(pageSource, /const \[weeklyPlanDetailsOpen, setWeeklyPlanDetailsOpen\] = useState\(false\)/, 'the page must own explicit state for the in-page weekly-plan drawer');
-assert.match(pageSource, /weeklyPlanDetailsOpen&&<Suspense[^>]*><WeeklyPlanDetailsDrawer data=\{data\} open onClose=\{\(\)=>setWeeklyPlanDetailsOpen\(false\)\}/, 'the detailed weekly plan must remain in-page and close without navigation');
+assert.doesNotMatch(pageSource, /weeklyPlanDetailsOpen|WeeklyPlanDetailsDrawer data=\{data\}/, 'the duplicate weekly-plan drawer must be removed');
+assert.match(currentPlanSource, /openAssistantWeeklyPlan\(\)/, 'weekly metrics must open the assistant weekly-plan modal');
 assert.match(pageSource, /setWeeklyPlanOpen\(false\);[\s\S]{0,200}setWorkspaceView\("today"\)[\s\S]{0,300}aria-label=\"当前周计划\"/, 'the assistant weekly-plan action must focus the inline current-plan summary without restoring the removed drawer');
 assert.doesNotMatch(pageSource, /BusinessAnnouncementBar/, 'the Smart Business home must not retain the deleted announcement bar');
 assert.match(pageSource, /const openWeeklyPlan = \(\) => \{[\s\S]{0,320}setNewGoal\(true\)[\s\S]{0,120}setWeeklyPlanOpen\(true\)[\s\S]{0,520}addEventListener\('lingshu:open-weekly-plan'/, 'the assistant entry must open the same weekly-plan composer as the page action');
@@ -433,7 +433,7 @@ assert.doesNotMatch(pageSource, /<BusinessOverviewTabs\b/, '经营总览 must re
 assert.match(workspaceTabsSource, /<Tabs key=\{identity\} aria-label="经营总览页内视图"/, 'retained standalone business modules must keep their accessible shared Ant tabs');
 const outlineFlowSource = pageSource.slice(pageSource.indexOf('const createWeeklyOutline'), pageSource.indexOf('const generateCurrentPlanDetails'));
 assert.match(outlineFlowSource, /digitalEmployeeApi\.createGoal/, 'weekly goal creation must persist before product confirmation');
-assert.match(confirmWeeklyPlanSource, /prepareWeeklyPlanForLaunch\(source[\s\S]{0,900}launchRequestSent = true;[\s\S]{0,220}approveGoal/, 'one confirmation must prepare persisted video details before requesting the real run');
+assert.match(confirmWeeklyPlanSource, /prepareWeeklyPlanForLaunch\(source[\s\S]{0,2400}launchRequestSent = true;[\s\S]{0,220}approveGoal/, 'one confirmation must prepare persisted video details before requesting the real run');
 assert.match(weeklyLaunchPreparationSource, /generatePackageDetails\(goal\.id\)[\s\S]{0,2200}detail\?\.status === 'ready'/, 'the shared launch preparation must verify the persisted detail receipt before any entry point can approve');
 assert.match(weeklyPlanCalendarSource, /publication\?\.title/, 'weekly calendar cards must show the future publishing title');
 assert.match(weeklyPlanCalendarSource, /planningEvidence\?\.referenceThumbnailUrl/, 'weekly calendar cards must render persisted viral thumbnails');
@@ -450,7 +450,7 @@ assert.match(smartBusinessFeatureSource, /function inspirationReferenceForPlan[\
 assert.match(publishingCalendarSource, /detailsTitle="内容制作进度"[\s\S]{0,600}WeeklyContentProgressPanel/, 'the Digital Employee publishing calendar must open read-only content progress in the shared drawer');
 assert.match(publishingCalendarSource, /onOpenReference[\s\S]{0,350}inspirationReferenceNavigationDetail/, 'the drawer must retain the exact persisted inspiration reference as a secondary action');
 assert.doesNotMatch(confirmWeeklyPlanSource + weeklyLaunchPreparationSource, /approvalBlocked|missingProducts|missingReferences|readiness\.canStart/, 'launch must not duplicate production or publishing readiness rules in the UI');
-assert.match(confirmWeeklyPlanSource, /api\.approveGoal\(goal\.id, preparedPackage\.revision, true\)/, 'launch must submit the server-prepared plan revision with explicit generation authorization');
+assert.match(confirmWeeklyPlanSource, /api\.approveGoal\(goal\.id, preparedPackage\.revision, true,/, 'launch must submit the server-prepared plan revision with explicit generation authorization');
 assert.match(digitalEmployeeApiSource, /approveGoal:[\s\S]{0,900}AbortSignal\.timeout\(12_000\)/, 'weekly launch must stop indefinite loading and hand unknown results to read-only reconciliation');
 assert.match(digitalEmployeeApiSource, /generatePackageDetails:[\s\S]{0,700}AbortSignal\.timeout\(20_000\)/, 'weekly detail preparation must stop indefinite loading and hand unknown results to read-only reconciliation');
 assert.match(inspirationSource, /receiveReference[\s\S]{0,2200}resolveInspirationReference\([\s\S]{0,900}setSelectedVideo\(resolved\.video\)/, 'Inspiration Center must resolve and open the requested viral-video detail');
@@ -459,8 +459,8 @@ assert.match(inspirationReferenceResolverSource, /analysisSource: 'weekly-plan-s
 assert.match(inspirationSource, /resolved\.source === 'weekly-plan-snapshot'[\s\S]{0,200}setSelectedVideo\(resolved\.video\)/, 'a missing source must open the frozen snapshot instead of a fabricated live record');
 assert.match(weeklyGoalPanelSource, /请至少安排 1 条视频；投流金额必须大于 0。/, 'weekly-plan validation must name the editable process fields instead of showing a generic warning');
 assert.match(pageSource, /page === "socialPlanning"[\s\S]{0,160}void controlWeeklyWork\(\)/, 'the account-matrix next step must share the direct-start/new-goal control instead of reopening the removed detail page');
-assert.match(weeklyPlanControlsSource, /查看当前周计划/, 'a persisted weekly plan must expose a direct read-only plan action');
-assert.match(weeklyPlanControlsSource, /onClick=\{\(\) => setWeeklyPlanDetailsOpen\(true\)\}[\s\S]{0,120}查看当前周计划/, 'viewing the current weekly plan must open the in-page detail drawer');
+assert.doesNotMatch(weeklyPlanControlsSource, /查看当前周计划|setWeeklyPlanDetailsOpen/, 'the duplicate current-plan button and drawer must be removed');
+assert.match(currentPlanSource, /openAssistantWeeklyPlan\(\)/, 'plan metrics must reuse the assistant plan confirmation');
 assert.doesNotMatch(weeklyPlanControlsSource, /setWorkspaceView\("matrix"\)|getElementById\("agent-weekly-calendar"\)|scrollIntoView/, 'viewing weekly tasks must not change tabs or scroll to the employee calendar');
 assert.match(weeklyPlanControlsSource, /历史计划/, 'Smart Business must retain plan history outside the active-run controls');
 assert.doesNotMatch(weeklyPlanControlsSource, /删除旧任务/, 'active weekly controls must not expose the destructive legacy cancellation action');
@@ -788,7 +788,7 @@ assert.match(weeklyLaunchSource, /const presentConfirmedWeeklyExecution[\s\S]{0,
 assert.match(pageSource, /weeklyPlanOpen && \(!goal \|\| newGoal\) && !activeRun/, 'an active run must hide the next-goal editor');
 assert.doesNotMatch(confirmWeeklyPlanSource, /firstMissingReadiness|approvalBlocked/, 'readiness gaps must be resolved in their production stage, not as a blanket launch gate');
 assert.match(packageSource, /issues.length > 0/, 'invalid packages must block launch and explain missing dependencies');
-assert.match(pageSource, /<WeeklyPlanDetailsDrawer data=\{data\} open/, 'the active weekly plan must expose persisted plan details');
+assert.doesNotMatch(pageSource, /<WeeklyPlanDetailsDrawer data=\{data\} open/, 'the duplicate weekly-plan drawer must remain removed');
 assert.match(packageSource, /每条内容发布到一个账号计一次/, 'bounded publishing must explain that the limit counts actual account-level publish actions');
 assert.doesNotMatch(pageSource, /required\.add\(["'](?:products|viral_library|customers)["']\)/, 'new tenants must not be blocked from starting merely because products, inspiration, or customers are still empty');
 
@@ -915,7 +915,7 @@ assert.match(pageSource, /title="确认开始本周生产"/, 'weekly production 
 assert.match(pageSource, /okText="确认周计划"/, 'weekly production must expose one direct plan confirmation action');
 assert.doesNotMatch(pageSource, /generationAuthorized|我授权数字员工开始本周内容生成任务/, 'weekly production must not show a separate generation authorization control');
 assert.match(pageSource, /纯产品内容不要求数字人形象/, 'the weekly confirmation must not impose a presenter gate on product-only plans');
-assert.match(confirmWeeklyPlanSource, /approveGoal\(goal\.id, preparedPackage\.revision, true\)/, 'confirming the weekly plan must implicitly record generation authorization');
+assert.match(confirmWeeklyPlanSource, /approveGoal\(goal\.id, preparedPackage\.revision, true,/, 'confirming the weekly plan must implicitly record generation authorization');
 
 console.log('DigitalEmployeePage contract tests passed');
 

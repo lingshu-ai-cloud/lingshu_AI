@@ -30,6 +30,31 @@ test('crawler analyzer deduplicates image URLs and keeps Qwen primary evidence',
   assert.match(result.analysis?.productionLabels?.[0]?.sourceSha256 || '', /^[a-f0-9]{64}$/);
 });
 
+test('stored reference reanalysis reads tenant-scoped original bytes and binds its label to that image', async () => {
+  const bytes = Buffer.from([9, 8, 7]);
+  let reads = 0;
+  const analyzer = createImagePostEvidenceAnalyzer({ store, collection: 'trend_videos', mediaDir: '/unused',
+    normalizeThumbnailUrl: url => url,
+    readStoredReference: async (tenantId, url) => {
+      assert.equal(tenantId, 'tenant-1');
+      assert.equal(url, '/api/overseas/videos/record-1/image/0');
+      reads++;
+      return { bytes, mimeType: 'image/png' };
+    },
+    analyzeQwen: async input => {
+      assert.equal(input.images[0]?.base64, bytes.toString('base64'));
+      return { ...evidence, productionLabels: [{ imageIndex: 1, kind: 'product_only', productPresence: 'present',
+        evidence: '可见瓶装产品', confidence: .9, sourceSha256: null, verification: 'unverified' }] };
+    },
+  });
+  const result = await analyzer.analyzeImagePostBestEffort({ ...item, tenantId: 'tenant-1',
+    imageUrls: ['/api/overseas/videos/record-1/image/0'] }, '');
+  assert.equal(result.status, 'analyzed');
+  assert.equal(reads, 1);
+  assert.equal(result.analysis?.productionLabels?.[0]?.productPresence, 'present');
+  assert.match(result.analysis?.productionLabels?.[0]?.sourceSha256 || '', /^[a-f0-9]{64}$/);
+});
+
 test('each image production label is tied to the analyzed bytes; failed images stay unknown', async () => {
   const analyzer = createImagePostEvidenceAnalyzer({ store, collection: 'trend_videos', mediaDir: '/unused', normalizeThumbnailUrl: url => url,
     fetcher: async url => String(url).endsWith('/missing.png') ? new Response(null, { status: 404 }) : fetcher(),

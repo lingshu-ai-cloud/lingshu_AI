@@ -28,6 +28,7 @@ test('image choices remain visible and production shows only the current automat
   assert.doesNotMatch(conversationSource, /请先填写本次制作费用上限|保存并等待费用核验/, '不能用费用核验阻止新任务');
   assert.doesNotMatch(executionSource, /<Timeline|stages\.map/, '会话进度不得展开全部内部节点');
   assert.match(executionSource, /data-image-current-stage=\{activeStage\[0\]\}/, '会话进度只显示当前真实节点');
+  assert.doesNotMatch(executionSource, /<strong>图文制作进度<\/strong>|<p className="mt-2 text-sm">\{task\?\.status/, '会话进度卡上方不得重复显示进度标题和总状态');
   assert.match(executionSource, /原参考记录缺少可核验的风格标签，系统已按广告式产品图制作/, '旧记录降级时说明缺少标签，不误称图片风格无法判断');
   assert.match(executionSource, /working\?<Spin size="small"\/>/, '自动生产时必须显示持续工作状态');
   assert.doesNotMatch(executionSource, /这条任务未记录制作费用上限/, '缺少预算不阻塞生产');
@@ -35,7 +36,8 @@ test('image choices remain visible and production shows only the current automat
 
 test('product presence stays system-owned and uncertain references retain the same task for replacement', () => {
   assert.doesNotMatch(conversationSource, /<fieldset|<Radio\.Group|参考图中是否有产品|请人工核对/);
-  assert.match(conversationSource, /confirmReferenceProduct\(task, 'auto'\)/);
+  assert.match(conversationSource, /confirmReferenceProduct\(current, 'auto'\)/);
+  assert.match(conversationSource, /reanalyzeCollectedImageReference/);
   assert.match(conversationSource, /let task = awaitingReference \|\| await createImageReplicationDraft/);
   assert.match(conversationSource, /socialImageApi\.updateTask\(task, \{ referenceUrls/);
   assert.match(conversationSource, /setAwaitingReference\(pendingTask\)/);

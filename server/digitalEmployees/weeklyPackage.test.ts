@@ -5,6 +5,7 @@ import './contentPlanRecommendation.test.js';
 import { recommendPackage, compilePackage, normalizePackage, repairCollapsedWeeklyVideoProduction, validatePackage, validatePackageForStart, grantCovers, packageConfig, criticalBusinessConfigChanges } from './weeklyPackage.js';
 import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
 import { estimateWeeklyMixedProduction } from '../../shared/contracts/weeklyMixedContentPlan.js';
+import { fillMatrixVideos } from '../../src/lib/weeklyMatrix.js';
 const config = normalizeDigitalEmployeeConfig({ companyName: 'Test', industry: 'Tools', focusProducts: 'A', operatingMaturity: 'starting', publishingTargets: [{ platform: 'youtube', accountId: 'account-a', accountLabel: 'A' }] });
 const goal = normalizeWeeklyGoal({ objective: '跑通首条发布', startsAt: '2026-09-06', endsAt: '2026-09-12', contentPlatforms: ['youtube'] }, config);
 const pack = recommendPackage(goal, config);
@@ -19,6 +20,12 @@ assert.equal(mixedSlots.length, 15, 'weekly package freezes all publication posi
 assert.equal(mixedSlots.filter(slot => slot.productionRole === 'original').length, 10, 'only ten productions are charged');
 assert.equal(mixedSlots.filter(slot => slot.kind === 'image' && slot.productionRole === 'original').length, 4);
 assert.equal(mixedPack.tasks.find(task => task.templateId === 'production')?.videoPlans?.length, 6);
+assert.ok(mixedPack.tasks.find(task => task.templateId === 'production')?.videoPlans?.every(plan => !plan.matrix?.accountId),
+  'creative production must not be attached to provisional publishing accounts');
+const changedPublishingQuota = fillMatrixVideos({ ...mixedPack, matrixPlan: mixedPack.matrixPlan?.map(row => ({ ...row, weeklyCount: 1 })) }, mixedConfig.videoDefaults, mixedGoal.endsAt);
+assert.equal(changedPublishingQuota.tasks.find(task => task.templateId === 'production')?.videoPlans?.length, 6,
+  'changing provisional account quotas must not change creative production count');
+assert.equal(mixedPack.directorPlan?.paidMediaBudget, 10 * 36, 'Facebook media outline follows ten planned posts at US$5 each');
 assert.equal(mixedPack.directorPlan?.productionBudgetMin, estimateWeeklyMixedProduction(mixedSlots).minCny,
   'new mixed plans keep the public-model estimate instead of a legacy per-video floor');
 assert.equal(mixedPack.operatingContext?.outputs.count, 15);
@@ -27,6 +34,11 @@ assert.deepEqual(mixedPack.matrixPlan?.map(row => [row.platform, row.weeklyCount
 assert.ok((mixedPack.operatingContext?.budget.productionMinCny || 0) >= 25, 'public price estimate includes the six video originals');
 assert.ok((mixedPack.operatingContext?.budget.productionMaxCny || 0) > (mixedPack.operatingContext?.budget.productionMinCny || 0));
 assert.deepEqual(normalizePackage(mixedPack).mixedContentSlots, mixedSlots, 'persisted package retains the mixed slots');
+const imageBoundSlots = mixedSlots.map(slot => slot.kind === 'image' && slot.productionRole === 'original'
+  ? { ...slot, referenceId: `image-${slot.slotId}`, referenceTitle: '爆款图文参考', referenceSourceUrl: 'https://example.com/post' }
+  : slot);
+assert.deepEqual(normalizePackage({ ...mixedPack, mixedContentSlots: imageBoundSlots }).mixedContentSlots, imageBoundSlots,
+  'persisted package must retain validated image reference bindings');
 assert.equal(repairCollapsedWeeklyVideoProduction(mixedPack).operatingContext?.outputs.count, 15, 'legacy video repair must not collapse mixed publication slots');
 assert.equal(normalizePackage(mixedPack).directorPlan?.productionBudgetMin,
   mixedPack.directorPlan?.productionBudgetMin, 'legacy video repair must preserve the public mixed-cost quote');

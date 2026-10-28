@@ -10,6 +10,7 @@ import { estimateWeeklyMixedProduction, type WeeklyMixedContentSlot } from '../.
 import { mixedWeeklyRecommendation } from './weeklyMixedContentPackage.js';
 import { buildWeeklyPlan, type DigitalEmployeeConfig, type WeeklyGoalInput, type WeeklyPlanDraft } from './domain.js';
 import { scheduleWeeklyVideos } from '../../src/lib/weeklyGoalSchedule.js';
+import { DEFAULT_FACEBOOK_PROMOTION_CNY } from '../../src/lib/defaultFacebookPromotion.js';
 
 const splitMarkets = (value: string): string[] => [...new Set(value.split(/[、，,；;\n]/).map(item => item.trim()).filter(Boolean))];
 
@@ -95,6 +96,7 @@ export function buildWeeklyOperatingContext(
 
 export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeConfig, ownerId = '', ownerName = ''): WeeklyPackage {
   const base = buildWeeklyPlan(goal, config);
+  const mixedRecommendation = mixedWeeklyRecommendation({ goal, config });
   const maturity = config.operatingMaturity || 'growing';
   const participation = config.defaultParticipation || 'agent';
   const keys = new Set(base.tasks.map(t => t.key));
@@ -102,9 +104,8 @@ export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeC
     templateId: template.id, title: template.title,
     ownerId: participation === 'team' && !['review'].includes(template.id) ? ownerId : '',
     ownerName: participation === 'team' && ownerId ? ownerName : '', dueAt: goal.endsAt, notes: taskGuidance(maturity, template.id, config.operatingAssessment), sourceProjectIds: [],
-    ...(template.id === 'production' ? { videoPlans: goal.videoPlans?.length ? goal.videoPlans : [normalizeVideoPlan({ ...config.videoDefaults, productName: config.focusProducts.split(/[、，,；;]/)[0], theme: '介绍产品的用途与特点', platform: goal.contentPlatforms[0] })] } : {}),
+    ...(template.id === 'production' ? { videoPlans: mixedRecommendation ? [] : goal.videoPlans?.length ? goal.videoPlans : [normalizeVideoPlan({ ...config.videoDefaults, productName: config.focusProducts.split(/[、，,；;]/)[0], theme: '介绍产品的用途与特点', platform: goal.contentPlatforms[0] })] } : {}),
   }));
-  const mixedRecommendation = mixedWeeklyRecommendation({ goal, config });
   const matrixPlan = goal.businessLine === 'customer_conversion' ? [] : mixedRecommendation?.rows || defaultMatrixPlan(config, goal.contentPlatforms, goal.objective);
   const baseContentCount = tasks.find(t => t.templateId === 'production')?.videoPlans?.length || 0;
   const platformVersionTarget = mixedRecommendation?.slots.filter(slot => slot.kind === 'video' && slot.productionRole === 'original').length
@@ -120,7 +121,9 @@ export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeC
   // This is a public-price planning estimate, not user paid-call authority.
   initialDirectorPlan.productionBudget = imageQuote ? imageQuote.maxCny : originalTarget * MASTER_VIDEO_COST_MAX_CNY + imageMax;
   initialDirectorPlan.productionBudgetMax = initialDirectorPlan.productionBudget;
-  initialDirectorPlan.paidMediaBudget = Math.round((goal.promotionPlans || []).reduce((sum, item) => sum + item.budgetCny, 0) * 100) / 100;
+  initialDirectorPlan.paidMediaBudget = Math.round(((goal.promotionPlans?.length
+    ? goal.promotionPlans.reduce((sum, item) => sum + item.budgetCny, 0)
+    : mixedRecommendation ? mixedRecommendation.slots.filter(slot => slot.platform === 'facebook').length * DEFAULT_FACEBOOK_PROMOTION_CNY : 0)) * 100) / 100;
   let recommended: WeeklyPackage = { revision: 1, referenceSourcePolicy: 'existing_library_only',
     ...(mixedRecommendation ? { mixedContentSlots: mixedRecommendation.slots } : {}),
     maturity, operatingAssessment: normalizeAssessment(config.operatingAssessment), participation, tasks,
@@ -177,6 +180,9 @@ export function normalizePackage(raw: WeeklyPackage): WeeklyPackage {
       presentation: slot.presentation === 'image' ? 'image' as const : 'video' as const,
       productionRole: slot.productionRole === 'adaptation' ? 'adaptation' as const : 'original' as const,
       originalSlotId: clean(slot.originalSlotId, 120),
+      ...(slot.kind === 'image' && slot.productionRole === 'original' && clean(slot.referenceId, 160)
+        ? { referenceId: clean(slot.referenceId, 160), referenceTitle: clean(slot.referenceTitle, 500),
+          referenceSourceUrl: clean(slot.referenceSourceUrl, 2_000) } : {}),
     } satisfies WeeklyMixedContentSlot)) } : {}),
     ...(raw.directorPlan !== undefined ? { directorPlan: normalizeDirectorPlan(raw.directorPlan) } : {}),
     ...(raw.matrixPlan !== undefined ? { matrixPlan: normalizeMatrixPlan(raw.matrixPlan) } : {}),

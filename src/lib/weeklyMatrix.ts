@@ -144,6 +144,24 @@ export function fillMatrixVideos(pack: WeeklyPackage, defaults: Partial<VideoCre
   const rows = pack.matrixPlan || [];
   const existing = pack.tasks.find(t => t.templateId === 'production');
   const sourcePlans = existing?.videoPlans || [];
+  if (pack.mixedContentSlots) {
+    // Publishing slots are a provisional distribution outline. They must not
+    // determine the creative count through account quotas or freeze an account
+    // on a generated video; the user chooses the destination at publish time.
+    const originals = pack.mixedContentSlots.filter(slot => slot.kind === 'video' && slot.productionRole === 'original');
+    const plans = originals.map((_, index) => normalizeVideoPlan({
+      ...defaults, ...sourcePlans[index], contentId: sourcePlans[index]?.contentId || crypto.randomUUID(),
+      route: sourcePlans[index]?.route || 'clone', platform: sourcePlans[index]?.platform || 'facebook',
+      theme: sourcePlans[index]?.theme || `待编导确认的买家问题 ${index + 1}`,
+      productName: sourcePlans[index]?.productName || rows[0]?.productName || '',
+      matrix: undefined,
+    }));
+    const linked = linkMatrixVersionsToMasters(plans, plans.length);
+    const production = existing ? { ...existing, videoPlans: linked } : { templateId: 'production' as const, title: '制作产品视频', ownerId: '', ownerName: '', dueAt, notes: '', sourceProjectIds: [], videoPlans: linked };
+    const tasks = existing ? pack.tasks.map(task => task.templateId === 'production' ? production : task) : [...pack.tasks, production];
+    return { ...pack, tasks, ...(pack.directorPlan ? { directorPlan: { ...pack.directorPlan,
+      originalTarget: linked.length, platformVersionTarget: linked.length, publishTarget: pack.mixedContentSlots.length } } : {}) };
+  }
   const assignedByAccount = new Map(rows.map(row => [row.accountId, sourcePlans.filter(plan => plan.matrix?.accountId === row.accountId)]));
   const unassigned = sourcePlans.filter(plan => !plan.matrix?.accountId);
   const plans: VideoCreationPlan[] = [];
@@ -206,8 +224,8 @@ export function matrixIssues(pack: WeeklyPackage): string[] {
       ? pack.mixedContentSlots.filter(slot => slot.accountId === row.accountId).length
       : assigned.length + row.sourceProjectIds.length;
     if (plannedCount !== row.weeklyCount) issues.push(`${row.platform} 账号的内容数量与本周计划不一致，请补齐内容计划或调整条数`);
-    if (pack.mixedContentSlots && assigned.length !== pack.mixedContentSlots.filter(slot => slot.accountId === row.accountId
-      && slot.kind === 'video' && slot.productionRole === 'original').length) issues.push('本周视频任务与混合内容制作位不一致');
+    if (pack.mixedContentSlots && plans.length !== pack.mixedContentSlots.filter(slot => slot.kind === 'video'
+      && slot.productionRole === 'original').length) issues.push('本周视频任务与混合内容制作位不一致');
     if (publishing && row.connected !== false && !pack.authorization.accountIds.includes(row.accountId)) issues.push('已连接矩阵账号不在本周允许发布的账号范围内');
     if (assigned.some(plan => {
       const hasIndependentProduct = Boolean(plan.productId?.trim() && plan.productName.trim());

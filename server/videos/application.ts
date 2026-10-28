@@ -1,4 +1,5 @@
 import { normalizeThumbnailUrl } from '../routes/videoCrawlerProviderProjection.js';
+import { readSocialImageReferenceBytes } from '../socialImage/socialImageReferenceBytes.js';
 import { createVideoTenantListing } from '../routes/videoTenantListing.js';
 import { registerVideoListingRoutes } from '../routes/videoListingRoutes.js';
 import { createVideoThumbnailPersistence } from '../routes/videoThumbnailPersistence.js';
@@ -265,6 +266,7 @@ export function createVideoApplication(videosRouter: Router) {
 
   const { fetchImageForAnalysis, analyzeImagePostBestEffort } = createImagePostEvidenceAnalyzer({
     store, collection: COL, mediaDir: MEDIA_DIR, normalizeThumbnailUrl,
+    readStoredReference: readSocialImageReferenceBytes,
   });
 
   const { persistThumbnail: persistImagePostThumbnail, persistImages: persistImagePostImages } = createImagePostMediaPersistence({

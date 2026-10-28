@@ -15,7 +15,7 @@ import { resolveImageReplicationIntake, type ImageReplicationIntake, type ImageR
 import { createImageReplicationDraft, imageReplicationDraftIssue,
   type ImageReplicationDraft, type ImageReplicationReference } from '../../lib/imageReplicationDraft';
 
-import { readImageReplicationReferences } from '../../lib/imageReplicationReferences';
+import { readImageReplicationReferences, reanalyzeCollectedImageReference } from '../../lib/imageReplicationReferences';
 import { imageReplicationReferenceRatio } from '../../lib/imageReplicationReferenceRatio';
 import ImageCreationTaskExecution from './ImageCreationTaskExecution';
 
@@ -58,6 +58,7 @@ export default function ImageReplicationConversation({ request, onShowCreations,
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [error, setError] = useState('');
+  const [analysisMessage, setAnalysisMessage] = useState('');
   const [reload, setReload] = useState(0);
   const [created, setCreated] = useState<SocialImageCreationTask>();
   const [awaitingReference, setAwaitingReference] = useState<SocialImageCreationTask>();
@@ -165,8 +166,20 @@ export default function ImageReplicationConversation({ request, onShowCreations,
     if (!isCurrent()) { setError('登录状态已变化，请重新打开创作。'); return; }
     frozen.current ||= structuredClone(draft());
     setObjective(frozen.current.objective); setAudience(frozen.current.audience); setCallToAction(frozen.current.callToAction);
-    locked.current = true; setBusy(true); setSubmitted(true); setError('');
+    locked.current = true; setBusy(true); setSubmitted(true); setError(''); setAnalysisMessage('');
     let pendingTask: SocialImageCreationTask | undefined;
+    const confirmAndQueue = async (current: SocialImageCreationTask) => {
+      const checked = current.referenceProductCheck?.decision === 'present'
+        ? current : (await socialImageApi.confirmReferenceProduct(current, 'auto')).task;
+      if (!isCurrent()) return;
+      if (checked.referenceProductCheck?.decision === 'absent') {
+        setAwaitingReference(checked); setSubmitted(false); frozen.current = undefined; setStep(0);
+        setError('参考图不符合本次制作要求，请更换参考图。');
+        return;
+      }
+      const queued = await socialImageApi.enqueueExecution(checked);
+      if (isCurrent()) setCreated(queued.task);
+    };
     try {
       let task = awaitingReference || await createImageReplicationDraft({ draft: frozen.current, operationKey: key.current,
         entrySource: request?.assistantEntry ? 'assistant' : 'workspace', isCurrent,
@@ -183,22 +196,38 @@ export default function ImageReplicationConversation({ request, onShowCreations,
         setAwaitingReference(task);
         pendingTask = task;
       }
-      if (task.referenceProductCheck?.decision !== 'present') {
-        task = (await socialImageApi.confirmReferenceProduct(task, 'auto')).task;
-        if (!isCurrent()) return;
-      }
-      if (task.referenceProductCheck?.decision === 'absent') {
-        setAwaitingReference(task); setSubmitted(false); frozen.current = undefined; setStep(0);
-        setError('参考图不符合本次制作要求，请更换参考图。');
-        return;
-      }
-      const queued = await socialImageApi.enqueueExecution(task);
-      if (isCurrent()) setCreated(queued.task);
+      await confirmAndQueue(task);
     } catch (cause) { if (isCurrent()) {
-      if ((cause as { payload?: { code?: string } })?.payload?.code === 'social_image_reference_product_uncertain') {
+      const code = (cause as { payload?: { code?: string } })?.payload?.code;
+      if (code === 'social_image_reference_analysis_outdated' && pendingTask?.referenceSnapshot?.sourceRecordId) {
+        setAwaitingReference(pendingTask);
+        setAnalysisMessage('旧版参考图分析缺少产品判断，正在对原图补充分析；原任务已保留。');
+        try {
+          await reanalyzeCollectedImageReference(pendingTask.referenceSnapshot.sourceRecordId);
+          if (isCurrent()) { setAnalysisMessage(''); await confirmAndQueue(pendingTask); }
+        } catch (analysisError) {
+          if (isCurrent()) {
+            const nextCode = (analysisError as { payload?: { code?: string } })?.payload?.code;
+            setAnalysisMessage(''); setSubmitted(false);
+            setError(nextCode === 'social_image_reference_product_uncertain'
+              ? '补充分析已完成，但仍无法可靠判断图中产品；原任务已保留，请更换参考图。'
+              : `参考图补充分析未完成，原任务已保留；${analysisError instanceof Error ? analysisError.message : '请在灵感中心查看分析状态。'}`);
+          }
+        }
+      } else if (code === 'social_image_reference_analysis_in_progress') {
         if (pendingTask) setAwaitingReference(pendingTask);
-        setSubmitted(false); frozen.current = undefined; setStep(0);
-        setError('参考图视觉分析暂未完成，请稍后重试或更换参考图。');
+        setSubmitted(false);
+        setError('参考图正在补充分析，原任务已保留；分析完成后可继续。');
+      } else if (code === 'social_image_reference_analysis_reconciliation_required') {
+        if (pendingTask) setAwaitingReference(pendingTask);
+        setSubmitted(false);
+        setError('参考图分析结果待核对，原任务已保留；不会自动重复分析。');
+      } else if (code === 'social_image_reference_product_uncertain' || code === 'social_image_reference_analysis_failed') {
+        if (pendingTask) setAwaitingReference(pendingTask);
+        setSubmitted(false);
+        setError(code === 'social_image_reference_analysis_failed'
+          ? '参考图补充分析失败，原任务已保留；请在灵感中心查看原因或更换参考图。'
+          : '参考图分析结果不足以可靠判断是否有产品，原任务已保留；请更换参考图。');
       } else setError(cause instanceof Error ? cause.message : '复刻任务保存失败，请重试');
     } }
     finally { locked.current = false; if (isCurrent()) setBusy(false); }
@@ -247,9 +276,10 @@ export default function ImageReplicationConversation({ request, onShowCreations,
               <div><dt className="text-text-secondary">交付规格</dt><dd>{PLATFORM_LABELS[platform]} · {aspectRatio} · {imageLanguageLabel(language)} · 一张图片、帖子配文与话题标签</dd></div>
               <div><dt className="text-text-secondary">预计费用（图片模型环节）</dt><dd>¥{imageReplicationModelCostRangeCny().minimum.toFixed(2)}–¥{imageReplicationModelCostRangeCny().maximum.toFixed(2)}/张</dd></div></dl>
           </section>}
+          {analysisMessage && <Alert type="info" showIcon title={analysisMessage}/>}
           {error && <Alert type="error" showIcon title={error}/>}
           <div className="flex flex-wrap gap-3">
-            {step > 0 && <Button type="primary" htmlType="submit" loading={busy} disabled={loading || (step === 1 && !product)}>{step === 1 ? '确认并继续' : submitted ? '恢复本次复刻任务' : '确认并开始制作'}</Button>}
+            {step > 0 && <Button type="primary" htmlType="submit" loading={busy} disabled={loading || (step === 1 && !product)}>{step === 1 ? '确认并继续' : awaitingReference ? '继续原任务' : submitted ? '恢复本次复刻任务' : '确认并开始制作'}</Button>}
             {step > 0 && !submitted && <Button disabled={busy} onClick={() => { setStep(value => awaitingReference ? 0 : value - 1); setError(''); }}>返回修改</Button>}
           </div>
         </form>

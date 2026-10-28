@@ -4,6 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import fs from 'node:fs';
 import AssistantWeeklyActions, { standaloneContentNavigation, weeklyActionsForPage, weeklyCapacityLimitLabel } from './AssistantWeeklyActions';
+import AssistantQuickEntries from './AssistantQuickEntries';
 
 test('only the three approved closed loops are exposed on relevant pages', () => {
   assert.deepEqual(weeklyActionsForPage('digitalEmployees'), ['create', 'revise', 'publish']);
@@ -16,14 +17,22 @@ test('capacity restrictions use readable Chinese and never expose unknown intern
   assert.equal(weeklyCapacityLimitLabel('budget'), '可用预算不足');
   assert.equal(weeklyCapacityLimitLabel('internal_provider_quota_key'), '存在容量限制，请查看周任务说明');
 });
-test('idle action disclosure does not create a task, request, or crowd the first screen', () => {
+test('idle action form does not create a task or add a second shortcut row', () => {
   const html = renderToStaticMarkup(<AssistantWeeklyActions page="smartAssets" scopeKey="tenant:user" disabled={false} onReceipt={() => { throw new Error('must not fire'); }} />);
-  assert.match(html, /执行任务/); assert.doesNotMatch(html, /确认提交周任务/);
+  assert.equal(html, '');
 });
-test('task panel can collapse without clearing intake; confirmation details start folded', () => {
+test('weekly actions follow the existing business shortcuts in one row', () => {
+  const html = renderToStaticMarkup(<AssistantQuickEntries page="digitalEmployees" weeklyActions={weeklyActionsForPage('digitalEmployees')} onQuestion={() => {}} onExecute={() => {}} onWeeklyAction={() => {}}/>);
+  assert.ok(html.indexOf('今天优先做什么') < html.indexOf('新建一条内容'));
+  for (const label of ['新建一条内容', '修改已有内容', '发布指定成片']) assert.match(html, new RegExp(label));
+  assert.doesNotMatch(html, /执行任务/);
+});
+test('task actions enter from the shared shortcut row; confirmation details start folded', () => {
   const source = fs.readFileSync(new URL('./AssistantWeeklyActions.tsx', import.meta.url), 'utf8');
-  assert.match(source, /aria-label="收起执行任务"/);
-  assert.match(source, /onClick=\{\(\) => setExpanded\(false\)\}/);
+  const shortcuts = fs.readFileSync(new URL('./AssistantQuickEntries.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /执行任务|setExpanded/);
+  assert.match(shortcuts, /weeklyActions\.map\(action => <button/);
+  assert.match(source, /actionRequest\?\.id/);
   assert.match(source, /<details[^>]*><summary[^>]*>查看任务详情<\/summary>/);
   assert.doesNotMatch(source, /<details[^>]*\sopen(?:\s|=|>)/);
   assert.doesNotMatch(source, /新增任务使用独立的额外费用上限|新增排期会暂停本周尚未执行的发布授权|纳入周任务后，按实际资料/);

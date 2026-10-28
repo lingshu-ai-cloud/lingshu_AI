@@ -104,7 +104,6 @@ export default function DigitalEmployeePage({
   const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
   const [weeklyPlanOpen, setWeeklyPlanOpen] = useState(false);
   const [planHistoryOpen, setPlanHistoryOpen] = useState(false);
-  const [weeklyPlanDetailsOpen, setWeeklyPlanDetailsOpen] = useState(false);
   const overviewRequestVersionRef = useRef(0);
   const enterpriseFactsRecoveryRef = useRef(new Map<string, Promise<void>>());
   const productionRangeLoadingRef = useRef(false);
@@ -187,7 +186,7 @@ export default function DigitalEmployeePage({
     return () => window.removeEventListener(HOME_INTRODUCTION_COMPLETE_EVENT, refreshOnboarding);
   }, []);
 
-  useEffect(()=>{let authorization=authHeader().Authorization;const clear=()=>{const next=authHeader().Authorization;if(next===authorization)return;authorization=next;overviewRequestVersionRef.current+=1;initialLoadRef.current=null;setData(null);setWeeklyStartConflict(null);setSelectedTaskId('');setSelectedContentItemId('');setSelectedAccountId('');setWeeklyPlanOpen(false);setPlanHistoryOpen(false);setWeeklyPlanDetailsOpen(false);setWorkspaceView('today');setBusinessLine('full_funnel');setContentPlatform('all');setViewGoalId('');productionRangeRef.current=undefined;setLoading(true);initialLoadRef.current=load('');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.addEventListener('storage',clear);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.removeEventListener('storage',clear);};},[]);
+  useEffect(()=>{let authorization=authHeader().Authorization;const clear=()=>{const next=authHeader().Authorization;if(next===authorization)return;authorization=next;overviewRequestVersionRef.current+=1;initialLoadRef.current=null;setData(null);setWeeklyStartConflict(null);setSelectedTaskId('');setSelectedContentItemId('');setSelectedAccountId('');setWeeklyPlanOpen(false);setPlanHistoryOpen(false);setWorkspaceView('today');setBusinessLine('full_funnel');setContentPlatform('all');setViewGoalId('');productionRangeRef.current=undefined;setLoading(true);initialLoadRef.current=load('');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.addEventListener('storage',clear);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.removeEventListener('storage',clear);};},[]);
 
   useEffect(() => {
     const businessScope = consumeBusinessPageContext("production");
@@ -623,12 +622,12 @@ export default function DigitalEmployeePage({
     active, data: configuredData, busy, error, activeRun, canCreateNextGoal, viewGoalId, workspaceView,
     businessLine, contentPlatform, selectedAccountId, selectedContentItemId,
     weeklyStudioContentId, weeklyStartConflict, weeklyPlanOpen, newGoal,
-    planHistoryOpen, weeklyPlanDetailsOpen, applicationGuideOpen,
+    planHistoryOpen, applicationGuideOpen,
     applicationGuideEntry, weeklyStartDialogOpen,
     onboardingWelcomeOpen, setError, setViewGoalId,
     setWorkspaceView, setSelectedTaskId, setSelectedContentItemId,
     setWeeklyStudioContentId, setWeeklyPlanOpen, setNewGoal, setPlanHistoryOpen,
-    setWeeklyPlanDetailsOpen, setApplicationGuideOpen, setApplicationGuideEntry,
+    setApplicationGuideOpen, setApplicationGuideEntry,
     setWeeklyStartDialogOpen, setOnboardingWelcomeOpen, onNavigate, onOpenMonitor,
     load, act, returnToLatest, openWeeklyStartConfirmation,
     presentConfirmedWeeklyExecution, publishWeeklyWorkUpdate,

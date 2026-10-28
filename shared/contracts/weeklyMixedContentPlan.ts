@@ -9,6 +9,10 @@ export interface WeeklyMixedContentSlot {
   productionRole: 'original' | 'adaptation';
   /** An adaptation must reuse this original and must not trigger another generation. */
   originalSlotId: string;
+  /** Internal reference identity for an independently produced image; never expose the ID in UI. */
+  referenceId?: string;
+  referenceTitle?: string;
+  referenceSourceUrl?: string;
 }
 
 /** Read-only quote inputs. The amount is an estimate, never paid-call authority. */

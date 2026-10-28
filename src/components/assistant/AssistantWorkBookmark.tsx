@@ -1,12 +1,12 @@
 import { CalendarRange, ChevronRight } from 'lucide-react';
-import { openContentGenerationQueue } from '../../lib/contentGenerationQueue';
+import { openAssistantWeeklyPlan } from '../../lib/assistantWeeklyPlanEvents';
 import './assistantWorkBookmark.css';
 
-/** The weekly bookmark opens the shared queue already scoped to weekly work. */
+/** The weekly bookmark opens the shared assistant confirmation modal. */
 export default function AssistantWorkBookmark() {
-  return <button type="button" className="assistant-work-bookmark" aria-label="打开周任务包" aria-haspopup="dialog" onClick={() => openContentGenerationQueue({ view: 'tasks', source: 'weekly' })}>
+  return <button type="button" className="assistant-work-bookmark" aria-label="打开本周运营计划" aria-haspopup="dialog" onClick={openAssistantWeeklyPlan}>
     <CalendarRange size={17} aria-hidden="true"/>
-    <span>周任务包</span>
+    <span>本周运营计划</span>
     <ChevronRight size={14} aria-hidden="true"/>
   </button>;
 }

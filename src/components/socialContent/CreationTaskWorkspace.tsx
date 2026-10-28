@@ -7,7 +7,7 @@ import { socialContentApi, SocialContentRequestError } from '../../lib/socialCon
 import { SOCIAL_CONTENT_TASK_REFRESH_EVENT } from '../../lib/socialContentTaskRefresh';
 import { SOCIAL_CONTENT_NAVIGATION_EVENT, readSocialContentNavigationQueryTaskId, readSocialContentNavigationTaskId } from '../../lib/socialContentContext';
 import { productionNavigationIdentity, stampProductionHistoryState } from '../../lib/productionNavigation';
-import { creationTaskCalendar, creationTaskRows, type CreationTaskCategory, type CreationTaskRow, type CreationTaskProduct } from '../../lib/creationTaskWorkspace';
+import { creationTaskCalendar, creationTaskRows, type CreationTaskRow, type CreationTaskProduct } from '../../lib/creationTaskWorkspace';
 import { studioApi } from '../../lib/studioApi';
 import CreationTaskCover from './CreationTaskCover';
 import { LsCalendar } from '../ui/LsCalendar';
@@ -18,10 +18,6 @@ import type { ContentGenerationQueueMetric, ContentGenerationQueueRequest, Conte
 
 const selectedTask = () => readSocialContentNavigationQueryTaskId('socialInspiration',window.location.search)
   || readSocialContentNavigationTaskId('socialInspiration',window.history.state);
-const selectedFilter = (): CreationTaskCategory|'all' => {
-  const value = new URLSearchParams(window.location.search).get('taskFilter');
-  return value === 'completed' || value === 'creating' || value === 'confirmation' ? value : 'all';
-};
 const selectedMetric = ():ContentGenerationQueueMetric => {
   const value=new URLSearchParams(window.location.search).get('taskMetric');
   return value==='planned'||value==='producing'||value==='waiting_review'||value==='completed'||value==='scheduled'?value:'all';
@@ -33,7 +29,7 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
   const [tasks,setTasks]=useState<SocialContentTaskSummary[]>([]),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
   const [view,setView]=useState<'calendar'|'tasks'>(()=>request?.view ?? (embeddedCalendar?'calendar':selectedTask()||new URLSearchParams(window.location.search).get('view')==='tasks'?'tasks':'calendar'));
   const [calendarPortalRevision,setCalendarPortalRevision]=useState(0);
-  const [filter,setFilter]=useState<CreationTaskCategory|'all'>(()=>request?.status ?? (embeddedCalendar?'all':selectedFilter())),[taskId,setTaskId]=useState<string|null>(()=>request?.taskId ?? (embeddedCalendar?null:selectedTask())),[contentId,setContentId]=useState<string|null>(()=>request?.contentId||null),[rowKey,setRowKey]=useState<string|null>(null);
+  const [taskId,setTaskId]=useState<string|null>(()=>request?.taskId ?? (embeddedCalendar?null:selectedTask())),[contentId,setContentId]=useState<string|null>(()=>request?.contentId||null),[rowKey,setRowKey]=useState<string|null>(null);
   const [metric,setMetric]=useState<ContentGenerationQueueMetric>(()=>request?.metric ?? (embeddedCalendar?'all':selectedMetric()));
   const [source,setSource]=useState<ContentGenerationQueueSource>(()=>request?.source||'all');
   const [exact,setExact]=useState<SocialContentTaskSummary|null>(null),[identity,setIdentity]=useState(productionNavigationIdentity);
@@ -43,15 +39,14 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
   const [unavailable,setUnavailable]=useState<NonNullable<SocialContentTaskPage['unavailableItems']>>([]);
   const refresh=()=>{setRevision(v=>v+1);onRefresh();};
   useEffect(()=>{
-    const navigation=()=>{if(embeddedCalendar||queueMode)return;const target=selectedTask();setTaskId(target);setRowKey(null);if(target){setView('tasks');setFilter('all');}};
+    const navigation=()=>{if(embeddedCalendar||queueMode)return;const target=selectedTask();setTaskId(target);setRowKey(null);if(target)setView('tasks');};
     const calendarPortal=(event:Event)=>{
       if(embeddedCalendar||queueMode)return;
       const detail=(event as CustomEvent<{page?:string;view?:string;taskFilter?:string;taskMetric?:string;navigationIdentity?:string}>).detail;
       if(detail?.page!=='socialInspiration'||detail.navigationIdentity&&detail.navigationIdentity!==productionNavigationIdentity())return;
-      const nextFilter:CreationTaskCategory|'all'=detail.taskFilter==='completed'||detail.taskFilter==='creating'||detail.taskFilter==='confirmation'?detail.taskFilter:'all';
       const nextMetric:ContentGenerationQueueMetric=detail.taskMetric==='planned'||detail.taskMetric==='producing'||detail.taskMetric==='waiting_review'||detail.taskMetric==='completed'||detail.taskMetric==='scheduled'?detail.taskMetric:'all';
-      if(detail.view==='tasks'){setView('tasks');setTaskId(null);setContentId(null);setRowKey(null);setFilter(nextFilter);setMetric(nextMetric);return;}
-      if(detail.view==='calendar'){setView('calendar');setTaskId(null);setContentId(null);setRowKey(null);setFilter('all');setMetric(nextMetric);setCalendarPortalRevision(value=>value+1);}
+      if(detail.view==='tasks'){setView('tasks');setTaskId(null);setContentId(null);setRowKey(null);setMetric(nextMetric);return;}
+      if(detail.view==='calendar'){setView('calendar');setTaskId(null);setContentId(null);setRowKey(null);setMetric(nextMetric);setCalendarPortalRevision(value=>value+1);}
     };
     const reset=()=>{setTasks([]);setUnavailable([]);setProducts([]);setExact(null);setTaskId(null);setContentId(null);setRowKey(null);setIdentity(productionNavigationIdentity());setRevision(v=>v+1);};
     const changed=()=>setRevision(v=>v+1);
@@ -63,7 +58,7 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
   },[embeddedCalendar,queueMode]);
   useEffect(()=>{
     if(!request)return;
-    setView(request.view||'tasks');setFilter(request.status||'all');setMetric(request.metric||'all');setSource(request.source||'all');
+    setView(request.view||'tasks');setMetric(request.metric||'all');setSource(request.source||'all');
     setTaskId(request.taskId||null);setContentId(request.contentId||null);setRowKey(null);
   },[request]);
   useEffect(()=>{
@@ -97,7 +92,7 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
   const updateLocation=(next:'calendar'|'tasks',row?:CreationTaskRow)=>{
     if(embeddedCalendar||queueMode)return;
     const url=new URL(window.location.href);url.searchParams.set('view',next);url.searchParams.delete('taskId');
-    if(next==='tasks'&&filter!=='all')url.searchParams.set('taskFilter',filter);else url.searchParams.delete('taskFilter');
+    url.searchParams.delete('taskFilter');
     if(metric!=='all')url.searchParams.set('taskMetric',metric);else url.searchParams.delete('taskMetric');
     if(row?.taskId)url.searchParams.set('socialContentTaskId',row.taskId);else url.searchParams.delete('socialContentTaskId');
     const state={...window.history.state};delete state.socialContentTaskId;delete state.socialContentPage;
@@ -114,10 +109,9 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
     {error&&<Alert className="m-4" type="warning" showIcon title={error}/>}
     {data.contentQueue?.sourceStatus!=='available'&&<Alert className="m-4" type="warning" title={data.contentQueue?.sourceNote||'周任务包暂时不可用，以下保留已读取的内容任务。'}/>}
     {queueMode&&selected?<CreationTaskDetailDrawer key={`${identity}:${selected.key}`} inline row={selected} overview={data} onClose={close} onUpdated={refresh} onRecover={() => { close(); setRecoveryOpen(true); }}/>:<>
-    {!embeddedCalendar&&<div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3"><span className="text-sm text-text-secondary">任务来源</span><Segmented<ContentGenerationQueueSource> aria-label="任务来源筛选" value={source} options={[{label:'全部',value:'all'},{label:'周计划',value:'weekly'},{label:'临时单条',value:'single'}]} onChange={setSource}/></div>}
     {view==='tasks'?<>
-      <div className="flex flex-wrap items-center gap-3 px-5 py-4"><Segmented aria-label="内容生成任务状态筛选" value={filter} options={[{label:'全部',value:'all'},{label:'已完成',value:'completed'},{label:'创作中',value:'creating'},{label:'待确认',value:'confirmation'}]} onChange={value=>{const next=value as CreationTaskCategory|'all';setFilter(next);setMetric('all');if(queueMode)return;const url=new URL(window.location.href);url.searchParams.delete('taskMetric');if(next==='all')url.searchParams.delete('taskFilter');else url.searchParams.set('taskFilter',next);window.history.replaceState(window.history.state,'',url);}}/>{metric!=='all'&&<Tag closable onClose={()=>setMetric('all')}>来自计划数据：{{planned:'待制作',producing:'制作中',waiting_review:'待验收成片',completed:'已完成成片',scheduled:'已排期发布'}[metric]}</Tag>}</div>
-      <Table<CreationTaskRow> rowKey="key" loading={loading} locale={{emptyText:source==='weekly'?'当前没有周任务包内容':'暂无内容生成任务'}} onRow={row=>({onClick:()=>open(row),style:{cursor:'pointer'}})} dataSource={metricRows.filter(row=>filter==='all'||row.category===filter)} size="middle" scroll={{x:960}} pagination={{defaultPageSize:20,showSizeChanger:true,showTotal:total=>`共 ${total} 条`}} columns={[
+      {metric!=='all'&&<div className="px-5 py-3"><Tag closable onClose={()=>setMetric('all')}>来自计划数据：{{planned:'待制作',producing:'制作中',waiting_review:'待验收成片',completed:'已完成成片',scheduled:'已排期发布'}[metric]}</Tag></div>}
+      <Table<CreationTaskRow> rowKey="key" loading={loading} locale={{emptyText:source==='weekly'?'当前没有周计划内容':'暂无内容生成任务'}} onRow={row=>({onClick:()=>open(row),style:{cursor:'pointer'}})} dataSource={metricRows} size="middle" scroll={{x:960}} pagination={{defaultPageSize:20,showSizeChanger:true,showTotal:total=>`共 ${total} 条`}} columns={[
         {title:'视频封面',key:'cover',width:106,render:(_,row)=><button aria-label={`查看任务：${row.title}`} onClick={()=>open(row)} className="flex h-16 w-20 items-center justify-center overflow-hidden rounded-md bg-surface-2 text-text-muted"><CreationTaskCover key={row.cover} row={row}/></button>},
         {title:'创作任务',key:'title',width:280,render:(_,row)=><button className="text-left font-semibold text-text-primary hover:text-accent" onClick={()=>open(row)}>{row.title}</button>},
         {title:'状态',key:'status',width:110,render:(_,row)=><Tag color={row.category==='confirmation'?'warning':row.category==='completed'?'success':'processing'}>{row.statusLabel}</Tag>},

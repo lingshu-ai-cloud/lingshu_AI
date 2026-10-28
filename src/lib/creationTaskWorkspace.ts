@@ -74,7 +74,7 @@ export function creationTaskRows(tasks: SocialContentTaskSummary[], weekly: Cont
     const selected=ids.length?ids.flatMap(id=>products.filter(product=>product.id===id)):products.filter(product=>product.name===legacy||product.id===legacy||`product:${product.id}`===legacy);
     const images=[...new Set(selected.flatMap(product=>product.imageUrls||[]))];
     return {...row,productImages:images,cover:row.cover||images[0]||''};
-  }).sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt)||a.key.localeCompare(b.key));
+  }).sort((a,b)=>Number(b.category==='completed')-Number(a.category==='completed')||Date.parse(b.createdAt)-Date.parse(a.createdAt)||a.key.localeCompare(b.key));
 }
 export function creationTaskCalendar(rows: CreationTaskRow[]): LsCalendarEvent[] {
   return rows.flatMap(row=>{
