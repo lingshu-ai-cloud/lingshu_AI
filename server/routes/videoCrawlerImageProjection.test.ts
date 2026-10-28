@@ -41,9 +41,23 @@ test('TikTok photo row retains source and image/engagement evidence', () => {
   assert.equal(post?.isAd, true);
 });
 
+test('TikTok single photo stays eligible when its preview cover has another URL', () => {
+  const post = apifyTikTokItemToImagePost({
+    type: 'Photo', webVideoUrl: 'https://www.tiktok.com/@factory/photo/1234567890',
+    imageUrls: ['https://cdn.example.test/one.jpg'], coverUrl: 'https://cdn.example.test/cover.jpg',
+  }, 'OEM');
+  assert.deepEqual(post?.imageUrls, ['https://cdn.example.test/one.jpg']);
+});
+
 test('TikTok video-only and spoofed source rows remain excluded', () => {
   assert.equal(apifyTikTokItemToImagePost({ type: 'Video', webVideoUrl: 'https://www.tiktok.com/@factory/video/123' }, 'OEM'), null);
   assert.equal(apifyTikTokItemToImagePost({ type: 'Photo', webVideoUrl: 'https://tiktok.com.evil.test/@factory/video/123', imageUrls: ['https://cdn.example.test/a.jpg'] }, 'OEM'), null);
+});
+
+test('explicit carousel and GIF source rows are excluded before image import', () => {
+  assert.equal(apifyInstagramItemToImagePost({ type: 'Sidecar', shortCode: 'abc', displayUrl: 'https://cdn.example.test/a.jpg' }, 'OEM'), null);
+  assert.equal(apifyTikTokItemToImagePost({ type: 'Slideshow', webVideoUrl: 'https://www.tiktok.com/@factory/photo/123', imageUrls: ['https://cdn.example.test/a.jpg'] }, 'OEM'), null);
+  assert.equal(apifyFacebookPostToImagePost({ url: 'https://www.facebook.com/factory/posts/123', type: 'GIF', media: { __typename: 'Photo', image: { uri: 'https://scontent.fbcdn.net/a.jpg' } } }, 'OEM'), null);
 });
 
 test('Facebook image projection keeps post scope, image evidence, and engagement', () => {

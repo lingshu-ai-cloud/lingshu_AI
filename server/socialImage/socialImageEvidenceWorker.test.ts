@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import sharp from 'sharp';
-import { analyzeSocialImageReference, inspectSocialImageAsset, socialImageAssetAuthorization,
+import { analyzeSocialImageReference, enterpriseProductImageAuthorization, inspectSocialImageAsset, socialImageAssetAuthorization,
   socialImageAssetManifest } from './socialImageEvidenceWorker.js';
 
 test('required asset inspection is based on decodable bytes and preserves OCR observations', async () => {
@@ -41,6 +41,21 @@ test('required asset inspection is based on decodable bytes and preserves OCR ob
   const orientedInspection = await inspectSocialImageAsset({ assetId: 'product-oriented', role: 'product', required: true,
     bytes: oriented, mimeType: 'image/jpeg' });
   assert.deepEqual(orientedInspection.dimensions, { width: 300, height: 240 }, 'EXIF orientation must be applied before evidence dimensions');
+});
+test('tenant enterprise product images are authorized without a separate material license record', async () => {
+  const bytes = await sharp({ create: { width: 240, height: 300, channels: 4, background: '#ddeeff' } }).png().toBuffer();
+  const authorization = enterpriseProductImageAuthorization('tenant-a', 'GUIANFA-RS-004');
+  const inspected = await inspectSocialImageAsset({ assetId: 'GUIANFA-RS-004', role: 'product', required: true,
+    bytes, mimeType: 'image/png', authorization });
+  assert.equal(inspected.readable, true);
+  assert.equal(inspected.rights, 'cleared');
+  assert.equal(inspected.rightsEvidenceRef, 'enterprise_profile:tenant-a:product:GUIANFA-RS-004');
+  const stale = await inspectSocialImageAsset({ assetId: 'GUIANFA-RS-004', role: 'product', required: true,
+    bytes, mimeType: 'image/png', expectedContentHash: '0'.repeat(64), authorization });
+  assert.equal(stale.readable, false, 'a changed product image must still fail its task hash binding');
+  const invalid = await inspectSocialImageAsset({ assetId: 'GUIANFA-RS-004', role: 'product', required: true,
+    bytes: Buffer.from('not-an-image'), mimeType: 'image/png', authorization });
+  assert.equal(invalid.readable, false, 'default authorization does not bypass image decoding');
 });
 test('reference worker emits normalized region, saliency and OCR evidence from actual pixels', async () => {
   const base = await sharp({ create: { width: 300, height: 300, channels: 3, background: '#202020' } }).png().toBuffer();

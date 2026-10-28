@@ -101,7 +101,7 @@ export interface DigitalEmployeeApplicationPorts {
   committedDigitalEmployeeOperatingGoals(tenantId: string, goals: GoalRecord[]): Promise<GoalRecord[]>;
   activeWorkflowHandoffsForRun(tenantId: string, runId: string): Promise<HandoffRecord[]>;
   handoffPolicyIdentity(handoff: HandoffRecord): ActiveWorkflowHandoff;
-  approveGoalForReview(tenantId: string, userId: string, goalId: string, packageRevision: number | undefined, members: Array<{id: string}>, authorization?: ContentGenerationAuthorization): Promise<{ status: number; body: unknown }>;
+  approveGoalForReview(tenantId: string, userId: string, goalId: string, packageRevision: number | undefined, members: Array<{id: string}>, authorization?: ContentGenerationAuthorization, overBudgetQuoteKey?: string): Promise<{ status: number; body: unknown }>;
   applyTaskControl: ReturnType<typeof createTaskInterventionApplication>['applyTaskControl'];
   queueDigitalEmployeeRunAdvance(tenantId: string, runId: string): void;
   resumeInitialPreparationPlan(tenantId: string, goalId: string, allowBlocked?: boolean): Promise<void>;

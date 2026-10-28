@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { Button, Modal } from 'antd';
-import { ArrowRight, BarChart3, CalendarCheck2, ChevronDown, ChevronUp, Clapperboard, Images, Megaphone, MessagesSquare, Newspaper } from 'lucide-react';
+import { AlertCircle, LoaderCircle, ArrowRight, BarChart3, CalendarCheck2, ChevronDown, ChevronUp, Clapperboard, Images, Megaphone, MessagesSquare, Newspaper } from 'lucide-react';
 import type { Page } from '../../pageRegistry';
 import { isBusinessScene, type BusinessSceneId } from '../../../shared/contracts/assistantBusinessScene';
 import { ASSISTANT_HOME_LEVEL_LABELS, ASSISTANT_HOME_QUICK_LAUNCHERS, assistantHomePromptById, type AssistantHomePrompt, type AssistantHomeQuickLauncher, type AssistantHomeQuickLauncherId } from '../../lib/assistantHomeQuickPrompts';
@@ -16,6 +16,11 @@ import CompanyReportScene from './CompanyReportScene';
 import SocialInsightDialog from './SocialInsightDialog';
 import { assistantImageReplicationPortal } from './assistantImageReplicationIntent';
 import { ASSISTANT_HOME_ACTIVITY_EVENT, type AssistantHomePromptMode, type AssistantHomeSubmitOptions, type AssistantHomePromptEventDetail } from './useAssistantHomeAnchor';
+import { weeklyHomeIndicator } from '../../lib/weeklyHomeIndicator';
+import { weeklyTaskReply } from '../contentCreationHomeReplies';
+import { WEEKLY_WORK_UPDATED_EVENT } from '../../lib/weeklyWorkEvents';
+import { WEEKLY_ACTION_LABELS } from './AssistantWeeklyActions';
+import type { WeeklyAssistantAction } from '../../lib/assistantWeeklyActionsApi';
 import './assistantHomeScenes.css';
 
 type PendingHomePrompt = { entry: AssistantHomePrompt; submitOptions?: AssistantHomeSubmitOptions };
@@ -47,10 +52,12 @@ export interface AssistantHomeScenesProps {
   overviewLoaded?: boolean;
   onPrompt: (detail: AssistantHomePromptEventDetail) => void;
   onNavigate?: (page: Page) => void;
+  weeklyActions?: WeeklyAssistantAction[];
+  onWeeklyAction?: (action: WeeklyAssistantAction) => void;
   children?: (parts: { panel: ReactNode; launchers: ReactNode }) => ReactNode;
 }
 
-export default function AssistantHomeScenes({ agent, disabled = false, variant = 'sidebar', sessionScope = '', overview: suppliedOverview, overviewLoaded, onPrompt, onNavigate, children }: AssistantHomeScenesProps) {
+export default function AssistantHomeScenes({ agent, disabled = false, variant = 'sidebar', sessionScope = '', overview: suppliedOverview, overviewLoaded, onPrompt, onNavigate, children, weeklyActions = [], onWeeklyAction }: AssistantHomeScenesProps) {
   const [activeLauncherId, setActiveLauncherId] = useState<AssistantHomeQuickLauncherId | null>(null);
   const [companyReportOpen, setCompanyReportOpen] = useState(false);
   const [socialInsightOpen, setSocialInsightOpen] = useState(false);
@@ -66,7 +73,9 @@ export default function AssistantHomeScenes({ agent, disabled = false, variant =
   const [readLoaded, setReadLoaded] = useState(false);
   const overview = suppliedOverview === undefined ? readOverview : suppliedOverview;
   const firstRunLoaded = overviewLoaded ?? readLoaded;
-  const assistantBusy = disabled;
+  const [weeklyBusy, setWeeklyBusy] = useState(false);
+  const assistantBusy = disabled || weeklyBusy;
+  const weeklyIndicator = weeklyHomeIndicator(overview);
   const uniqueId = useId();
   const panelId = variant === 'home' ? 'creator-home-operations' : `assistant-scenes-${uniqueId}`;
   const companyPanelId = `${panelId}-company`;
@@ -77,7 +86,9 @@ export default function AssistantHomeScenes({ agent, disabled = false, variant =
   const hasWeeklyPlan = Boolean(overview?.goal && overview.plan);
   const activePrompts = useMemo(() => {
     const prompts = resolveLauncherPrompts(activeLauncher);
-    if (activeLauncher?.id !== 'weekly-plan' || !firstRunLoaded || hasWeeklyPlan) return prompts;
+    if (activeLauncher?.id !== 'weekly-plan' || !firstRunLoaded) return prompts;
+    if (weeklyIndicator === 'attention') return prompts.map(entry => entry.id === 'OP-CALENDAR' ? { ...entry, label: '解决当前问题', summary: '让灵小枢说明当前缺什么，并在对话中补齐' } : entry);
+    if (hasWeeklyPlan) return prompts;
     return prompts.map(entry => entry.id === 'OP-CALENDAR' ? {
       ...entry,
       label: '创建周计划',
@@ -85,7 +96,7 @@ export default function AssistantHomeScenes({ agent, disabled = false, variant =
       prompt: '请帮我创建本周计划。',
       level: 'plan' as const,
     } : entry);
-  }, [activeLauncher, firstRunLoaded, hasWeeklyPlan]);
+  }, [activeLauncher, firstRunLoaded, hasWeeklyPlan, weeklyIndicator]);
   const canvasCollapsed = activeLauncher === null;
   useEffect(() => {
     setActiveLauncherId(null); setCompanyReportOpen(false); setHighlightOpen(false); setBusinessSceneId(null); setQueryPrompt(null); setPendingPrompt(null);
@@ -100,6 +111,38 @@ export default function AssistantHomeScenes({ agent, disabled = false, variant =
     window.addEventListener(ASSISTANT_HOME_ACTIVITY_EVENT, collapse);
     return () => window.removeEventListener(ASSISTANT_HOME_ACTIVITY_EVENT, collapse);
   }, [variant]);
+  useEffect(() => {
+    if (suppliedOverview !== undefined) return;
+    let active = true;
+    const refresh = () => { void digitalEmployeeApi.overview().then(value => { if (active) setReadOverview(value); }).catch(() => {}); };
+    window.addEventListener(WEEKLY_WORK_UPDATED_EVENT, refresh);
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 15_000);
+    return () => { active = false; window.removeEventListener(WEEKLY_WORK_UPDATED_EVENT, refresh); window.clearInterval(timer); };
+  }, [suppliedOverview, sessionScope, agent]);
+  const showWeeklyIssueInConversation = async () => {
+    if (assistantBusy) return;
+    const initial = useAssistantStore.getState().threads[agent];
+    const isCurrent = () => {
+      const current = useAssistantStore.getState().threads[agent];
+      return current.conversationKey === initial.conversationKey && current.conversationResetVersion === initial.conversationResetVersion;
+    };
+    setWeeklyBusy(true);
+    try {
+      const latest = await digitalEmployeeApi.overview();
+      const readiness = latest.goal && !latest.run ? await digitalEmployeeApi.weeklyProductionReadiness(latest.goal.id).catch(() => null) : null;
+      if (!isCurrent()) return;
+      setReadOverview(latest);
+      const store = useAssistantStore.getState();
+      store.setMessages(agent, [...store.threads[agent].messages, { role: 'user', content: assistantHomePromptById('OP-CALENDAR')!.prompt }, { role: 'assistant', content: weeklyTaskReply(latest, readiness) }]);
+      store.setFollowingLatest(agent, true);
+      setActiveLauncherId(null);
+      window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_ACTIVITY_EVENT, { detail: { active: true } }));
+    } catch {
+      if (!isCurrent()) return;
+      const store = useAssistantStore.getState();
+      store.setMessages(agent, [...store.threads[agent].messages, { role: 'assistant', content: '周计划最新状态暂时读取不到。资料和原任务都没有改动，请稍后再试。' }]);
+    } finally { setWeeklyBusy(false); }
+  };
   const fillPrompt = (entry: AssistantHomePrompt, mode: AssistantHomePromptMode = 'replace', submitOptions?: AssistantHomeSubmitOptions) => {
     onPrompt({ prompt: entry.prompt, mode, submitOptions });
     setPendingPrompt(null);
@@ -114,7 +157,7 @@ export default function AssistantHomeScenes({ agent, disabled = false, variant =
 
   const choosePrompt = (entry: AssistantHomePrompt) => {
     if (assistantBusy) return;
-    if (entry.id === 'OP-CALENDAR') { preparePrompt(entry); return; }
+    if (entry.id === 'OP-CALENDAR') { if (weeklyIndicator === 'attention') void showWeeklyIssueInConversation(); else preparePrompt(entry); return; }
     if (entry.id === 'CO-11') { openContentGenerationQueue({view:'tasks'});setActiveLauncherId(null);return; }
     if (entry.id === 'CO-07') {
       if (assistantBusy) return;
@@ -156,10 +199,10 @@ export default function AssistantHomeScenes({ agent, disabled = false, variant =
                 disabled={assistantBusy}
                 aria-expanded={entry.id === 'OP-LEADER' ? companyReportOpen : undefined}
                 aria-controls={entry.id === 'OP-LEADER' ? companyPanelId : undefined}
-                className={`creator-home__prompt-card${index === 0 ? ' creator-home__prompt-card--primary' : ''}`}
+                className={`creator-home__prompt-card${index === 0 ? ' creator-home__prompt-card--primary' : ''}${entry.id === 'OP-CALENDAR' && weeklyIndicator === 'attention' ? ' creator-home__prompt-card--attention' : ''}`}
                 onClick={() => choosePrompt(entry)}
               >
-                <span className="creator-home__prompt-card-icon">{entry.id === 'CO-13' ? <Images size={19} aria-hidden="true"/> : launcherIcon(activeLauncher.id, 19)}</span>
+                <span className="creator-home__prompt-card-icon">{entry.id === 'OP-CALENDAR' && weeklyIndicator === 'attention' ? <AlertCircle size={19} aria-hidden="true"/> : entry.id === 'CO-13' ? <Images size={19} aria-hidden="true"/> : launcherIcon(activeLauncher.id, 19)}</span>
                 <span className="creator-home__prompt-card-copy"><strong>{entry.label}</strong><span>{entry.summary}</span></span>
                 <span className={`creator-home__prompt-card-level is-${entry.level}`}>{ASSISTANT_HOME_LEVEL_LABELS[entry.level]}</span>
                 <ArrowRight size={15} aria-hidden="true"/>
@@ -181,16 +224,18 @@ export default function AssistantHomeScenes({ agent, disabled = false, variant =
             type="button"
             key={launcher.id}
             disabled={assistantBusy}
-            className={active ? 'is-active' : undefined}
+            className={[active ? 'is-active' : '', launcher.id === 'weekly-plan' && weeklyIndicator !== 'idle' ? `creator-home__suggestion--${weeklyIndicator}` : ''].filter(Boolean).join(' ') || undefined}
+            aria-label={launcher.id === 'weekly-plan' && weeklyIndicator === 'attention' ? '查看当前周计划：有问题需要处理' : launcher.id === 'weekly-plan' && weeklyIndicator === 'producing' ? '查看当前周计划：正在生产' : undefined}
             aria-controls={panelId}
             aria-expanded={active}
             onClick={() => toggleLauncher(launcher.id)}
           >
-            {launcherIcon(launcher.id, 15)}
+            {launcher.id === 'weekly-plan' && weeklyIndicator === 'attention' ? <AlertCircle size={15} aria-hidden="true"/> : launcher.id === 'weekly-plan' && weeklyIndicator === 'producing' ? <LoaderCircle size={15} aria-hidden="true"/> : launcherIcon(launcher.id, 15)}
             <span>{launcher.label}</span>
             {active ? <ChevronUp size={14} aria-hidden="true"/> : <ChevronDown size={14} aria-hidden="true"/>}
           </button>;
         })}
+        {weeklyActions.map(action => <button type="button" key={action} disabled={assistantBusy} onClick={() => onWeeklyAction?.(action)}>{WEEKLY_ACTION_LABELS[action]}</button>)}
       </div>;
   return <div className={`assistant-home-scenes assistant-home-scenes--${variant}`}>
     {children ? children({ panel, launchers }) : <>{launchers}{panel}</>}

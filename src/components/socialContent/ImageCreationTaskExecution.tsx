@@ -9,7 +9,6 @@ import ImageReplicationRunSummary from './ImageReplicationRunSummary';
 import { imageProductionEstimate } from '../../lib/imageProductionEstimate';
 import { ASSISTANT_IMAGE_REVISION_EVENT } from '../../lib/assistantImageRevision';
 
-const labels:Record<SocialImageExecutionReceipt['status'],string>={queued:'已入队，等待调度领取',running:'正在制作图文',retry_wait:'等待恢复',reconciling:'供应商回执待核对',blocked:'需要处理',paused:'已暂停',succeeded:'首版制作完成，等待审阅',cancelled:'已取消',dead_letter:'需要处理'};
 const stages=[['asset_manifest','核验企业素材'],['adaptation','分析参考图与爆点'],['director_brief','图文策划'],['render_spec','编译制作方案'],['candidate_generation','生成图文首版'],['quality_check','成片质检'],['user_approval','等待用户验收'],['delivery','图文交付']] as const;
 const issueLabels:Record<string,string>={
   social_image_reference_product_confirmation_required:'暂时无法判断图片中是否有产品，请重新确认参考图片。',
@@ -22,8 +21,11 @@ const issueLabels:Record<string,string>={
   social_image_repair_quality_requires_review:'修复后的图片需要再次质检，请先核对上一次质检回执；原任务与图片已保留。',
   social_image_quality_requires_review:'首版已生成，正在等待质量复核。',
   social_image_product_cutout_required:'当前产品缺少已核验的透明抠图，请先在产品素材库补齐；系统不会用带背景原图继续制作。',
+  social_image_product_cutout_unreadable:'已找到透明抠图，但暂时无法读取文件。请检查素材存储连接后在原任务中继续，不需重新上传。',
   social_image_product_cutout_ambiguous:'当前产品有多份可用透明抠图，请确认唯一版本后再制作。',
   social_image_product_cutout_invalid:'透明抠图的像素或素材校验未通过，请检查产品素材后再制作。',
+  social_image_product_asset_processing:'产品素材此前尚未就绪。如已在素材库看到透明图，请点击“继续生成”，系统会重新核验原任务。',
+  social_image_product_analysis_failed:'产品透明图已备好，但素材分析失败。请先检查素材库中的分析状态，修复分析服务后重新分析，再在原任务中继续生成。',
 };
 
 /** Read-only polling survives refresh; only explicit confirmation submits the durable command. */
@@ -35,13 +37,14 @@ export default function ImageCreationTaskExecution({contentTaskId}:{contentTaskI
   const [error,setError]=useState(''),[busy,setBusy]=useState(false),[details,setDetails]=useState(false),[revision,setRevision]=useState(0);
   const [readError,setReadError]=useState('');
   const [now,setNow]=useState(Date.now);
+  const [durationHistorySeconds,setDurationHistorySeconds]=useState<number[]>([]);
   useEffect(()=>{if(execution?.status!=='running')return;setNow(Date.now());const timer=setInterval(()=>setNow(Date.now()),15_000);return()=>clearInterval(timer);},[execution?.status]);
   useEffect(()=>{
     let active=true,inFlight=false;const identity=productionNavigationIdentity();
     const read=async()=>{if(inFlight)return;inFlight=true;
       try{const result=await socialImageApi.getContentExecution(contentTaskId);
         if(result.task.productionRuntime?.binding?.contentTaskId!==contentTaskId)throw new Error('图片运行与当前内容任务不一致。');
-        if(active&&identity===productionNavigationIdentity()){setTask(previous=>previous&&previous.id===result.task.id&&previous.version>result.task.version?previous:result.task);setExecution(result.execution);setReadError('');}}
+        if(active&&identity===productionNavigationIdentity()){setTask(previous=>previous&&previous.id===result.task.id&&previous.version>result.task.version?previous:result.task);setExecution(result.execution);setDurationHistorySeconds(result.durationHistorySeconds);setReadError('');}}
       catch(cause){if(active&&identity===productionNavigationIdentity())setReadError(cause instanceof Error?cause.message:'图文进度读取失败');}
       finally{inFlight=false;}};
     void read();const timer=setInterval(()=>{if(document.visibilityState==='visible')void read();},3000);
@@ -88,8 +91,8 @@ export default function ImageCreationTaskExecution({contentTaskId}:{contentTaskI
   const activeNode=activeStage?task?.productionRuntime?.nodes.find(item=>item.nodeId===activeStage[0]):undefined;
   const blocked=Boolean(execution&&['blocked','dead_letter','paused'].includes(execution.status));
   const canRetryPlanning=Boolean(blocked&&execution&&['social_image_planning_failed',
-    'social_image_product_cutout_required','social_image_product_cutout_ambiguous',
-    'social_image_product_cutout_invalid'].includes(execution.lastError||''));
+    'social_image_product_cutout_required','social_image_product_cutout_unreadable','social_image_product_cutout_ambiguous',
+    'social_image_product_cutout_invalid','social_image_product_asset_processing','social_image_product_analysis_failed'].includes(execution.lastError||''));
   const issue=execution?.lastError?issueLabels[execution.lastError]||'当前步骤未能继续，系统已保留原任务和已完成结果。':'';
   const currentPlanId=task?.productionRuntime?.nodes.find(node=>node.nodeId==='execution_plan'&&node.status==='completed')?.outputRef?.id;
   const currentPlan=task?.productionRuntime?.nodeOutputs.find(node=>node.id===currentPlanId&&node.nodeId==='execution_plan'&&node.status==='completed');
@@ -102,7 +105,6 @@ export default function ImageCreationTaskExecution({contentTaskId}:{contentTaskI
     <Button type="primary" onClick={()=>{if(identityRef.current!==productionNavigationIdentity())return;window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{page:'smartAssets',view:'publish',socialContentTaskId:contentTaskId,socialContentPage:'smartAssets',navigationIdentity:identityRef.current}}));}}>去发布</Button>
   </section>;
   return <section aria-label="图文任务进度" aria-live="polite" className="space-y-4">
-    <div><strong>图文制作进度</strong><p className="mt-2 text-sm">{task?.status==='approved'?'成片已采用并交付':execution?labels[execution.status]:'任务已保存，尚未提交执行调度'}</p></div>
     {(error||readError)&&<Alert showIcon type="warning" title={error||readError} action={<Button onClick={()=>{setError('');setRevision(v=>v+1);}}>重新读取</Button>}/>}
     {styleFallback&&<Alert showIcon type="info" title="原参考记录缺少可核验的风格标签，系统已按广告式产品图制作。"/>}
     {!task&&!error&&!readError&&<Spin description="正在读取图片任务…"/>}
@@ -112,7 +114,7 @@ export default function ImageCreationTaskExecution({contentTaskId}:{contentTaskI
         {working?<Spin size="small"/>:<span className={`h-2.5 w-2.5 shrink-0 rounded-full ${blocked?'bg-warning':'bg-success'}`} aria-hidden="true"/>}
         <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><strong>{activeStage[1]}</strong><Tag color={working?'processing':blocked?'warning':activeNode?.status==='completed'?'success':'default'}>{stageState}</Tag></div>
           <p className="mt-1 text-xs text-text-secondary">{stageDescription}</p>
-          {imageProductionEstimate(task,execution,now)&&<p className="mt-1 text-xs text-text-secondary">{imageProductionEstimate(task,execution,now)}</p>}
+          {imageProductionEstimate(task,execution,now,durationHistorySeconds)&&<p className="mt-1 text-xs text-text-secondary">{imageProductionEstimate(task,execution,now,durationHistorySeconds)}</p>}
           {canRetryPlanning&&<Button className="mt-3" type="primary" size="small" loading={busy} onClick={()=>void retry()}>继续生成</Button>}</div>
       </div>}
       {!working&&latestImage&&!candidate&&<Button onClick={()=>setDetails(value=>!value)}>{details?'返回任务进度':'审阅图片与配文'}</Button>}

@@ -3,19 +3,16 @@ import { type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { fillMatrixVideos } from '../../src/lib/weeklyMatrix.js';
 import { store } from '../storage/index.js';
 import { readTenantEnterpriseProfile, type EnterpriseProfile } from '../routes/enterprise.js';
-import { readServerProductionOnboardingReadiness, referenceCoveredByProductionEvidence } from './productionOnboardingPreflight.js';
 import { bindDefaultProductsToPackage, enrichPackageWithContentSignals } from './contentPlanRecommendation.js';
-import { benchmarkAnalysisForRecord } from '../lib/benchmarkAnalysis.js';
 import { evaluatePlannedReferenceReuse, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds } from './viralAnalysisCoverage.js';
 import { contentRoutingEvidence } from '../routes/digitalEmployeeContentEvidence.js';
 import { goalInput } from './overviewProjection.js';
 import { type DigitalEmployeeConfig } from './domain.js';
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, type GoalRecord, type PlanRecord, type RunRecord, type StoredRecord } from './records.js';
 import type { DigitalEmployeeApplicationPorts } from './applicationPorts.js';
+import { bindWeeklyImageProducts, bindWeeklyImageReferences } from './weeklyImageReferences.js';
 
 export function createWeeklyPackagePreparation(deps: Pick<DigitalEmployeeApplicationPorts, 'frozenEnterpriseProfileForPlan' | 'appendAudit'>) {
-  const frozenEnterpriseProfileForPlan: DigitalEmployeeApplicationPorts['frozenEnterpriseProfileForPlan'] = (...args) => deps.frozenEnterpriseProfileForPlan(...args);
-
   const appendAudit: DigitalEmployeeApplicationPorts['appendAudit'] = (...args) => deps.appendAudit(...args);
 
   async function recommendPackageWithTenantEvidence(
@@ -44,27 +41,16 @@ export function createWeeklyPackagePreparation(deps: Pick<DigitalEmployeeApplica
       ? fillMatrixVideos({ ...pack, matrixPlan }, config.videoDefaults || {}, goal.endsAt)
       : pack;
     const productBound = bindDefaultProductsToPackage(matrixBound, routingEvidence.products);
-    const productionEvidence = await readServerProductionOnboardingReadiness({
-      store,
-      tenantId,
-      profile: enterpriseProfile,
-      preferences: config.productionOnboarding,
-      plans: [],
-      budgetConfirmed: true,
-    });
-    const producibleReferences = videos.items.filter(item => {
-      if (!hasParseableExactVideoAnalysis(item)) return false;
-      return referenceCoveredByProductionEvidence({
-        analysis: benchmarkAnalysisForRecord(item, jsonObject<Record<string, unknown>>(item.aiAnalysis, {})),
-        preferences: config.productionOnboarding,
-        evidence: productionEvidence.evidence,
-      });
-    });
+    // Reference selection only needs an admissible analysis. Material coverage
+    // is a separate production-readiness decision, never a reason to claim the
+    // tenant has no analyzed viral videos while establishing a weekly outline.
+    const producibleReferences = videos.items.filter(hasParseableExactVideoAnalysis);
     // A reference is unique inside one weekly package, not permanently spent.
     // Keeping the full analyzed library lets a later week reuse a proven content
     // logic after real performance review, while package enrichment still
     // prevents the same source from occupying two slots in the current week.
-    return enrichPackageWithContentSignals({ pack: productBound, goal, config, videos: producibleReferences, benchmarks: benchmarks.items });
+    return bindWeeklyImageReferences(enrichPackageWithContentSignals({ pack: bindWeeklyImageProducts(productBound, routingEvidence.products), goal, config,
+      videos: producibleReferences, benchmarks: benchmarks.items }), videos.items);
   }
 
   function clearAutomaticViralReferences(pack: WeeklyPackage): WeeklyPackage {
@@ -93,22 +79,7 @@ export function createWeeklyPackagePreparation(deps: Pick<DigitalEmployeeApplica
     const production = input.pack.tasks.find(task => task.templateId === 'production');
     const plans = production?.videoPlans || [];
     const library = await store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-updatedAt', perPage: 500 });
-    const profile = (input.plan ? frozenEnterpriseProfileForPlan(input.plan, false) : null)
-      || await readTenantEnterpriseProfile(input.tenantId);
-    const productionEvidence = await readServerProductionOnboardingReadiness({
-      store,
-      tenantId: input.tenantId,
-      profile,
-      preferences: input.config.productionOnboarding,
-      plans: [],
-      budgetConfirmed: true,
-    });
-    const coveredReferenceIds = new Set(library.items.filter(item => hasParseableExactVideoAnalysis(item)
-      && referenceCoveredByProductionEvidence({
-        analysis: benchmarkAnalysisForRecord(item, jsonObject<Record<string, unknown>>(item.aiAnalysis, {})),
-        preferences: input.config.productionOnboarding,
-        evidence: productionEvidence.evidence,
-      })).map(item => item.id));
+    const coveredReferenceIds = new Set(library.items.filter(hasParseableExactVideoAnalysis).map(item => item.id));
     // Cross-week use is allowed. The evaluator receives only the current weekly
     // selection and therefore enforces one-content-one-slot for this week.
     const usedReferenceIds: string[] = [];

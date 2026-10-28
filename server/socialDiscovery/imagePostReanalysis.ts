@@ -10,6 +10,7 @@ type EvidenceResult = {
   analysis?: ImagePostEvidenceAnalysis;
   error?: string;
   provider?: 'qwen' | 'gemini';
+  providerAttempted?: boolean;
 };
 
 function tagsOf(value: unknown): string[] {
@@ -44,8 +45,12 @@ export async function reanalyzeStoredImagePost(input: {
   if (['queued', 'processing', 'unknown'].includes(String(current.imageAnalysisQueueState || ''))) {
     throw Error('image_post_queue_requires_reconciliation');
   }
+  if (current.imageAnalysisStatus === 'pending' && current.imageAnalysisAttemptId) {
+    throw Error('image_post_analysis_attempt_requires_reconciliation');
+  }
   const initialSourceHash = imagePostSourceHash(record);
   const item: CrawledImagePost = {
+    tenantId: input.tenantId,
     platform: String(record.platform || 'instagram') as CrawledImagePost['platform'],
     title: String(record.title || ''), sourceUrl: String(record.sourceUrl || ''),
     thumbnailUrl: String(record.thumbnailUrl || ''),
@@ -59,6 +64,7 @@ export async function reanalyzeStoredImagePost(input: {
     status: 'pending' as VideoStatus,
     aiAnalysis: serializeImagePostAnalysis({ ...current,
       imageAnalysisStatus: 'pending', imageAnalysisAttemptId: attemptId,
+      imageAnalysisQueueState: 'processing',
       imageAnalysisStartedAt: new Date().toISOString(), imageAnalysisError: undefined,
     }),
   })) throw Error('image_post_analysis_attempt_persistence_failed');
@@ -68,9 +74,19 @@ export async function reanalyzeStoredImagePost(input: {
   const latestAnalysis = videoAnalysisOf(latest);
   if (latestAnalysis.imageAnalysisAttemptId !== attemptId) throw Error('image_post_analysis_superseded');
   if (imagePostSourceHash(latest) !== initialSourceHash) throw Error('image_post_analysis_source_changed');
+  if (output.status === 'failed' && output.providerAttempted) {
+    const unknown = serializeImagePostAnalysis({ ...latestAnalysis,
+      imageAnalysisStatus: 'unknown', imageAnalysisQueueState: 'unknown', imageAnalysisError: output.error,
+    });
+    if (!await input.store.update(input.collection, recordId, { aiAnalysis: unknown, status: 'pending' as VideoStatus })) {
+      throw Error('image_post_analysis_result_persistence_failed');
+    }
+    throw Error('image_post_analysis_provider_result_unknown');
+  }
   const finalAnalysis = serializeImagePostAnalysis({ ...latestAnalysis,
     imageEvidence: output.analysis || latestAnalysis.imageEvidence,
     imageAnalysisStatus: output.status,
+    imageAnalysisQueueState: output.status === 'analyzed' ? 'completed' : 'failed',
     imageAnalysisError: output.error,
     analysisSource: output.status === 'analyzed' ? `${output.provider || 'qwen'}-image-evidence-v2` : 'image-metadata',
     analysisQuality: output.status === 'analyzed' ? 'image' : 'metadata',

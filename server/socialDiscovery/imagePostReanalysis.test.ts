@@ -7,7 +7,7 @@ const evidence = { version: 2 as const, status: 'analyzed' as const,
   observedFacts: [{ imageIndex: 1, subjects: ['bottle'], scene: 'studio', composition: 'center', colors: [], visibleText: [], confidence: .9 }],
   carouselFlow: [], copyEvidence: { hooks: [], sellingPoints: [], cta: [] }, reusableModules: [], uncertainties: [] };
 
-function fixture(options: { failStart?: boolean; failFinish?: boolean; changeSource?: boolean } = {}) {
+function fixture(options: { failStart?: boolean; failFinish?: boolean; changeSource?: boolean; unknownProvider?: boolean } = {}) {
   const events: string[] = [];
   let row: Record<string, unknown> = {
     id: 'record-1', tenantId: 'tenant-1', contentFormat: 'image', platform: 'instagram',
@@ -31,10 +31,12 @@ function fixture(options: { failStart?: boolean; failFinish?: boolean; changeSou
     async analyze(item: { imageUrls?: string[]; caption?: string }, keyword: string) {
       events.push('analyze');
       assert.equal(row.status, 'pending');
+      assert.equal(JSON.parse(String(row.aiAnalysis)).imageAnalysisQueueState, 'processing');
       assert.equal(item.imageUrls?.[0], '/api/overseas/videos/record-1/image/0');
       assert.equal(item.caption, 'Bottle caption');
       assert.equal(keyword, 'bottle');
       if (options.changeSource) row = { ...row, sourceUrl: 'https://example.test/post/2' };
+      if (options.unknownProvider) return { status: 'failed' as const, error: 'transport uncertain', providerAttempted: true };
       return { status: 'analyzed' as const, analysis: evidence, provider: 'qwen' as const };
     },
   };
@@ -78,4 +80,14 @@ test('active or unknown deferred work blocks a second manual supplier call', asy
   f.input.record.aiAnalysis = JSON.stringify({ ...JSON.parse(String(f.input.record.aiAnalysis)), imageAnalysisQueueState: 'unknown' });
   await assert.rejects(reanalyzeStoredImagePost(f.input), /requires_reconciliation/);
   assert.deepEqual(f.events, []);
+});
+
+test('unknown provider outcome stays durable and cannot be paid again automatically', async () => {
+  const f = fixture({ unknownProvider: true });
+  await assert.rejects(reanalyzeStoredImagePost(f.input), /image_post_analysis_provider_result_unknown/);
+  const analysis = JSON.parse(String(f.row.aiAnalysis));
+  assert.equal(analysis.imageAnalysisStatus, 'unknown');
+  assert.equal(analysis.imageAnalysisQueueState, 'unknown');
+  await assert.rejects(reanalyzeStoredImagePost({ ...f.input, record: f.row }), /requires_reconciliation/);
+  assert.equal(f.events.filter(event => event === 'analyze').length, 1);
 });

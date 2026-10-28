@@ -20,3 +20,13 @@ test('assistant weekly-goal generation persists the per-content Facebook default
   assert.equal(goal.promotionPlans?.length, 5);
   assert.equal(goal.promotionPlans?.reduce((sum, plan) => sum + plan.budgetCny, 0), 180);
 });
+
+test('default weekly outline is 15 provisional Facebook and LinkedIn publications independent of account quotas', () => {
+  const config = normalizeDigitalEmployeeConfig({ focusProducts: '产品', publishingTargets: [
+    { platform: 'facebook', accountId: 'fb', accountLabel: 'FB', weeklyCount: 2 },
+  ] });
+  const goal = defaultWeeklyGoal(config).draft;
+  assert.deepEqual(goal.contentPlatforms, ['facebook', 'linkedin']);
+  assert.equal(goal.target, 15);
+  assert.deepEqual(goal.videoPlans, []);
+});

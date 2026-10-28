@@ -15,6 +15,7 @@ import {
   evaluateServerProductionOnboardingReadiness,
   fixedYieldArchetypeForBenchmarkShot,
   inventoryFixedYieldArchetypes,
+  missingFixedYieldLocalMaterials,
   readServerProductionOnboardingReadiness,
   referenceCoveredByProductionEvidence,
   requiredFixedYieldArchetypes,
@@ -102,6 +103,17 @@ test('reference and inventory classifiers produce exact fixed-yield archetypes w
   assert.deepEqual(inventoryFixedYieldArchetypes([ownedVideo()], { tenantId: 'tenant-a' }), ['P3B_MACHINE_CLOSEUP']);
 });
 
+test('managed clone leaves non-person footage to its real per-shot executor instead of the fixed-yield catalogue', () => {
+  const plans = [{ route: 'clone' as const, productionRole: 'master' as const, productId: 'product-1',
+    benchmarkAnalysis: analysis([shot({ materialType: 'product', narrativeRole: 'product_intro', visual: '产品包装静态展示' })]) }];
+  assert.deepEqual(requiredFixedYieldArchetypes(plans), []);
+  assert.deepEqual(requiredFixedYieldLocalMaterials(plans), []);
+  assert.equal(evaluateServerProductionOnboardingReadiness({ preferences, evidence: {
+    companyReady: true, brandReady: true, productFactsReady: true, presenterReady: false,
+    voiceReady: false, inventoryArchetypes: [], budgetConfirmed: true,
+  }, plans }).ready, true);
+});
+
 test('inventory coverage accepts licensed shared video and rejects synthetic, unreviewed and image-only records', () => {
   const invalid = [
     ownedVideo({ id: 'shared', source: 'licensed_shared_material', authorization: { status: 'licensed', scope: 'shared', evidence: 'license' } }),
@@ -133,6 +145,11 @@ test('inventory readiness validates V2 rights, source revision, edit bounds, dur
   assert.deepEqual(inventoryFixedYieldArchetypes([ownedVideo()], {
     tenantId: 'tenant-a', requirements: [...factoryRequirements, ...factoryRequirements.map(item => ({ ...item, requirementId: `${item.requirementId}:second` }))],
   }), [], 'one source segment cannot be reused for two shots in the same plan');
+  const twoShots = requiredFixedYieldLocalMaterials([{ productId: 'product-1', benchmarkAnalysis: analysis([
+    shot(), shot({ shotId: 'shot-2', start: 3, end: 6 }),
+  ]) }]);
+  assert.deepEqual(missingFixedYieldLocalMaterials([ownedVideo()], { tenantId: 'tenant-a', requirements: twoShots })
+    .map(item => item.shotIndex), [1], 'assistant names only the unmatched shot, not every shot of a missing archetype');
 
   const productReference = analysis([shot({
     shotId: 'product-shot', materialType: 'product', narrativeRole: 'product_intro',

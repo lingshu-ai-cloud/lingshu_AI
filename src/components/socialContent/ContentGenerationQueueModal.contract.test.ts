@@ -10,7 +10,7 @@ const shell = fs.readFileSync(new URL('../AppShellChrome.tsx', import.meta.url),
 const configuredWorkspace = fs.readFileSync(new URL('../ConfiguredDigitalEmployeeWorkspace.tsx', import.meta.url), 'utf8');
 const assistantWorkBookmark = fs.readFileSync(new URL('../assistant/AssistantWorkBookmark.tsx', import.meta.url), 'utf8');
 const entrypointSources = [
-  '../ContentCreationHome.tsx',
+  '../assistant/AssistantHomeScenes.tsx',
   '../DigitalEmployeeHomeWork.tsx',
   '../ConfiguredDigitalEmployeeWorkspace.tsx',
   '../assistant/AssistantWorkBookmark.tsx',
@@ -46,7 +46,7 @@ assert.match(assistantWorkBookmark, /onClick=\{onOpen\}/, '周任务包书签必
 assert.match(modal, /embedded \? \{ source: 'weekly' as const \}/, '侧栏展开必须展示真实周计划任务');
 assert.doesNotMatch(assistantWorkBookmark, /打开内容生成队列|<span>内容生成队列<\/span>/, '助手侧边入口不得继续暴露旧的内容生成队列名称');
 for (const entrypoint of entrypointSources) {
-  assert.match(entrypoint.source, /openContentGenerationQueue\(/, `${entrypoint.relativePath} 必须打开全局统一队列`);
+  if (entrypoint.relativePath !== '../assistant/AssistantWorkBookmark.tsx') assert.match(entrypoint.source, /openContentGenerationQueue\(/, `${entrypoint.relativePath} 必须打开全局统一队列`);
   assert.doesNotMatch(entrypoint.source, /<CreationTaskWorkspace\b/, `${entrypoint.relativePath} 不得嵌入第二份内容队列`);
 }
 const contentCreationOverview = fs.readFileSync(new URL('../ContentCreationOverviewPage.tsx', import.meta.url), 'utf8');
@@ -54,7 +54,7 @@ assert.match(contentCreationOverview, /<CreationTaskWorkspace data=\{overview\} 
 assert.doesNotMatch(contentCreationOverview, /openContentGenerationQueue\(/, '内容创作页不得再通过按钮打开任务弹窗');
 
 assert.match(workspace, /aria-label="内容生成队列视图"[\s\S]{0,240}label:'任务列表'[\s\S]{0,120}label:'发布日历'/, '统一弹窗必须在同一工作区切换任务列表和发布日历');
-assert.match(workspace, /aria-label="任务来源筛选"[\s\S]{0,260}label:'周计划'[\s\S]{0,120}label:'临时单条'/, '统一弹窗必须提供周计划和临时单条来源筛选');
+assert.doesNotMatch(workspace, /aria-label="任务来源筛选"|aria-label="内容生成任务状态筛选"/, '任务列表不再展示来源和状态筛选');
 
 assert.match(helper, /taskId\?: string;[\s\S]{0,80}contentId\?: string;/, '统一入口请求必须支持任务和内容标识');
 assert.match(helper, /detail: \{ requestId: requestSequence, view: 'tasks', metric: 'all', source: 'all', status: 'all', \.\.\.request \}/, '统一入口必须原样保留调用方传入的聚焦详情请求');

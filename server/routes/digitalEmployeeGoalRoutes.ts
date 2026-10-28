@@ -5,12 +5,14 @@ import { type EnterpriseProfile } from './enterprise.js';
 import { configurationSnapshot, enterpriseProfileFromKnowledgeBinding } from '../digitalEmployees/configuration.js';
 
 import { buildWeeklyPlan, normalizeWeeklyGoal, validateWeeklyGoal } from '../digitalEmployees/domain.js';
-import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, type GoalRecord, type PlanRecord, type StoredRecord } from '../digitalEmployees/records.js';
+import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, type GoalRecord, type PlanRecord, type StoredRecord } from '../digitalEmployees/records.js';
 import type { DigitalEmployeeApplicationPorts } from '../digitalEmployees/applicationPorts.js';
 import { contentGenerationAuthorization } from '../../shared/contracts/contentGenerationAuthorization.js';
 import { isContentProductionPlatform } from '../../shared/contracts/contentProductionPlatforms.js';
 import { store } from '../storage/index.js';
 import { weeklyReferenceCreationGate } from '../digitalEmployees/weeklyReferenceCreationGate.js';
+import { bindWeeklyImageReferences, weeklyImageProductShortage } from '../digitalEmployees/weeklyImageReferences.js';
+import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 
 export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplicationPorts, 'digitalEmployeesRouter' | 'configForTenant' | 'resolveCurrentConfiguration' | 'requiredCreate' | 'recommendPackageWithTenantEvidence' | 'appendAudit' | 'buildOverview' | 'approveGoalForReview'>) {
   const digitalEmployeesRouter = deps.digitalEmployeesRouter;
@@ -32,6 +34,36 @@ export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplic
   const approveGoalForReview: DigitalEmployeeApplicationPorts['approveGoalForReview'] = (...args) => deps.approveGoalForReview(...args);
 
   function registerPostGoals() {
+    digitalEmployeesRouter.post('/goals/:goalId/rebind-image-references', async (req, res) => {
+      const { tenantId, userId } = res.locals as AuthLocals;
+      const overview = await buildOverview(tenantId, req.params.goalId);
+      if (overview.goal?.id !== req.params.goalId || !overview.plan?.businessPackage || !overview.plan.id) {
+        res.status(404).json({ error: 'weekly_goal_not_found' }); return;
+      }
+      const current = await store.getById<PlanRecord>(COLLECTION.plans, overview.plan.id);
+      if (!current || current.tenant_id !== tenantId || current.goal_id !== req.params.goalId || current.status !== 'draft') {
+        res.status(409).json({ error: 'weekly_plan_not_draft' }); return;
+      }
+      const body = jsonObject<Record<string, unknown>>(current.plan, {});
+      const pack = body.businessPackage as WeeklyPackage | undefined;
+      if (!pack?.mixedContentSlots) { res.status(409).json({ error: 'weekly_image_slots_missing' }); return; }
+      const library = await store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 500 });
+      const rebound = bindWeeklyImageReferences(pack, library.items);
+      const gate = weeklyReferenceCreationGate(rebound, library.items);
+      if (!gate.ready) { res.status(409).json({ error: 'weekly_reference_shortage', ...gate }); return; }
+      const reboundSlots = rebound.mixedContentSlots || [];
+      if (JSON.stringify(rebound.mixedContentSlots) !== JSON.stringify(pack.mixedContentSlots)) {
+        if (!store.compareAndSwap || await store.supportsAtomicCompareAndSwapFor?.(COLLECTION.plans) !== true) {
+          res.status(503).json({ error: 'weekly_plan_atomic_store_required' }); return;
+        }
+        const updated = await store.compareAndSwap(COLLECTION.plans, current.id,
+          { status: 'draft', plan: current.plan }, { plan: { ...body, businessPackage: { ...rebound, revision: rebound.revision + 1 } } });
+        if (!updated) { res.status(409).json({ error: 'weekly_plan_changed' }); return; }
+        await appendAudit({ tenantId, userId, action: 'weekly_image_references.bound', targetType: 'weekly_plan', targetId: current.id,
+          metadata: { goalId: req.params.goalId, imageCount: reboundSlots.filter(slot => slot.kind === 'image' && slot.productionRole === 'original').length } });
+      }
+      res.json(await buildOverview(tenantId, req.params.goalId));
+    });
     digitalEmployeesRouter.get('/goals/:goalId/reference-readiness', async (req, res) => {
       const { tenantId } = res.locals as AuthLocals;
       const overview = await buildOverview(tenantId, req.params.goalId);
@@ -66,12 +98,18 @@ export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplic
       if (missing.length) { res.status(400).json({ error: 'goal_invalid', missing }); return; }
       const planDraft = buildWeeklyPlan(goal, config);
       const recommendedPackage = await recommendPackageWithTenantEvidence(tenantId, goal, config, userId, '', enterpriseProfile);
+      const missingProducts = weeklyImageProductShortage(recommendedPackage);
+      if (missingProducts) {
+        res.status(409).json({ error: 'weekly_focus_products_missing',
+          message: `本周单图计划需要 3 个主推产品，还缺 ${missingProducts} 个。请先在企业资料中补齐主推产品。`, missingProducts });
+        return;
+      }
       const referenceLibrary = await store.list<StoredRecord>('trend_videos', { where: { tenantId }, perPage: 500 });
       const referenceGate = weeklyReferenceCreationGate(recommendedPackage, referenceLibrary.items);
       if (!referenceGate.ready) {
         res.status(409).json({
           error: 'weekly_reference_shortage',
-          message: `本周还缺 ${referenceGate.missingCount} 条可用于制作的爆款视频。请手动录入并完成逐镜分析，或立即采集后再确认周任务。`,
+          message: `本周还缺 ${referenceGate.videoMissingCount} 条爆款视频、${referenceGate.imageMissingCount} 条爆款图文参考。请手动录入或立即采集并完成分析后再确认周任务。`,
           ...referenceGate,
         });
         return;
@@ -116,12 +154,14 @@ export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplic
       if (!authorization) {
         res.status(400).json({
           error: 'content_generation_authorization_required',
-          message: '开始任务前，请先确认授权数字员工调用已配置的内容生成模型；实际用量和费用只记录，不设创作预算上限。',
+          message: '开始任务前，请先确认授权数字员工调用已配置的内容生成模型。',
         });
         return;
       }
       const members = await listTenantEmployees(res.locals as AuthLocals, req.headers.authorization);
-      const result = await approveGoalForReview(tenantId, userId, req.params.goalId, req.body?.packageRevision, members, authorization);
+      const result = await approveGoalForReview(tenantId, userId, req.params.goalId, req.body?.packageRevision, members, authorization,
+        typeof req.body?.finishedFilmOverBudgetQuoteKey === 'string' && req.body.finishedFilmOverBudgetQuoteKey.length <= 4_000
+          ? req.body.finishedFilmOverBudgetQuoteKey : '');
       res.status(result.status).json(result.body);
     });
   }

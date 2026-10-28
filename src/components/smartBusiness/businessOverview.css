@@ -1,13 +1,8 @@
 /* Compact the overview in layout space, preserving browser/text zoom and mobile reflow. */
 @media (min-width: 1024px) {
-  /* Match the overview crop; advice and topics must not stretch its frame. */
+  /* Keep the summary and the following sections on the same page-width grid. */
   .business-overview-summary {
-    aspect-ratio: 1.72;
-    max-height: 90dvh;
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior-y: contain;
-    scrollbar-gutter: stable;
+    overflow: hidden;
   }
 
   .business-overview-summary .weekly-command-header {

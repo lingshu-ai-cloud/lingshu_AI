@@ -13,11 +13,12 @@ import { renderSocialImageLayerGraph } from '../socialImage/layerRenderer.js';
 import { enterpriseAssetTenantKey } from '../storage/enterpriseAssets.js';
 import { recordSocialImageBusinessContext, recordSocialImageNodeOutput, SocialImageProductionRunError } from '../socialImage/socialImageProductionRun.js';
 import { projectSocialImageProductionSnapshot } from '../socialImage/socialImageProductionRuntime.js';
-import { analyzeSocialImageReference, inspectSocialImageAsset, socialImageAssetAuthorization, socialImageAssetManifest } from '../socialImage/socialImageEvidenceWorker.js';
+import { analyzeSocialImageReference, enterpriseProductImageAuthorization, inspectSocialImageAsset, socialImageAssetAuthorization, socialImageAssetManifest } from '../socialImage/socialImageEvidenceWorker.js';
 import { readSocialImageReferenceBytes } from '../socialImage/socialImageReferenceBytes.js';
 import { referenceProductCheckIssue } from './socialImageReferenceProductPolicy.js';
 import { readReferenceStyle } from './socialImageReferenceStyle.js';
 import { resolveSocialImageProductCutout } from './socialImageProductCutout.js';
+import { ensureProductCutout } from '../lib/productCutoutPipeline.js';
 import { inspectSocialImageCandidateFactors, prepareSocialImageReferenceStrategy, socialImageFrozenGraphMatches, socialImageFrozenSourceIssue } from '../socialImage/socialImageReferenceStrategy.js';
 import { localProductOcrReadiness, recognizeProductImageLocally, recognizeProductImageTokensLocally } from '../lib/localProductOcr.js';
 import { runSocialImageVisualPreflight } from '../socialImage/socialImageQualityPreflight.js';
@@ -93,14 +94,13 @@ export async function prepareImageEvidence(input: ImageWorkflowInput) {
             mimeType: string;
         } | null = null;
         let authorityRecord: Record<string, unknown> | null = null;
+        let productAuthorization: ReturnType<typeof enterpriseProductImageAuthorization> | null = null;
         if (asset.role === 'product' && asset.source === 'enterprise_knowledge_base') {
             const product = await enterpriseProductAsset(tenantId, asset.assetId);
             if (product) {
                 const format = (await sharp(product.bytes).metadata().catch(() => ({ format: undefined }))).format;
                 loaded = { bytes: product.bytes, mimeType: format === 'png' ? 'image/png' : format === 'webp' ? 'image/webp' : 'image/jpeg' };
-                const contentHash = createHash('sha256').update(product.bytes).digest('hex');
-                authorityRecord = library.items.find(item => item.type === 'image' && item.sourceType === 'enterprise_product_table'
-                    && String(item.productId || '') === asset.assetId && String(item.contentSha256 || '') === contentHash) || null;
+                productAuthorization = enterpriseProductImageAuthorization(tenantId, asset.assetId);
             }
         }
         else {
@@ -113,7 +113,7 @@ export async function prepareImageEvidence(input: ImageWorkflowInput) {
         inspected.push(await inspectSocialImageAsset({ assetId: asset.assetId, role: asset.role, required: asset.required,
             bytes: loaded?.bytes || null, mimeType: loaded?.mimeType || 'application/octet-stream',
             expectedContentHash: asset.contentHash || String(authorityRecord?.contentSha256 || ''),
-            authorization: socialImageAssetAuthorization(authorityRecord, tenantId), ocr }));
+            authorization: productAuthorization || socialImageAssetAuthorization(authorityRecord, tenantId), ocr }));
     }
     const manifest = socialImageAssetManifest({ assets: inspected, ocrAvailable: ocrReadiness.ready,
         prohibitedClaims: task.contentBrief.prohibitedClaims });
@@ -133,7 +133,7 @@ export async function prepareImageEvidence(input: ImageWorkflowInput) {
     }
     if (unauthorized.length) {
         throw imageCommandFailure(422, { ok: false, code: 'social_image_required_asset_rights_unverified',
-            error: `强制企业图片缺少可核验的商用与衍生授权：${unauthorized.join('、')}`, task,
+            error: `其他必需素材尚未确认使用权限：${unauthorized.join('、')}`, task,
             snapshot: projectSocialImageProductionSnapshot(task) });
     }
     if (task.creationPath === 'material_processing') {
@@ -226,7 +226,16 @@ export async function renderImageLayers(input: ImageWorkflowInput) {
         const productIssue = referenceProductCheckIssue(task, reference?.bytes || null);
         if (productIssue) throw imageCommandFailure(422, { ok: false, code: productIssue, error: '参考图产品确认已失效，请重新确认。' });
         for (const productId of assets.keys()) {
-            const cutout = await resolveSocialImageProductCutout({ tenantId, productId });
+            const preparation = await ensureProductCutout(tenantId, productId,
+                task.productionRuntime?.binding?.entrySource === 'weekly_package' ? { wait: true, waitForAnalysis: true } : {})
+                .catch(error => {
+                    if (error instanceof Error && error.message === 'product_cutout_source_unavailable') return null;
+                    throw error;
+                });
+            if (preparation === 'processing') throw new Error('social_image_product_asset_processing');
+            let cutout;
+            cutout = await resolveSocialImageProductCutout({ tenantId, productId,
+                sourceSha256: createHash('sha256').update(assets.get(productId)!).digest('hex') });
             assets.set(productId, cutout.bytes);
         }
     }

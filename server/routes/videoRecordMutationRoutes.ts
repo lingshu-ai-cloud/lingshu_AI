@@ -18,7 +18,9 @@ export function createVideoRecordMutationRoutes(deps: Pick<VideoApplicationPorts
       const record = await store.getById<Record<string, unknown>>(COL, req.params.id);
       if (!record || recordContentFormat(record) !== 'image') { res.status(404).json({ error: 'Image post not found' }); return; }
       if (record.tenantId !== tenantId && !await requireAdminUser(req)) { res.status(404).json({ error: 'Image post not found' }); return; }
-      if (['queued', 'processing', 'unknown'].includes(String(videoAnalysisOf(record).imageAnalysisQueueState || ''))) {
+      const analysis = videoAnalysisOf(record);
+      if (['queued', 'processing', 'unknown'].includes(String(analysis.imageAnalysisQueueState || ''))
+        || (analysis.imageAnalysisStatus === 'pending' && analysis.imageAnalysisAttemptId)) {
         res.status(409).json({ ok: false, error: 'image_post_queue_requires_reconciliation' });
         return;
       }
@@ -33,9 +35,12 @@ export function createVideoRecordMutationRoutes(deps: Pick<VideoApplicationPorts
         const publicCode = [
           'image_post_analysis_attempt_persistence_failed', 'image_post_analysis_result_persistence_failed',
           'image_post_analysis_superseded', 'image_post_analysis_source_changed',
-          'image_post_record_disappeared_after_analysis',
+          'image_post_record_disappeared_after_analysis', 'image_post_analysis_provider_result_unknown',
+          'image_post_queue_requires_reconciliation', 'image_post_analysis_attempt_requires_reconciliation',
         ].includes(code) ? code : 'image_post_analysis_unknown';
-        res.status(['image_post_analysis_superseded', 'image_post_analysis_source_changed'].includes(publicCode) ? 409 : 503)
+        res.status(['image_post_analysis_superseded', 'image_post_analysis_source_changed',
+          'image_post_analysis_provider_result_unknown', 'image_post_queue_requires_reconciliation',
+          'image_post_analysis_attempt_requires_reconciliation'].includes(publicCode) ? 409 : 503)
           .json({ ok: false, error: publicCode });
       }
     });

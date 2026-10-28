@@ -10,6 +10,7 @@ import type { DataStore } from '../storage/datastore.js';
 import { tagsFromKeyword } from '../routes/videoCrawlerNormalization.js';
 
 export interface CrawledImagePost {
+  tenantId?: string;
   platform: Platform;
   title: string;
   sourceUrl: string;
@@ -41,10 +42,15 @@ export function createImagePostEvidenceAnalyzer(input: {
   mediaDir: string;
   normalizeThumbnailUrl(url: string): string;
   fetcher?: typeof fetch;
+  readStoredReference?: (tenantId: string, url: string) => Promise<{ bytes: Buffer; mimeType: string } | null>;
   analyzeQwen?: typeof analyzeImagePostEvidenceWithQwen;
   analyzeGemini?: typeof analyzeImagePostEvidenceWithGemini;
 }) {
-  async function fetchImageForAnalysis(url: string): Promise<ImageBytes | null> {
+  async function fetchImageForAnalysis(url: string, tenantId?: string): Promise<ImageBytes | null> {
+    if (tenantId && /^\/api\/overseas\/videos\/[^/]+\/image\/\d+$/.test(url)) {
+      const stored = await input.readStoredReference?.(tenantId, url).catch(() => null);
+      return stored?.bytes.length ? { base64: stored.bytes.toString('base64'), mimeType: stored.mimeType } : null;
+    }
     const normalized = input.normalizeThumbnailUrl(url);
     if (!normalized) return null;
     try {
@@ -74,7 +80,7 @@ export function createImagePostEvidenceAnalyzer(input: {
   async function analyzeImagePostBestEffort(item: CrawledImagePost, keyword: string, _fallback?: VideoAiAnalysis): Promise<EvidenceResult> {
     const urls = [...new Set((item.imageUrls?.length ? item.imageUrls : [item.thumbnailUrl]).filter(Boolean))].slice(0, 10);
     const images = (await Promise.all(urls.map(async (url, index) => {
-      const image = await fetchImageForAnalysis(url);
+      const image = await fetchImageForAnalysis(url, item.tenantId);
       return image ? { ...image, imageIndex: index + 1 } : null;
     }))).filter((image): image is ImageBytes & { imageIndex: number } => Boolean(image));
     if (!images.length) return { status: 'failed', error: '公开图片下载失败，未执行视觉分析' };

@@ -1,10 +1,9 @@
 import AssistantWorkBookmark from './AssistantWorkBookmark';
 import ContentGenerationQueueModal from '../socialContent/ContentGenerationQueueModal';
-import { useState } from 'react';
 import GuidedCreationChoices from './GuidedCreationChoices';
 import ContentCreationChoices from './ContentCreationChoices';
 import { useCreationMode } from '../../lib/creationMode';
-import { type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ArrowDown, ArrowLeft, X } from 'lucide-react';
 import type { AgentAction, Page } from '../../App';
@@ -21,7 +20,8 @@ import { assistantFollowUpSuggestion } from '../../lib/assistantFollowUp';
 import AssistantConversationBubbles from './AssistantConversationBubbles';
 import AssistantCustomerTodoView from './AssistantCustomerTodoView';
 import AssistantHomeScenes from './AssistantHomeScenes';
-import AssistantWeeklyActions from './AssistantWeeklyActions';
+import AssistantWeeklyActions, { weeklyActionsForPage } from './AssistantWeeklyActions';
+import type { WeeklyAssistantAction } from '../../lib/assistantWeeklyActionsApi';
 import { contextForOrbit, type AssistantContext } from './globalAssistantRuntime';
 import type { useAssistantDecisionDialog } from './useAssistantDecisionDialog';
 import type { useAssistantQuickExecution } from './useAssistantQuickExecution';
@@ -93,6 +93,7 @@ type Props = {
 
 /** The existing single-column assistant surface, without its data lifecycle. */
 export default function AssistantConversationPanel(props: Props) {
+  const [weeklyActionRequest, setWeeklyActionRequest] = useState<{ action: WeeklyAssistantAction; id: number } | null>(null);
   const { inlineHome, inlineHomeBounds, page, pageContext, currentPageAgent, activeAgent, activeThread, mode, panelView,
     assistantTool, viewport, reduceMotion, productionDecisionContext, decisionFeedRevision,
     persistenceScopeKey, welcomeBubbleVisible, loading, fileGenerating, replyStreaming,
@@ -255,6 +256,8 @@ export default function AssistantConversationPanel(props: Props) {
             )}
 
             {!inlineHome && !contentIntake.active && <AssistantHomeScenes
+              weeklyActions={weeklyActionsForPage(page)}
+              onWeeklyAction={action => setWeeklyActionRequest(current => ({ action, id: (current?.id || 0) + 1 }))}
               key={persistenceScopeKey} variant="sidebar" sessionScope={persistenceScopeKey} agent={activeAgent}
               disabled={loading || fileGenerating || attachmentUploading}
               onNavigate={target => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: target } }))}
@@ -272,6 +275,7 @@ export default function AssistantConversationPanel(props: Props) {
             />}
 
             {!inlineHome && <AssistantWeeklyActions page={page} scopeKey={persistenceScopeKey}
+              actionRequest={weeklyActionRequest}
               disabled={loading || attachmentUploading} onBusyChange={setWeeklyActionBusy}
               onReceipt={receipt => {
                 const thread = useAssistantStore.getState().threads[activeAgent];

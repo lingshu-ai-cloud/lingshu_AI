@@ -10,6 +10,7 @@ import { SocialImageProductionRunError } from '../socialImage/socialImageProduct
 import { controlContentExecutionJob } from '../contentExecution/durableQueue.js';
 import { confirmReferenceProduct } from '../socialImage/socialImageReferenceProductCheck.js';
 import type { readSocialImageReferenceBytes } from '../socialImage/socialImageReferenceBytes.js';
+import { readImageNodeDurationHistory } from '../socialImage/socialImageDurationHistory.js';
 const admission = z.object({ expectedVersion: z.number().int().positive() }).strict();
 const referenceCheck = admission.extend({ decision: z.literal('auto') }).strict();
 export function registerSocialImageExecutionRoutes(router: Router, store: DataStore, ports: { readReference?: typeof readSocialImageReferenceBytes } = {}) {
@@ -84,7 +85,13 @@ export function registerSocialImageExecutionRoutes(router: Router, store: DataSt
             }
             const job = await readImageExecutionJob(store, tenantId, task);
             res.setHeader('Cache-Control', 'private, no-store');
-            res.json({ ok: true, task, execution: job ? imageExecutionReceipt(job) : null });
+            const execution = job ? imageExecutionReceipt(job) : null;
+            const durationHistorySeconds = execution?.status === 'running'
+                ? await readImageNodeDurationHistory(store, tenantId, task).catch(error => {
+                    console.warn('[social-image] duration history read unavailable', { taskId: task.id, error: error instanceof Error ? error.message : String(error) });
+                    return [];
+                }) : [];
+            res.json({ ok: true, task, execution, durationHistorySeconds });
         }
         catch {
             res.status(503).json({ ok: false, code: 'social_image_queue_read_failed', error: '调度回执读取失败' });

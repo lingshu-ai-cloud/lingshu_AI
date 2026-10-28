@@ -21,6 +21,12 @@ export interface SocialImageAssetAuthorization {
   derivativesApproved: boolean;
 }
 
+/** A product image resolved from this tenant's enterprise profile is owned input; no separate license annotation is required. */
+export function enterpriseProductImageAuthorization(tenantId: string, productId: string): SocialImageAssetAuthorization {
+  return { rightsStatus: 'owned', rightsEvidenceRef: `enterprise_profile:${tenantId}:product:${productId}`,
+    commercialUseApproved: true, derivativesApproved: true };
+}
+
 /** Authorization is read from the tenant's persisted inventory, not the image or task patch. */
 export function socialImageAssetAuthorization(record: Record<string, unknown> | null, tenantId: string): SocialImageAssetAuthorization | null {
   if (!record || String(record.tenantId || record.tenant_id || '') !== tenantId || record.scope === 'shared') return null;

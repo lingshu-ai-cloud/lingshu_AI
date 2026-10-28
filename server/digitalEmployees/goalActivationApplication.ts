@@ -14,6 +14,8 @@ import { configSnapshotForPlan, goalInput, publicConfig } from './overviewProjec
 import { buildWeeklyPlan } from './domain.js';
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, withLocalQueue, type GoalRecord, type PlanRecord, type RunRecord, type StoredRecord, type TaskRecord } from './records.js';
 import type { DigitalEmployeeApplicationPorts } from './applicationPorts.js';
+import { finishedFilmBudgetDecision, finishedFilmBudgetQuoteKey } from '../../shared/contracts/finishedFilmBudget.js';
+import { ensureWeeklyImageQueue, preflightWeeklyImageQueue, weeklyImageQueueFailure } from './weeklyImageQueueBridge.js';
 
 export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplicationPorts, 'requiredCreate' | 'goalApprovalQueues' | 'tenantRecord' | 'weeklyGoalFactRebuildTargetCommitted' | 'first' | 'advanceRun' | 'buildOverview' | 'configForTenant' | 'resolveCurrentConfiguration' | 'weeklyGoalFactRebuildRecovery' | 'frozenEnterpriseProfileForPlan' | 'executionConfigForPlan' | 'appendEvent' | 'appendAudit'>) {
   function requiredCreate<T extends StoredRecord>(collection: string, payload: Record<string, unknown>): Promise<T> {
@@ -91,7 +93,7 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
     }
   }
 
-  async function approveGoalForReview(tenantId: string, userId: string, goalId: string, packageRevision: number | undefined, members: Array<{id: string}>, authorization?: ContentGenerationAuthorization) {
+  async function approveGoalForReview(tenantId: string, userId: string, goalId: string, packageRevision: number | undefined, members: Array<{id: string}>, authorization?: ContentGenerationAuthorization, overBudgetQuoteKey = '') {
     return withLocalQueue(goalApprovalQueues, `${tenantId}:activate`, async () => {
       if (!store.compareAndSwap) return { status: 503, body: { error: 'goal_atomic_store_required', message: '当前存储不支持安全启动周目标。' } };
       const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, goalId, tenantId);
@@ -110,7 +112,12 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
           const saved = jsonObject<ReturnType<typeof compilePackage>>(savedPlan.plan, {} as ReturnType<typeof compilePackage>);
           if (!saved.tasks?.length) throw Error('初始化任务清单不可用');
           await ensureReviewRunTasks(tenantId, goal, savedPlan, existingRun, saved.tasks, saved.businessPackage);
+          let imageReceipts: Awaited<ReturnType<typeof ensureWeeklyImageQueue>>;
+          try { imageReceipts = await ensureWeeklyImageQueue({ store, tenantId, userId, plan: savedPlan, run: existingRun }); }
+          catch (error) { return weeklyImageQueueFailure(error); }
           if (!await store.update(COLLECTION.runs, existingRun.id, { status: 'planning' })) throw Error('任务初始化状态保存失败');
+          if (imageReceipts.length) await appendEvent({ tenantId, runId: existingRun.id, type: 'weekly.images.queued', level: 'success',
+            summary: `${imageReceipts.length} 条本周图片已进入制作队列`, payload: { imageReceipts } });
           await advanceRun(tenantId, existingRun.id);
         }
         return { status: 200, body: await buildOverview(tenantId, goal.id) };
@@ -177,7 +184,7 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
       if (savedFactsVersion && savedFactsVersion !== canonicalFactsVersion) {
         return { status: 409, body: {
             error: 'enterprise_facts_changed',
-            message: '企业事实已更新；当前草稿仍引用旧事实，请基于最新事实新建周目标后再启动。',
+            message: '企业资料已更新；当前周计划需按最新资料同步并重新确认，生产尚未开始。',
             ...weeklyGoalFactRebuildRecovery(goal, existingPlan!, savedFactsVersion, canonicalFactsVersion),
           } };
       }
@@ -197,6 +204,19 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
         if (packageRevision !== pack.revision) { return { status: 409, body: { error: 'package_changed', message: '请查看并确认最新版本的经营包。' } }; }
         if (pack.tasks.some(t => t.ownerId && !members.some(m => m.id === t.ownerId))) { return { status: 409, body: { error: 'owner_unavailable', message: '计划中的负责人已不可用，请重新分配任务。' } }; }
         const masterPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans?.filter(item => item.productionRole !== 'platform_adaptation') || [];
+        const filmBudgetDecisions = masterPlans.map(item => finishedFilmBudgetDecision({
+          contentId: item.contentId ?? '', durationSeconds: Number(item.duration),
+          estimatedCostCny: Number(item.estimatedCostRange?.maxCny ?? item.estimatedCost),
+        }));
+        const unavailableEstimates = filmBudgetDecisions.filter(item => !item.estimateAvailable);
+        if (unavailableEstimates.length) return { status: 409, body: {
+          error: 'finished_film_budget_estimate_unavailable', message: '部分成片缺少可核验的时长或费用估算，未启动生产。', films: unavailableEstimates,
+        } };
+        const overBudgetFilms = filmBudgetDecisions.filter(item => item.requiresConfirmation);
+        const currentQuoteKey = finishedFilmBudgetQuoteKey(overBudgetFilms);
+        if (overBudgetFilms.length && overBudgetQuoteKey !== currentQuoteKey) return { status: 409, body: {
+          error: 'finished_film_budget_confirmation_required', message: `有 ${overBudgetFilms.length} 条成片预计超过 ¥0.70/秒，未启动生产。请查看逐条费用并确认是否继续。`, films: overBudgetFilms,
+        } };
         if (masterPlans.length && (pack.detailGeneration?.status !== 'ready'
           || masterPlans.some(item => !item.preproduction?.readiness.canStart))) {
           const blockers = [...new Set([
@@ -239,6 +259,8 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
         }
         const issues = validatePackageForStart(pack, goalInput(goal), configSnapshotForPlan(existingPlan, currentConfig));
         if (issues.length) { return { status: 400, body: { error: 'package_invalid', message: issues.join('；') } }; }
+        try { await preflightWeeklyImageQueue(store, tenantId, pack); }
+        catch (error) { return weeklyImageQueueFailure(error); }
       }
       const planDraft = pack ? compilePackage(pack, goalInput(goal), config) : buildWeeklyPlan(goalInput(goal), config);
       const now = new Date().toISOString();
@@ -251,6 +273,12 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
         ...frozenPlanMetadata,
         ...planDraft,
         contentGenerationAuthorization: { ...(authorization || newContentGenerationAuthorization()), authorizedBy: userId, authorizedAt: now },
+        ...(pack ? { finishedFilmBudgetApproval: { confirmedBy: overBudgetQuoteKey ? userId : null,
+          confirmedAt: overBudgetQuoteKey ? now : null, packageRevision: pack.revision,
+          quoteKey: overBudgetQuoteKey || null,
+          films: pack.tasks.find(task => task.templateId === 'production')?.videoPlans?.filter(item => item.productionRole !== 'platform_adaptation')
+            .map(item => finishedFilmBudgetDecision({ contentId: item.contentId ?? '', durationSeconds: Number(item.duration),
+              estimatedCostCny: Number(item.estimatedCostRange?.maxCny ?? item.estimatedCost) })) || [] } } : {}),
         ...(managedPublishingGrantId ? { managedPublishingGrantId } : {}),
         ...(pack ? { packageApprovedBy: userId, packageApprovedAt: now } : {}),
       };
@@ -286,9 +314,14 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
         completed_at: '',
       });
       await ensureReviewRunTasks(tenantId, goal, plan, run, planDraft.tasks, pack);
+      let imageReceipts: Awaited<ReturnType<typeof ensureWeeklyImageQueue>>;
+      try { imageReceipts = await ensureWeeklyImageQueue({ store, tenantId, userId, plan, run }); }
+      catch (error) { return weeklyImageQueueFailure(error); }
       if (!await store.update(COLLECTION.runs, run.id, { status: 'planning' })) throw Error('任务初始化状态保存失败');
+      if (imageReceipts.length) await appendEvent({ tenantId, runId: run.id, type: 'weekly.images.queued', level: 'success',
+        summary: `${imageReceipts.length} 条本周图片已进入制作队列`, payload: { imageReceipts } });
       await appendEvent({ tenantId, runId: run.id, type: 'plan.generated', level: 'success', summary: `计划 Agent 已生成 ${planDraft.tasks.length} 个任务`, payload: { strategy: planDraft.strategy } });
-      const contentCount = pack?.tasks.find(task => task.templateId === 'production')?.videoPlans?.length || 0;
+      const contentCount = (pack?.tasks.find(task => task.templateId === 'production')?.videoPlans?.length || 0) + imageReceipts.length;
       await appendEvent({
         tenantId,
         runId: run.id,

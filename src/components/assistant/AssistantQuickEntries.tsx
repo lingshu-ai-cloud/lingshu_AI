@@ -1,5 +1,7 @@
 import { ArrowRight, MessageCircleQuestion, Zap } from 'lucide-react';
 import type { Page } from '../../pageRegistry';
+import { WEEKLY_ACTION_LABELS } from './AssistantWeeklyActions';
+import type { WeeklyAssistantAction } from '../../lib/assistantWeeklyActionsApi';
 import {
   assistantQuickEntriesForPage,
   type AssistantQuickExecution,
@@ -13,12 +15,14 @@ type Props = {
   executions?: readonly AssistantQuickExecution[];
   onQuestion: (entry: AssistantQuickQuestion) => void;
   onExecute: (entry: AssistantQuickExecution) => void;
+  weeklyActions?: readonly WeeklyAssistantAction[];
+  onWeeklyAction?: (action: WeeklyAssistantAction) => void;
 };
 
 /** Mixed page-specific questions and executions shown directly above the composer. */
-export default function AssistantQuickEntries({ page, disabled = false, emptyConversation = false, executions = [], onQuestion, onExecute }: Props) {
+export default function AssistantQuickEntries({ page, disabled = false, emptyConversation = false, executions = [], onQuestion, onExecute, weeklyActions = [], onWeeklyAction }: Props) {
   const entries = [...assistantQuickEntriesForPage(page), ...executions];
-  if (!entries.length) return null;
+  if (!entries.length && !weeklyActions.length) return null;
 
   return (
     <div
@@ -54,6 +58,7 @@ export default function AssistantQuickEntries({ page, disabled = false, emptyCon
             </button>
           );
         })}
+        {weeklyActions.map(action => <button key={`weekly-${action}`} type="button" disabled={disabled} data-assistant-quick-kind="execute" data-assistant-quick-id={`weekly-${action}`} onClick={() => onWeeklyAction?.(action)} className="ls-assistant-quick-entry ls-type-label-medium inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-md border border-accent/35 bg-accent/10 px-3 py-1.5 text-left font-semibold text-accent transition-colors hover:border-accent/60 hover:bg-accent/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50" aria-label={`快捷执行：${WEEKLY_ACTION_LABELS[action]}`}><Zap size={12} aria-hidden="true"/><span>{WEEKLY_ACTION_LABELS[action]}</span></button>)}
       </div>
     </div>
   );

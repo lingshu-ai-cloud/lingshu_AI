@@ -339,18 +339,24 @@ export async function executeApprovedDiscoveryRun(input: {
   const dueCandidates = input.triggerType === 'scheduled'
     ? dueDiscoveryModes(brief, previousRuns)
     : input.requestedModes ?? brief.discoveryModes;
-  const candidates = dueCandidates.includes('account') || accountRefsToCollect.length ? ['account' as const] : [];
+  // A frozen weekly original run is an account-video authority. Ordinary
+  // approved discovery may use every explicitly enabled source mode.
+  const candidates = input.originalRun ? dueCandidates.filter(mode => mode === 'account')
+    : input.triggerType === 'production_gap' ? ['account' as const]
+    : input.triggerType === 'scheduled' && accountRefsToCollect.length ? [...new Set(['account' as const, ...dueCandidates])]
+    : dueCandidates;
+  const enabledModes = brief.discoveryModes.filter(mode => brief.modePolicies?.[mode]?.enabled
+    && (mode === 'account' ? accountRefsToCollect.length > 0 : modeRefs(scope, mode).length > 0));
   const configuredShare = Number((brief as SocialDiscoveryBriefWithQuality).innovationExperimentShare ?? 0.1);
   const quotaPlan = planRollingSevenDayQuotas(previousRuns, {
     totalAcceptedTarget: brief.resultLimit,
     innovationShare: configuredShare,
-    accountShare: 1,
-    enabledModes: accountRefsToCollect.length > 0 ? ['account'] : [],
+    accountShare: enabledModes.includes('account') ? Math.min(enabledModes.includes('momentum') ? 0.7 : 0.85, 1 - configuredShare) : 0,
+    enabledModes,
   });
   const requestedModes = [...new Set(candidates)].filter(mode => brief.discoveryModes.includes(mode)
     && brief.modePolicies?.[mode]?.enabled
-    && (mode !== 'account' || accountRefsToCollect.length > 0)
-    && mode === 'account')
+    && (mode === 'account' ? accountRefsToCollect.length > 0 : modeRefs(scope, mode).length > 0))
     .sort((left,right)=>Number(right==='account')-Number(left==='account'));
   if (!requestedModes.length) return { skipped: true, reason: 'no_discovery_mode_due', nextRunAt: nextDiscoveryRunAt(brief, previousRuns) };
   brief.discoveryModes = requestedModes;
@@ -379,11 +385,18 @@ export async function executeApprovedDiscoveryRun(input: {
   const failureDetails: NonNullable<SocialInspirationCollectionRun['failureDetails']> = [];
   const quotaPlatforms = [...new Set([
     ...brief.platforms,
+    ...Object.values(brief.modePolicies ?? {}).flatMap(policy => policy?.platforms ?? []),
     ...brief.competitorAccounts.map(account => inferPlatformFromUrl(account)),
   ])];
   const retryPlatformLimits = input.retry ? new Map<string,number>([...new Set(input.retry.sourceSelection.map(source => source.platform))].map(platform => [platform,input.retry!.sourceSelection.filter(source => source.platform === platform).length])) : null;
-  const remainingPlatformQuota = new Map<string, number>(retryPlatformLimits
-    ?? normalizeSocialPlatformQuotas(quotaPlatforms, brief.resultLimit).map(item => [item.platform, item.limit]));
+  const normalPlatformQuotas = quotaPlatforms.includes('tiktok')
+    ? normalizeSocialPlatformQuotas(quotaPlatforms, brief.resultLimit).map(item => [item.platform, item.limit] as const)
+    : quotaPlatforms.map((platform, index) => [platform,
+      Math.floor(brief.resultLimit / quotaPlatforms.length) + (index < brief.resultLimit % quotaPlatforms.length ? 1 : 0)] as const);
+  const remainingPlatformQuota = new Map<string, number>(retryPlatformLimits ?? normalPlatformQuotas);
+  if (!input.retry) for (const platform of quotaPlatforms) {
+    if (!remainingPlatformQuota.has(platform)) remainingPlatformQuota.set(platform, 1);
+  }
   let error: string | null = null;
   for (const mode of requestedModes) {
     const policy = brief.modePolicies![mode]!;
@@ -434,7 +447,8 @@ export async function executeApprovedDiscoveryRun(input: {
       try {
         const dateTo = new Date().toISOString().slice(0, 10);
         const dateFrom = new Date(Date.now() - brief.lookbackDays * 86_400_000).toISOString().slice(0, 10);
-        const videoResult = await dependencies.crawl({
+        let videoResult: CrawlVideosResult | null = null;
+        try { videoResult = await dependencies.crawl({
           tenantId: input.tenantId,
           platform: target.platform,
           newCandidatesOnly: true,
@@ -451,26 +465,61 @@ export async function executeApprovedDiscoveryRun(input: {
             actorInputSha256: createHash('sha256').update(JSON.stringify(frozenWeeklyAccountFiveVideoActorInput(accountOnlyUrl))).digest('hex'),
           }} : {}) },
           ...(input.originalDatasetReplay?{originalDatasetReplay:input.originalDatasetReplay}:{}),
-        });
-        const sourceResults: CrawlVideosResult[] = [videoResult];
-        if (!input.originalRun && mode === 'account' && dependencies.crawlImages) {
-          sourceResults.push(await dependencies.crawlImages({
-            tenantId: input.tenantId,
-            platform: target.platform,
-            mode: 'account',
-            accountUrl: target.ref,
-            accountName: accountNameByUrl.get(target.ref) || target.ref,
-            limit: perSourceLimit,
-            dateFrom,
-            dateTo,
-          }));
+        }); } catch (videoError) {
+          if (input.originalRun) throw videoError;
+          const message = videoError instanceof Error ? videoError.message : '视频采集失败';
+          failureDetails.push({ mode, platform: target.platform, queryRef: target.ref,
+            error: `视频：${message}`, errorCode: classifyDiscoverySourceFailure(message) });
+          stats.failed += 1;
+          addStats(platformStats[target.platform]!, { failed: 1 });
+          addStats(keywordTierStats[target.tier]!, { failed: 1 });
+        }
+        const sourceResults: CrawlVideosResult[] = videoResult ? [videoResult] : [];
+        const availableImagePlatformQuota = mode === 'account' ? perSourceLimit : remainingPlatformQuota.get(target.platform) ?? 0;
+        if (!input.originalRun && !input.retry && dependencies.crawlImages && availableImagePlatformQuota > 0) {
+          try {
+            const imageLimit = await reserveDailyCollection(dependencies.dataStore, {
+              tenantId: input.tenantId, runId,
+              requestKey: `${mode}:${target.platform}:${target.ref}:image`,
+              requested: Math.min(perSourceLimit, availableImagePlatformQuota), now: input.now,
+            });
+            if (!imageLimit) { dailyLimitReached = true; completeEmptyVerified = false; }
+            else {
+              stats.requested += imageLimit;
+              addStats(platformStats[target.platform]!, { requested: imageLimit });
+              addStats(keywordTierStats[target.tier]!, { requested: imageLimit });
+              if (mode !== 'account') remainingPlatformQuota.set(target.platform, availableImagePlatformQuota - imageLimit);
+              sourceResults.push(await dependencies.crawlImages({
+                tenantId: input.tenantId,
+                platform: target.platform,
+                mode: mode === 'account' ? 'account' : 'keyword',
+                ...(mode === 'account'
+                  ? { accountUrl: target.ref, accountName: accountNameByUrl.get(target.ref) || target.ref }
+                  : { keyword: target.ref }),
+                limit: imageLimit,
+                dateFrom,
+                dateTo,
+              }));
+            }
+          } catch (imageError) {
+            const message = imageError instanceof Error ? imageError.message : '单图采集失败';
+            failureDetails.push({ mode, platform: target.platform, queryRef: target.ref,
+              error: `单图：${message}`, errorCode: classifyDiscoverySourceFailure(message) });
+            stats.failed += 1;
+            addStats(platformStats[target.platform]!, { failed: 1 });
+            addStats(keywordTierStats[target.tier]!, { failed: 1 });
+          }
+        }
+        if (!sourceResults.length) {
+          error = failureDetails.at(-1)?.error ?? 'discovery_source_all_formats_failed';
+          continue;
         }
         for (const sourceResult of sourceResults) {
           if ((sourceResult.items?.length ?? 0) > perSourceLimit || (sourceResult.candidateIds?.length ?? 0) > perSourceLimit) throw Error('daily_collection_provider_limit_exceeded');
         }
         const combinedItems = sourceResults.flatMap(sourceResult => sourceResult.items ?? []);
         const result: CrawlVideosResult = {
-          ...videoResult,
+          ...sourceResults[0]!,
           total: sourceResults.reduce((sum, sourceResult) => sum + Number(sourceResult.total || 0), 0),
           imported: sourceResults.reduce((sum, sourceResult) => sum + Number(sourceResult.imported || 0), 0),
           skipped: sourceResults.reduce((sum, sourceResult) => sum + Number(sourceResult.skipped || 0), 0),

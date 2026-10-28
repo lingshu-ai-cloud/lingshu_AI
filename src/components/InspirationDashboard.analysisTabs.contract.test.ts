@@ -77,7 +77,8 @@ test('image creation waits for trusted image evidence and uses the image-only re
 
   image.aiAnalysis = { ...image.aiAnalysis, imageAnalysisQueueState: 'unknown', imageAnalysisStatus: 'unknown' };
   assert.match(inspirationCreationAvailability(image).reason, /请先核对任务与费用/);
-  assert.match(detailSource, /isImagePost && !imageAnalysisReady && !imageQueue && <Button onClick=\{onReanalyzeImage\}/);
+  assert.match(detailSource, /isImagePost && \(!imageAnalysisReady \|\| legacyImageAnalysis\) && !imageQueue && <Button onClick=\{onReanalyzeImage\}/);
+  assert.match(detailSource, /旧版拆解缺少逐图产品判断/);
   assert.match(detailSource, /canRunDetailAnalysis = isImagePost \? Boolean\(video\.recordId\) && !imageQueue/);
   assert.match(videoCardsSource, /const imageAnalyzed = !imageQueue &&/);
 

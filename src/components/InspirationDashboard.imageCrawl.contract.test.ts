@@ -13,7 +13,7 @@ test('viral library prioritizes benchmark accounts and keeps keyword image posts
   assert.match(source, /<Button icon=\{<Images size=\{15\} \/>\} onClick=\{openImageCrawl\}>关键词补充<\/Button>/);
   assert.match(source, /<InspirationImageCrawlDialog[\s\S]*?onSubmit=\{\(\) => void runImageCrawl\(\)\}/);
   assert.match(dialogSource, /title="关键词补充采集"/);
-  assert.match(dialogSource, /图文会同时保留图片、轮播顺序和原帖配文/);
+  assert.match(dialogSource, /只保留一张静态图片及原帖配文，不采图组、轮播或 GIF/);
   assert.match(dialogSource, /closable=\{!busy\}/);
   assert.match(dialogSource, /onCancel=\{\(\) => \{ if \(!busy\) onClose\(\); \}\}/);
   assert.match(source, /runInspirationImageCrawl\(\{/);

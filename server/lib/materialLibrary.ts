@@ -272,6 +272,9 @@ async function enterpriseProductImageMaterials(tenantId: string, ownedRecords: M
   // remains mandatory on every read, but four independent reads avoid turning
   // a library request into an unbounded serial queue (the UI allows 15 s).
   const projected = await mapBoundedInOrder(imageBindings, 4, async ({ productId, productName, assetIndex, row, url }): Promise<MaterialRecord | null> => {
+    if (ownedRecords.some(record => String(record.productId || '') === productId
+      && [record.sourceUrl, record.url, record.provenance?.enterpriseAssetUrl].includes(url)
+      && record.type === 'image')) return null;
     const file = tenantCatalogImageFile(url, tenantId, mediaRoot);
     const uploaded = file ? null : await ownedEnterpriseUploadImage(url, tenantId, ownedRecords);
     if (!file && !uploaded) return null;

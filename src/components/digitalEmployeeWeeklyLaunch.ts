@@ -9,6 +9,10 @@ import { notifyWeeklyWorkUpdated } from '../lib/weeklyWorkEvents';
 import { weeklyWorkStatus } from '../lib/weeklyWorkStatus';
 import { prepareWeeklyPlanForLaunch } from '../lib/weeklyPlanLaunchPreparation';
 import { digitalEmployeeApi, type DigitalEmployeeOverview } from '../lib/digitalEmployees';
+import { Modal } from 'antd';
+import { createElement } from 'react';
+import { finishedFilmBudgetDecision, finishedFilmBudgetQuoteKey } from '../../shared/contracts/finishedFilmBudget';
+import { showWeeklyReadinessGuidance } from '../lib/weeklyReadinessGuidance';
 
 type WeeklyLaunchApi = Pick<typeof digitalEmployeeApi, 'approveGoal' | 'generatePackageDetails' | 'overview'>;
 
@@ -28,6 +32,7 @@ interface WeeklyLaunchContext {
   api?: WeeklyLaunchApi;
   feedback?: typeof showActionFeedback;
   notify?: typeof notifyWeeklyWorkUpdated;
+  confirmOverBudget?: (message: string) => Promise<boolean>;
 }
 
 export function createDigitalEmployeeWeeklyLaunch(context: WeeklyLaunchContext) {
@@ -39,6 +44,10 @@ export function createDigitalEmployeeWeeklyLaunch(context: WeeklyLaunchContext) 
   const api = context.api || digitalEmployeeApi;
   const feedback = context.feedback || showActionFeedback;
   const notify = context.notify || notifyWeeklyWorkUpdated;
+  const confirmOverBudget = context.confirmOverBudget || (message => new Promise<boolean>(resolve => {
+    Modal.confirm({ title: '成片预计超预算', content: createElement('div', { style: { whiteSpace: 'pre-line' } }, message), okText: '确认超预算并继续生产', cancelText: '暂不生产',
+      onOk: () => resolve(true), onCancel: () => resolve(false) });
+  }));
   const reportWeeklyStartFailure = (message: string) => {
     setError(message);
     feedback({ title: '周任务未启动', description: message, tone: 'error' });
@@ -108,13 +117,27 @@ export function createDigitalEmployeeWeeklyLaunch(context: WeeklyLaunchContext) 
       });
       const preparedPackage = prepared.goal?.id === goal.id ? prepared.plan?.businessPackage : undefined;
       if (!preparedPackage) throw new Error('任务包准备结果与当前周目标不一致，本周任务尚未启动。');
+      const decisions = (preparedPackage.tasks.find(task => task.templateId === 'production')?.videoPlans || [])
+        .filter(item => item.productionRole !== 'platform_adaptation')
+        .map(item => finishedFilmBudgetDecision({ contentId: item.contentId ?? '', durationSeconds: Number(item.duration),
+          estimatedCostCny: Number(item.estimatedCostRange?.maxCny ?? item.estimatedCost) }));
+      if (decisions.some(item => !item.estimateAvailable)) throw new Error('成片时长或费用估算缺失，未进入生产。');
+      const overBudget = decisions.filter(item => item.requiresConfirmation);
+      if (overBudget.length && !await confirmOverBudget(overBudget.map((item, index) =>
+        `视频 ${index + 1}：预计 ¥${item.estimatedCostCny.toFixed(2)}，成片 ${item.durationSeconds} 秒，平均 ¥${item.estimatedCnyPerSecond?.toFixed(2)}/秒；标准上限 ¥${item.allowedCostCny.toFixed(2)}。`).join('\n'))) return;
       launchRequestSent = true;
-      const next = await api.approveGoal(goal.id, preparedPackage.revision, true);
+      const next = await api.approveGoal(goal.id, preparedPackage.revision, true,
+        overBudget.length > 0 ? finishedFilmBudgetQuoteKey(overBudget) : '');
       if (!presentConfirmedWeeklyExecution(next, goal.id)) {
         throw new Error('启动结果未返回可确认的真实运行；系统不会自动重复提交同一周计划。');
       }
     } catch (actionError) {
       if (await recoverEnterpriseFactsChanged(actionError, goal)) return;
+      if (showWeeklyReadinessGuidance(actionError)) {
+        setError('');
+        feedback({ title: '周计划待补齐资料', description: '灵小枢已在对话中说明下一步；本周生产尚未启动。', tone: 'info' });
+        return;
+      }
       const conflict = weeklyStartConflictFromError(actionError);
       if (conflict) {
         setError('');

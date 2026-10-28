@@ -452,6 +452,7 @@ export interface Material {
   productSceneType?: ProductSceneKind;
   segmentAnalysisStatus?: 'pending' | 'analyzing' | 'completed' | 'failed';
   segmentAnalysisError?: string;
+  productImageProcessing?: { analysis: 'pending' | 'analyzing' | 'completed' | 'failed'; cutout: 'pending' | 'queued' | 'running' | 'completed' | 'failed' };
   segments?: MaterialSegment[];
   visualObservations?: string[];
   scriptAnalysis?: MaterialScriptAnalysis;

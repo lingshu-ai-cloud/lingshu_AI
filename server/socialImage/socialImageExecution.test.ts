@@ -145,6 +145,14 @@ test('agent product observation admits only a same-tenant exact-byte analyzed re
  assert.equal(blocked.status,'blocked');
  assert.equal((await store.list('content_execution_jobs')).totalItems,0);
 });
+test('old analyzed reference without byte-bound labels requests reanalysis without admitting production',async()=>{
+ const {store,task,readReference}=await setup();
+ await store.create('trend_videos',{id:'old-post',tenant_id:'tenant-a',aiAnalysis:JSON.stringify({contentFormat:'image',imageAnalysisStatus:'analyzed',imageAnalysisQueueState:'completed',imageEvidence:{version:2,status:'analyzed',observedFacts:[{subjects:['bottle']}]}})});
+ const changed=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{referenceSnapshot:{sourceRecordId:'old-post',imageUrls:['/reference.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
+ assert.equal(changed.kind,'updated');if(changed.kind!=='updated')throw Error('fixture');
+ await assert.rejects(confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:changed.task.version,decision:'auto',readReference}),/social_image_reference_analysis_outdated/);
+ assert.equal((await store.list('content_execution_jobs')).totalItems,0);
+});
 test('legacy timed-out planning receipt identifies the unknown provider outcome without replaying it',async()=>{
  const {store,input}=await setup();const queued=await enqueueImageExecution(input);
  const raw=await store.getById<Record_>('content_execution_jobs',queued.execution.jobId);

@@ -2,11 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { defaultWeeklyGoal, type GoalDraft } from '../../lib/defaultWeeklyGoal';
 import { DigitalEmployeeApiError, digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
 import { socialDiscoveryApi } from '../../lib/socialDiscoveryApi';
-import type { DigitalEmployeeConfig, DigitalEmployeeOverview } from '../../lib/digitalEmployees';
+import { ENTERPRISE_FACTS_CHANGED_ERROR_CODE, type DigitalEmployeeConfig, type DigitalEmployeeOverview } from '../../lib/digitalEmployees';
 import { confirmedWeeklyExecution, weeklyStartConflictFromError, weeklyStartResultNeedsReconciliation } from '../../lib/weeklyStartValidation';
 import { notifyWeeklyWorkUpdated, WEEKLY_WORK_UPDATED_EVENT } from '../../lib/weeklyWorkEvents';
 import { ASSISTANT_WEEKLY_PLAN_OPEN_EVENT } from '../../lib/assistantWeeklyPlanEvents';
 import { prepareWeeklyPlanForLaunch } from '../../lib/weeklyPlanLaunchPreparation';
+import { finishedFilmBudgetDecision, finishedFilmBudgetQuoteKey } from '../../../shared/contracts/finishedFilmBudget';
+import { showWeeklyReadinessGuidance } from '../../lib/weeklyReadinessGuidance';
+import { synchronizeWeeklyPlanFacts } from '../../lib/weeklyFactsSync';
 
 type GuidanceKey = 'companyName' | 'focusProducts' | 'targetMarkets' | 'customerProfile' | 'weeklyObjective';
 type GuidanceQuestion = { key: GuidanceKey; prompt: string };
@@ -70,7 +73,7 @@ function applyGuidance(config: DigitalEmployeeConfig, answers: Partial<Record<Gu
 function guidedDraft(config: DigitalEmployeeConfig, answers: Partial<Record<GuidanceKey, string>>): GoalDraft {
   const base = defaultWeeklyGoal(config).draft;
   const objective = answers.weeklyObjective?.trim();
-  return { ...base, ...(objective ? { title: '本周重点经营计划', objective } : {}), constraints: [...base.constraints, '方案与预算均须由用户分步确认后才可启动'] };
+  return { ...base, ...(objective ? { title: '本周重点经营计划', objective } : {}), constraints: [...base.constraints, '周计划与预算须由用户在同一页确认后才可启动'] };
 }
 
 export function useAssistantWeeklyPlanExperience() {
@@ -78,13 +81,18 @@ export function useAssistantWeeklyPlanExperience() {
   const [proposal, setProposal] = useState<DigitalEmployeeOverview | null>(null);
   const [draft, setDraft] = useState<GoalDraft | null>(null);
   const [guidance, setGuidance] = useState<GuidanceState | null>(null);
-  const [stage, setStage] = useState<'plan' | 'budget'>('plan');
   const [modalOpen, setModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [factsRecovery, setFactsRecovery] = useState<Readonly<Record<string, unknown>> | null>(null);
   const [celebrating, setCelebrating] = useState(false);
-  const [referenceGap, setReferenceGap] = useState<{ missingCount: number; requiredCount: number } | null>(null);
+  const [referenceGap, setReferenceGap] = useState<{ missingCount: number; requiredCount: number; videoMissingCount: number; imageMissingCount: number } | null>(null);
   const [referenceMessage, setReferenceMessage] = useState('');
+  const [overBudgetApprovalRevision, setOverBudgetApprovalRevision] = useState<number | null>(null);
+  const [overBudgetApprovalQuoteKey, setOverBudgetApprovalQuoteKey] = useState('');
+  const [overBudgetConfirmationOpen, setOverBudgetConfirmationOpen] = useState(false);
+  const [overBudgetConfirmationCount, setOverBudgetConfirmationCount] = useState(0);
   const refresh = useCallback(async () => {
     const next = await digitalEmployeeApi.overview();
     setOverview(next);
@@ -100,26 +108,79 @@ export function useAssistantWeeklyPlanExperience() {
 
   const prepare = useCallback(async () => {
     setError('');
+    setNotice('');
+    setFactsRecovery(null);
+    setOverBudgetApprovalRevision(null);
+    setOverBudgetApprovalQuoteKey('');
+    setOverBudgetConfirmationOpen(false);
+    setOverBudgetConfirmationCount(0);
     setReferenceMessage('');
-    const next = await digitalEmployeeApi.overview();
+    let next = await digitalEmployeeApi.overview();
     if (!next.config) throw new Error('企业基础档案尚未建立。请先完成首页的新手卡片，之后我会在这里逐项补充周计划信息。');
     setOverview(next); setGuidance(null); setDraft(null);
     if (next.goal && next.plan) {
-      const readiness = await digitalEmployeeApi.weeklyReferenceReadiness(next.goal.id);
+      const goalId = next.goal.id;
+      const productionReadiness = !next.run
+        ? await digitalEmployeeApi.weeklyProductionReadiness(goalId).catch(() => null) : null;
+      if (productionReadiness?.blockers.some(item => item.code === 'enterprise_facts_mismatch')
+        && productionReadiness.recovery) {
+        setFactsRecovery(productionReadiness.recovery);
+        setReferenceGap(null); setProposal(next); setModalOpen(true);
+        setNotice('企业资料已更新。请先同步这份周计划，再核对新版内容；生产尚未开始。');
+        return '企业资料已更新，这份周计划需要同步。请在当前窗口更新后重新确认。';
+      }
+      let readiness = await digitalEmployeeApi.weeklyReferenceReadiness(goalId);
+      if (!readiness.ready && readiness.videoMissingCount === 0 && readiness.imageMissingCount > 0
+        && next.plan.status === 'draft') {
+        try {
+          next = await digitalEmployeeApi.rebindWeeklyImageReferences(goalId);
+          readiness = await digitalEmployeeApi.weeklyReferenceReadiness(goalId);
+          setOverview(next);
+        } catch (cause) {
+          setReferenceMessage(cause instanceof Error ? cause.message : '图文参考自动匹配失败');
+        }
+      }
       if (!readiness.ready) {
-        setReferenceGap({ missingCount: readiness.missingCount, requiredCount: readiness.requiredCount });
-        setProposal(next); setStage('plan'); setModalOpen(false);
-        return `本周计划还缺 ${readiness.missingCount} 条可用于制作的爆款视频。周任务尚未确立，请选择手动录入或立即采集。`;
+        setReferenceGap(readiness);
+        setProposal(next); setModalOpen(true);
+        return `本周计划还缺 ${readiness.videoMissingCount} 条爆款视频、${readiness.imageMissingCount} 条爆款图文参考。请手动录入或立即采集。`;
       }
       setReferenceGap(null);
-      setProposal(next); setStage('budget'); setModalOpen(true);
-      return '已在当前窗口打开本周计划。你可以核对方案和预算；只有再次确认后才会启动运营。';
+      setProposal(next); setModalOpen(true);
+      return '已在当前窗口打开本周计划。请核对爆款参考、暂定发布安排和预算，确认后开始运营。';
     }
     const questions = guidanceQuestions(next.config);
     setReferenceGap(null);
-    setProposal(null); setStage('plan'); setModalOpen(false);
+    setProposal(null); setModalOpen(false);
     setGuidance({ config: next.config, questions, index: 0, answers: {} });
     return questionPrompt(questions[0]!);
+  }, []);
+
+  const saveDraft = useCallback(async (candidate: GoalDraft, current: GuidanceState): Promise<string> => {
+    setBusy(true); setError(''); setReferenceMessage('');
+    try {
+      const configChanged = Object.keys(current.answers).some(key => key !== 'weeklyObjective');
+      if (configChanged) await digitalEmployeeApi.completeOnboarding(current.config);
+      const created = await digitalEmployeeApi.createGoal(candidate);
+      if (!created.goal || !created.plan?.businessPackage) throw new Error('周计划方案尚未生成完整，请稍后重试。');
+      setOverview(created); setProposal(created); setGuidance(null); setReferenceGap(null); setModalOpen(true);
+      return '已找到并绑定可用的爆款视频与图文参考。请在同一页核对计划和预算，确认后开始运营。';
+    } catch (cause) {
+      if (cause instanceof DigitalEmployeeApiError && cause.code === 'weekly_reference_shortage') {
+        const count = Number(cause.details.missingCount);
+        const required = Number(cause.details.requiredCount);
+        if (Number.isSafeInteger(count) && count > 0 && Number.isSafeInteger(required) && required >= count) {
+          const videoMissingCount = Number(cause.details.videoMissingCount) || 0;
+          const imageMissingCount = Number(cause.details.imageMissingCount) || 0;
+          setReferenceGap({ missingCount: count, requiredCount: required, videoMissingCount, imageMissingCount });
+          setModalOpen(false);
+          return `本周还缺 ${videoMissingCount} 条爆款视频、${imageMissingCount} 条爆款图文参考。请手动录入或立即采集。`;
+        }
+      }
+      const message = cause instanceof Error ? cause.message : '周计划方案保存失败';
+      setError(message); setModalOpen(false);
+      return `周计划尚未确立：${message}`;
+    } finally { setBusy(false); }
   }, []);
 
   const answer = useCallback(async (value: string) => {
@@ -141,35 +202,11 @@ export function useAssistantWeeklyPlanExperience() {
       return questionPrompt(current.questions[nextIndex]!);
     }
     const config = applyGuidance(current.config, answers);
-    setDraft(guidedDraft(config, answers));
-    setGuidance({ ...current, config, answers, index: nextIndex });
-    setStage('plan'); setModalOpen(true);
-    return '信息够用了。我先整理了一版周计划草案，已在当前窗口打开。请先确认目标、内容和排期；确认方案后，我再给你看预算。';
-  }, [busy, guidance]);
-
-  const confirmPlan = useCallback(async () => {
-    if (!draft || !guidance || busy) return;
-    setBusy(true); setError(''); setReferenceMessage('');
-    try {
-      const configChanged = Object.keys(guidance.answers).some(key => key !== 'weeklyObjective');
-      if (configChanged) await digitalEmployeeApi.completeOnboarding(guidance.config);
-      const created = await digitalEmployeeApi.createGoal(draft);
-      if (!created.goal || !created.plan?.businessPackage) throw new Error('周计划方案尚未生成完整，请稍后重试。');
-      setOverview(created); setProposal(created); setGuidance(null); setReferenceGap(null); setStage('budget');
-    } catch (cause) {
-      if (cause instanceof DigitalEmployeeApiError && cause.code === 'weekly_reference_shortage') {
-        const count = Number(cause.details.missingCount);
-        const required = Number(cause.details.requiredCount);
-        if (Number.isSafeInteger(count) && count > 0 && Number.isSafeInteger(required) && required >= count) {
-          setReferenceGap({ missingCount: count, requiredCount: required });
-          setModalOpen(false);
-          return;
-        }
-      }
-      setError(cause instanceof Error ? cause.message : '周计划方案保存失败');
-    }
-    finally { setBusy(false); }
-  }, [busy, draft, guidance]);
+    const candidate = guidedDraft(config, answers);
+    const nextGuidance = { ...current, config, answers, index: nextIndex };
+    setDraft(candidate); setGuidance(nextGuidance);
+    return saveDraft(candidate, nextGuidance);
+  }, [busy, guidance, saveDraft]);
 
   const openReferenceLibrary = useCallback((view: 'inspiration' | 'accounts') => {
     const url = new URL(window.location.href);
@@ -191,7 +228,7 @@ export function useAssistantWeeklyPlanExperience() {
       const result = await socialDiscoveryApi.run({ triggerType: 'manual' });
       setReferenceMessage(result.skipped
         ? `本次采集未启动：${result.reason || '请检查采集范围与运行状态'}。周任务仍未创建。`
-        : '已发起采集。新视频完成逐镜分析与复核后，返回这里重新核验周计划；采集入库不等于可用于制作。');
+        : '已发起采集。新视频或图文完成相应分析后，返回这里重新匹配周计划；采集入库不等于可用于制作。');
     } catch (cause) {
       setReferenceMessage(cause instanceof Error ? cause.message : '采集未启动，请检查采集设置。');
     } finally { setBusy(false); }
@@ -205,30 +242,85 @@ export function useAssistantWeeklyPlanExperience() {
 
   const confirm = useCallback(async () => {
     const current = proposal;
-    if (!current?.goal || !current.plan?.businessPackage || busy || stage !== 'budget') return;
+    if (!current?.goal || !current.plan?.businessPackage || busy) return;
     setBusy(true); setError('');
+    if (!factsRecovery) setNotice('');
     let requestSent = false;
     let reconciliationRead = false;
     const finish = (next: DigitalEmployeeOverview) => {
       const execution = confirmedWeeklyExecution(next, current.goal!.id);
       if (!execution) return false;
       setOverview(next); setProposal(next); setModalOpen(false); setCelebrating(true);
+      setOverBudgetConfirmationOpen(false);
       notifyWeeklyWorkUpdated({ source: 'assistant', goalId: current.goal!.id, execution: { goalId: current.goal!.id, runId: execution.run.id, status: execution.run.status, taskCount: execution.tasks.length, startedAt: execution.run.started_at } });
       window.setTimeout(() => setCelebrating(false), 900);
       return true;
     };
     try {
+      if (factsRecovery) {
+        const rebuilt = await synchronizeWeeklyPlanFacts(current.goal, factsRecovery);
+        setOverview(rebuilt); setProposal(rebuilt); setFactsRecovery(null); setModalOpen(true);
+        setNotice('已按最新企业资料更新周计划。请重新核对并确认；生产尚未开始。');
+        notifyWeeklyWorkUpdated({ source: 'assistant', goalId: rebuilt.goal!.id });
+        return;
+      }
       const prepared = await prepareWeeklyPlanForLaunch(current, {
         onObserved: next => { setOverview(next); setProposal(next); },
       });
       const preparedPackage = prepared.plan?.businessPackage;
       if (!preparedPackage) throw new Error('任务包准备结果与当前周目标不一致，本周任务尚未启动。');
+      const overBudgetFilms = (preparedPackage.tasks.find(task => task.templateId === 'production')?.videoPlans || [])
+        .filter(item => item.productionRole !== 'platform_adaptation')
+        .map(item => finishedFilmBudgetDecision({ contentId: item.contentId ?? '', durationSeconds: Number(item.duration),
+          estimatedCostCny: Number(item.estimatedCostRange?.maxCny ?? item.estimatedCost) }))
+        .filter(item => item.requiresConfirmation);
+      if (overBudgetFilms.some(item => !item.estimateAvailable)) {
+        throw new Error('部分成片缺少可核验的时长或费用估算；本次未启动生产。');
+      }
+      const quoteKey = finishedFilmBudgetQuoteKey(overBudgetFilms);
+      if (overBudgetFilms.length && (overBudgetApprovalRevision !== preparedPackage.revision || overBudgetApprovalQuoteKey !== quoteKey)) {
+        setProposal(prepared);
+        if (overBudgetConfirmationOpen) {
+          setOverBudgetConfirmationOpen(false);
+          setOverBudgetApprovalRevision(null);
+          setOverBudgetApprovalQuoteKey('');
+          setOverBudgetConfirmationCount(0);
+          setError('制作费用预留已更新，本周计划尚未启动。请重新核对预算后再确认。');
+          return;
+        }
+        setOverBudgetApprovalRevision(preparedPackage.revision);
+        setOverBudgetApprovalQuoteKey(quoteKey);
+        setOverBudgetConfirmationCount(overBudgetFilms.length);
+        setOverBudgetConfirmationOpen(true);
+        return;
+      }
       requestSent = true;
-      let next = await digitalEmployeeApi.approveGoal(current.goal.id, preparedPackage.revision, true);
+      let next = await digitalEmployeeApi.approveGoal(current.goal.id, preparedPackage.revision, true,
+        overBudgetFilms.length > 0 ? quoteKey : '');
       let finished = finish(next);
       if (!finished) { reconciliationRead = true; next = await digitalEmployeeApi.overview(current.goal.id); finished = finish(next); }
       if (!finished) throw new Error('启动请求已经发出，但暂未取得可确认的运行回执。系统不会自动重复启动，请稍后刷新查看。');
     } catch (cause) {
+      setOverBudgetConfirmationOpen(false);
+      if (factsRecovery) setNotice('');
+      if (!factsRecovery && cause instanceof DigitalEmployeeApiError && cause.code === ENTERPRISE_FACTS_CHANGED_ERROR_CODE) {
+        try {
+          const rebuilt = await synchronizeWeeklyPlanFacts(current.goal, cause.details);
+          setOverview(rebuilt); setProposal(rebuilt); setModalOpen(true);
+          setFactsRecovery(null);
+          setOverBudgetApprovalRevision(null); setOverBudgetApprovalQuoteKey(''); setOverBudgetConfirmationCount(0);
+          setNotice('企业资料更新后，已重新整理这份周计划。请核对新版内容，再决定是否开始生产。');
+          notifyWeeklyWorkUpdated({ source: 'assistant', goalId: rebuilt.goal.id });
+        } catch (rebuildError) {
+          setError(rebuildError instanceof Error ? `周计划暂时无法更新：${rebuildError.message}` : '周计划暂时无法更新，请刷新后重试。');
+        }
+        return;
+      }
+      if (showWeeklyReadinessGuidance(cause)) {
+        setModalOpen(false);
+        setError('');
+        return;
+      }
       const conflict = weeklyStartConflictFromError(cause);
       if (conflict) setError(`${conflict.goalTitle || '另一轮周计划'}正在运行，本周计划没有被重复启动。`);
       else if (requestSent && !reconciliationRead && weeklyStartResultNeedsReconciliation(cause)) {
@@ -237,17 +329,30 @@ export function useAssistantWeeklyPlanExperience() {
         setError('启动结果暂时无法确认。系统已完成一次只读核对，不会自动重复提交，请稍后刷新查看。');
       } else setError(cause instanceof Error ? cause.message : '周计划启动失败');
     } finally { setBusy(false); }
-  }, [busy, proposal, stage]);
+  }, [busy, proposal, factsRecovery, overBudgetApprovalRevision, overBudgetApprovalQuoteKey, overBudgetConfirmationOpen]);
 
-  return { proposal, draft, stage, modalOpen, busy, error, celebrating,
+  return { proposal, draft, modalOpen, busy, error, notice, factsSyncRequired: Boolean(factsRecovery), celebrating, overBudgetApprovalRevision,
+    overBudgetConfirmationOpen, overBudgetConfirmationCount,
+    cancelOverBudgetConfirmation: () => { if (busy) return; setOverBudgetConfirmationOpen(false);
+      setOverBudgetApprovalRevision(null); setOverBudgetApprovalQuoteKey(''); setOverBudgetConfirmationCount(0); },
     referenceGap, referenceMessage, openReferenceLibrary, collectReferencesNow,
-    retryReferenceCheck: () => { if (draft) void confirmPlan(); else void prepare().catch(cause => setReferenceMessage(cause instanceof Error ? cause.message : '参考核验暂不可用')); },
+    retryReferenceCheck: () => { if (draft && guidance) { void saveDraft(draft, guidance); return; }
+      const goalId = proposal?.goal?.id;
+      if (goalId && referenceGap?.imageMissingCount) {
+        setBusy(true);
+        void digitalEmployeeApi.rebindWeeklyImageReferences(goalId)
+          .then(next => { setOverview(next); setProposal(next); setReferenceGap(null); setModalOpen(true); setReferenceMessage('图文参考已重新匹配，请核对方案。'); })
+          .catch(cause => setReferenceMessage(cause instanceof Error ? cause.message : '图文参考重新匹配失败'))
+          .finally(() => setBusy(false));
+        return;
+      }
+      void prepare().catch(cause => setReferenceMessage(cause instanceof Error ? cause.message : '参考核验暂不可用')); },
     guidanceActive: Boolean(guidance && guidance.index < guidance.questions.length), weeklyPlanOperating: operating(overview),
     objectiveChoices: guidance?.questions[guidance.index]?.key === 'weeklyObjective'
       ? suggestedWeeklyObjectives(applyGuidance(guidance.config, guidance.answers)).map((label, index) => ({
         value: String(index + 1), label, recommended: index === 0,
       })) : [],
-    prepare, answer, confirmPlan, open: () => setModalOpen(true), close: () => { if (!busy) setModalOpen(false); }, confirm };
+    prepare, answer, open: () => setModalOpen(true), close: () => { if (!busy) setModalOpen(false); }, confirm };
 }
 
 export type AssistantWeeklyPlanExperience = ReturnType<typeof useAssistantWeeklyPlanExperience>;

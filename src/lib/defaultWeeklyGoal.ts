@@ -23,6 +23,9 @@ export const EMPTY_GOAL: GoalDraft = {
 };
 
 export function defaultWeeklyGoal(config: DigitalEmployeeConfig, businessLine: BusinessLine = 'full_funnel', contentPlatform: ContentPlatform = 'all') {
+  // The default weekly publishing outline is independent of connected accounts
+  // and their quotas. It is not a request to produce one asset per publish slot.
+  const mixedDefault = businessLine !== 'customer_conversion' && contentPlatform === 'all';
   const targetPlatforms = weeklyPublishingPlatforms(config.publishingTargets, config.socialCadence);
   const availablePlatforms = targetPlatforms.length
     ? targetPlatforms
@@ -36,9 +39,9 @@ export function defaultWeeklyGoal(config: DigitalEmployeeConfig, businessLine: B
   const preset = weeklyTaskPackagePreset(presetId);
   const presetPlatforms = preset.platforms.filter(isContentProductionPlatform)
     .filter(platform => configuredPlatforms.includes(platform));
-  const platforms = presetPlatforms.length ? presetPlatforms : initialPlatforms;
+  const platforms = mixedDefault ? (['facebook', 'linkedin'] as Array<'facebook' | 'linkedin'>) : presetPlatforms.length ? presetPlatforms : initialPlatforms;
   const product = config.focusProducts.split(/[、，,；;\n]/).map(item => item.trim()).filter(Boolean)[0] || '';
-  const videoPlans = businessLine === 'customer_conversion' ? [] : buildPresetMatrixVideoPlans({
+  const videoPlans = businessLine === 'customer_conversion' || mixedDefault ? [] : buildPresetMatrixVideoPlans({
     preset, productName: product, focus: '', defaults: config.videoDefaults, platforms,
     matrixRows: defaultMatrixPlan(config, platforms, preset.objective),
   });
@@ -52,7 +55,7 @@ export function defaultWeeklyGoal(config: DigitalEmployeeConfig, businessLine: B
     title: businessLine === 'customer_conversion' ? '本周客户转化目标' : `${preset.label}周任务包`,
     objective: businessLine === 'customer_conversion' ? '提升高意向客户的报价、跟进与成交转化' : preset.objective,
     metric: businessLine === 'customer_conversion' ? 'qualified_inquiries' : preset.metric,
-    target: businessLine === 'customer_conversion' ? 1 : target,
+    target: businessLine === 'customer_conversion' ? 1 : mixedDefault ? 15 : target,
     unit: businessLine === 'customer_conversion' ? '位' : '条',
     scope: config.targetMarkets,
   };

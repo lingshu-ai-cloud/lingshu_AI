@@ -430,8 +430,19 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
         const next = [...existing];
         for (const item of incoming) {
           const sku = item.sku?.trim();
-          const index = sku ? next.findIndex(product => product.sku?.trim() === sku) : -1;
-          if (index >= 0) next[index] = { ...next[index], ...item };
+          const id = item.id?.trim();
+          const index = id ? next.findIndex(product => product.id?.trim() === id)
+            : sku ? next.findIndex(product => product.sku?.trim() === sku) : -1;
+          if (index >= 0) {
+            const previous = next[index];
+            // A migration bundle may carry a new main photo but no legacy
+            // attachment list. Keep existing account assets instead of clearing
+            // them when a matching product is imported again.
+            next[index] = { ...previous, ...item,
+              images: item.images?.length ? [...(previous.images || []), ...item.images] : previous.images || [],
+              packagingImages: [...(previous.packagingImages || []), ...(item.packagingImages || [])],
+            };
+          }
           else next.push(item);
         }
         setProductPage(Math.max(1, Math.ceil(next.length / PAGE_SIZE)));

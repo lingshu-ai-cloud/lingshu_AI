@@ -8,7 +8,8 @@ const draft = {
   goal: { id: 'goal-a', version: 1 },
   plan: { businessPackage: {
     revision: 3,
-    tasks: [{ templateId: 'production', videoPlans: [{ contentId: 'content-a', productionRole: 'master' }] }],
+    tasks: [{ templateId: 'production', videoPlans: [{ contentId: 'content-a', productionRole: 'master', duration: 30,
+      estimatedCost: 10, estimatedCostRange: { minCny: 10, maxCny: 20, basis: 'verified_storyboard_provider_envelope' } }] }],
   } },
   run: null,
   tasks: [],
@@ -36,6 +37,7 @@ function setup(options: {
   approveGoal?: () => Promise<DigitalEmployeeOverview>;
   overview?: () => Promise<DigitalEmployeeOverview>;
   recover?: () => Promise<boolean>;
+  confirmOverBudget?: (message: string) => Promise<boolean>;
 } = {}) {
   const calls: string[] = [];
   const errors: string[] = [];
@@ -66,9 +68,23 @@ function setup(options: {
     api,
     feedback: value => feedback.push({ title: value.title, tone: value.tone }),
     notify: value => events.push(value),
+    confirmOverBudget: options.confirmOverBudget,
   });
   return { ...action, calls, errors, views, feedback, events, conflicts, data, version };
 }
+
+test('over-budget finished film pauses before approval and only resumes after explicit confirmation', async () => {
+  const costly = structuredClone(prepared);
+  costly.plan!.businessPackage!.tasks[0]!.videoPlans![0]!.estimatedCostRange!.maxCny = 22;
+  const declined = setup({ generatePackageDetails: async () => costly, confirmOverBudget: async message => {
+    assert.match(message, /¥0\.73\/秒/); return false;
+  } });
+  await declined.confirmWeeklyPlan();
+  assert.equal(declined.calls.includes('approve'), false);
+  const accepted = setup({ generatePackageDetails: async () => costly, confirmOverBudget: async () => true });
+  await accepted.confirmWeeklyPlan();
+  assert.equal(accepted.calls.includes('approve'), true);
+});
 
 test('one confirmation accepts only a persisted matching run and publishes its scoped receipt', async () => {
   const run = setup();

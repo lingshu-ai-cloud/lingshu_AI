@@ -73,6 +73,14 @@ export function MaterialLibraryCardMedia({
   useEffect(() => setAspectRatio(materialIntrinsicAspectRatio(material)), [material.aspectRatio, material.height, material.id, material.width]);
   return (
     <div className="relative bg-surface-2" style={{ aspectRatio }}>
+      {material.productImageProcessing && (material.productImageProcessing.analysis !== 'completed' || material.productImageProcessing.cutout !== 'completed') &&
+        <div className="absolute bottom-2 left-2 z-30 rounded bg-white/95 px-2 py-1 text-xs text-text-secondary" aria-label="产品图片加工状态">
+          {material.productImageProcessing.analysis !== 'completed'
+            ? material.productImageProcessing.analysis === 'failed' ? '分析未完成' : '分析中' : ''}
+          {material.productImageProcessing.analysis !== 'completed' && material.productImageProcessing.cutout !== 'completed' ? ' · ' : ''}
+          {material.productImageProcessing.cutout !== 'completed'
+            ? material.productImageProcessing.cutout === 'failed' ? '抠图未完成' : '抠图中' : ''}
+        </div>}
       <div className="absolute right-2 top-2 z-30 flex gap-1">
         {material.canManage && <button type="button" aria-label={`编辑 ${material.name}`} title="编辑" onClick={onEdit} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-accent"><Pencil size={14} /></button>}
         {material.canManage && <button type="button" aria-label={`删除 ${material.name}`} title="删除" onClick={onDelete} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-red-600"><Trash2 size={14} /></button>}

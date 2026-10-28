@@ -585,6 +585,8 @@ export default function GlobalAssistant({
       if (assistantText) {
         const current = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages;
         setMessages(PRIMARY_ASSISTANT_THREAD, [...current, { role: 'assistant', content: assistantText }]);
+        setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true);
+        window.setTimeout(() => persistThread(PRIMARY_ASSISTANT_THREAD), 0);
       }
       if (text) window.setTimeout(() => void send(text, routeAgent, targetContext, [], detail?.referenceMedia, { preserveDraft: detail?.preserveDraft, companyReport: Boolean(detail?.companyReportRequest), businessScene: detail?.businessScene }), 0);
     };
@@ -779,9 +781,7 @@ export default function GlobalAssistant({
         handleContentDeliveryCreate={handleContentDeliveryCreate}
         handleContentDeliveryDownload={handleContentDeliveryDownload}
       />
-
       <AssistantWeeklyPlanOverlay experience={weeklyPlanExperience} reduceMotion={reduceMotion}/>
-
       {!inlineHome && <AssistantLauncher
         retracted={launcherRetracted}
         chatOpen={mode === 'chat'}

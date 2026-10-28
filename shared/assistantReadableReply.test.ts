@@ -44,6 +44,13 @@ test('quick task replies keep a short actionable surface and preserve the remain
   for (const paragraph of paragraphs) assert.ok((result.summary + result.details.join('')).includes(paragraph));
 });
 
+test('weekly footage supplement never duplicates its list in an automatic details disclosure', () => {
+  const long = `本周计划还没有开始。\n\n${'镜头还缺可用实拍。'.repeat(80)}\n\n先补充视频素材。`;
+  const result = splitAssistantReply(long, { presentation: 'operations', compact: true });
+  assert.equal(result.details.length, 0);
+  assert.equal(result.summary, long);
+});
+
 test('customer reply translates internal statuses and removes raw evidence without losing action or impact', () => {
   const result = readableAssistantReply('结论：先重试平台采集。\n依据：当前 workflow_tasks 中 `scheduled_source_collection` 任务状态为 `failed` [记录:workflow_tasks/workflow_tasks_5ef74d300c96453c8a0c6c8c25632ea6]，导致8条 TikTok 脚本卡在 `plan_review`。\n✅ 行动：重试采集，或提供2～3个竞品链接。');
   assert.doesNotMatch(result, /workflow_tasks|scheduled_source|plan_review|failed|记录:|5ef74d|`/);

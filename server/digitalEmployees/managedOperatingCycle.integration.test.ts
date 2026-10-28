@@ -83,6 +83,13 @@ try {
   profile.factVersion!.confirmedBy = confirmedBy;
   rows.get('digital_employee_configs')![0].config.productionOnboarding = configuredOnboarding;
   rows.get('weekly_plans')![0].plan.configSnapshot = { ...rows.get('weekly_plans')![0].plan.configSnapshot, productionOnboarding: configuredOnboarding };
+  const firstMaster = rows.get('weekly_plans')![0].plan.businessPackage.tasks.find((task: any) => task.templateId === 'production').videoPlans[0];
+  const previousMax = firstMaster.estimatedCostRange.maxCny;
+  firstMaster.estimatedCostRange.maxCny = 100;
+  const overBudget = await approveGoalForReview(tenant, 'actor', 'source', pack.revision, []);
+  assert.equal((overBudget.body as { error?: string }).error, 'finished_film_budget_confirmation_required');
+  assert.equal(rows.get('workflow_runs')!.length, 0, 'over-budget film must not start a run without explicit confirmation');
+  firstMaster.estimatedCostRange.maxCny = previousMax;
   const first = await approveGoalForReview(tenant, 'actor', 'source', pack.revision, []);
   assert.equal(first.status, 200, JSON.stringify(first.body));
   assert.equal(rows.get('weekly_plans')![0].plan.managedPublishingGrantId, 'grant', 'first cycle binds explicit consent without waiting for next week');

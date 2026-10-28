@@ -7,6 +7,7 @@ import type { DigitalEmployeeOverview } from '../lib/digitalEmployees';
 import { HOME_FIRST_RUN_RESET_EVENT, HOME_GROWTH_TOUR_COMPLETE_EVENT, HOME_GROWTH_TOUR_START_EVENT, HOME_INTRODUCTION_COMPLETE_EVENT, readHomeFirstRun, resetHomeFirstRun, writeHomeFirstRun } from '../lib/homeFirstRun';
 import { EMPTY_CONFIG } from './smartBusiness/digitalEmployeeConfigRules';
 import HomeIntroduction from './HomeIntroduction';
+import { WEEKLY_WORK_UPDATED_EVENT } from '../lib/weeklyWorkEvents';
 import AssistantHomeScenes from './assistant/AssistantHomeScenes';
 import { PRIMARY_ASSISTANT_THREAD } from './assistant/globalAssistantRuntime';
 import { ASSISTANT_HOME_ACTIVITY_EVENT, ASSISTANT_HOME_PROMPT_EVENT } from './assistant/useAssistantHomeAnchor';
@@ -32,8 +33,15 @@ export default function ContentCreationHome({ onNavigate, inspirationWorkspace, 
   useEffect(() => {
     const refresh = () => setOverviewRevision(value => value + 1);
     window.addEventListener(AUTH_TOKEN_CHANGED_EVENT, refresh);
-    return () => window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT, refresh);
+    window.addEventListener(WEEKLY_WORK_UPDATED_EVENT, refresh);
+    return () => { window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT, refresh); window.removeEventListener(WEEKLY_WORK_UPDATED_EVENT, refresh); };
   }, []);
+
+  useEffect(() => {
+    if (!overview?.run || ['succeeded', 'cancelled'].includes(overview.run.status)) return;
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') setOverviewRevision(value => value + 1); }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [overview?.run?.id, overview?.run?.status]);
 
   useEffect(() => {
     let active = true;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { Router } from 'express';
-import { advanceAutomatedReplication, invokeReplicationRoute } from './automatedReplicationBridge.js';
+import { advanceAutomatedReplication, invokeReplicationRoute, validateReplicationVideo } from './automatedReplicationBridge.js';
 import { shotFingerprint } from '../../src/lib/shotProduction.js';
 
 const shot = { source: 'material', sound: 'voiceover', layout: 'full', presenterId: '', productId: '', productMaterialId: '', backgroundMaterialId: '', backgroundMode: 'independent', transparent: false, narration: 'Enterprise script', locked: false, factsConfirmed: false, candidates: [], adoptedId: '', revision: 1 };
@@ -43,6 +43,50 @@ assert.equal((await advanceAutomatedReplication({ tenantId: 'tenant', projectId:
 assert.equal(matchedCalls, 0); assert.equal(matched.project().spec.storyboardAssignments.slot, 'filling-video');
 assert.equal(matched.project().spec.clipEdits.slot.trimStart, 3); assert.equal(matched.project().spec.clipEdits.slot.trimEnd, 5);
 assert.ok(matched.project().spec.automatedReplicationProgress.shot.matching.evidence);
+
+const publicFallback = fixture();
+publicFallback.project().spec.automatedReplicationShots[0].firstFrameRequest = {
+  shotDescription: '滴管向瓶中灌装液体', sceneType: 'product', productIds: ['product-1'],
+};
+const publicMaterial = { id: 'public-video', scope: 'shared', sourceCategory: 'official_import', sourceType: 'official_import',
+  type: 'video', file: 'shared/public.mp4', duration: 8,
+  segments: [{ start: 0, end: 4, action: '滴管向瓶中灌装液体', subject: ['瓶', '液体', '滴管'] }] };
+assert.equal((await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: publicFallback.store }, {
+  ...deps, materials: () => [publicMaterial], call: async () => { throw Error('公共素材命中后不得付费生成'); },
+})).state, 'pending');
+assert.equal(publicFallback.project().spec.storyboardAssignments.slot, 'public-video');
+assert.equal(publicFallback.project().spec.storyboardSourcePlans.slot.materialFallbackTier, 'public');
+assert.match(publicFallback.project().spec.automatedReplicationShots[0].firstFrameRequest.shotDescription, /示意画面/);
+
+const genericFallback = fixture();
+genericFallback.project().spec.automatedReplicationShots[0].firstFrameRequest = {
+  shotDescription: '产品包装展示', sceneType: 'product', productIds: ['product-1'],
+};
+const genericMaterial = { id: 'factory-video', tenantId: 'tenant', scope: 'own', sourceType: 'upload', type: 'video',
+  file: 'factory.mp4', duration: 8, segments: [{ start: 0, end: 4, action: '工厂机器灌装液体', subject: ['设备', '瓶'] }] };
+assert.equal((await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: genericFallback.store }, {
+  ...deps, materials: () => [genericMaterial], call: async () => { throw Error('通用素材命中后不得付费生成'); },
+})).state, 'pending');
+assert.equal(genericFallback.project().spec.storyboardAssignments.slot, 'factory-video');
+assert.equal(genericFallback.project().spec.storyboardSourcePlans.slot.materialFallbackTier, 'generic');
+assert.match(genericFallback.project().spec.automatedReplicationShots[0].firstFrameRequest.shotDescription, /不展示或证明本产品/);
+const visualClaim = fixture();
+visualClaim.project().spec.shotProductions['video-1:shot'] = { ...shot, narration: '请看这款产品的包装' };
+visualClaim.project().spec.automatedReplicationShots[0].firstFrameRequest = {
+  shotDescription: '产品包装展示', sceneType: 'product', productIds: ['product-1'],
+};
+let visualClaimRoute = '';
+await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: visualClaim.store }, {
+  ...deps, materials: () => [genericMaterial], call: async (_surface: string, _method: string, route: string, body: any) => {
+    visualClaimRoute = route;
+    return deps.call('studio', 'post', route, body);
+  },
+});
+assert.equal(visualClaimRoute, '/storyboard-first-frame', 'a frozen visual claim must not be silently paired with unrelated B-roll');
+await assert.rejects(validateReplicationVideo({ id: 'private', scope: 'shared', sourceCategory: 'official_import',
+  type: 'video', objectKey: 'materials/tenants/not-this-tenant/private.mp4' }, 'tenant'), /可用素材范围/);
+await assert.rejects(validateReplicationVideo({ id: 'fake-public', scope: 'shared', sourceCategory: 'user_generated',
+  type: 'video', objectKey: 'materials/shared/public.mp4' }, 'tenant'), /只允许本企业/);
 
 const replaced = fixture();
 let videoHash = 'a'.repeat(64);

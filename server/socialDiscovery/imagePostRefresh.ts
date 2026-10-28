@@ -36,8 +36,9 @@ export async function refreshExistingImagePost(input: {
   const previouslyAnalyzed = (existingAnalysis.imageEvidence as { status?: string } | undefined)?.status === 'analyzed';
   const recordId = String(existingRecord.id);
   const remoteThumbnail = item.thumbnailUrl || String(existingRecord.thumbnailUrl || '');
-  const thumbnailUrl = await input.persistThumbnail(recordId, remoteThumbnail);
   const storedImageUrls = await input.persistImages(recordId, item.imageUrls?.length ? item.imageUrls : [remoteThumbnail]);
+  if (storedImageUrls.length !== 1) throw Error('image_post_single_static_image_required');
+  const thumbnailUrl = await input.persistThumbnail(recordId, remoteThumbnail);
   const storedRecord = await input.store.getById<Record<string, unknown>>(input.collection, recordId);
   if (!storedRecord || storedRecord.tenantId !== input.tenantId) throw Error('image_post_record_disappeared_before_analysis');
   const storedAnalysis = videoAnalysisOf(storedRecord);

@@ -193,11 +193,17 @@ export function ProductMaterialGroupCard({
 }) {
   const productSlots = slots.filter(slot => slot.productId === product.id);
   const coverMaterial = selectProductCoverMaterial(materials, product);
+  const processing = materials.find(material => material.productImageProcessing)?.productImageProcessing;
   const sourceImageUrl = productSlots.find(slot => slot.sourceImageUrl)?.sourceImageUrl;
 
   return (
     <article className="group relative overflow-hidden rounded-lg border border-border bg-surface transition-colors hover:border-border-bright focus-within:border-accent">
       <ProductCover product={product} coverMaterial={coverMaterial} sourceImageUrl={sourceImageUrl} loading={loading} error={error} />
+      {processing && (processing.analysis !== 'completed' || processing.cutout !== 'completed') &&
+        <div className="absolute left-2 top-2 z-20 flex flex-wrap gap-1" aria-label="产品图片加工状态">
+          {processing.analysis !== 'completed' && <span className="rounded bg-white/95 px-2 py-1 text-xs text-text-secondary shadow-sm">{processing.analysis === 'failed' ? '分析未完成' : '分析中'}</span>}
+          {processing.cutout !== 'completed' && <span className="rounded bg-white/95 px-2 py-1 text-xs text-text-secondary shadow-sm">{processing.cutout === 'failed' ? '抠图未完成' : '抠图中'}</span>}
+        </div>}
       <div className="ls-touch-media-reveal absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/65 to-transparent p-3 pt-10 text-white opacity-0 transition-opacity duration-[var(--ls-motion-fast)] group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
         <h3 className="line-clamp-2 ls-type-title-small text-white">{product.name}</h3>
         <p className="mt-1 ls-type-body-small text-white/80">产品素材集合</p>

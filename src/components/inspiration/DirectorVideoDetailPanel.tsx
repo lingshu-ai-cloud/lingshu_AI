@@ -54,6 +54,7 @@ export function DirectorVideoDetailPanel({
   const isImagePost = video.contentFormat === 'image';
   const imageQueue = imagePostAnalysisQueuePresentation(video);
   const imageAnalysisReady = !imageQueue && imageEvidence?.status === 'analyzed' && Boolean(imageEvidence.observedFacts?.length);
+  const legacyImageAnalysis = isImagePost && imageAnalysisReady && !Array.isArray(imageEvidence?.productionLabels);
   const progressStage = payload?.analysisProgress?.stage;
   const hasServerProgress = Boolean(payload?.analysisProgress);
   const terminalAnalysisState = Boolean(payload?.analysisError)
@@ -108,7 +109,7 @@ export function DirectorVideoDetailPanel({
           ? <Button onClick={onCancelAnalysis} icon={<X size={13} />}>停止分析</Button>
           : <Button onClick={analysisInterrupted ? (onReanalyze || onExactAnalysis) : exactQuality.ready ? (onReanalyze || onExactAnalysis) : onExactAnalysis} icon={<BarChart2 size={13} />}>{analysisInterrupted ? '继续详细分析' : exactQuality.ready ? '重新详细分析' : '详细分析'}</Button>)}
         {!isImagePost && !analysisInterrupted && (payload?.analysisError || video.status === 'failed') && <Button onClick={onRetry} loading={analyzing}>重新分析</Button>}
-        {isImagePost && !imageAnalysisReady && !imageQueue && <Button onClick={onReanalyzeImage} loading={analyzing} icon={<Images size={13} />}>重新分析图文</Button>}
+        {isImagePost && (!imageAnalysisReady || legacyImageAnalysis) && !imageQueue && <Button onClick={onReanalyzeImage} loading={analyzing} icon={<Images size={13} />}>{legacyImageAnalysis ? '补充参考图分析' : '重新分析图文'}</Button>}
         <Button onClick={onPreview}>预览原内容</Button>
         <Button type="primary" onClick={detailCreationReady ? onCreate : isImagePost ? onReanalyzeImage : onExactAnalysis} disabled={!detailCreationReady && !canRunDetailAnalysis} className="ml-auto">{video.id.startsWith('material-') ? '开始创作' : '爆款裂变'}</Button>
         {!detailCreationReady && <p className="w-full text-xs text-text-secondary">{isImagePost ? imageQueue?.detail || '点击“爆款裂变”会先完成图文证据分析。' : pending ? '详细分析完成后会开放复刻，当前任务不会重复提交。' : needsDirectorReview ? '逐镜分析已经完成；需先确认待复核的镜头证据，再进入制作。' : canRunExactAnalysis ? '点击“爆款裂变”会先完成详细分析，再进入制作。' : detailedAnalysisReason}</p>}
@@ -123,6 +124,7 @@ export function DirectorVideoDetailPanel({
         </div>}
       </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+          {legacyImageAnalysis && <p role="status" className="mb-4 border-l-2 border-warning bg-surface-2 px-3 py-2 text-xs text-text-secondary">旧版拆解缺少逐图产品判断；补充分析后才能用于图文复刻。</p>}
           {isImagePost && notice && <p role="status" className="mb-4 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">{notice}</p>}
           {isImagePost && imageAnalysisReady && imageEvidence ? (
             <ImageEvidenceSummaryPanel evidence={imageEvidence} />

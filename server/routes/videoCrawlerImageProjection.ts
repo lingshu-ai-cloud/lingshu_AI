@@ -9,7 +9,7 @@ import {
 export function apifyInstagramItemToImagePost(item: Record<string, unknown>, keyword: string): CrawledImagePost | null {
   const type = String(item.type || '').toLowerCase();
   const isVideo = type === 'video' || item.productType === 'clips' || Boolean(item.videoUrl);
-  if (isVideo) return null;
+  if (isVideo || /carousel|sidecar|album|gif|animated/.test(type)) return null;
   const author = String(item.ownerUsername || '').trim();
   const shortCode = String(item.shortCode || '').trim();
   const rawUrl = String(item.url || (shortCode ? `https://www.instagram.com/p/${shortCode}/` : '')).trim();
@@ -43,6 +43,7 @@ export function apifyInstagramItemToImagePost(item: Record<string, unknown>, key
 }
 
 export function apifyTikTokItemToImagePost(item: Record<string, unknown>, keyword: string): CrawledImagePost | null {
+  if (/gif|carousel|album|slideshow|animated/i.test(String(item.type || item.mediaType || ''))) return null;
   const hasImages = Boolean(item.imagePost)
     || (Array.isArray(item.images) && item.images.length > 0)
     || (Array.isArray(item.imageUrls) && item.imageUrls.length > 0)
@@ -53,7 +54,8 @@ export function apifyTikTokItemToImagePost(item: Record<string, unknown>, keywor
   if (!sourceUrl || !isPlatformUrl(sourceUrl, 'tiktok')) return null;
   const text = String(item.text || item.description || item.desc || item.title || '').trim();
   const thumbnailUrl = firstImageUrl([item.imagePost, item.images, item.imageUrls, item.coverUrl, item.thumbnailUrl, item]);
-  const imageUrls = imageUrlsFrom([item.imagePost, item.images, item.imageUrls, item.coverUrl, item.thumbnailUrl, item]);
+  const sourceImages = imageUrlsFrom([item.imagePost, item.images, item.imageUrls]);
+  const imageUrls = sourceImages.length ? sourceImages : imageUrlsFrom([item.coverUrl, item.thumbnailUrl]);
   const likes = Number(item.diggCount || item.likes || item.likeCount || 0);
   const comments = Number(item.commentCount || item.comments || 0);
   const shares = Number(item.shareCount || item.shares || 0);
@@ -90,8 +92,10 @@ function isDirectFacebookImageAsset(value: string): boolean {
 }
 
 export function apifyFacebookPostToImagePost(item: Record<string, unknown>, keyword: string): CrawledImagePost | null {
+  if (/gif|carousel|album|animated/i.test(String(item.type || item.mediaType || ''))) return null;
   if (findFacebookVideoMedia(item)) return null;
   const media = findFacebookImageMedia(item);
+  if (/gif|animated/i.test(String(media?.__typename || media?.__isMedia || ''))) return null;
   const sourceUrl = String(item.url || item.topLevelUrl || media?.url || '').trim();
   if (!sourceUrl || !isPlatformUrl(sourceUrl, 'facebook')) return null;
   if (/\/search\//i.test(sourceUrl)) return null;

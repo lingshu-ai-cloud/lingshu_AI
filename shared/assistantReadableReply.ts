@@ -201,7 +201,7 @@ export function splitAssistantReply(content: string, options: { compact?: boolea
   if (detail !== null) details.push(detail.join('\n'));
   let main = summary.join('\n');
   let autoFolded = false;
-  if (!details.length && options.presentation) {
+  if (!details.length && options.presentation && !/先补充视频素材。/u.test(main)) {
     const protectedBlocks: string[] = [];
     const foldable = main.replace(/```next\s*\n[\s\S]*?\n```/gu, block => {
       protectedBlocks.push(block);
@@ -216,7 +216,7 @@ export function splitAssistantReply(content: string, options: { compact?: boolea
   }
   // Older replies have no details protocol. Fold only clearly long, paragraph-based
   // explanations, never code/copy, tables, file receipts or a single paragraph.
-  if (!details.length && main.length > 1500 && !hasAssistantMarkdownTable(main) && !/```|<!--assistant-file:|^\s*\|/mu.test(main)) {
+  if (!details.length && main.length > 1500 && !hasAssistantMarkdownTable(main) && !/```|<!--assistant-file:|^\s*\||先补充视频素材。/mu.test(main)) {
     const paragraphs = main.split(/\n\s*\n/u).filter(value => value.trim());
     if (paragraphs.length > 3) {
       let boundary = 1;
@@ -225,7 +225,7 @@ export function splitAssistantReply(content: string, options: { compact?: boolea
       details.push(paragraphs.slice(boundary).join('\n\n'));
     }
   }
-  if (options.compact && !details.length && main.length > 420 && !hasAssistantMarkdownTable(main) && !/```(?:copy|chart|social-insight|industry-insight)|<!--assistant-file:|^\s*\|/mu.test(main)) {
+  if (options.compact && !details.length && main.length > 420 && !hasAssistantMarkdownTable(main) && !/```(?:copy|chart|social-insight|industry-insight)|<!--assistant-file:|^\s*\||先补充视频素材。/mu.test(main)) {
     const units = main.split(/\n\s*\n/u).filter(value => value.trim()).flatMap(paragraph => {
       if (paragraph.length <= 220) return [paragraph];
       const sentences = paragraph.match(/[^。！？\n]+[。！？]?/gu)?.map(value => value.trim()).filter(Boolean) ?? [];

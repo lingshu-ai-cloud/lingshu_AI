@@ -361,6 +361,7 @@ export function cloudMaterialView(item: CloudMaterialRecord): Record<string, unk
     width: width || undefined, height: height || undefined,
     aspectRatio: width > 0 && height > 0 ? +(width / height).toFixed(4) : undefined,
     size: humanSize(Number(item.sizeBytes || 0)), sizeBytes: Number(item.sizeBytes || 0), file: String(item.videoFile || item.objectKey || ''),
+    ...(item.objectKey ? { objectKey: String(item.objectKey) } : {}),
     url: `/studio-media/${item.id}/media.mp4`, poster: `/studio-media/${item.id}/poster.jpg`,
     scope: String(item.scope || 'own'), tenantId: materialTenantId(item), usage: String(item.usage || 'editable'),
     sourceCategory:item.sourceCategory,

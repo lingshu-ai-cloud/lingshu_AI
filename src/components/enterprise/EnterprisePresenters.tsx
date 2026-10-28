@@ -10,6 +10,7 @@ import type { ArkPresenterPreparation, PresenterCreation } from '../../lib/prese
 import { LsBrandAction, LsLoadingState } from '../ui/LsExperiencePrimitives';
 import ArkPresenterEnrollmentPanel from '../studio/ArkPresenterEnrollmentPanel';
 import PresenterManager, { type PresenterSaveContext } from './PresenterManager';
+import WeeklyMissingInputAction from '../assistant/WeeklyMissingInputAction';
 
 function heyGenReady(presenter?: PresenterAsset): boolean {
   return Boolean(presenter?.authorized && (presenter.toolMappings?.heygen?.avatarId || presenter.avatarId)
@@ -31,14 +32,6 @@ function voiceReady(presenter?: PresenterAsset): boolean {
 function arkReady(presenter?: PresenterAsset): boolean {
   return Boolean(presenter?.authorized && presenter.arkCertification?.status === 'active'
     && presenter.arkCertification.assetType === 'image' && presenter.arkCertification.assetUri);
-}
-
-function openDigitalHumanOnboarding(): void {
-  try { window.sessionStorage.setItem('lingshu:open-digital-employee-guide', 'presenter'); } catch { /* optional */ }
-  window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'digitalEmployees' } }));
-  const openGuide = () => window.dispatchEvent(new CustomEvent('lingshu:open-digital-employee-guide', { detail: { step: 'presenter' } }));
-  openGuide();
-  window.requestAnimationFrame?.(openGuide);
 }
 
 export default function EnterprisePresenters({
@@ -323,11 +316,11 @@ export default function EnterprisePresenters({
   return <section className="rounded-lg border border-border bg-white p-5" aria-label={contentProduction ? '内容制作人物管理' : '人物与出镜'}>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h3 className="text-base font-semibold text-text-primary">人物与出镜</h3><p className="mt-1 text-xs text-text-muted">这里可以修改已接入人物、补全声音，或按需配置方舟增强认证。</p></div>
-      {contentProduction && <Button onClick={openDigitalHumanOnboarding}>打开数字人接入</Button>}
+      {!initialConfiguration && <WeeklyMissingInputAction kind="presenter" />}
     </div>
     {error && <Alert className="mt-4" type="error" showIcon title={error} />}
     {message && <Alert className="mt-4" type="success" showIcon title={message} />}
-    {!loaded ? <p role="status" className="mt-5 text-sm text-text-muted">正在读取已授权人物…</p> : !value.presenters.length ? <div className="mt-5 rounded-lg border border-dashed border-border p-8 text-center"><UserRound className="mx-auto text-text-muted" /><p className="mt-3 text-sm font-semibold">暂无已授权人物</p><p className="mt-1 text-xs text-text-muted">请前往数字员工新手引导完成首次接入。</p><Button className="mt-4" type="primary" onClick={openDigitalHumanOnboarding}>打开数字人接入</Button></div> : <div className="mt-5 divide-y divide-border rounded-lg border border-border">
+    {!loaded ? <p role="status" className="mt-5 text-sm text-text-muted">正在读取已授权人物…</p> : !value.presenters.length ? <div className="mt-5 rounded-lg border border-dashed border-border p-8 text-center"><UserRound className="mx-auto text-text-muted" /><p className="mt-3 text-sm font-semibold">暂无已授权人物</p><p className="mt-1 text-xs text-text-muted">从上方“录入数字人”开始，补充人物和声音。</p></div> : <div className="mt-5 divide-y divide-border rounded-lg border border-border">
       {value.presenters.map(presenter => {
         const referenceIds = presenter.referenceMaterialIds || [];
         const creationId = presenter.rightsEvidence?.authorizationRef?.match(/^document:\/\/studio_presenter_assets\/([^/]+)\//)?.[1];

@@ -33,6 +33,7 @@ data.repo-template/
 pb_data/
 .local-bin/
 .venv-video-downloader/
+.venv-product-cutout/
 
 # Independent local Sites workspaces are separate repositories.
 /sites/
@@ -61,6 +62,7 @@ pb_data/
 /data/digital-human-worker/
 /data/generated/
 /data/imports/
+/data/private-product-bundles/
 /data/migrations/
 /data/publishing-uploads/
 /data/social-content-renders/

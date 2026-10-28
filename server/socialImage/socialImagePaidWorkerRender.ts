@@ -23,6 +23,7 @@ import type { SocialImageAspectRatio } from './referenceCanvas.js';
 import type { ImageReferenceStyleElement } from '../../shared/contracts/imageReferenceProductionLabel.js';
 import { imageLanguageSchema, normalizeImageLanguage } from '../../shared/contracts/imageLanguages.js';
 import { resolveSocialImageProductCutout, type SocialImageProductCutout } from './socialImageProductCutout.js';
+import { ensureProductCutout } from '../lib/productCutoutPipeline.js';
 import { isVerifiedTransparentProductCutout } from '../lib/productIdentityPreparation.js';
 
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -52,8 +53,18 @@ export async function renderSocialImagePaidWorker(input: {
   const product = await input.enterpriseProductAsset(tenantId, productId);
   if (!product) throw new Error('social_image_product_asset_unavailable');
   // Validate before a paid job is appended or the provider is contacted.
-  const cutout = await (input.ports?.productCutout || ((tenant: string, id: string) =>
-    resolveSocialImageProductCutout({ tenantId: tenant, productId: id })))(tenantId, productId);
+  let cutout: SocialImageProductCutout;
+  if (input.ports?.productCutout) cutout = await input.ports.productCutout(tenantId, productId);
+  else {
+    const preparation = await ensureProductCutout(tenantId, productId,
+      task.productionRuntime?.binding?.entrySource === 'weekly_package' ? { wait: true, waitForAnalysis: true } : {})
+      .catch(error => {
+        if (error instanceof Error && error.message === 'product_cutout_source_unavailable') return null;
+        throw error;
+      });
+    if (preparation === 'processing') throw new Error('social_image_product_asset_processing');
+    cutout = await resolveSocialImageProductCutout({ tenantId, productId, sourceSha256: hash(product.bytes) });
+  }
   if (!await isVerifiedTransparentProductCutout(cutout.bytes)
     || hash(cutout.bytes) !== cutout.contentSha256) throw new Error('social_image_product_cutout_invalid');
   const library = await readMaterialLibrary(tenantId);

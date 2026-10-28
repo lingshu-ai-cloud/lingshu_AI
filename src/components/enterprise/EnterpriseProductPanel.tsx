@@ -96,7 +96,7 @@ export default function EnterpriseProductPanel({
               <Input.TextArea className={textareaCls} rows={2} value={profileProducts.highlights} onChange={e => onProductFieldChange('highlights', e.target.value)} placeholder="工厂直供、支持 OEM/ODM、备货稳定" />
             </Field>
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              <AntUpload accept=".xlsx,.xls,.csv,.pdf,.docx" showUploadList={false} disabled={productImporting || productDocumentUploading} beforeUpload={file => { void importProductSheet(file); return false; }}>
+              <AntUpload accept=".xlsx,.xls,.csv,.pdf,.docx,.lingshu-products.json" showUploadList={false} disabled={productImporting || productDocumentUploading} beforeUpload={file => { void importProductSheet(file); return false; }}>
                 <Button loading={productImporting} disabled={productDocumentUploading} icon={<FileSpreadsheet size={14} />}>导入产品表</Button>
               </AntUpload>
               <Button onClick={addProduct} disabled={productDocumentUploading} icon={<Plus size={14} />}>添加产品</Button>
