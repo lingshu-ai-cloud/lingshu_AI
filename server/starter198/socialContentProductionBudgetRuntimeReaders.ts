@@ -42,7 +42,7 @@ export function createProductionBudgetRuntimeReaders(input: {
                 if(!Number.isSafeInteger(index)||voicePlan?.texts[index]!==requirement.text||!p.texts[index])return null;
                 return {provider:p.provider,model:p.model,accountRef:productionBillingAccountRef(p.provider,p.endpoint,p.accountKeyHash),routeEvidenceRef:'studio-native:'+paidProductionHash(p),usageBoundRef:'actual-native-prepared-text:'+paidProductionHash({text:p.texts[index],voiceId:p.voiceId}),maximumAttempts:1,maximumUnits:p.provider==='heygen'?(p.model==='avatar_iv'?{providerSeconds:frozenTrackSeconds*2}:{audioSeconds:frozenTrackSeconds*2}):{characters:nativeVoiceBillableCharacters(p.texts[index])}} satisfies BoundPaidRoute;
             }
-            if(requirement.stage==='voice_alignment'&&voicePlan?.asrConfigured) {
+            if(requirement.stage==='voice_alignment'&&voicePlan&&(input.requiresMeasuredAlignment||voicePlan.asrConfigured)) {
                 let b:ReturnType<typeof getQwenProviderBinding>;try{b=getQwenProviderBinding(env);}catch{return null;}
                 const base=(env.DASHSCOPE_ASR_BASE_URL||'https://dashscope.aliyuncs.com/api/v1').replace(/\/$/,'');
                 if(base!=='https://dashscope.aliyuncs.com/api/v1')return null;

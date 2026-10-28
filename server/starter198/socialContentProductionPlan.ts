@@ -1,3 +1,4 @@
+import type {MeasuredSceneTime} from './socialContentMeasuredSceneTimeline.js';
 import type {GeneratedAssetArchiveInput} from '../../shared/contracts/generatedMaterial.js';
 import { editorialEvidenceScore, visualEvidenceScore } from '../digitalEmployees/sceneEvidence.js';
 import type { SocialContentThemeId } from '../../shared/contracts/socialContentWorkflow.js';
@@ -120,6 +121,7 @@ export type PlannedProductionScene = {
 };
 
 export type SocialProductionPlan = {
+  timingPolicy?:'voice-driven-slots.v1';
   ok: boolean;
   reasonCode: 'ready' | 'no_visual_material' | 'material_analysis_required' | 'insufficient_visual_coverage';
   message: string;
@@ -447,6 +449,7 @@ export function buildSocialProductionPlan(input: {
    * bind generated media to its frozen scene; they are not a visual-quality
    * pass and every resulting scene remains marked for independent review. */
   routedSceneAssets?: Array<{ sceneId: string; assetId: string; durationSeconds?: number }>;
+  measuredSceneTimeline?:MeasuredSceneTime[];
 }): SocialProductionPlan {
   const materialPolicy = socialContentMaterialPolicy(input.themeId ?? input.baseline.themeId ?? null);
   const fullReplication = input.baseline.source === 'inspiration_script';
@@ -477,6 +480,16 @@ export function buildSocialProductionPlan(input: {
     uniqueAssets.push(asset);
   }
   if (input.routedSceneAssets) {
+    const measured=input.measuredSceneTimeline;
+    if(measured){
+      let end=0;
+      if(measured.length!==input.baseline.scenes.length)throw Error('measured_material_timeline_changed');
+      for(const [index,time] of measured.entries()){
+        if(time.shotId!==input.baseline.scenes[index]!.sceneId||!Number.isFinite(time.start)||!Number.isFinite(time.end)
+          ||time.end<=time.start||Math.abs(time.start-end)>1e-6)throw Error('measured_material_timeline_changed');
+        end=time.end;
+      }
+    }
     const routed = new Map(input.routedSceneAssets.map(item => [item.sceneId, item.assetId]));
     if (routed.size !== input.routedSceneAssets.length || routed.size !== input.baseline.scenes.length) {
       return { ok:false,reasonCode:'insufficient_visual_coverage',message:'逐镜供应结果与冻结脚本数量不一致。',scenes:[],pendingScenes:pendingScenes([]),selectedAssetIds:[],unusedAssets,narrationChanged:false,maxDuration:0,sourceClipSeconds:0,averageConfidence:0,notes:['生成结果必须逐镜绑定，不能回退到未绑定素材。'] };
@@ -491,7 +504,7 @@ export function buildSocialProductionPlan(input: {
     const routedSourceCursors = new Map<string, number>();
     const scenes = input.baseline.scenes.flatMap((scene, sceneIndex) => {
       const assetId = routed.get(scene.sceneId), asset = assetId ? assetsById.get(assetId) : null;
-      const frozenDuration=Number(scene.referenceStructure?.sourceTiming.durationSeconds)
+      const frozenDuration=measured?(measured[sceneIndex]!.end-measured[sceneIndex]!.start):Number(scene.referenceStructure?.sourceTiming.durationSeconds)
         ||(Number(scene.referenceStructure?.sourceTiming.endSeconds)-Number(scene.referenceStructure?.sourceTiming.startSeconds))
         ||input.routedSceneAssets!.find(item=>item.sceneId===scene.sceneId)?.durationSeconds||0;
       if (!asset || asset.type !== 'video' || !asset.localPath || !asset.contentHash
@@ -517,9 +530,9 @@ export function buildSocialProductionPlan(input: {
     });
     if(scenes.length!==input.baseline.scenes.length)return {ok:false,reasonCode:'material_analysis_required',message:'逐镜供应结果缺少可验证的视频字节、哈希、时长或场景绑定。',scenes:[],pendingScenes:pendingScenes(scenes.map(scene=>scene.baselineSceneIndex)),selectedAssetIds:[],unusedAssets,narrationChanged:false,maxDuration:0,sourceClipSeconds:0,averageConfidence:0,notes:['不能用原始产品图或系统说明图代替已承诺的生成镜头。']};
     const selectedAssetIds=[...new Set(scenes.map(scene=>scene.clip.assetId))],sourceClipSeconds=scenes.reduce((sum,scene)=>sum+scene.clip.sourceDuration,0),referenceDuration=Math.max(0,...input.baseline.scenes.map(scene=>Number(scene.referenceStructure?.sourceTiming.endSeconds)||0));
-    const frozenTimelineDuration = referenceDuration > 0 ? referenceDuration : sourceClipSeconds;
+    const frozenTimelineDuration = measured?.at(-1)?.end??(referenceDuration > 0 ? referenceDuration : sourceClipSeconds);
     for(const asset of input.assets.filter(asset=>!selectedAssetIds.includes(asset.id)))unusedAssets.push({assetId:asset.id,assetName:asset.name,reason:'该逐镜供应结果未绑定当前冻结场景，未进入剪辑'});
-    return {ok:true,reasonCode:'ready',message:'已按审核后的逐镜供应回执绑定生成视频；最终画面质量仍需独立验收。',scenes,selectedAssetIds,unusedAssets,narrationChanged:false,
+    return {...(measured?{timingPolicy:'voice-driven-slots.v1' as const}:{}),ok:true,reasonCode:'ready',message:'已按审核后的逐镜供应回执绑定生成视频；最终画面质量仍需独立验收。',scenes,selectedAssetIds,unusedAssets,narrationChanged:false,
       // Routed sources are trimmed into the frozen scene windows. Summing the
       // full source-file durations multiplies reused clips and can turn a
       // 38-second timeline into several minutes.

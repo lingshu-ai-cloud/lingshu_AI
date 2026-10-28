@@ -265,7 +265,7 @@ export interface SocialAssetSupplyShotPlan {
   functionalEquivalentReplacement: SocialFunctionalEquivalentReplacement;
   feasibility: SocialProductionFeasibility;
   feasibilityReason: string;
-  customerShootRequired: false;
+  customerShootRequired: boolean;
   /** Shared Director-to-Content visual requirements; absent on historic plans. */
   visualContract?: SocialSceneVisualContract;
   /** Content-Agent-selected material range. When present, execution must use
@@ -326,7 +326,7 @@ export interface SocialAssetSupplyShotPlan {
  * the system; only unconfirmed facts or rights may remain as customer actions.
  */
 export interface SocialAssetSupplyPlan {
-  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2';
+  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2' | 'type-aware.v3';
   inventoryAudit?: { scannedAt:string; records:Array<{id:string;sha256:string|null;mediaType:string;productRef:string|null;width:number|null;height:number|null;durationSeconds:number|null;rightsEvidenceRef:string|null;productionEligible:boolean;gaps:string[]}> };
   planVersion: string;
   creationMode: SocialContentCreationMode;
@@ -362,6 +362,7 @@ export interface SocialReferenceShotTags {
 /** A multimodal, shot-level reading of one reference video; never a reusable formula. */
 export interface SocialReferenceShotAnalysis {
   shotId: string;
+  materialType?: import('../benchmarkAnalysis.js').BenchmarkMaterialType;
   referenceProductionRouting?: import('../referenceShotProductionRouting.js').ReferenceShotProductionRouting;
   presenterContinuityEvidence?: import('../referenceShotProductionRouting.js').ReferencePresenterContinuityEvidence;
   /** Same verified source person across shots. Missing means identity continuity is unknown. */

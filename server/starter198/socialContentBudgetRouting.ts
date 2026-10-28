@@ -59,6 +59,34 @@ export async function applyPresenterFirstBudgetRouting(input:{plan:SocialAssetSu
   quote:(plan:SocialAssetSupplyPlan)=>Promise<SocialWholeFilmRouteQuote>}):Promise<SocialAssetSupplyPlan>{
   if(!Number.isFinite(input.maximumCny)||input.maximumCny<=0)fail('maximum_missing');
   const maximum=input.maximumCny,original=structuredClone(input.plan),plan=structuredClone(input.plan);
+  // New label-driven films do not upgrade product shots or restore legacy
+  // action/SKU/geometry gates while allocating their cumulative budget.
+  if (plan.materialRoutingPolicyVersion === 'type-aware.v3') {
+    const ids = new Set(plan.shots.map(shot => shot.shotId));
+    if (ids.size !== plan.shots.length || input.workflow.directorBrief.scenes.length !== ids.size
+      || input.workflow.directorBrief.scenes.some(scene => !ids.has(scene.sceneId))) fail('scene_mapping_invalid');
+    for (const shot of plan.shots) {
+      const routing = shot.materialRouting ?? fail(`material_label_unresolved:${shot.shotId}`);
+      if (routing.pendingReason) fail(`${routing.pendingReason}:${shot.shotId}`);
+      if (routing.materialType === 'talking_head') {
+        if (shot.sourceStrategy !== 'authorized_digital_presenter') fail(`presenter_route_invalid:${shot.shotId}`);
+      } else if (shot.sourceStrategy !== 'customer_real_asset' || routing.policy !== 'local_only'
+        || routing.localMatch.state !== 'matched' || !shot.selectedMaterialSegment
+        || !routing.localMatch.sourceRefs.includes(shot.selectedMaterialSegment.sourceRef)) {
+        fail(`awaiting_theme_material:${shot.shotId}`);
+      }
+    }
+    const quote = await input.quote(plan);
+    if (!Number.isFinite(quote.wholeTaskUpperBoundCny) || quote.wholeTaskUpperBoundCny < 0
+      || !Number.isFinite(quote.maximumCny) || quote.maximumCny <= 0
+      || quote.retainedCny !== undefined && (!Number.isFinite(quote.retainedCny) || quote.retainedCny < 0 || quote.retainedCny > quote.wholeTaskUpperBoundCny)) fail('verified_whole_film_quote_missing');
+    const maximumCny = Math.min(maximum, quote.maximumCny);
+    if (productionBudgetExceeded(quote.wholeTaskUpperBoundCny, maximumCny)) {
+      throw productionBudgetDecisionError({maximumCny, retainedCny: quote.retainedCny ?? 0,
+        plannedAdditionalCny: quote.wholeTaskUpperBoundCny - (quote.retainedCny ?? 0), totalCny: quote.wholeTaskUpperBoundCny});
+    }
+    return plan;
+  }
   const scenes=new Map(input.workflow.directorBrief.scenes.map(scene=>[scene.sceneId,scene]));
   if(scenes.size!==original.shots.length||new Set(original.shots.map(s=>s.shotId)).size!==original.shots.length)fail('scene_mapping_invalid');
   const upgrades:string[]=[];

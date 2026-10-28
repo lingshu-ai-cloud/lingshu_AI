@@ -296,16 +296,17 @@ function generalStrategy(
   accountPresenterLock: SocialAccountPresenterLock | null | undefined,
   referenceShots?: SocialReferenceShotAnalysis[],
   productionApproach: SocialProductionApproach = 'ai_enhanced',
-  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2',
+  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2' | 'type-aware.v3',
 ): { strategy: SocialShotSourceStrategy; refs: string[]; instruction: string; productSceneReplication?: SocialProductSceneReplicationSpec; materialRouting?: SocialMaterialRouting; blocked?: boolean } {
   const signals = shotSignals(shot, referenceShots);
   if(productionApproach==='material_cut'&&materialRoutingPolicyVersion==='type-aware.v2'){
     const local=selectVerifiedLocalMaterialCut({shot,inventory,materialType:classifySocialAssetSupplyMaterialType(shot,referenceShots)});
     if(local)return local;
   }
-  if (materialRoutingPolicyVersion === 'type-aware.v1' || materialRoutingPolicyVersion === 'type-aware.v2') {
-    const routed=selectTypeAwareSocialMaterial({policyVersion:materialRoutingPolicyVersion,shot,inventory,materialType:classifySocialAssetSupplyMaterialType(shot,referenceShots),referenceVisualContract:referenceShot(shot,referenceShots)?.visualContract,presenterRefs:presenterLockReady(accountPresenterLock)?[accountPresenterLock.presenterAssetId]:inventory.presenterAssetIds,buildProductSpec:()=>buildSocialProductSceneReplicationSpec({shot,inventory,referenceShots})});
-    if(productionApproach==='ai_enhanced')return routed;
+  if (materialRoutingPolicyVersion === 'type-aware.v1' || materialRoutingPolicyVersion === 'type-aware.v2' || materialRoutingPolicyVersion === 'type-aware.v3') {
+    const ref = referenceShot(shot, referenceShots);
+    const routed=selectTypeAwareSocialMaterial({policyVersion:materialRoutingPolicyVersion,shot,inventory,materialType:materialRoutingPolicyVersion === 'type-aware.v3' ? ref ? ref.materialType ?? 'unknown' : shot.materialType ?? (!shot.referenceShotId && !referenceShots?.length ? classifySocialAssetSupplyMaterialType(shot) : 'unknown') : classifySocialAssetSupplyMaterialType(shot,referenceShots),referenceVisualContract:ref?.visualContract,presenterRefs:presenterLockReady(accountPresenterLock)?[accountPresenterLock.presenterAssetId]:inventory.presenterAssetIds,buildProductSpec:()=>buildSocialProductSceneReplicationSpec({shot,inventory,referenceShots})});
+    if(productionApproach==='ai_enhanced'||materialRoutingPolicyVersion==='type-aware.v3')return routed;
     if(productionApproach==='material_cut'&&routed.materialRouting?.localMatch.state==='matched'){
       // A verified free cut keeps its exact segment, not a generation-capable routing contract.
       return {...routed,materialRouting:undefined};
@@ -537,9 +538,9 @@ function planShot(
   referenceShots?: SocialReferenceShotAnalysis[],
   productionApproach: SocialProductionApproach = 'ai_enhanced',
   presenterSelectionConfirmed = false,
-  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2',
+  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2' | 'type-aware.v3',
 ): SocialAssetSupplyShotPlan {
-  const subject = shot.truthSensitiveSubject ?? ((materialRoutingPolicyVersion==='type-aware.v1'||materialRoutingPolicyVersion==='type-aware.v2')&&shotSignals(shot,referenceShots).factory?'customer_factory':'none');
+  const subject = materialRoutingPolicyVersion === 'type-aware.v3' ? 'none' : shot.truthSensitiveSubject ?? ((materialRoutingPolicyVersion==='type-aware.v1'||materialRoutingPolicyVersion==='type-aware.v2')&&shotSignals(shot,referenceShots).factory?'customer_factory':'none');
   const canonicalVisualContract = shot.visualContract ?? referenceShot(shot, referenceShots)?.visualContract;
   const signals = shotSignals(shot, referenceShots);
   const observedReferenceRouting = referenceShot(shot, referenceShots)?.referenceProductionRouting;
@@ -549,7 +550,7 @@ function planShot(
   const hasEvidence = subject !== 'none' && evidenceRefs.length > 0
     && !(subject === 'product_effect' && signals.hasPerson);
 
-  if (hasEvidence && !referenceRouting && !signals.hasPerson && materialRoutingPolicyVersion !== 'type-aware.v1' && materialRoutingPolicyVersion !== 'type-aware.v2') {
+  if (hasEvidence && !referenceRouting && !signals.hasPerson && materialRoutingPolicyVersion !== 'type-aware.v1' && materialRoutingPolicyVersion !== 'type-aware.v2' && materialRoutingPolicyVersion !== 'type-aware.v3') {
     const truthBoundary: SocialShotTruthBoundary = {
       subject,
       syntheticVisualAllowed: false,
@@ -613,7 +614,7 @@ function planShot(
     || normalizedVisualContract.productUsage.productRef || shot.productRef);
   const exactVerifiedLocalProduct = selected.strategy === 'customer_real_asset' && shot.localVideoMatch?.semanticMatch === 'verified'
     && shot.localVideoMatch.sourceRefs.some(ref => selected.refs.includes(ref)) && normalizedProductIdentity(shot.localVideoMatch.productRef) === requestedProductRef;
-  const lockedProductUnavailable = Boolean(selected.productSceneReplication
+  const lockedProductUnavailable = materialRoutingPolicyVersion !== 'type-aware.v3' && (Boolean(selected.productSceneReplication
     && selected.productSceneReplication.productIdentity.groups.length === 0) || (
     normalizedVisualContract.product.policy === 'locked'
       && Boolean(requestedProductRef)
@@ -621,9 +622,9 @@ function planShot(
         normalizedProductIdentity(group.productRef) === requestedProductRef
         && group.imageIds.length > 0
       ))
-  );
+  ));
   const localEquivalent = selected.materialRouting?.localMatch.state==='matched'&&selected.materialRouting.localMatch.reuseKind==='functional_equivalent';
-  const usesFunctionalEquivalent = localEquivalent || signals.personUsesProduct || (signals.hasPerson && signals.factory);
+  const usesFunctionalEquivalent = materialRoutingPolicyVersion !== 'type-aware.v3' && (localEquivalent || signals.personUsesProduct || (signals.hasPerson && signals.factory));
   const realFactoryBackgroundMissing=selected.materialRouting?.policy==='authorized_presenter'&&subject==='customer_factory'&&selected.materialRouting.localMatch.state!=='matched';
   const selectedSegment=selected.materialRouting?.localMatch.state==='matched'?shot.selectedMaterialSegment:(materialRoutingPolicyVersion==='type-aware.v1'||materialRoutingPolicyVersion==='type-aware.v2')&&selected.strategy==='customer_real_asset'?selectVerifiedSocialMaterialSegment(shot,selected.refs):undefined;
   const awaitingProductBudget=materialRoutingPolicyVersion==='type-aware.v2'&&selected.materialRouting?.materialType==='product'
@@ -674,7 +675,7 @@ function planShot(
           : null,
     },
     feasibility,
-    feasibilityReason: feasibility === 'full_fidelity'
+    feasibilityReason: materialRoutingPolicyVersion === 'type-aware.v3' ? selected.instruction : feasibility === 'full_fidelity'
       ? '已有客户素材，可在不改变真实主体的情况下完整实现'
       : feasibility === 'functional_equivalent'
         ? awaitingProductBudget
@@ -688,7 +689,7 @@ function planShot(
         : lockedProductUnavailable
           ? '用户明确锁定的产品暂无对应参考素材；只有 locked 策略会停止异品替换'
           : '免费方案当前没有可裁切的已入库素材',
-    customerShootRequired: false,
+    customerShootRequired: selected.materialRouting?.pendingReason === 'awaiting_shoot',
     ...(canonicalVisualContract ? { visualContract: structuredClone(canonicalVisualContract) } : {}),
     ...(selected.productSceneReplication ? {
       productSceneReplication: structuredClone(selected.productSceneReplication),

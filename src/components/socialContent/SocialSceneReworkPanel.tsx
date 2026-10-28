@@ -9,6 +9,7 @@ import {
   sceneReworkSelectionAllowed,
   socialSceneReworkApi,
   type SceneReworkScope,
+  type SceneReworkOveragePreview,
 } from '../../lib/socialSceneReworkApi';
 import {
   sceneReworkCostConfirmable,
@@ -51,6 +52,8 @@ export function SocialSceneReworkPanel({
   const [costUncertain, setCostUncertain] = useState(false);
   const [admissionPreview, setAdmissionPreview] = useState<SceneReworkAdmissionPreview | null>(null);
   const [admissionPolicy, setAdmissionPolicy] = useState<SceneReworkCostPolicy | null>(null);
+  const [overage, setOverage] = useState<SceneReworkOveragePreview | null>(null);
+  const [overageApproved, setOverageApproved] = useState(false);
   const identity = `${expectedTenantId || ''}:${task.taskId}:${task.runId}:${parent}`;
   const current = useRef(identity);
   current.current = identity;
@@ -67,6 +70,8 @@ export function SocialSceneReworkPanel({
     setStatus(null);
     setAdmissionPreview(null);
     setAdmissionPolicy(null);
+    setOverage(null);
+    setOverageApproved(false);
     setError('');
     setBusy(false);
     setUncertain(false);
@@ -95,7 +100,7 @@ export function SocialSceneReworkPanel({
       if (current.current !== token) return;
       setAvailability(value);
       setUncertain(false);
-      setIds(focusedSceneId && value.scenes.filter(scene => scene.sceneId === focusedSceneId && scene.status === 'failed').length === 1 ? [focusedSceneId] : []);
+      setIds(focusedSceneId && value.scenes.filter(scene => scene.sceneId === focusedSceneId && (value.selectionMode === 'user_selected' || scene.status === 'failed')).length === 1 ? [focusedSceneId] : []);
     } catch (cause) {
       if (current.current === token) setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -119,8 +124,10 @@ export function SocialSceneReworkPanel({
       onChanged?.();
     } catch (cause) {
       if (current.current === token) {
-        setError(cause instanceof Error ? cause.message : String(cause));
-        setUncertain(true);
+        const message = cause instanceof Error ? cause.message : String(cause);
+        setError(message === 'scene_rework_budget_decision_required'
+          ? '整条成片预算尚未满足执行条件；可读取超额报价，核对后选择是否继续。' : message);
+        setUncertain(message !== 'scene_rework_budget_decision_required');
       }
     } finally {
       if (current.current === token) setBusy(false);
@@ -143,6 +150,24 @@ export function SocialSceneReworkPanel({
     } finally {
       if (current.current === token) setBusy(false);
     }
+  }
+
+  async function readOverage() {
+    if (!availability || !admissionPreview) return;
+    const token=identity; setBusy(true); setError('');
+    try { const value=await socialSceneReworkApi.overagePreview(scope(),availability,ids,admissionPreview);
+      if(current.current===token){setOverage(value);setOverageApproved(false);} }
+    catch(cause){if(current.current===token){const message=cause instanceof Error?cause.message:String(cause);
+      setError(message==='scene_rework_overage_not_required'?'本次未超出原预算，可直接开始返工。':message==='scene_rework_overage_unsettled_receipt'?'已有付费操作的回执尚未结清，请先核对结果。':message==='scene_rework_overage_original_film_required'?'无法核验原成片预算，请先核对任务记录。':message);}}
+    finally{if(current.current===token)setBusy(false);}
+  }
+  async function confirmOverage() {
+    if(!availability||!admissionPreview||!overage)return;
+    const token=identity;setBusy(true);setError('');
+    try {await socialSceneReworkApi.confirmOverage(scope(),availability,ids,admissionPreview,overage);
+      if(current.current===token)setOverageApproved(true);}
+    catch(cause){if(current.current===token)setError(cause instanceof Error?cause.message:String(cause));}
+    finally{if(current.current===token)setBusy(false);}
   }
 
   async function confirmAdmissionCost() {
@@ -243,8 +268,8 @@ export function SocialSceneReworkPanel({
 
   return (
     <section aria-label="逐镜局部返工" className="rounded-lg border border-border bg-white p-4">
-      <h3 className="text-sm font-bold">失败镜头局部返工</h3>
-      <p className="my-2 text-xs text-text-muted">保留原成片，只修复已核验失败镜头。系统先核验真实路线并生成报价；付费路线确认上限后才创建独立生产作业。</p>
+      <h3 className="text-sm font-bold">分镜局部返工</h3>
+      <p className="my-2 text-xs text-text-muted">保留原成片，选择需要修改的分镜；先核验真实路线并生成报价。</p>
       <div className="flex flex-wrap items-center gap-2">
         <select aria-label="返工原成片" value={parent} disabled={busy || uncertain} onChange={event => setParent(event.target.value)} className={inputClass}>
           <option value="">选择本任务真实成片</option>
@@ -261,7 +286,7 @@ export function SocialSceneReworkPanel({
             <label className="flex items-start gap-2">
               <input
                 type="checkbox"
-                disabled={busy || uncertain || Boolean(status) || Boolean(admissionPreview) || scene.status !== 'failed'}
+                disabled={busy || uncertain || Boolean(status) || Boolean(admissionPreview) || (availability.selectionMode !== 'user_selected' && scene.status !== 'failed')}
                 checked={ids.includes(scene.sceneId)}
                 onChange={event => setIds(currentIds => event.target.checked ? [...currentIds, scene.sceneId] : currentIds.filter(id => id !== scene.sceneId))}
               />
@@ -281,9 +306,9 @@ export function SocialSceneReworkPanel({
           {admissionPreview.gaps.map(gap => <p key={gap} className="text-amber-800">{gap}</p>)}
           {admissionPreview.localOnly ? <p>当前为已验证本地素材路线，无外部生成费用。</p> : admissionPreview.quote ? <>
             <p>付费路线 {admissionPreview.quote.provider} / {admissionPreview.quote.model} · 报价上界 ¥{admissionPreview.quote.totalUpperBoundCny.toFixed(2)}</p>
-            <div className="flex flex-wrap items-end gap-2"><label>明确允许的本次费用上限（元）<input type="number" min="0" step="0.01" value={cap} disabled={busy || Boolean(admissionPolicy)} onChange={event => setCap(event.target.value)} className={`mt-1 block ${inputClass}`}/></label>{admissionPolicy ? <p>已确认费用上限 ¥{admissionPolicy.authorizedMaximumCostCny.toFixed(2)}；仍未创建生产作业。</p> : <button type="button" disabled={busy || !cap.trim() || Number(cap) < admissionPreview.quote.totalUpperBoundCny || Number(cap) > admissionPreview.quote.maximumOriginalBudgetCny} onClick={() => void confirmAdmissionCost()} className={secondaryButtonClass}>确认费用上限</button>}</div>
+            {availability.selectionMode === 'user_selected' ? <div><p>服务端核验整条成片累计预算；超额时由你选择。</p><button type="button" disabled={busy || overageApproved} onClick={() => void readOverage()} className={secondaryButtonClass}>读取超额报价</button>{overage && <div><p>已占用 ¥{overage.retainedCny.toFixed(2)} · 本次预计上限 ¥{overage.plannedCny.toFixed(2)} · 合计 ¥{overage.totalCny.toFixed(2)} · 超额 ¥{overage.extraCny.toFixed(2)}</p>{overageApproved ? <p>已确认本次超额，仍需开始返工作业。</p> : <button type="button" disabled={busy} onClick={() => void confirmOverage()} className={secondaryButtonClass}>确认本次超额费用</button>}</div>}</div> : <div className="flex flex-wrap items-end gap-2"><label>明确允许的本次费用上限（元）<input type="number" min="0" step="0.01" value={cap} disabled={busy || Boolean(admissionPolicy)} onChange={event => setCap(event.target.value)} className={`mt-1 block ${inputClass}`}/></label>{admissionPolicy ? <p>已确认费用上限 ¥{admissionPolicy.authorizedMaximumCostCny.toFixed(2)}；仍未创建生产作业。</p> : <button type="button" disabled={busy || !cap.trim() || Number(cap) < admissionPreview.quote.totalUpperBoundCny || Number(cap) > admissionPreview.quote.maximumOriginalBudgetCny} onClick={() => void confirmAdmissionCost()} className={secondaryButtonClass}>确认费用上限</button>}</div>}
           </> : <p>缺少可信报价，不能创建生产作业。</p>}
-          <button type="button" disabled={busy || uncertain || admissionPreview.gaps.length > 0 || (!admissionPreview.localOnly && !admissionPolicy)} onClick={() => void submit()} className="btn-primary">创建并开始返工作业</button>
+          <button type="button" disabled={busy || uncertain || admissionPreview.gaps.length > 0 || (!admissionPreview.localOnly && availability.selectionMode !== 'user_selected' && !admissionPolicy)} onClick={() => void submit()} className="btn-primary">创建并开始返工作业</button>
         </div>}
       </div>}
 
@@ -293,7 +318,7 @@ export function SocialSceneReworkPanel({
         <p>实际已产生费用：尚无可核验账单</p>
         {status.completedAt && <p>作业完成时间 {status.completedAt}</p>}
         {status.runCompletedAt && <p>运行完成时间 {status.runCompletedAt}</p>}
-        <button type="button" disabled={busy} onClick={() => void readCost()} className={secondaryButtonClass}>读取真实报价与已确认费用上限</button>
+        {availability?.selectionMode !== 'user_selected' && <button type="button" disabled={busy} onClick={() => void readCost()} className={secondaryButtonClass}>读取真实报价与已确认费用上限</button>}
         {cost && <div className="space-y-2 rounded-lg border border-border bg-white p-3">
           <p>报价状态对应作业 {cost.jobStatus} · {cost.runStatus}</p>
           {cost.gaps.map(gap => <p key={gap} className="text-amber-800">{gap}</p>)}
@@ -308,7 +333,7 @@ export function SocialSceneReworkPanel({
           </div>}
           {costUncertain && <p role="alert" className="text-amber-800">费用确认结果未知，请先只读重新读取已确认记录。</p>}
         </div>}
-        <button type="button" disabled={busy || uncertain || costUncertain || Boolean(cost?.quote && !cost.policy) || !['blocked', 'dead_letter', 'paused'].includes(status.jobStatus) || status.runStatus !== 'running'} onClick={() => void resume()} className="btn-primary">继续原返工作业</button>
+        <button type="button" disabled={busy || uncertain || costUncertain || Boolean(availability?.selectionMode !== 'user_selected' && cost?.quote && !cost.policy) || !['blocked', 'dead_letter', 'paused'].includes(status.jobStatus) || status.runStatus !== 'running'} onClick={() => void resume()} className="btn-primary">继续原返工作业</button>
         <p>仅继续当前独立运行和原作业；服务端重新核验预算和凭据。供应商结果未知时仅核对原请求，不重复发送。</p>
         {status.output && <SceneReworkOutputReceipt key={`${identity}:${status.operationId}:${status.output.artifactId}`} taskId={status.taskId} output={status.output} />}
         {status.lastError && <p role="alert" className="text-red-700">{status.lastError}</p>}

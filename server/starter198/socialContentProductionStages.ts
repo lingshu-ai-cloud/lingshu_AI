@@ -308,19 +308,29 @@ export async function executeSocialQualityStage(input: {
   runFfmpeg: NonNullable<SocialContentAutoProductionRuntime['runFfmpeg']>;
   checkpointEnabled?: boolean;
   verifyDuration?: boolean;
+  minimalVideoPolicy?: boolean;
   expectedBgm?: { source: string; sourceHash: string; volume: number };
 }) {
   const sha256 = input.checkpointEnabled === false ? '' : await mediaHash(input.outputPath);
   const inputHash = socialRequestHash({ sha256, duration: input.duration, scenes: input.scenes, expectedUniqueScenes: input.expectedUniqueScenes, verifyDuration: input.verifyDuration === true,
-    expectedBgm: input.expectedBgm ? { sourceHash: input.expectedBgm.sourceHash, volume: input.expectedBgm.volume } : null });
+    expectedBgm: input.expectedBgm ? { sourceHash: input.expectedBgm.sourceHash, volume: input.expectedBgm.volume } : null,
+    ...(input.minimalVideoPolicy ? { minimalVideoPolicy: 'voice-driven-slots.v1' } : {}) });
   type Report = { quality: Awaited<ReturnType<typeof input.inspectVisuals>>; sceneQuality: Awaited<ReturnType<typeof input.inspectScenes>>; audio: { ok: boolean; bgm?: SocialBgmAudibilityEvidence }; measuredDurationSeconds?: number };
   const saved = input.checkpointEnabled === false ? null : readCurrentContentExecutionCheckpoint<Report>({ stage: 'social.graph_quality', version: '1', inputHash });
   if (input.checkpointEnabled !== false) await assertCurrentContentExecutionActive();
   if (saved) return saved;
-  const quality = await input.inspectVisuals({ outputPath: input.outputPath, expectedDuration: input.duration, expectedUniqueScenes: input.expectedUniqueScenes });
-  const sceneQuality = await input.inspectScenes({ outputPath: input.outputPath, scenes: input.scenes, requireDistinct: true });
+  const observedVisuals = await input.inspectVisuals({ outputPath: input.outputPath, expectedDuration: input.duration, expectedUniqueScenes: input.minimalVideoPolicy ? 0 : input.expectedUniqueScenes });
+  const observedScenes = await input.inspectScenes({ outputPath: input.outputPath, scenes: input.scenes, requireDistinct: !input.minimalVideoPolicy });
+  // Retain measurements, but the current policy admits decode evidence rather
+  // than brightness, texture, sharpness, duplicate shots or aesthetic scores.
+  const visualDecodeFailures = observedVisuals.metrics.sampleCount > 0 ? [] : ['成片未解码到可验证视频帧'];
+  const sceneDecodeIssues = observedScenes.issues.filter(issue => issue.code === 'decode');
+  const quality = input.minimalVideoPolicy ? { ...observedVisuals, passed: !visualDecodeFailures.length,
+    failures: visualDecodeFailures, policy: 'voice-driven-slots.v1', observations: observedVisuals.failures } : observedVisuals;
+  const sceneQuality = input.minimalVideoPolicy ? { ...observedScenes, passed: !sceneDecodeIssues.length,
+    issues: sceneDecodeIssues, policy: 'voice-driven-slots.v1', observations: observedScenes.issues } : observedScenes;
   const audio = await input.runFfmpeg(['-i', input.outputPath, '-map', '0:a:0', '-t', String(Math.min(2, input.duration)), '-f', 'null', '-']);
-  const bgm = input.expectedBgm
+  const bgm = input.expectedBgm && !input.minimalVideoPolicy
     ? await inspectBgmAudibility({ source: input.expectedBgm.source, volume: input.expectedBgm.volume, outputPath: input.outputPath, runFfmpeg: input.runFfmpeg })
     : undefined;
   if (bgm && !bgm.passed) {
@@ -335,7 +345,7 @@ export async function executeSocialQualityStage(input: {
     const progress = decoded.stdout.toString();
     const times = [...progress.matchAll(/out_time_us=(\d+)/g)].map(match => Number(match[1]) / 1e6);
     measuredDurationSeconds = decoded.ok && /progress=end/.test(progress) && times.length ? Math.max(...times) : 0;
-    if (!measuredDurationSeconds || Math.abs(measuredDurationSeconds - input.duration) > 0.25) {
+    if (!measuredDurationSeconds || Math.abs(measuredDurationSeconds - input.duration) > (input.minimalVideoPolicy ? 0.3 : 0.25) + 1e-9) {
       quality.passed = false;
       quality.failures.push(`实际视频时长 ${measuredDurationSeconds.toFixed(3)} 秒与锁定 ${input.duration.toFixed(3)} 秒不一致`);
     }

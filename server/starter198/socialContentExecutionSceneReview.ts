@@ -13,6 +13,8 @@ export function reviewSocialExecutionScene(input: {
   weekly: boolean;
   rightsMissing: boolean;
   enforceTruthGates?: boolean;
+  themePolicy?: boolean;
+  pendingReason?: import('../../shared/contracts/socialContentMaterialRouting.js').SocialMaterialRouting['pendingReason'];
   conceptPreview: boolean;
 }): SocialExecutionPlanSceneReview {
   const failedCriteria: string[] = [], requiredRevision: string[] = [];
@@ -27,7 +29,15 @@ export function reviewSocialExecutionScene(input: {
     requiredRevision.push('补充对应真实资料或修改参考，不得生成事实证明替代');
     reasonCodes.push('facts_missing');
   }
-  if (input.plan.feasibility === 'goal_degraded') {
+  if (input.themePolicy && input.pendingReason) {
+    failedCriteria.push(input.pendingReason === 'awaiting_shoot' ? '待拍：本地无已录入并绑定授权的数字人'
+      : input.pendingReason === 'awaiting_theme_material' ? '待补素材：没有匹配当前分镜标签主题的素材'
+        : '分镜标签补充分析后仍无法确定，需要用户介入或确认');
+    requiredRevision.push(input.pendingReason === 'awaiting_shoot' ? '完成待拍任务后将素材关联原槽位，恢复原任务'
+      : input.pendingReason === 'awaiting_theme_material' ? '补充匹配主题的素材后恢复原槽位任务' : '确认该槽位标签后恢复原任务');
+    reasonCodes.push('material_insufficient');
+  }
+  if ((!input.themePolicy || !input.pendingReason) && input.plan.feasibility === 'goal_degraded') {
     failedCriteria.push('当前路线降低了镜头的核心证明强度或经营目标');
     requiredRevision.push('寻找能保持事实强度的替代路线，或显式返回经营 Agent 调整目标');
     reasonCodes.push('material_insufficient');
@@ -48,7 +58,7 @@ export function reviewSocialExecutionScene(input: {
     const execution = factorExecutionById.get(factorId);
     return Boolean(execution && (!execution.feasible || !execution.plannedValidatorId));
   });
-  if (missingFactorIds.length || infeasibleFactorIds.length) {
+  if (!input.themePolicy && (missingFactorIds.length || infeasibleFactorIds.length)) {
     failedCriteria.push(`存在未被执行方案承接的裂变因素：${unique([...missingFactorIds, ...infeasibleFactorIds]).join('、')}`);
     requiredRevision.push('为每个冻结因素补充可执行候选和独立检测器，不得通过放宽因素规格绕过');
     reasonCodes.push('capability_mismatch');

@@ -458,7 +458,11 @@ export function buildSocialDirectorPlan(input: {
     },
     {
       gateId: 'material_coverage',
-      status: scenes.length >= 2 && input.productionPlan.sourceClipSeconds >= 5.5 ? 'passed' : 'blocked',
+      status: (input.productionPlan.timingPolicy==='voice-driven-slots.v1'
+        ? scenes.length===input.baseline.scenes.length&&!(input.productionPlan.pendingScenes?.length)
+          &&input.productionPlan.scenes.every(scene=>scene.clip.sourceDuration>0)
+          &&Math.abs(input.productionPlan.sourceClipSeconds-input.productionPlan.maxDuration)<=.02
+        : scenes.length>=2&&input.productionPlan.sourceClipSeconds>=5.5) ? 'passed' : 'blocked',
       message: `已锁定 ${scenes.length} 个可用视觉镜头，约 ${input.productionPlan.sourceClipSeconds.toFixed(1)} 秒有效画面。`,
     },
     {

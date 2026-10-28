@@ -46,6 +46,20 @@ test('whole-plan permit rejects over-budget submissions for ordinary and formerl
   await assert.rejects(make('another-tenant',path.join(root,'ordinary')).beforeSubmit(request),/production_budget_decision_required/);
  }finally{fs.rmSync(root,{recursive:true,force:true});if(configured===undefined)delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS=configured;}
 });
+test('over-cap permit consumes only the exact approved operation and keeps receipt recovery',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'paid-permit-approved-overage-'));try{
+  const repair={...op,operationId:'repair',stage:'scene_rework',shotId:'slot'},repairIntent={...intent,...repair};
+  const ledger=new SocialContentTaskBudget(path.join(root,'ledger'),{assertCurrent:async()=>{},authorization:async()=>({maximumCny:15,productionDurationSeconds:30,authorizationRef:'original'}),quote:async(_s,o)=>({upperBoundCny:o.operationId===op.operationId?14:2,quoteRef:'verified-price',validUntil:'2099-01-01'}),verifyRejection:async()=>false});
+  await ledger.reserveBatch(scope,[op]);const preview=await ledger.previewOverage(scope,repair);
+  await ledger.reserveUserApprovedOverage(scope,repair,{previewHash:preview.previewHash,actorUserId:'user',authorizationRef:'user-choice'});
+  const permit=createSocialContentPaidOperationPermit({scope,operations:[op,repair],intents:[intent,repairIntent],ledger,root:path.join(root,'claims'),assertCurrent:async()=>{}});
+  await assert.rejects(permit.beforeSubmit(request),/production_budget_decision_required/);
+  await permit.beforeSubmit({...repairIntent,actualUnits:request.actualUnits});
+  assert.equal((await permit.assertRecovery(repair.operationId)).status,'unknown');
+  assert.equal(ledger.status(scope)!.retainedCny,16);
+  await assert.rejects(permit.beforeSubmit({...repairIntent,actualUnits:request.actualUnits}),/receipt_recovery_required/);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
 test('permit accepts an exact scope-bound 16.5 correction ledger and still rejects an unrelated scope',async()=>{const f=await setup();try{
  const grant=sealSocialTaskCorrectionBudgetAuthorization({schemaVersion:1,...scope,previousMaximumCny:10,maximumCny:16.5,reason:'provider_correction',correctionCause:'approved_first_frame_not_consumed',affectedPresenterGroupIds:['presenter-mother-1','presenter-mother-2','presenter-mother-3'],presenterApprovalBindings:['presenter-mother-1','presenter-mother-2','presenter-mother-3'].map((groupId,index)=>({groupId,approvalRecordHash:String(index+1).repeat(64)})) as any,authorizedBy:'server',authorizationRef:'approved-correction',issuedAt:new Date().toISOString()});
  await f.ledger.authorizeCorrection(scope,grant);await createSocialContentPaidOperationPermit(f.config).beforeSubmit(request);

@@ -2,6 +2,27 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { executeSocialQualityStage } from './socialContentProductionStages.js';
 
+test('voice-driven policy records visual observations without aesthetic/distinct/BGM gates and retains decode failures', async () => {
+  for (const sampleCount of [0, 2]) {
+    const report = await executeSocialQualityStage({ outputPath: '/local/output.mp4', duration: 3,
+      scenes: [{ start: 0, end: 3 }], expectedUniqueScenes: 2, checkpointEnabled: false, minimalVideoPolicy: true,
+      expectedBgm: { source: '/local/bgm.mp3', sourceHash: 'a'.repeat(64), volume: 1 },
+      inspectVisuals: async () => ({ passed: false, failures: ['dark image'], metrics: { sampleCount } as never, evidenceFrames: [] }),
+      inspectScenes: async input => {
+        assert.equal(input.requireDistinct, false);
+        return { passed: false, checkedScenes: 1, issues: [{ sceneIndex: 0, start: 0, end: 3, code: 'blank', reason: 'flat background' }] };
+      },
+      runFfmpeg: async args => {
+        assert.equal(args.some(value => value.includes('volumedetect')), false);
+        return { ok: true, stdout: Buffer.alloc(0), stderr: '' };
+      },
+    });
+    assert.equal(report.quality.passed, sampleCount > 0);
+    assert.equal(report.sceneQuality.passed, true);
+    assert.equal(report.audio.bgm, undefined);
+  }
+});
+
 test('quality gate measures decoded video length and rejects a 10.923 second artifact on a 38 second timeline', async () => {
   for (const seconds of [10.923, 38]) {
     const report = await executeSocialQualityStage({

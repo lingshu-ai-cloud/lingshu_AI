@@ -62,7 +62,7 @@ export interface SocialAssetSupplyShotRequest {
 }
 
 export interface CreateSocialAssetSupplyPlanInput {
-  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2';
+  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2' | 'type-aware.v3';
   creationMode: SocialContentCreationMode;
   assetAvailability?: SocialAssetAvailability;
   managementMode?: SocialContentManagementMode;

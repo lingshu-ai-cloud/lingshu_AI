@@ -104,7 +104,7 @@ const limits = {
   agentBudgetCny: { orchestrator: 25, content: 25, traffic: 25, sales: 25 },
 };
 
-async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
+async function verifyAdmission(cachedReference: boolean,recoverOutbox=false,legacyV2=false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'typed-admission-'));
   const tenantId = 'typed-local-tenant';
   const store = new MemoryStore([...Object.values(STARTER_COLLECTIONS), 'durable_operation_leases', 'trend_videos']);
@@ -122,29 +122,34 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
       idempotencyKey: 'typed-create', now,
       value: parseCreateSocialTask({title: '本地动作完整覆盖', objective: '制作完整产品内容', mode: 'instant',
         themeId: 'product_value', creationMode: cachedReference ? 'viral_replication' : 'material_processing', productRef: 'SKU-1', perItemBudgetCny: 10})});
-    assert.equal(created.brief.materialRoutingPolicyVersion, 'type-aware.v2');
+    assert.equal(created.brief.materialRoutingPolicyVersion, 'type-aware.v3');
+    if (legacyV2) {
+      const stored = store.rows.get(STARTER_COLLECTIONS.socialContentTasks)!.find(item => item.task_id === created.taskId)!;
+      stored.brief = {...created.brief, materialRoutingPolicyVersion: 'type-aware.v2', perItemBudgetCny: 10};
+    }
     let currentVersion = created.version;
     let currentDetail = created;
     if (cachedReference) {
       const descriptions = ['工厂流水线生产产品', '手持产品包装晃一圈', '消费者在生活场景使用产品', '产品包装静止展示'];
-      const boundaries = [0, 9, 18, 28, 38];
+      const boundaries = legacyV2 ? [0, 9, 18, 28, 38] : [0, 6, 12, 20, 28];
+      const referenceDuration = boundaries[boundaries.length - 1]!;
       const analysis = {analysisRunId: 'cached-38-verified', contentSha256: 'a'.repeat(64), analysisMode: 'exact', analysisQuality: 'video',
         gemini: {theme: '产品介绍', scriptDetails15s: descriptions.map((visual, i) => ({time: `${boundaries[i]}-${boundaries[i + 1]}`,
-          purpose: i === 0 ? '工厂钩子' : i === 3 ? '产品行动引导' : '产品展示', visual,
+          materialType: ['factory', 'product', 'consumer_demo', 'product'][i], purpose: i === 0 ? '工厂钩子' : i === 3 ? '产品行动引导' : '产品展示', visual,
           shot: '近景', camera: '固定镜头', dialogue: visual, confidence: .99,
           hookMotionEvidence: {status: 'verified', observations: [{time: boundaries[i]}, {time: boundaries[i + 1]}],
             transitions: [{from: boundaries[i], to: boundaries[i + 1], action: visual}]}})),
           audioTranscript: {segments: descriptions.map((text, i) => ({start: boundaries[i], end: boundaries[i + 1], text,
             timingPrecision: 'phrase', provenance: 'fixture-cached-asr'}))}}};
       await store.create('trend_videos', {id: 'cached-38', tenantId, sourceUrl: 'https://example.com/fixture-cached-38',
-        duration: 38, aiAnalysis: JSON.stringify(analysis)});
+        duration: referenceDuration, aiAnalysis: JSON.stringify(analysis)});
       const selected = await addSocialTaskSource({repository, tenantId, userId: 'operator', taskId: created.taskId,
         idempotencyKey: 'select-cached-38', now,
         value: parseSocialSource({kind: 'reference_link', sourceRef: 'https://example.com/fixture-cached-38',
           label: '已有38秒精确分析', cachedReferenceRecordId: 'cached-38'}), referenceResolver: resolveSocialTaskReferenceScript});
       currentVersion = selected.task.version;
       currentDetail = selected.task;
-      assert.equal(selected.task.referenceVideoAnalysis?.durationSeconds, 38);
+      assert.equal(selected.task.referenceVideoAnalysis?.durationSeconds, referenceDuration);
       assert.ok(selected.task.replicationScript?.shots.length);
     }
     const row = store.rows.get(STARTER_COLLECTIONS.socialContentTasks)!.find(item => item.task_id === created.taskId)!;
@@ -182,7 +187,7 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
     assert.ok(initial?.assetSupplyPlan);
     assert.ok(initial.assetSupplyPlan.shots.every(shot => shot.materialRouting?.localMatch.state === 'matched'), JSON.stringify({baseline: baseline.scenes, plan: initial.assetSupplyPlan.shots}));
     const inspected = await readSocialTaskDetail({repository, tenantId, taskId: created.taskId});
-    if (cachedReference) {
+    if (cachedReference && legacyV2) {
       const review = inspected?.agentWorkflow?.executionPlanReview;
       assert.ok(review);
       assert.ok(review.sceneResults.every(scene => scene.approved), JSON.stringify(review));
@@ -201,7 +206,7 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
       expectedVersion: currentVersion, idempotencyKey: 'typed-start', now, orchestratorQueue: actualQueue});
     if (cachedReference) assert.ok(row.replication_script, 'real cached package builder persists the script through source service');
     else assert.equal(row.replication_script ?? '', '', 'normal baseline is tested without a fabricated replication script');
-    assert.equal(admitted.brief.materialRoutingPolicyVersion, 'type-aware.v2');
+    assert.equal(admitted.brief.materialRoutingPolicyVersion, legacyV2 ? 'type-aware.v2' : 'type-aware.v3');
     assert.equal(admitted.status, 'producing');
     assert.equal(admitted.contentOrder?.contentId,created.taskId);
     assert.equal(admitted.contentOrder?.budgetTaskId,created.taskId);
@@ -294,15 +299,22 @@ async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
     assert.ok(admitted.assetSupplyPlan.shots.every(shot => shot.materialRouting?.localMatch.state === 'matched'));
     assert.deepEqual(admitted.assetSupplyPlan.shots.map(shot => shot.materialRouting?.materialType),
       cachedReference ? ['factory', 'product', 'consumer_demo', 'product'] : ['product', 'product', 'consumer_demo', 'product']);
-    assert.deepEqual(row.script_baseline, baseline, 'normal create baseline is preserved verbatim');
+    if (cachedReference) {
+      const confirmedBaseline = parseStoredSocialScriptBaseline(row.script_baseline)!;
+      assert.deepEqual({...confirmedBaseline, version: baseline.version}, baseline, 'system confirmation may advance the baseline version without changing its scenes');
+      assert.equal(admitted.replicationScript?.status, 'confirmed');
+      assert.equal(admitted.replicationScript?.review?.reviewedBy, 'system:replication-review');
+      assert.ok(admitted.replicationScript?.review?.scriptHash, 'normal admission persists a real hash-bound system review');
+    } else assert.deepEqual(row.script_baseline, baseline, 'normal create baseline is preserved verbatim');
     assert.ok(admitted.assetSupplyPlan.shots.every(shot => shot.selectedMaterialSegment
       && shot.selectedMaterialSegment.endSeconds > shot.selectedMaterialSegment.startSeconds));
-    assert.equal(admitted.brief.perItemBudgetCny, 10, 'dispatch must retain the narrower explicit grant, not expand it to the default ceiling');
+    assert.equal(admitted.brief.perItemBudgetCny, legacyV2 ? 10 : 15, 'new tasks use the confirmed whole-film allowance; historical records retain their frozen grant');
     assert.equal(admitted.agentWorkflow?.executionPlan.estimatedTotalCostCny, 0);
     assert.equal(store.rows.get(STARTER_COLLECTIONS.runs)!.length, 1);
   } finally {fs.rmSync(root, {recursive: true, force: true});}
 }
 
 test('normal unaltered product_value baseline admits complete local semantic evidence', () => verifyAdmission(false));
-test('normal cached38 builds matched factory/product/consumer scenes but missing original-reference gates block dispatch', () => verifyAdmission(true));
+test('new v3 cached reference admits topic matches without historical visual/reference gates', () => verifyAdmission(true));
+test('historical v2 cached38 retains missing original-reference gates on recovery', () => verifyAdmission(true,false,true));
 test('real outbox recovery reuses original queue/run after crash and never resubmits unknown supplier work',()=>verifyAdmission(false,true));

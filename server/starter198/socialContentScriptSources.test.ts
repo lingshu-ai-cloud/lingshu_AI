@@ -666,3 +666,47 @@ assert.deepEqual(normalizedV12.slice(35,37).map(row=>[row.timing.startSeconds,ro
 assert.equal(normalizedV12[0]!.timing.startSeconds,0);
 assert.equal(normalizedV12.at(-1)!.timing.endSeconds,38);
 assert.ok(normalizedV12.slice(1).every((row,index)=>row.timing.startSeconds===normalizedV12[index]!.timing.endSeconds));
+
+// The current policy consumes benchmark labels without introducing temporal child slots.
+const v3TemporalPresenter = buildSocialTaskReferencePackage({ record: temporalPresenterRecord, source, themeId: 'product_value',
+  verifiedContext: { productName: '新产品', facts: [], source: 'enterprise_product', confidence: 1 },
+  planning: { materialRoutingPolicyVersion: 'type-aware.v3', targetDurationSeconds: 30, budgetCny: 15 } });
+assert.ok(v3TemporalPresenter);
+assert.deepEqual(v3TemporalPresenter.referenceVideoAnalysis.shots.map(shot => shot.materialType), ['talking_head', 'product']);
+assert.equal(v3TemporalPresenter.replicationScript.shots.length, v3TemporalPresenter.referenceVideoAnalysis.shots.length);
+assert.deepEqual(v3TemporalPresenter.replicationScript.shots.map(shot => shot.referenceShotId),
+  v3TemporalPresenter.referenceVideoAnalysis.shots.map(shot => shot.shotId));
+
+// V3 rewrites tagged competitor identities even when the title omits them, and
+// removes unsupported certification clauses without changing source slots.
+const identityV3Analysis = JSON.parse(record.aiAnalysis);
+identityV3Analysis.gemini.identityEntities = [
+  { type: 'brand', text: '竞品品牌' }, { type: 'product', text: '竞品产品' },
+  { type: 'credential', text: '专有金牌资质' },
+];
+identityV3Analysis.gemini.audioTranscript = { segments: [
+  { start: 0, end: 3, text: '竞品品牌的竞品产品，获得专有金牌资质。', provenance: 'source_asr' },
+  { start: 3, end: 6, text: '通过 ISO 9001 认证。', provenance: 'source_asr' },
+  { start: 6, end: 8, text: '了解产品。', provenance: 'source_asr' },
+] };
+const identityV3Input = { record: { ...record, title: '参考视频', aiAnalysis: JSON.stringify(identityV3Analysis) }, source,
+  themeId: 'product_value' as const, verifiedContext: { enterpriseName: '自有企业', brandName: '自有品牌', productName: '自有产品', facts: [], source: 'enterprise_product' as const, confidence: 1 } };
+const v3Identity = buildSocialTaskReferencePackage({ ...identityV3Input,
+  planning: { materialRoutingPolicyVersion: 'type-aware.v3', targetDurationSeconds: 30, budgetCny: 15 } });
+assert.ok(v3Identity);
+assert.equal(v3Identity.replicationScript.shots.length, 3);
+assert.deepEqual(v3Identity.replicationScript.shots.map(shot => shot.referenceShotId), v3Identity.referenceVideoAnalysis.shots.map(shot => shot.shotId));
+const rewrittenLines = v3Identity.replicationScript.narrationLines!;
+assert.match(rewrittenLines[0]!.draftText, /自有品牌的自有产品/);
+assert.doesNotMatch(rewrittenLines.map(line => line.draftText).join(' '), /竞品品牌|竞品产品|专有金牌资质|ISO 9001/);
+assert.equal(rewrittenLines[1]!.draftText, '了解更多产品信息。');
+assert.ok(rewrittenLines.every(line => (line.visualShotIds?.length ?? 0) > 0));
+const historicIdentity = buildSocialTaskReferencePackage(identityV3Input);
+assert.ok(historicIdentity);
+assert.match(historicIdentity.replicationScript.narrationLines![0]!.draftText, /竞品品牌/);
+assert.match(historicIdentity.replicationScript.narrationLines![1]!.draftText, /ISO 9001/);
+const verifiedCredential = buildSocialTaskReferencePackage({ ...identityV3Input,
+  verifiedContext: { ...identityV3Input.verifiedContext, facts: [{ key: 'certifications', label: '资质', value: 'ISO 9001' }] },
+  planning: { materialRoutingPolicyVersion: 'type-aware.v3', targetDurationSeconds: 30, budgetCny: 15 } });
+assert.ok(verifiedCredential);
+assert.match(verifiedCredential.replicationScript.narrationLines![1]!.draftText, /ISO 9001/);

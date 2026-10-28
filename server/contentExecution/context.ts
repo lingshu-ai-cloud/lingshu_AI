@@ -301,15 +301,21 @@ export function readCurrentContentExecutionCheckpoint<T>(input: {
   stage: string;
   version: string;
   inputHash: string;
+  rejectMismatch?: boolean;
 }): T | null {
   const current = executionContext.getStore();
   if (!current) return null;
   const stage = checkpointKey(input.stage);
   const checkpoint = current.checkpoints[stage];
-  if (!checkpoint
-    || checkpoint.version !== compact(input.version, 40)
-    || checkpoint.inputHash !== compact(input.inputHash, 240)) return null;
-  return safeCheckpointPayload(checkpoint.payload) as T;
+  if (!checkpoint) return null;
+  if (checkpoint.version !== compact(input.version, 40)
+    || checkpoint.inputHash !== compact(input.inputHash, 240)) {
+    if (input.rejectMismatch) throw new Error('content_execution_checkpoint_mismatch');
+    return null;
+  }
+  const payload = safeCheckpointPayload(checkpoint.payload);
+  if (input.rejectMismatch && payload == null) throw new Error('content_execution_checkpoint_mismatch');
+  return payload as T;
 }
 
 /**

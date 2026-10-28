@@ -29,8 +29,33 @@ test('real supply executor only retries failed scene; passed bytes and frozen au
   await assert.rejects(()=>executeSocialSceneReworkSupply({...input,cache:{...cache,parentArtifactHash:'forged'}}),/cache_integrity_invalid/);
   await assert.rejects(()=>executeSocialSceneReworkSupply({...input,plan:{...plan,planVersion:'changed'}}),/plan_changed/);
   assert.deepEqual(calls,['scene-b']);
+  // A user's requested change is not a fabricated detector failure. The exact
+  // original receipt status is still verified, and only that slot is supplied.
+  const voicePlan=alignSocialAssetSupplyPlanToBaseline({baseline,plan:{...plan,materialRoutingPolicyVersion:'type-aware.v3' as const}});
+  const {recordHash:_oldHash,...oldCache}=cache;
+  const voiceCache=sealSocialSceneMediaCache({...oldCache,planHash:sceneReworkHash(voicePlan),scenes:cache.scenes.map((scene,index)=>({...scene,status:index===0?'review_required' as const:'passed' as const,shotHash:sceneReworkHash(voicePlan.shots[index])}))});
+  const requested=createSocialSceneReworkIntent(voiceCache,'actor',['scene-a'],'rework-run','user_selected');
+  assert.deepEqual(requested.failedReceiptIds,[]);
+  assert.deepEqual(requested.selectedReceiptIds,['receipt-scene-a']);
+  calls.length=0; const observed:Array<[string,string]>=[];
+  const revised=await executeSocialSceneReworkSupply({...input,plan:voicePlan,cache:voiceCache,intent:requested,verifyReceipt:async(id, _scene, status)=>{observed.push([id,status]);}});
+  assert.deepEqual(calls,['scene-a']); assert.equal(revised.assets[1]?.id,'original');
+  assert.deepEqual(observed,[['receipt-scene-a','review_required'],['receipt-scene-b','passed']]);
+  const projected=structuredClone(voicePlan);
+  projected.shots[0]!.sourceRefs=['replacement-source'];
+  const projectedSupply=await executeSocialSceneReworkSupply({...input,plan:voicePlan,cache:voiceCache,intent:requested,
+    localProjection:{plan:projected,assets:[{...result.asset,id:'replacement-source',sourceId:'replacement-source'}]},
+    adapters:[{adapterId:'new-real-source',sourceStrategies:['customer_real_asset' as const],execute:async()=>({...result,
+      sourceRef:'replacement-source',asset:{...result.asset,id:'replacement-source',sourceId:'replacement-source'}})}]});
+  assert.equal(projectedSupply.execution.shots.find(shot=>shot.sceneId==='scene-a')!.sourceRef,'replacement-source');
+  assert.deepEqual(projectedSupply.plan.shots[1],voicePlan.shots[1]);
+  const forged=structuredClone(projected);forged.shots[1]!.sourceRefs=['unselected-tamper'];
+  await assert.rejects(()=>executeSocialSceneReworkSupply({...input,plan:voicePlan,cache:voiceCache,intent:requested,
+    localProjection:{plan:forged,assets:[]}}),/projection_invalid/);
+  await assert.rejects(()=>executeSocialSceneReworkSupply({...input,cache:voiceCache,intent:requested}),/selection_mode_invalid/);
+  calls.length=0;
   await writeFile(path,'tampered');
-  await assert.rejects(()=>executeSocialSceneReworkSupply(input),/media_hash_changed/); assert.deepEqual(calls,['scene-b']);
+  await assert.rejects(()=>executeSocialSceneReworkSupply(input),/media_hash_changed/); assert.deepEqual(calls,[]);
   assert.throws(()=>createSocialSceneReworkIntent(cache,'actor',['scene-a'],'rework-run'),/failed_receipt_required/);
   assert.throws(()=>createSocialSceneReworkIntent(cache,'actor',['scene-b','scene-b'],'rework-run'),/selection_invalid/);
  } finally {await rm(dir,{recursive:true,force:true});}

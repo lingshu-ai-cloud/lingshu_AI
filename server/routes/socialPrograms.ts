@@ -1,3 +1,4 @@
+import {createWeeklyVideoQualityMediaRouter} from './weeklyVideoQualityMedia.js';
 import { createSocialWeeklyProducerEvidenceRouter } from './socialWeeklyProducerEvidence.js';
 import {createWeeklyAutomaticScheduleRouter} from './weeklyAutomaticSchedule.js';
 import {createSocialWeeklyInventoryReuseRouter} from './socialWeeklyInventoryReuse.js';
@@ -23,6 +24,7 @@ import {recheckWeeklyRequiredMaterials} from '../socialPrograms/weeklyRequiredMa
 import {readWeeklyContentNavigation} from '../socialPrograms/weeklyContentNavigation.js';
 import {readWeeklyReferenceReviewNavigation} from '../socialPrograms/weeklyReferenceReviewNavigation.js';
 import {backfillWeeklyTaskWorkspaces,readWeeklyTaskWorkspace} from '../socialPrograms/weeklyTaskWorkspaces.js';
+import {acceptWeeklyUnknownVideoQuality} from '../socialPrograms/weeklyVideoQualityAcceptance.js';
 import { createWeeklyOperatingPackageService } from '../socialPrograms/weeklyOperatingPackages.js';
 import {createWeeklyExecutionPipelineService} from '../socialPrograms/weeklyExecutionPipeline.js';
 import { createSocialOperatingOrchestrationService, weeklyAuthorityFromResolution } from '../socialOperating/orchestration.js';
@@ -111,6 +113,7 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   const router = Router();
   if (authenticate) router.use(requireAuth, enforceSupportSessionReadOnly);
   const service = createSocialProgramService(dataStore);
+  router.use(createWeeklyVideoQualityMediaRouter(dataStore));
   router.use('/:programId/operating-packages/:packageId/producer-evidence', asyncRoute(async (req, res, next) => {
     await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
     next();
@@ -573,6 +576,13 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('package_version_invalid',400,'周包版本无效。');
     res.setHeader('Cache-Control','private, no-store');
     res.json({item:await readWeeklyTaskWorkspace(dataStore,{tenantId,programId:String(req.params.programId),packageId:String(req.params.packageId),packageVersion,executionTaskId:String(req.params.taskId)})});
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/video-quality/accept-unknown', asyncRoute(async (req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals;const body=routeBody(req.body);
+    if(!body||Object.keys(body).some(key=>!['packageVersion','expectedJobId','expectedRunId','expectedMediaSha256','acceptUnknown','confirmSubtitleStyle'].includes(key))||!Number.isSafeInteger(body.packageVersion)||Number(body.packageVersion)<1||typeof body.expectedJobId!=='string'||typeof body.expectedRunId!=='string'||typeof body.expectedMediaSha256!=='string'||body.acceptUnknown!==true||(body.confirmSubtitleStyle!==undefined&&body.confirmSubtitleStyle!==true))throw new SocialProgramError('weekly_video_quality_acceptance_input_invalid',400,'当前成片接受参数无效。');
+    const item=await acceptWeeklyUnknownVideoQuality(dataStore,{tenantId,actorUserId:userId,programId:String(req.params.programId),packageId:String(req.params.packageId),packageVersion:Number(body.packageVersion),executionTaskId:String(req.params.taskId)},{expectedJobId:body.expectedJobId,expectedRunId:body.expectedRunId,expectedMediaSha256:body.expectedMediaSha256,acceptUnknown:true,...(body.confirmSubtitleStyle===true?{confirmSubtitleStyle:true}:{})});
+    res.setHeader('Cache-Control','private, no-store');res.json({item});
   }));
 
   router.post('/:programId/operating-packages/:packageId/task-workspaces/backfill', asyncRoute(async (req, res) => {

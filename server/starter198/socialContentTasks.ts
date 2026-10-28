@@ -1,3 +1,4 @@
+import {canQueueV3InputCompletion} from './socialContentMissingLabelQueueAdmission.js';
 import { withWeeklyProductionStartGuard } from '../runtime/weeklyProductionStartGuard.js';
 import { reviewReplicationBySystem, systemReviewAppliedForStart } from './socialReplicationSystemReview.js';
 import { assertIllustrativeSceneSelection } from './socialContentIllustrativeSceneApproval.js';
@@ -313,7 +314,7 @@ export async function updateSocialContentTask(input: {
       const productionPlanFieldsChanged = ['productionApproach', 'assetAvailability', 'managementMode', 'presenterAssetId',
         'referenceReuse', 'presenterPolicy', 'presenterSpeechReviewPolicy', 'illustrativeSceneIds']
         .some(key => Object.prototype.hasOwnProperty.call(briefChanges, key));
-      if (productionPlanFieldsChanged) brief.materialRoutingPolicyVersion = 'type-aware.v2'; // Forward route revision uses the current planner.
+      if (productionPlanFieldsChanged) brief.materialRoutingPolicyVersion = 'type-aware.v3'; // Forward route revision uses the current planner.
       await applyFunctionalReplacementRevision({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,record,
         actorUserId:input.userId,revisedAt:timestamp,currentApproach:current.productionApproach,
         nextApproach:briefChanges.productionApproach,brief,serverBrief});
@@ -674,7 +675,7 @@ async function startSocialContentTaskUnderGuard(input: Parameters<typeof startSo
           || socialText(replicationScript.referenceAnalysisId) !== socialText(referenceAnalysis.analysisId)) {
           throw new SocialContentWorkflowError('social_content_reference_analysis_pending', 409);
         }
-        if (socialText(replicationScript.status) !== 'confirmed') {
+        if (socialText(replicationScript.status) !== 'confirmed' && !canQueueV3InputCompletion((await readSocialTaskDetail(input))!)) {
           await reviewReplicationBySystem({ ...input, expectedVersion: socialText(record.version),
             idempotencyKey: `${operationId}:system-review` });
           record = await requireSocialTask(input);
@@ -697,7 +698,8 @@ async function startSocialContentTaskUnderGuard(input: Parameters<typeof startSo
       }
       const executableDetail = await readSocialTaskDetail(input);
       const workflowReview = executableDetail?.agentWorkflow?.executionPlanReview;
-      if (workflowReview && !socialContentReviewAdmissionAllowed(workflowReview)) {
+      if (workflowReview && !socialContentReviewAdmissionAllowed(workflowReview)
+        && !canQueueV3InputCompletion(executableDetail!)) {
         const reasonCodes = workflowReview.reasonCodes;
         const code = reasonCodes.includes('rights_missing')
           ? 'social_content_execution_rights_required'

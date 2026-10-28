@@ -80,6 +80,7 @@ export interface SocialTaskBudgetEntry extends SocialTaskBudgetOperation {
         recordHash: string;
     };
     preproductionBinding?: SocialTaskPreproductionBudgetBinding;
+    overageApproval?: { actorUserId: string; authorizationRef: string; quoteHash: string; extraMicros: number; batchOperationIds?:string[]; recordHash: string };
 }
 export interface SocialTaskPreproductionBudgetBinding {
     schema: 'social-task-preproduction-budget-binding.v1';
@@ -121,6 +122,7 @@ function scopeCheck(s: SocialTaskBudgetScope) { if (![s.tenantId, s.taskId, s.ru
     fail('scope_invalid'); }
 function operationCheck(o: SocialTaskBudgetOperation) { if (![o.operationId, o.provider, o.model, o.accountRef, o.stage].every(text) || !/^[a-f0-9]{64}$/.test(o.fingerprint) || (o.shotId !== null && !text(o.shotId)))
     fail('operation_invalid'); }
+function overage(l: Ledger) { return Object.values(l.entries).reduce((sum, e) => sum + (e.status !== 'rejected' ? e.overageApproval?.extraMicros ?? 0 : 0), 0); }
 function used(l: Ledger) { const n = Object.values(l.entries).reduce((v, e) => v + (e.status === 'rejected' || e.preproductionBinding ? 0 : e.reservedMicros), 0); if (!Number.isSafeInteger(n))
     fail('ledger_corrupt'); return n; }
 /** A task, including replacement runs and retries, owns ONE ceiling. All paid stages
@@ -180,6 +182,12 @@ export class SocialContentTaskBudget {
                     ||(['operationId','fingerprint','provider','model','accountRef','stage','shotId'] as const).some(key=>e[key]!==binding.exactOperation[key])
                     ||recordHash!==hash(JSON.stringify(body)))fail('ledger_corrupt');
             }
+            if(e.overageApproval){
+                const grant=e.overageApproval,{recordHash,...body}=grant;
+                if(!text(grant.actorUserId)||!text(grant.authorizationRef)||!/^[a-f0-9]{64}$/.test(grant.quoteHash)
+                  ||!Number.isSafeInteger(grant.extraMicros)||grant.extraMicros<0||(!grant.batchOperationIds&&grant.extraMicros===0)||grant.extraMicros>e.reservedMicros
+                  ||recordHash!==hash(JSON.stringify([e.operationId,e.fingerprint,e.executionTaskId,e.runId,e.planHash,e.quoteRef,e.reservedMicros,body])))fail('ledger_corrupt');
+            }
             if(e.preproductionBinding){
                 const binding=e.preproductionBinding,{recordHash,...body}=binding;
                 if(binding.schema!=='social-task-preproduction-budget-binding.v1'||binding.source!=='weekly_candidate_exact_analysis'
@@ -190,6 +198,14 @@ export class SocialContentTaskBudget {
                     ||micros(binding.retainedUpperBoundCny)!==e.reservedMicros||recordHash!==hash(JSON.stringify(body))
                     ||e.status!=='completed'||e.receiptRef!==`weekly-exact:${binding.sourceReceiptHash}`)fail('ledger_corrupt');
             }
+        }
+        for(const entry of Object.values(l.entries))if(entry.overageApproval?.batchOperationIds){
+            const grant=entry.overageApproval,ids=grant.batchOperationIds!;
+            if(!ids.length||new Set(ids).size!==ids.length||!ids.includes(entry.operationId)||ids.some(id=>!text(id)))fail('ledger_corrupt');
+            for(const id of ids){const member=l.entries[hash(id)],approval=member?.overageApproval;
+                if(!member||!approval||member.executionTaskId!==entry.executionTaskId||member.runId!==entry.runId||member.planHash!==entry.planHash
+                  ||approval.quoteHash!==grant.quoteHash||approval.actorUserId!==grant.actorUserId||approval.authorizationRef!==grant.authorizationRef
+                  ||JSON.stringify(approval.batchOperationIds)!==JSON.stringify(ids))fail('ledger_corrupt');}
         }
         used(l);
         if(l.executionLimitMicros&&Object.entries(l.executionLimitMicros).some(([id,limit])=>!text(id)||!Number.isSafeInteger(limit)||limit<0))fail('ledger_corrupt');
@@ -342,7 +358,7 @@ export class SocialContentTaskBudget {
                     fail('quote_missing_or_expired');
                 l.entries[id] = { ...o, executionTaskId:scope.taskId, authorizationRef:a.authorizationRef, runId: scope.runId, planHash: scope.planHash, quoteRef: q.quoteRef, reservedMicros: micros(q.upperBoundCny), status: 'reserved', receiptRef: null };
             }
-            if (used(l) > cap)
+            if (used(l) > cap + overage(l))
                 throw productionBudgetDecisionError({maximumCny:cap/1e6,retainedCny:retainedBefore/1e6,plannedAdditionalCny:(used(l)-retainedBefore)/1e6,totalCny:used(l)/1e6});
             const executionLimit=l.executionLimitMicros?.[hash(scope.taskId)];
             if(executionLimit!==undefined&&Object.values(l.entries).filter(e=>(e.executionTaskId??l.taskId)===scope.taskId&&e.status!=='rejected').reduce((sum,e)=>sum+e.reservedMicros,0)>executionLimit)fail('execution_allowance_exceeded');
@@ -350,6 +366,73 @@ export class SocialContentTaskBudget {
             this.write(scope, l);
             return this.status(scope)!;
         });
+    }
+    /** The same original-film lock covers the complete selected operation set. */
+    async previewOverageBatch(scope:SocialTaskBudgetScope,operations:SocialTaskBudgetOperation[]){
+        scopeCheck(scope);operations.forEach(operationCheck);
+        if(!operations.length||new Set(operations.map(row=>row.operationId)).size!==operations.length)fail('operation_duplicate');
+        return withPaidOperationLock(path.join(this.root,'.locks'),JSON.stringify([scope.tenantId,scope.budgetTaskId??scope.taskId]),async()=>{
+            await this.ports.assertCurrent(scope);return this.readOverageBatchPreview(scope,operations);
+        });
+    }
+    async previewOverage(scope:SocialTaskBudgetScope,operation:SocialTaskBudgetOperation){
+        const result=await this.previewOverageBatch(scope,[operation]);
+        return {...result,operation:result.operations[0]!,quote:result.quotes[0]!};
+    }
+    private async readOverageBatchPreview(scope:SocialTaskBudgetScope,input:SocialTaskBudgetOperation[]){
+        const operations=[...input].sort((a,b)=>a.operationId.localeCompare(b.operationId));
+        const ledger=this.read(scope),authorization=await this.ports.authorization(scope);
+        if(!ledger||ledger.limitMicros!==15e6||ledger.correctionAuthorization||authorization.maximumCny!==15
+          ||!text(authorization.authorizationRef)||!ledger.authorizationRefs.includes(authorization.authorizationRef)
+          ||ledger.productionDurationSeconds===undefined||ledger.productionDurationSeconds>30
+          ||authorization.productionDurationSeconds!==ledger.productionDurationSeconds
+          ||authorization.maximumExecutionCny!==undefined||ledger.executionLimitMicros?.[hash(scope.taskId)]!==undefined)fail('overage_original_film_required');
+        if(Object.values(ledger.entries).some(entry=>entry.status==='unknown'||entry.status==='accepted'))fail('overage_unsettled_receipt');
+        if(operations.some(operation=>ledger.entries[hash(operation.operationId)]))fail('overage_operation_exists');
+        const quotes:SocialTaskBudgetQuote[]=[];
+        for(const operation of operations){const quote=await this.ports.quote(scope,operation);
+            if(!text(quote.quoteRef)||!Number.isFinite(Date.parse(quote.validUntil))||Date.parse(quote.validUntil)<=Date.now())fail('quote_missing_or_expired');
+            micros(quote.upperBoundCny);quotes.push(quote);}
+        const amount=quotes.reduce((sum,quote)=>sum+micros(quote.upperBoundCny),0),retained=used(ledger),ceiling=ledger.limitMicros+overage(ledger);
+        if(!Number.isSafeInteger(ceiling)||!Number.isSafeInteger(retained+amount))fail('ledger_corrupt');
+        if(retained+amount<=ceiling)fail('overage_not_required');
+        const body={scope,operations,quotes,retainedMicros:retained,ceilingMicros:ceiling,extraMicros:retained+amount-ceiling};
+        return {...body,previewHash:hash(JSON.stringify(body))};
+    }
+    async reserveUserApprovedOverageBatch(scope:SocialTaskBudgetScope,operations:SocialTaskBudgetOperation[],input:{previewHash:string;actorUserId:string;authorizationRef:string}){
+        scopeCheck(scope);operations.forEach(operationCheck);
+        if(!operations.length||new Set(operations.map(row=>row.operationId)).size!==operations.length)fail('operation_duplicate');
+        if(!/^[a-f0-9]{64}$/.test(input.previewHash)||!text(input.actorUserId)||!text(input.authorizationRef))fail('overage_approval_invalid');
+        return withPaidOperationLock(path.join(this.root,'.locks'),JSON.stringify([scope.tenantId,scope.budgetTaskId??scope.taskId]),async()=>{
+            await this.ports.assertCurrent(scope);
+            const ledger=this.read(scope),priors=operations.map(operation=>ledger?.entries[hash(operation.operationId)]);
+            if(priors.some(entry=>entry?.overageApproval)){
+                for(const [index,prior] of priors.entries()){
+                    const operation=operations[index]!,grant=prior?.overageApproval;
+                    if(!prior||!grant||prior.status==='rejected'||grant.quoteHash!==input.previewHash||grant.actorUserId!==input.actorUserId||grant.authorizationRef!==input.authorizationRef
+                      ||(prior.executionTaskId??ledger!.taskId)!==scope.taskId||prior.runId!==scope.runId||prior.planHash!==scope.planHash
+                      ||JSON.stringify(grant.batchOperationIds??[prior.operationId])!==JSON.stringify(operations.map(row=>row.operationId).sort())
+                      ||(['operationId','fingerprint','provider','model','accountRef','stage','shotId'] as const).some(key=>prior[key]!==operation[key]))fail('overage_approval_conflict');
+                }return this.status(scope)!;
+            }
+            const preview=await this.readOverageBatchPreview(scope,operations);
+            if(preview.previewHash!==input.previewHash)fail('overage_preview_changed');
+            const current=this.read(scope)!;let remaining=preview.extraMicros;
+            for(const [index,operation] of preview.operations.entries()){
+                const quote=preview.quotes[index]!,reservedMicros=micros(quote.upperBoundCny),extraMicros=Math.min(remaining,reservedMicros);remaining-=extraMicros;
+                const base={actorUserId:input.actorUserId,authorizationRef:input.authorizationRef,quoteHash:input.previewHash,extraMicros,
+                    ...(operations.length>1?{batchOperationIds:preview.operations.map(row=>row.operationId)}:{})};
+                const entry:SocialTaskBudgetEntry={...operation,executionTaskId:scope.taskId,authorizationRef:input.authorizationRef,runId:scope.runId,planHash:scope.planHash,
+                    quoteRef:quote.quoteRef,reservedMicros,status:'reserved',receiptRef:null};
+                entry.overageApproval={...base,recordHash:hash(JSON.stringify([entry.operationId,entry.fingerprint,entry.executionTaskId,entry.runId,entry.planHash,entry.quoteRef,entry.reservedMicros,base]))};
+                current.entries[hash(operation.operationId)]=entry;
+            }
+            if(remaining!==0)fail('overage_approval_invalid');
+            await this.ports.assertCurrent(scope);this.write(scope,current);return this.status(scope)!;
+        });
+    }
+    async reserveUserApprovedOverage(scope:SocialTaskBudgetScope,operation:SocialTaskBudgetOperation,input:{previewHash:string;actorUserId:string;authorizationRef:string}){
+        return this.reserveUserApprovedOverageBatch(scope,[operation],input);
     }
     /** Adopt a settled pre-production charge into the original film ledger.
      * The caller must independently verify the immutable source receipt and

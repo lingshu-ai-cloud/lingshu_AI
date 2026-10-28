@@ -1,6 +1,45 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyContentExecutionFailure } from './retryPolicy';
+import { productionBudgetDecisionError, PRODUCTION_BUDGET_DECISION_MESSAGE } from '../../shared/contracts/productionBudgetPolicy';
+test('over-budget decisions expose verified numeric evidence without retrying or masking reconciliation', () => {
+  const error = productionBudgetDecisionError({maximumCny:15, retainedCny:14, plannedAdditionalCny:1.001, totalCny:15.001});
+  const result = classifyContentExecutionFailure(error, {attempt: 1});
+  assert.equal(result.disposition, 'block');
+  assert.match(result.publicReason, /额度 ¥15\.00，已占用 ¥14\.00，本次新增报价 ¥1\.001，累计 ¥15\.001/);
+  assert.equal(classifyContentExecutionFailure(error, {attempt:1, hasUnsettledProviderReceipt:true}).disposition, 'reconcile');
+  for (const invalid of [
+    'user_input_required:production_budget_decision_required:{"reason":"production_total_exceeded","maximumCny":15,"retainedCny":14,"plannedAdditionalCny":1,"totalCny":20}',
+    'user_input_required:production_budget_decision_required:{"reason":"other","maximumCny":15,"retainedCny":14,"plannedAdditionalCny":2,"totalCny":16}',
+    'user_input_required:production_budget_decision_required:{"reason":"production_total_exceeded","maximumCny":15,"retainedCny":14,"plannedAdditionalCny":1,"totalCny":15}',
+    'user_input_required:production_budget_decision_required:not-json',
+  ]) assert.equal(classifyContentExecutionFailure(Error(invalid), {attempt:1}).publicReason, PRODUCTION_BUDGET_DECISION_MESSAGE);
+});
+test('theme material shortage blocks the original slot instead of retrying generation', () => {
+  for (const code of ['awaiting_theme_material', 'user_input_required:awaiting_theme_material:shot-2']) {
+    for (const attempt of [1, 9]) {
+      const decision = classifyContentExecutionFailure(Error(code), { attempt });
+      assert.equal(decision.failureClass, 'input_required');
+      assert.equal(decision.disposition, 'block');
+      assert.equal(decision.maxAttempts, 1);
+      assert.equal(decision.retryDelayMs, null);
+      assert.match(decision.publicReason, /对应分镜槽位.*主题匹配且时长足够/);
+      assert.match(decision.publicReason, /已有音频和素材已保留/);
+      assert.doesNotMatch(decision.publicReason, /付费|生成|换主题/);
+    }
+  }
+  assert.match(classifyContentExecutionFailure(Error('user_input_required:awaiting_theme_material:shot-2'), {attempt:1}).publicReason,/shot-2/);
+  assert.equal(classifyContentExecutionFailure(Error('user_input_required:awaiting_theme_material:shot-2'), {
+    attempt: 1, hasUnsettledProviderReceipt: true,
+  }).disposition, 'reconcile');
+});
+test('theme shortage classification matches its exact code and preserves unrelated failures', () => {
+  for (const code of ['not_awaiting_theme_material', 'awaiting_theme_material_analysis_failed']) {
+    assert.equal(classifyContentExecutionFailure(Error(code), { attempt: 1 }).failureClass, 'system_fault');
+  }
+  const subtitle = classifyContentExecutionFailure(Error('subtitle_style_blocked'), { attempt: 1 });
+  assert.match(subtitle.publicReason, /字幕样式检查/);
+});
 test('narration capability gap neither retries paid speech nor invalidates the selected avatar',()=>{
  const result=classifyContentExecutionFailure(new Error('user_input_required:presenter_narration_capability_unavailable:heygen:starfish'),{attempt:1});
  assert.equal(result.disposition,'block');assert.equal(result.failureClass,'input_required');assert.equal(result.retryDelayMs,null);assert.match(result.publicReason,/人物授权仍有效/);assert.match(result.publicReason,/试听确认/);

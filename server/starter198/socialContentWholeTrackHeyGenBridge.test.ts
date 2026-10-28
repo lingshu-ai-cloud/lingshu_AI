@@ -151,3 +151,27 @@ test('group request uses one canonical mother-segment operation and rejects chan
  const drift=fixture();try{const {requirement}=configure(drift,'original');requirement.presenterSceneSourceContractHash='f'.repeat(64);await assert.rejects(createWholeTrackSocialHeyGenBridge(drift.options).resolveSpeechAudio!(drift.request),/group_contract_changed/);assert.deepEqual(drift.counters(),{uploads:0,posts:0,gets:0});}finally{drift.cleanup();}
  const changed=fixture();try{const {requirement}=configure(changed);requirement.presenterGroupShotIds=['s1','s3'];await assert.rejects(createWholeTrackSocialHeyGenBridge(changed.options).resolveSpeechAudio!(changed.request),/group_contract_changed/);assert.deepEqual(changed.counters(),{uploads:0,posts:0,gets:0});}finally{changed.cleanup();}
 });
+
+test('repair video keeps original paid voice scope while claiming only its own canonical video operation',async()=>{
+ const f=fixture();try{
+  const originalScope=structuredClone(f.scope),repairScope={...f.scope,runId:'repair-run',planHash:'f'.repeat(64)};
+  const requirement=f.options.funding.requirements[0],route=f.options.funding.routeBindings[requirement.key];
+  f.options.funding.scope=repairScope;
+  const intent={...f.intent,operationId:'paid-plan:'+paidProductionHash({scope:repairScope,key:requirement.key,attempt:0}),inputContractHash:paidProductionHash({requirement,route,attempt:0})};
+  f.options.funding.intents=[intent];
+  assert.throws(()=>createWholeTrackSocialHeyGenBridge({...f.options,sourceVoiceScope:originalScope}),/source_voice_scope_unverified/);
+  let verified=0;
+  const options={...f.options,sourceVoiceScope:originalScope,assertSourceVoice:async()=>{verified++;}};
+  const output=await f.execute(createWholeTrackSocialHeyGenBridge(options));
+  assert.equal(output.status,'completed');assert.ok(verified>0);assert.equal(f.claims.length,1);
+  assert.equal(f.claims[0].operationId,intent.operationId);assert.deepEqual(f.claims[0].actualUnits,{providerSeconds:1});
+  const raw=JSON.parse(fs.readFileSync(f.options.prepared.sourceReceiptRefs[0],'utf8'));
+  assert.deepEqual(raw.scope,originalScope,'original paid TTS identity is never rewritten to the repair run');
+  const receipt=JSON.parse(fs.readFileSync(f.receipts.get(intent.operationId).receiptRef,'utf8'));
+  assert.deepEqual(receipt.scope,repairScope);assert.equal(receipt.audio.wholeTrackSha256,f.options.prepared.wholeTrackSha256);
+  await createWholeTrackSocialHeyGenBridge(options).recoverExisting!(f.request);
+  assert.deepEqual(f.counters(),{uploads:2,posts:1,gets:2},'repair restart must recover same paid task');
+  await assert.rejects(f.execute(createWholeTrackSocialHeyGenBridge({...options,assertSourceVoice:async()=>{throw Error('source lineage changed');}})),/source lineage changed/);
+  assert.equal(f.counters().posts,1);
+ }finally{f.cleanup();}
+});

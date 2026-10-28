@@ -1,40 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { STARTER_198_CAPABILITIES } from '../../shared/contracts/starter198.js';
-import type { Starter198AccessSnapshot } from './profile.js';
-import { createStarter198Repository } from './repository.js';
-import { prepared } from './socialContentSceneReworkService.fixture.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { admitSocialSceneRework, confirmSocialSceneReworkAdmissionCost, previewSocialSceneReworkAdmission } from './socialContentSceneReworkAdmission.js';
-
-const access = (): Starter198AccessSnapshot => ({ recordId: 'access', tenantId: 't', productProfile: 'starter_198',
-  profileVersion: 'starter_198.v1', entitlementSnapshotId: 'actual-access', status: 'active',
-  cycleStartedAt: new Date(Date.now() - 60_000).toISOString(), cycleEndsAt: new Date(Date.now() + 60_000).toISOString(),
-  updatedAt: new Date().toISOString(), entitlements: STARTER_198_CAPABILITIES.map(capability => ({ capability, enabled: true })),
-  resourceLimits: { workspaceCount: 1, brandCount: 1, memberCount: 3, agentTeamCount: 1, productCount: 1,
-    marketCount: 1, buyerPersonaCount: 2, languageCount: 2, primaryPlatformCount: 2, concurrentRunCount: 1,
-    contentArtifactCountPerCycle: 7, contentRevisionCountPerCycle: 3, publicationPackageCountPerContent: 2,
-    assistedSessionCount: 5, inquiryAiCountPerCycle: 100, quoteDraftCountPerCycle: 20, highCostVideoCount: 0,
-    budgetCnyPerCycle: 100, agentBudgetCny: { orchestrator: 25, content: 25, traffic: 25, sales: 25 } } });
-
-async function setup(paid = false) {
-  const f = await prepared(paid);
-  f.tables.workflow_runs = f.tables.workflow_runs!.filter(row => row.id !== 'rework-run');
-  const original = f.tables.workflow_runs!.find(row => row.id === 'run')!;
-  original.status = 'succeeded';
-  const user = f.tables.users!.find(row => row.id === 'owner')!;
-  Object.assign(user, { tenantId: 't', role: 'social_operator', active: true });
-  await f.service.saveCache(f.context);
-  const repository = createStarter198Repository(f.store);
-  repository.access = async () => access();
-  return { ...f, repository, original, user, input: { repository, tenantId: 't', actorUserId: 'owner', taskId: 'content',
-    sourceRunId: 'run', parentArtifactId: 'artifact',
-    affectedSceneIds: [paid ? 'scene-transition' : 'scene-cta'] } };
-}
-
-const tariff = () => ({ QWEN_IMAGE_MODEL: 'qwen-image-3.0', SCENE_REWORK_QWEN_TARIFF_MODEL: 'qwen-image-3.0',
-  SCENE_REWORK_QWEN_MAX_BILLED_CNY_PER_IMAGE: '0.25',
-  SCENE_REWORK_QWEN_TARIFF_SOURCE_REF: 'server-approved-contract-v1', SCENE_REWORK_QWEN_TARIFF_VERSION: '1',
-  SCENE_REWORK_QWEN_TARIFF_VALID_UNTIL: new Date(Date.now() + 3_600_000).toISOString() });
+import { setup, tariff } from './socialContentSceneReworkAdmission.fixture.js';
 
 test('local repair preview writes no run/job; confirmed preview admits one genuine idempotent run/job', async () => {
   const f = await setup();
@@ -55,6 +25,22 @@ test('local repair preview writes no run/job; confirmed preview admits one genui
     assert.equal(f.tables.workflow_runs!.length, 2);
     assert.equal(f.tables.content_execution_jobs!.length, 1);
   } finally { await f.cleanup(); }
+});
+
+test('voice-driven repair without measured voice proof blocks before creating side effects', async () => {
+  const f = await setup(true, true, false);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scene-rework-v3-no-proof-'));
+  try {
+    const input = {...f.input, env: tariff(), ledgerRoot: root};
+    const preview = await previewSocialSceneReworkAdmission(input);
+    assert.ok(preview.gaps.includes('scene_rework_measured_voice_proof_missing'));
+    await assert.rejects(admitSocialSceneRework({...input, expectedPreviewHash: preview.previewHash}),
+      /scene_rework_measured_voice_proof_missing/);
+    assert.equal(f.tables.workflow_runs!.length, 1);
+    assert.equal(f.tables.content_execution_jobs?.length ?? 0, 0);
+    assert.equal(f.tables.starter_social_scene_rework_cost_policies?.length ?? 0, 0);
+    assert.deepEqual(fs.readdirSync(root), []);
+  } finally { fs.rmSync(root, {recursive:true, force:true}); await f.cleanup(); }
 });
 
 test('wrong actor, active source and exhausted actual run quota cannot create a repair run or job', async () => {

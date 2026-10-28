@@ -38,6 +38,7 @@ export interface BuildInitialSocialSceneCacheInput {
   adaptedScript: unknown;
   timeline: unknown[];
   presenterMotherExecution?: PresenterMotherExecutionResult;
+  measuredVoiceProof?: import('./socialContentSceneReworkMeasuredVoice.js').SceneReworkMeasuredVoiceProof;
 }
 
 function initialVariant(input: BuildInitialSocialSceneCacheInput): SocialVariantDifference {
@@ -100,5 +101,6 @@ export function buildInitialSocialSceneCacheInput(
     bgmUrl: input.bgmUrl,
     report: input.report,
     ...(input.presenterMotherExecution ? { presenterMotherExecution: input.presenterMotherExecution } : {}),
+    ...(input.measuredVoiceProof ? { measuredVoiceProof: input.measuredVoiceProof } : {}),
   };
 }

@@ -307,6 +307,7 @@ export function buildDirectorBrief(
   inspirationHandoffs: SocialInspirationHandoff[],
   replicationJob: SocialReplicationJob | null,
 ): SocialDirectorBrief {
+  const themePolicy = input.brief.materialRoutingPolicyVersion === 'type-aware.v3';
   const scriptShots = input.replicationScript?.shots ?? [];
   const supplyShots = input.assetSupplyPlan.shots;
   const supplyById = new Map(supplyShots.map(shot => [shot.shotId, shot]));
@@ -327,7 +328,7 @@ export function buildDirectorBrief(
     const reference = script
       ? referenceById.get(script.referenceShotId || '')
       : referenceShots[index];
-    return directorScene({
+    const scene = directorScene({
       index,
       script,
       supply,
@@ -344,12 +345,19 @@ export function buildDirectorBrief(
         && supply.sourceStrategy === 'customer_real_asset'
         && supply.feasibility === 'functional_equivalent',
     });
+    if (themePolicy) {
+      scene.acceptanceCriteria = ['按对标分镜标签选路；非真人口播只要求主题匹配', '保持既定槽位及口播对应关系，按实际语音校准定时'];
+      scene.allowedVariation = ['非真人口播不限制人物、动作、构图、SKU或对标视觉相似度'];
+      scene.replicationFactors = [];
+      scene.requiredEvidence = [];
+    }
+    return scene;
   }).filter((scene): scene is SocialDirectorBriefScene => Boolean(scene));
   const coverage = input.referenceAnalysis?.coverage;
   const referenceRequired = input.brief.creationMode === 'viral_replication';
-  const referenceReady = !referenceRequired || Boolean(input.referenceAnalysis?.status === 'ready' && coverage?.fullTimelineCovered !== false);
-  const factorsReady = !referenceRequired || replicationJob?.status === 'factor_ready';
-  const fidelityReady = !referenceRequired
+  const referenceReady = !referenceRequired || (themePolicy ? referenceShots.length > 0 : Boolean(input.referenceAnalysis?.status === 'ready' && coverage?.fullTimelineCovered !== false));
+  const factorsReady = themePolicy || !referenceRequired || replicationJob?.status === 'factor_ready';
+  const fidelityReady = themePolicy || !referenceRequired
     || socialReferenceFidelityFailures({ referenceAnalysis: input.referenceAnalysis, replicationScript: input.replicationScript }).length === 0;
   const orderedScenes = [...scenes].sort((left, right) => left.order - right.order);
   const timelineValid = orderedScenes.every((scene, index) => scene.duration.endSeconds > scene.duration.startSeconds
@@ -357,6 +365,7 @@ export function buildDirectorBrief(
   // Five Han characters or 2.7 whitespace-delimited words per second is a
   // deliberately conservative, deterministic speech-capacity gate.
   const dialogueFits = scenes.every(scene => {
+    if (themePolicy) return true;
     if (scene.voiceoverAlignment?.matchMode === 'verbatim_semantic') return true;
     const speech = scene.audioLayers.dialogue ?? scene.audioLayers.voiceover;
     if (!speech) return true;
@@ -366,9 +375,12 @@ export function buildDirectorBrief(
     const capacity = /[\u3400-\u9fff]/.test(speech) ? scene.duration.targetSeconds * 5 : scene.duration.targetSeconds * 2.7;
     return units <= Math.max(1, capacity);
   });
+  const slotStructureReady = !themePolicy || !referenceRequired || (scriptShots.length === referenceShots.length
+    && scriptShots.every((shot, index) => shot.referenceShotId === referenceShots[index]?.shotId
+      && (!shot.referenceShotIds?.length || shot.referenceShotIds.length === 1 && shot.referenceShotIds[0] === shot.referenceShotId)));
   const expectedSceneCount = scriptShots.length || supplyShots.length;
   const status = scenes.length > 0 && scenes.length === expectedSceneCount && scriptIdentityReady
-    && referenceReady && factorsReady && fidelityReady && timelineValid && dialogueFits ? 'ready' : 'blocked';
+    && slotStructureReady && referenceReady && factorsReady && fidelityReady && timelineValid && dialogueFits ? 'ready' : 'blocked';
   const totalDurationSeconds = Math.max(0, ...scenes.map(scene => scene.duration.endSeconds));
   const inferredProductRef = productSelection.productRef;
   const requirementText = [
@@ -669,6 +681,14 @@ export function capabilityCandidates(input: {
     }));
   const ranked = [...actualAssets, ...capabilityRows]
     .filter(candidate => {
+      if (input.policyVersion === 'type-aware.v3') {
+        const routing = input.supply.materialRouting;
+        if (!routing || routing.pendingReason) return false;
+        return routing.materialType === 'talking_head'
+          ? candidate.kind === 'capability' && candidate.sourceStrategy === 'authorized_digital_presenter'
+          : candidate.kind === 'asset' && candidate.sourceStrategy === 'customer_real_asset'
+            && Boolean(candidate.sourceRef && routing.localMatch.sourceRefs.includes(candidate.sourceRef));
+      }
       const typed = input.supply.materialRouting;
       if (typed) {
         if(eligibleProductBudgetCandidate(input.supply,input.policyVersion)&&candidate.kind==='capability'

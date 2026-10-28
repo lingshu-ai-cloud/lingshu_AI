@@ -1,3 +1,5 @@
+import {verifyStoredSceneReworkMeasuredVoice} from './socialContentSceneReworkMeasuredVoice.js';
+import { isVoiceDrivenFilm } from '../../shared/contracts/productionBudgetPolicy.js';
 import type { Record_ } from '../storage/datastore.js';
 import type { Starter198Repository, StarterRecord } from './repository.js';
 import { parseSocialProductionReceiptRecord } from './socialContentProductionHandoff.js';
@@ -21,11 +23,16 @@ export async function readSocialSceneReworkAvailability(input: {
     taskId: input.taskId, runId: sourceRunId, parentArtifactId: input.parentArtifactId });
   const run = await input.repository.dataStore!.getById<Record_>('workflow_runs', sourceRunId);
   const blockingReasons: string[] = [];
+  if (isVoiceDrivenFilm(context.plan)) {
+    if (!context.cache.measuredVoiceProof) blockingReasons.push('scene_rework_measured_voice_proof_missing');
+    else try { await verifyStoredSceneReworkMeasuredVoice(input.repository, context.cache); }
+    catch { blockingReasons.push('scene_rework_measured_voice_proof_invalid'); }
+  }
   if (!run || run.tenant_id !== input.tenantId || !['succeeded', 'completed', 'failed'].includes(String(run.status))) {
     blockingReasons.push('scene_rework_source_run_not_terminal');
   }
-  if (context.cache.scenes.some(scene => scene.status === 'review_required')) blockingReasons.push('scene_rework_quality_review_required');
-  if (!context.cache.scenes.some(scene => scene.status === 'failed')) blockingReasons.push('scene_rework_failed_receipt_required');
+  if (!isVoiceDrivenFilm(context.plan) && context.cache.scenes.some(scene => scene.status === 'review_required')) blockingReasons.push('scene_rework_quality_review_required');
+  if (!isVoiceDrivenFilm(context.plan) && !context.cache.scenes.some(scene => scene.status === 'failed')) blockingReasons.push('scene_rework_failed_receipt_required');
   const checks = new Map<string, Array<{ code: string; passed: boolean; message: string }>>();
   for (const scene of context.cache.scenes) {
     const rows = await input.repository.dataStore!.list<Record_>('starter_social_production_receipts', { where: {
@@ -59,6 +66,7 @@ export async function readSocialSceneReworkAvailability(input: {
   }
   return { tenantId: input.tenantId, taskId: input.taskId, sourceRunId, parentArtifactId: input.parentArtifactId,
     productionWorkspaceBinding, productionWorkspaceGap,
+    ...(isVoiceDrivenFilm(context.plan) ? { selectionMode: 'user_selected' as const } : {}),
     parentArtifactHash: context.cache.parentArtifactHash, cacheHash: context.cache.recordHash,
     scenes: context.cache.scenes.map(scene => {
       const baseline = context.baseline.scenes.filter(item => item.sceneId === scene.sceneId);

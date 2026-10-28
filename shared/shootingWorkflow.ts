@@ -55,6 +55,13 @@ export interface ScriptGapTask {
   expectedNarration?: string;
   createdAt: string;
   uploadedMaterialIds: string[];
+  /** Stable content-slot binding for automatically created talking-head
+   * capture work. Upload alone never constitutes presenter authorization. */
+  sourceContentTaskId?: string;
+  sourceContentRunId?: string;
+  sourceContentTaskVersion?: string;
+  sourceContentShotId?: string;
+  sourceContentPlanHash?: string;
 }
 
 export function reconcileShootingSlots(

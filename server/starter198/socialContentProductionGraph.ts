@@ -1,4 +1,5 @@
 import { reconcileAdmittedSocialProductionState } from './socialContentProductionState.js';
+import {completeGraphBenchmarkLabels} from './socialContentMissingLabelGraph.js';
 import { createSocialSceneReworkService } from './socialContentSceneReworkService.js';
 import {readGraphContextSnapshot,compactGraphContextSnapshot} from './socialContentGraphContextSnapshots.js';
 import {readBoundPresenterVoice} from './socialContentBoundPresenterVoice.js';
@@ -127,7 +128,7 @@ export function socialProductionGraphInput(detail: Detail, approvedContext?: Soc
 
 /** Self-generated runtime inventory cannot rewrite the admitted business plan.
  * Previously admitted sources remain visible and retain all normal validation. */
-export async function readSocialProductionGraphDetail(input: { repository: Starter198Repository; tenantId: string; taskId: string }, approvedContext: SocialGraphApprovedContext) {
+export async function readSocialProductionGraphDetail(input: { repository: Starter198Repository; tenantId: string; taskId: string; missingLabelOverlay?: import('./socialContentMissingLabelCompletion.js').MissingLabelOverlay; runtimeMaterialRecovery?: boolean }, approvedContext: SocialGraphApprovedContext) {
   if (approvedContext.revisionPlanHash) {
     const row = await requireSocialTask(input), marker = socialObject(socialObject(socialJson(row.brief))?._productionRevision);
     const { planHash, preparedBy: _actor, preparedAt: _time, ...immutable } = marker ?? {};
@@ -148,7 +149,12 @@ export async function readSocialProductionGraphDetail(input: { repository: Start
     const result = await library(...args);
     return { ...result, items: result.items.filter(item => graphRuntimeInventoryVisible(item,{tenantId:input.tenantId,taskId:input.taskId,admittedRefs,canonical,freezeToAdmitted:true})) };
   } } : input.repository;
-  return readSocialTaskDetail({ ...input, repository });
+  const detail=await readSocialTaskDetail({ ...input, repository });
+  if(input.runtimeMaterialRecovery&&detail&&repository.materialLibrary){
+    const {readInitialMaterialRuntimeDetail}=await import('./socialContentInitialMaterialRuntimeDetail.js');
+    return readInitialMaterialRuntimeDetail({...input,originalDetail:detail,readFrozenInventory:repository.materialLibrary});
+  }
+  return detail;
 }
 
 export function createSocialProductionExecutorCheckpoint(detail: Detail, env: NodeJS.ProcessEnv = process.env, revisionPlanHash?: string) {
@@ -453,6 +459,7 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
   if(corrected&&matchesAuthorizedCorrectionContext(job,corrected,String(binding?.inputHash||''),graphCorrection?.recordHash)&&!matchesAuthorizedCorrectionContext(job,corrected,String(binding?.inputHash||''),graphCorrection?.recordHash,current.inputHash))throw Error('user_input_required:graph_corrected_context_changed');
   if (!matchesAuthorizedCorrectionContext(job,approvedContext,String(binding?.inputHash||''),graphCorrection?.recordHash,current.inputHash)&&(binding?.inputHash !== current.inputHash || binding?.planVersion !== current.planVersion))
     throw new Error('user_input_required:graph_production_plan_changed:executor_binding');
+  await completeGraphBenchmarkLabels({repository,job,detail,approvedContext,planHash:current.inputHash,runtime:input.runtime});
   const correctionRuntimeHash=graphCorrection?socialContentCorrectionRuntimeHash(graphCorrection.recordHash):null;
   const graphVersion = (SUPPORTED_CONTENT_GRAPH_VERSIONS.includes(binding?.graphVersion as ContentGraphVersion)
     ? binding?.graphVersion : LEGACY_CONTENT_GRAPH_VERSION) as ContentGraphVersion;

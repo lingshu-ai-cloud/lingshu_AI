@@ -50,6 +50,7 @@ export async function prepareSocialContentFinalDelivery(input: {
 }) {
   const { execution, detail, agentWorkflow, contentHandoff, directorPlan, quality, sceneQuality,
     audio, technicalApproved, technicalFailures, assetSupplyExecution, assets } = input;
+  const voiceDriven = detail.brief.materialRoutingPolicyVersion === 'type-aware.v3';
   const coverPath = await input.createCover({ videoPath: input.outputPath,
     outputDirectory: input.outputDir, timestamp: input.coverTimestamp });
   await assertCurrentContentExecutionActive();
@@ -79,18 +80,18 @@ export async function prepareSocialContentFinalDelivery(input: {
     rawAssets: input.rawAssets, productionResultId, outputPath: input.outputPath,
     adaptedScript: input.adaptedScript,
   });
-  const creativeReviewFailures = socialProductionCollaborationFailures(agentWorkflow, contentHandoff, {
+  const creativeReviewFailures = voiceDriven ? [] : socialProductionCollaborationFailures(agentWorkflow, contentHandoff, {
     referenceAnalysis: detail.referenceVideoAnalysis,
     renderedDurationSeconds: input.measuredDurationSeconds ?? input.duration,
     renderedTimeline: input.timeline.map(clip => ({ sceneId: clip.sceneId,
       startSeconds: clip.targetStart, endSeconds: clip.targetEnd })),
   });
-  const replicationHardFailures = detail.brief.creationMode === 'viral_replication' && !replicationEvaluation
+  const replicationHardFailures = voiceDriven ? [] : detail.brief.creationMode === 'viral_replication' && !replicationEvaluation
     ? ['reference_evaluation_missing'] : socialReplicationHardQualityFailures(replicationEvaluation);
   const replicationHumanReviewPending = replicationEvaluation?.status === 'review_required'
     && !replicationHardFailures.length;
   await writeExecutionStage({ ...execution, stage: 'creative_review',
-    message: creativeReviewFailures.length
+    message: voiceDriven ? '标签驱动制作检查已完成，旧版创意与复刻因素评分不适用；等待用户验看当前成片。' : creativeReviewFailures.length
       ? '编导 Agent 的结构与表达验收未通过，正在停止提交并保留当前结果。'
       : !technicalApproved || creativeReviewFailures.length || replicationHardFailures.length
         ? '成片已保留为候选；独立媒体检测尚未自动放行，等待编导逐镜复核或局部返工。'
@@ -101,7 +102,7 @@ export async function prepareSocialContentFinalDelivery(input: {
       checkedSceneCount: contentHandoff.scenes.length, failedCriteria: creativeReviewFailures,
       replicationEvaluationId: replicationEvaluation?.evaluationId ?? null,
       replicationEvaluationStatus: replicationEvaluation?.status ?? null,
-      replicationHumanReviewPending } });
+      replicationHumanReviewPending, ...(voiceDriven ? { legacyCreativeReview: 'not_applicable', policy: 'voice-driven-slots.v1' } : {}) } });
   const evaluationFailures = [...creativeReviewFailures,
     ...(replicationEvaluation?.status === 'passed' ? []
       : replicationEvaluation?.directorDecision.failedCriteria ?? [])];
@@ -140,12 +141,13 @@ export async function prepareSocialContentFinalDelivery(input: {
             evidence: `checked_scenes:${sceneQuality.checkedScenes}` },
           { key: 'audio_decode', status: audio.ok ? 'passed' : 'failed',
             evidence: audio.ok ? 'ffmpeg_audio_decode_passed' : 'ffmpeg_audio_decode_failed' },
-          { key: 'director_review', status: creativeReviewFailures.length ? 'failed' : 'passed',
-            evidence: agentWorkflow.directorBrief.directorBriefId },
+          ...(!voiceDriven ? [{ key: 'director_review', status: creativeReviewFailures.length ? 'failed' as const : 'passed' as const,
+            evidence: agentWorkflow.directorBrief.directorBriefId }] : []),
           ...(replicationEvaluation ? [{ key: 'replication_evaluation',
             status: replicationHardFailures.length ? 'failed' as const : 'passed' as const,
             evidence: replicationEvaluation.evaluationId }] : []),
-        ], rawReport: { visual: quality, scenes: sceneQuality, replicationEvaluation } },
+        ], rawReport: { visual: quality, scenes: sceneQuality, replicationEvaluation,
+          ...(voiceDriven ? { legacyCreativeReview: 'not_applicable', policy: 'voice-driven-slots.v1' } : {}) } },
       rightsScope: 'tenant_generated_reusable' },
   });
   const productionResult: SocialProductionResult = {
@@ -169,7 +171,8 @@ export async function prepareSocialContentFinalDelivery(input: {
     technicalReview: { approved: technicalApproved, checkedScenes: sceneQuality.checkedScenes,
       failures: technicalFailures },
     creativeReview: { approved: !creativeReviewFailures.length && !replicationHardFailures.length,
-      failedCriteria: evaluationFailures, reviewedBy: 'director_agent' },
+      failedCriteria: evaluationFailures, reviewedBy: 'director_agent',
+      ...(voiceDriven ? { status: 'not_applicable', policy: 'voice-driven-slots.v1' } : {}) },
     artifactResourceRef: file.fileRef, createdAt: new Date().toISOString(),
   };
   return { stored, file, storedCover, coverFile, productionResultId, replicationEvaluation,

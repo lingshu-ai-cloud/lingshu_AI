@@ -163,13 +163,13 @@ assert.doesNotMatch(shootingPlanExecutionSource, /finishExecution\(|withSocialCo
   'shooting plans must not enter the video delivery/publishing finalizer');
 assert.match(shootingPlanExecutionSource, /stage: 'review_ready'[\s\S]*?status: 'completed'/);
 
-const presenterPrepare=source.indexOf('preparePresenterFirstFrameReviews:async');
-const presenterPause=source.indexOf("stage:'social.presenter_first_frames'");
-const wholeFilmBudget=source.indexOf('const productionBudget = await prepareSocialContentProductionBudget');
+const firstFramePreparationSource=fs.readFileSync(new URL('./socialContentProductionFirstFramePreparation.ts',import.meta.url),'utf8');
+const presenterPrepare=source.indexOf('preparePresenterFirstFrameReviews:createSocialProductionFirstFramePreparation');
+const wholeFilmBudget=source.indexOf('let productionBudget=await prepareBudget()');
 const presenterProvider=source.indexOf('motherSupply=await preparePresenterMotherSupply(');
-assert.ok(wholeFilmBudget>0&&presenterPrepare>wholeFilmBudget&&presenterPause>presenterPrepare&&presenterProvider>presenterPause,
-  'whole-film admission must prepare and persist review nodes before any mother provider invocation');
-assert.match(source,/preparePresenterFirstFrameReviews:async[\s\S]*?await input\.runtime\.preparePresenterMotherFirstFrames[\s\S]*?automaticallyConfirmPresenterFirstFrameApproval[\s\S]*?status:(?:nativeSourceOnly\?'catalogue_source_confirmed_visual_review_pending':)?'automatically_confirmed_after_static_qa'/,
+assert.ok(presenterPrepare>0&&wholeFilmBudget>presenterPrepare&&presenterProvider>wholeFilmBudget,
+  'whole-film admission must install the static preparation callback before any mother provider invocation');
+assert.match(firstFramePreparationSource,/await input\.runtime\.preparePresenterMotherFirstFrames[\s\S]*?automaticallyConfirmPresenterFirstFrameApproval[\s\S]*?status:(?:nativeSourceOnly\?'catalogue_source_confirmed_visual_review_pending':)?'automatically_confirmed_after_static_qa'/,
   'preflight callback must automatically confirm QA-passed review nodes with the trusted system actor');
 assert.doesNotMatch(source,/awaiting_explicit_user_confirmation|presenter_first_frames_pending_confirmation/,
   'production must never pause for a user confirmation after static first-frame QA passes');
@@ -265,7 +265,7 @@ await assert.rejects(() => archiveGeneratedSocialContentFile({
 console.log('social content shooting-plan execution tests passed');
 
 assert.match(source,/schemaVersion==='social-presenter-first-frame-approval.v3'\?\{originalSceneApproval:structuredClone\(confirmation.approval\)\}/,'only verified v3 original approvals reach the presenter adapter');
-assert.match(source,/buildSocialPresenterSceneSources\(\{groups,/,'budget static preparation consumes original scene source contract');
+assert.match(fs.readFileSync(new URL('./socialContentProductionFirstFramePreparation.ts',import.meta.url),'utf8'),/buildSocialPresenterSceneSources\(\{groups,/,'budget static preparation consumes original scene source contract');
 assert.match(source,/buildSocialPresenterMotherSceneSources\(/,'mother handoff reuses frozen original scene sources');
 assert.match(source,/if \(executedSupplyPlan && assetSupplyExecution\) \{[\s\S]*?buildInitialSocialSceneCacheInput\([\s\S]*?referenceAnalysis: detail\.referenceVideoAnalysis \?\? null/,
   'both original and reference productions enter the same initial scene-cache handoff');

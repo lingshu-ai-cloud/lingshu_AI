@@ -7,6 +7,7 @@ import { readSocialSceneReworkStatus } from './socialContentSceneReworkRead.js';
 import { createSocialSceneReworkSupplyPorts } from './socialContentSceneReworkSupplyPorts.js';
 import { createSocialSceneReworkCostPolicyService } from './socialContentSceneReworkCostPolicy.js';
 import { createSocialSceneReworkService } from './socialContentSceneReworkService.js';
+import { isVoiceDrivenFilm } from '../../shared/contracts/productionBudgetPolicy.js';
 
 const fail = (code: string): never => { throw new Error(code); };
 
@@ -48,7 +49,10 @@ export async function resumeSocialSceneRework(input: {
       if (!evidence.localOnly) {
         const policy = await createSocialSceneReworkCostPolicyService(repository).requireConfirmed({ tenantId: input.tenantId,
           taskId: input.taskId, runId: job.runId, operationId: input.operationId, actorUserId: input.actorUserId });
-        if (!input.expectedPolicyHash || input.expectedPolicyHash !== policy.recordHash) return fail('scene_rework_cost_policy_version_conflict');
+        if (!isVoiceDrivenFilm(context.plan) && (!input.expectedPolicyHash || input.expectedPolicyHash !== policy.recordHash))
+          return fail('scene_rework_cost_policy_version_conflict');
+        if (input.expectedPolicyHash !== undefined && input.expectedPolicyHash !== policy.recordHash)
+          return fail('scene_rework_cost_policy_version_conflict');
       }
       await ports.assertBudget(context.intent);
     }

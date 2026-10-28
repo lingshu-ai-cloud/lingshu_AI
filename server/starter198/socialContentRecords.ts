@@ -1,3 +1,5 @@
+import {projectMissingLabelOverlay} from './socialContentMissingLabelOverlay.js';
+import type {MissingLabelOverlay} from './socialContentMissingLabelCompletion.js';
 import {hydrateSocialContentExecutionSummaries} from './socialContentQueueProjection.js';
 import { guidedMaterialRoutingRequests, guidedProductIdentityGroups } from './guidedCreationRouting.js';
 import { bindTaskContactCards } from './socialContentContactCard.js';
@@ -63,6 +65,10 @@ export { readAuthorizedPresenterInventory, readAuthorizedPresenterAssetIds, pars
 export type { SocialSourceCoverage } from './socialContentRecordProjection.js';
 
 export async function readSocialTaskDetail(input: {
+  /** Server-only, source-verified runtime view; never stored over source analysis. */
+  missingLabelOverlay?: MissingLabelOverlay;
+  /** Server-validated initial recovery plan; preserves fixed slot identities. */
+  runtimeSupplyPlan?: import('../../shared/contracts/socialContentReplication.js').SocialAssetSupplyPlan;
   repository: Starter198Repository;
   tenantId: string;
   taskId: string;
@@ -144,7 +150,9 @@ export async function readSocialTaskDetail(input: {
     ...activeSources.filter(source => source.kind === 'knowledge').map(source => source.sourceId),
     ...(summary.brief.brandNotes ? ['brief:confirmed-facts'] : []),
   ];
-  const referenceVideoAnalysis = parseStoredSocialReferenceVideoAnalysis(task.reference_video_analysis);
+  let referenceVideoAnalysis = parseStoredSocialReferenceVideoAnalysis(task.reference_video_analysis);
+  if(input.missingLabelOverlay) referenceVideoAnalysis=projectMissingLabelOverlay({tenantId:input.tenantId,
+    taskId:summary.taskId,runId:String(task.run_id),reference:referenceVideoAnalysis,overlay:input.missingLabelOverlay});
   const replicationScript = parseStoredSocialReplicationScript(task.replication_script);
   const shotMaterialMap = parseStoredSocialShotMaterialMap(task.shot_material_map);
   const voiceoverRows = (replicationScript ? replicationScript.shots.map(shot => ({
@@ -198,7 +206,8 @@ export async function readSocialTaskDetail(input: {
     }
   }
   const candidateSet = buildSocialWorkflowMaterialCandidates({
-    deferVideoSkuFilter: summary.brief.materialRoutingPolicyVersion==='type-aware.v2',
+    themeOnly: summary.brief.materialRoutingPolicyVersion === 'type-aware.v3',
+    deferVideoSkuFilter: ['type-aware.v2','type-aware.v3'].includes(summary.brief.materialRoutingPolicyVersion??''),
     records: materialInventory.items,
     reviewedFootageOverlays,
     tenantId: input.tenantId,
@@ -214,7 +223,7 @@ export async function readSocialTaskDetail(input: {
   }
   const materialCandidates: SocialWorkflowMaterialClipCandidate[] = candidateSet.candidates.map(candidate => ({
     ...candidate,
-    ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || summary.brief.materialRoutingPolicyVersion === 'type-aware.v2') ? {
+    ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || ['type-aware.v2','type-aware.v3'].includes(summary.brief.materialRoutingPolicyVersion??'')) ? {
       synthetic: /ai.generated|seedream|seedance|synthetic|generated/i.test(String(materialById.get(candidate.assetId)?.sourceType || ''))
         || materialById.get(candidate.assetId)?.synthetic === true,
     } : {}),
@@ -230,7 +239,7 @@ export async function readSocialTaskDetail(input: {
       || Boolean(candidate.productRef && candidate.productRef === productRows[0]?.productRef))
     : productRows.filter(sameRequestedProduct);
   const productImageIds = [...new Set([...uniqueAssetIds(productFamilyRows),
-    ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || summary.brief.materialRoutingPolicyVersion === 'type-aware.v2') ? ownedProductReferenceImageIds({
+    ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || ['type-aware.v2','type-aware.v3'].includes(summary.brief.materialRoutingPolicyVersion??'')) ? ownedProductReferenceImageIds({
       records: materialInventory.items, tenantId: input.tenantId,
       productId: selectedTaskProductId, productRef: selectedTaskProductRef,
       enterpriseProductImageUrls,
@@ -334,10 +343,11 @@ export async function readSocialTaskDetail(input: {
       requestedDescription: shot.visualInstruction,
       truthSensitiveSubject: shot.materialPlan.truthBoundary.subject,
       referenceShotId: shot.referenceShotId,
+      ...(summary.brief.materialRoutingPolicyVersion === 'type-aware.v3' ? { materialType: shot.materialPlan.materialRouting?.materialType } : {}),
       ...(shot.materialPlan.visualContract ? { visualContract: structuredClone(shot.materialPlan.visualContract) } : {}),
-      ...(summary.brief.materialRoutingPolicyVersion==='type-aware.v2'?{plannedDurationSeconds:shot.endSeconds-shot.startSeconds}:{}),
+      ...(['type-aware.v2','type-aware.v3'].includes(summary.brief.materialRoutingPolicyVersion??'')?{plannedDurationSeconds:shot.endSeconds-shot.startSeconds}:{}),
       ...(summary.brief.creationDialoguePlan ? { plannedDurationSeconds: shot.endSeconds - shot.startSeconds, visualContract: shot.materialPlan.visualContract } : {}),
-      ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || summary.brief.materialRoutingPolicyVersion === 'type-aware.v2') && shot.materialPlan.materialRouting ? {
+      ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || ['type-aware.v2','type-aware.v3'].includes(summary.brief.materialRoutingPolicyVersion??'')) && shot.materialPlan.materialRouting ? {
         plannedDurationSeconds: shot.endSeconds - shot.startSeconds,
         ...(shot.materialPlan.visualContract ? { visualContract: structuredClone(shot.materialPlan.visualContract) } : {}),
         ...(shot.materialPlan.productSceneReplication ? { productSceneReplication: shot.materialPlan.productSceneReplication } : {}),
@@ -368,6 +378,12 @@ export async function readSocialTaskDetail(input: {
       verifiedEnterpriseFactRefs: confirmedFactRefs,
     }) : { productionExecutionAllowed: false as const, versionHash: 'reference-record-unavailable' }
     : null;
+  if(input.runtimeSupplyPlan){
+    if(assetSupplyPlan.materialRoutingPolicyVersion!=='type-aware.v3'||input.runtimeSupplyPlan.materialRoutingPolicyVersion!=='type-aware.v3'
+      ||socialRequestHash(assetSupplyPlan.shots.map(shot=>shot.shotId))!==socialRequestHash(input.runtimeSupplyPlan.shots.map(shot=>shot.shotId)))
+      throw Error('material_recovery_runtime_slots_changed');
+    assetSupplyPlan=structuredClone(input.runtimeSupplyPlan);
+  }
   const agentWorkflow = buildSocialAgentWorkflow({
     tenantId: input.tenantId,
     taskId: summary.taskId,
@@ -557,7 +573,7 @@ export async function readSocialTaskDetail(input: {
   const storedRequirements = summary.theme
     ? publicMaterialRequirements(parseStoredMaterialRequirements(task.material_requirements)) : [];
   // V2 discovers material gaps during review; its provisional baseline is not a user-confirmed request.
-  const shotRequirements = summary.brief.materialRoutingPolicyVersion === 'type-aware.v2' ? [] : projectShotMaterialRequirements({
+  const shotRequirements = ['type-aware.v2','type-aware.v3'].includes(summary.brief.materialRoutingPolicyVersion??'') ? [] : projectShotMaterialRequirements({
     plan: assetSupplyPlan,
     shotMaterialMap,
     themeId: summary.theme?.themeId,

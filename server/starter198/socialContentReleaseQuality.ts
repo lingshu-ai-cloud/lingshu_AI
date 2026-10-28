@@ -1,4 +1,4 @@
-import { hasSocialMeasuredMediaHardFailure } from './socialContentGraphQualityGate.js';
+import { hasSocialMeasuredMediaHardFailure, hasPassedVoiceDrivenVideoReview } from './socialContentGraphQualityGate.js';
 import type { SocialContentTaskBrief } from '../../shared/contracts/socialContentWorkflow.js';
 import {PRODUCTION_BUDGET_POLICY,productionBudgetDuration,productionBudgetLimitCny,productionBudgetMaximumCny,productionBudgetExceeded} from '../../shared/contracts/productionBudgetPolicy.js';
 
@@ -23,6 +23,9 @@ export function inspectSocialContentReleaseQuality(input: SocialContentReleaseQu
   const applicable = content.workflowSchema === 'social-content.auto-production.v3';
   if (!applicable) return { approved: true, applicable: false, failures: [] };
   const failures: string[] = [];
+  if (input.brief.materialRoutingPolicyVersion === 'type-aware.v3'
+    && !hasPassedVoiceDrivenVideoReview(content.technicalQualityReport, object(content.productionWorkspaceSource).outputSha256))
+    failures.push('voice_driven_quality_unverified');
   if(content.testOnly===true||content.publishable===false)failures.push('test_input_not_publishable');
   if(input.brief.presenterSpeechReviewPolicy==='heygen_native_human_review'){
     const speech=object(content.presenterSpeechReview);
@@ -54,7 +57,7 @@ export function inspectSocialContentReleaseQuality(input: SocialContentReleaseQu
   }
   // Basic media acceptance is independent of how a film was conceived. Only
   // reference-specific evidence belongs to the single-source fidelity branch.
-  if (input.brief.referenceMode !== 'single_source_fidelity') {
+  if (input.brief.materialRoutingPolicyVersion === 'type-aware.v3' || input.brief.referenceMode !== 'single_source_fidelity') {
     return { approved: failures.length === 0, applicable: true, failures };
   }
   const replication = object(content.replicationEvaluation);

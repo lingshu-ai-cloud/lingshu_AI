@@ -2,6 +2,7 @@ import type { SocialReplicationReferenceMode } from '../../shared/contracts/soci
 import type { SocialReplicationScriptShot } from '../../shared/contracts/socialContentWorkflow.js';
 import type { VerifiedSocialScriptContext } from './socialContentScriptBaseline.js';
 export interface ReferenceSemanticPlanning {
+    materialRoutingPolicyVersion?: import('../../shared/contracts/socialContentTaskContract.js').SocialContentTaskBrief['materialRoutingPolicyVersion'];
     /** Missing mode is the historical single-reference fidelity contract. */
     referenceMode?: SocialReplicationReferenceMode;
     targetDurationSeconds: number | null;

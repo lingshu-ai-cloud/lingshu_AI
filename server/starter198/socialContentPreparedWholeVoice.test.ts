@@ -44,6 +44,13 @@ test('one guarded full track and real alignment feed measured scene clips and re
    align:async(input:any)=>({source:'audio_ai' as const,cues:await withStudioVoicePaidContext(input.paidContext,()=>alignQwenFile(input.url,input.text,input.duration,path.join(root,'ignored-workspace.json'),{audioSha256:createHash('sha256').update(fs.readFileSync(input.preparedTrack.filePath)).digest('hex'),durableRoot:alignmentRoot}))})};
   const prepared=await prepareSocialContentWholeVoice(options);
   assert.equal(tts,1);assert.equal(alignmentPosts,1);assert.equal(claims.length,2);assert.equal(claims[1].actualUnits.audioSeconds,3);
+  const mappedOptions={...options,voiceDriven:true,sentenceScenes:options.scenes.map((scene:any,index:number)=>({shotId:scene.shotId,spokenText:scene.spokenText,lines:[{lineId:`line-${index+1}`,text:scene.spokenText,sourceStartSeconds:scene.startSeconds,sourceEndSeconds:scene.endSeconds,narrationOwnerShotId:scene.shotId,visualShotIds:[scene.shotId],isNarrationOwner:true}]}))};
+  const mapped=await prepareSocialContentWholeVoice(mappedOptions);
+  assert.deepEqual(mapped.measuredSentenceSlots?.map(row=>[row.lineId,row.startSeconds,row.endSeconds]),[['line-1',1,1.4],['line-2',1.6,2.2]]);
+  const recovered=await prepareSocialContentWholeVoice({...mappedOptions,synthesize:async()=>assert.fail('duplicate TTS'),align:async()=>assert.fail('duplicate alignment')});
+  assert.deepEqual(recovered.measuredSentenceSlots,mapped.measuredSentenceSlots);assert.equal(tts,1);assert.equal(alignmentPosts,1);
+  await assert.rejects(prepareSocialContentWholeVoice({...mappedOptions,sentenceScenes:mappedOptions.sentenceScenes.map((scene:any)=>({...scene,lines:scene.lines.map((line:any)=>({...line,lineId:line.lineId+'-changed'}))}))}),/sentence_slot_contract_changed/);
+
   const clip=await readPreparedWholeVoiceScene({prepared,scope,shotId:'s1',spokenText:'Hello world.',assertCurrent:async()=>{}});
   assert.ok(Math.abs(clip.durationSeconds-1.5)<.001);const decoded=execFileSync(ffmpeg||'ffmpeg',['-v','error','-i',clip.filePath,'-f','s16le','-ac','1','-ar','24000','pipe:1']);
   assert.equal(decoded.subarray(0,24000*2).every(byte=>byte===0),true,'one-second leading silence must stay aligned with global track');
@@ -113,4 +120,42 @@ test('37 visual cuts preserve the three frozen presenter groups with silent memb
   await assert.rejects(read({...groups.groups[0],memberSlotIds:['shot-1','shot-3']}),/scene_not_frozen:window_noncontiguous/);
   await assert.rejects(read({...groups.groups[0],memberSlotIds:['shot-2','shot-1']}),/scene_not_frozen:window_noncontiguous/);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('voice-driven receipt clips real audio with calibrated fixed-slot windows and rejects changed policy',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'measured-fixed-slot-'));
+ try{
+  const scope={tenantId:'fixture',taskId:'task',runId:'run',planHash:'a'.repeat(64)},file=path.join(root,'whole.wav');
+  execFileSync(ffmpeg!,['-hide_banner','-loglevel','error','-f','lavfi','-i','sine=frequency=440:sample_rate=24000:duration=4','-ac','1','-c:a','pcm_s16le',file]);
+  const hash=createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  const scenes=[{shotId:'a',spokenText:'Hello.',durationSeconds:1,startSeconds:0,endSeconds:1},{shotId:'b',spokenText:'Buy.',durationSeconds:1,startSeconds:1,endSeconds:2}];
+  const cues=[{start:0,end:3,text:'Hello.'},{start:3,end:4,text:'Buy.'}];
+  const voice={ok:true,localPath:file,url:'https://owned.test/audio',duration:4,cues};
+  const source=path.join(root,'source.json'),alignment=path.join(root,'alignment.json'),receipt=path.join(root,'prepared.json'),nativeVoice={provider:'heygen',model:'avatar_iv',physicalVoiceId:'original'};
+  fs.writeFileSync(source,JSON.stringify({scope,...nativeVoice,voiceId:nativeVoice.physicalVoiceId}));
+  fs.writeFileSync(alignment,JSON.stringify({state:'completed',scope:{audioSha256:hash},source:'heygen_native_subtitles',precision:'phrase',independentAsr:false,result:{transcripts:[{text:'Hello. Buy.',sentences:cues.map(cue=>({text:cue.text,begin_time:cue.start*1000,end_time:cue.end*1000}))}]}}));
+  const {mapMeasuredSceneTimeline}=await import('./socialContentMeasuredSceneTimeline.js');
+  const measuredSceneTimeline=mapMeasuredSceneTimeline({scenes,cues,durationSeconds:4});
+  const proof={sourceReceiptRefs:[source],alignmentReceiptRef:alignment,nativeVoice};
+  const {measureSentenceSlots}=await import('./socialContentSentenceSlotMapping.js');
+  const sentenceLines=[{lineId:'line-1',text:'Hello.',sourceStartSeconds:0,sourceEndSeconds:1,narrationOwnerShotId:'a',visualShotIds:['a'],isNarrationOwner:true},{lineId:'line-2',text:'Buy.',sourceStartSeconds:1,sourceEndSeconds:2,narrationOwnerShotId:'b',visualShotIds:['b'],isNarrationOwner:true}];
+  const measuredSentenceSlots=measureSentenceSlots(sentenceLines,cues);
+  const prepared:any={voice,inputHash:'fixture-input',receiptRef:receipt,wholeTrackSha256:hash,...proof,timingPolicy:'voice-driven-slots.v1',measuredSceneTimeline,measuredSentenceSlots};
+  fs.writeFileSync(receipt,JSON.stringify({status:'completed',inputHash:prepared.inputHash,scope,voice,wholeTrackSha256:hash,scenes,proof,voiceDriven:true,measuredTimeline:measuredSceneTimeline,sentenceLines,measuredSentenceSlots}));
+  const clip=await readPreparedWholeVoiceScene({prepared,scope,shotId:'a',spokenText:'Hello.',assertCurrent:async()=>{}});
+  assert.deepEqual(clip.range,{start:0,end:3});assert.equal(clip.durationSeconds,3);
+  await assert.rejects(readPreparedWholeVoiceScene({prepared:{...prepared,measuredSentenceSlots:[]},scope,shotId:'a',spokenText:'Hello.',assertCurrent:async()=>{}}),/sentence_slot_measurement_changed/);
+  await assert.rejects(readPreparedWholeVoiceScene({prepared:{...prepared,timingPolicy:undefined},scope,shotId:'a',spokenText:'Hello.',assertCurrent:async()=>{}}),/timing_policy_changed/);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('v3 single-sentence whole track reaches existing synthesis with trusted policy; legacy keeps its fence',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'single-whole-voice-')),old=process.env.DASHSCOPE_API_KEY;process.env.DASHSCOPE_API_KEY='controlled-only';
+ try{
+  const {VOICE_DRIVEN_SLOTS_AUDIO_POLICY}=await import('../lib/studioVoiceAutomationPolicy.js');
+  const funding:any={scope:{tenantId:'fixture',taskId:'task',runId:'run',planHash:'a'.repeat(64)},voiceInput:{tenantId:'fixture',text:'Hello world.',language:'en',voice:'v1'},routeBindings:{'voice:0:tts':{provider:'qwen'}},requirements:[],intents:[],permit:{},assertCurrent:async()=>{}};
+  let calls=0;const input={funding,targetDuration:2,scenes:[{shotId:'a',spokenText:'Hello world.',durationSeconds:2,startSeconds:0,endSeconds:2}],root,synthesize:async(request:any)=>{calls++;assert.equal(request.audioPolicy,VOICE_DRIVEN_SLOTS_AUDIO_POLICY);throw Error('controlled_synthesis_reached');}};
+  await assert.rejects(prepareSocialContentWholeVoice(input),/continuous_native_voice_required/);assert.equal(calls,0);
+  await assert.rejects(prepareSocialContentWholeVoice({...input,voiceDriven:true}),/controlled_synthesis_reached/);assert.equal(calls,1);
+ }finally{if(old===undefined)delete process.env.DASHSCOPE_API_KEY;else process.env.DASHSCOPE_API_KEY=old;fs.rmSync(root,{recursive:true,force:true});}
 });

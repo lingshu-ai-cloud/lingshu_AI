@@ -126,7 +126,7 @@ test('functional product substitutions preserve actions, prefer exact cuts, and 
 
 test('normal API creation persists the policy while historic briefs remain unmarked', () => {
   const brief = defaultBrief(parseCreateSocialTask({ title: '产品视频', objective: '介绍产品' }));
-  assert.equal(parseSocialTaskBrief(brief).materialRoutingPolicyVersion, 'type-aware.v2');
+  assert.equal(parseSocialTaskBrief(brief).materialRoutingPolicyVersion, 'type-aware.v3');
   assert.equal(parseSocialTaskBrief({...brief,materialRoutingPolicyVersion:'type-aware.v1'}).materialRoutingPolicyVersion,'type-aware.v1');
   const { materialRoutingPolicyVersion: _, ...legacy } = brief;
   assert.equal(parseSocialTaskBrief(legacy).materialRoutingPolicyVersion, undefined);
@@ -265,10 +265,10 @@ test('negative prompt and evidence prohibitions never become positive local-matc
   assert.deepEqual(result[0]!.localVideoMatch?.sourceRefs,['owned-usage']);
 });
 
-test('new product tasks default to fifteen yuan and retain explicit grants', () => {
+test('new product tasks use the whole-film fifteen-yuan allowance and legacy grants stay readable', () => {
   for (const requested of [undefined, null, 600, 10, 4]) {
     const input = parseCreateSocialTask({ title: '预算检查', objective: '产品正常制作', perItemBudgetCny: requested });
-    const expected = requested ?? 15;
+    const expected = 15;
     assert.equal(input.perItemBudgetCny, expected);
     assert.equal(defaultBrief(input).perItemBudgetCny, expected);
   }

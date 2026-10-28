@@ -1,3 +1,5 @@
+import { voiceDrivenIdentityPolicy } from './socialContentVoiceDrivenIdentity.js';
+import { benchmarkMaterialType } from '../../shared/benchmarkAnalysis.js';
 import {consolidateReferenceSemanticShots, type ReferenceSemanticPlanning} from './socialContentSemanticConsolidation.js';
 import {correctRepeatedSpokenWords} from './socialSpokenCopyReview.js';
 import type {
@@ -277,6 +279,7 @@ function publicShot(input: {
     observedPresenterRole: reliableRole || (referenceProductionRouting ? 'unknown' : ['sales_presenter', 'presenter_action', 'background', 'none', 'unknown'].includes(String(raw.observedPresenterRole)) ? raw.needsReview === true && raw.salesPresenterConfirmed !== true ? 'unknown' : raw.observedPresenterRole as SocialReferenceShotAnalysis['observedPresenterRole'] : undefined),
     ...(referenceProductionRouting ? { referenceProductionRouting: structuredClone(referenceProductionRouting) } : {}),
     ...(presenterContinuityEvidence ? { presenterContinuityEvidence: structuredClone(presenterContinuityEvidence) } : {}),
+    materialType: benchmarkMaterialType(raw.materialType),
     startSeconds: structure.sourceTiming.startSeconds,
     endSeconds: structure.sourceTiming.endSeconds,
     visualDescription: observedVisual ? `${observedVisual}；${structure.shotScale}，${structure.cameraMovement}` : `${subject}；${structure.shotScale}，${structure.cameraMovement}`,
@@ -503,6 +506,7 @@ export function buildSocialTaskReferencePackage(input: {
     verifiedContext: input.verifiedContext,
     replacements: input.identityReplacements,
   });
+  const rewrite = input.planning?.materialRoutingPolicyVersion === 'type-aware.v3' ? voiceDrivenIdentityPolicy({ legacy: replacements, analysis: exact.analysis, referenceRecord: input.record, context: input.verifiedContext }) : (text: string) => replaceIdentityOnly(text, replacements);
   const canonicalRouting=buildReferenceShotProductionRouting({sourceSha256:socialText(exact.analysis.contentSha256),shots:exact.details.map((row,index)=>({
     shotId:socialText(row.detail.shotId)?`reference-${socialText(row.detail.shotId)}`:`reference-shot-${index+1}`,
     time:`${row.timing.startSeconds}-${row.timing.endSeconds}`,
@@ -531,9 +535,9 @@ export function buildSocialTaskReferencePackage(input: {
   const selectedHookIndex = defaultHookIndex;
   const hookShot = shots[selectedHookIndex]!;
   const narrationStyle = deriveNarrationStyleProfile(exact.details.map(row => row.detail));
-  const hookVoiceover = replaceIdentityOnly(sourceSpeech.length
-    ? referenceLines[selectedHookIndex] ?? '' : '', replacements);
-  const hookCaption = replaceIdentityOnly(referenceCaptions[selectedHookIndex] ?? '', replacements);
+  const hookVoiceover = rewrite(sourceSpeech.length
+    ? referenceLines[selectedHookIndex] ?? '' : '');
+  const hookCaption = rewrite(referenceCaptions[selectedHookIndex] ?? '');
   const primaryHook = {
     ...hookOption({
     analysisId,
@@ -588,7 +592,7 @@ export function buildSocialTaskReferencePackage(input: {
     coverage,
     shots,
     hookAnalysis: primaryHook,
-    rightsNotice: '已入库的工厂、客户案例和企业通用素材可直接用于匹配与剪辑。口播按参考逐字逐句冻结，仅替换企业名、品牌名或产品名，不改写事实、句序、停顿与时长；画面、配乐、音效和字幕动效重新制作。',
+    rightsNotice: input.planning?.materialRoutingPolicyVersion === 'type-aware.v3' ? '口播替换识别出的竞品身份并移除未证实资质；保留原句和分镜关联，以实际语音校准时长。' : '已入库的工厂、客户案例和企业通用素材可直接用于匹配与剪辑。口播按参考逐字逐句冻结，仅替换企业名、品牌名或产品名，不改写事实、句序、停顿与时长；画面、配乐、音效和字幕动效重新制作。',
     createdAt,
   };
   // Speech is one ordered source timeline. Visual cuts only reference lines;
@@ -605,7 +609,7 @@ export function buildSocialTaskReferencePackage(input: {
       const visualShotIds = shots
         .filter(shot => line.startSeconds < shot.endSeconds && line.endSeconds > shot.startSeconds)
         .map(shot => `replication-${shot.shotId}`);
-      const adjusted = replaceIdentityOnly(line.text, replacements);
+      const adjusted = rewrite(line.text);
       return {
         lineId: `line-${String(index + 1).padStart(3, '0')}`,
         referenceText: line.text,
@@ -624,14 +628,14 @@ export function buildSocialTaskReferencePackage(input: {
     const rawDetail = exact.details[index]!.detail;
     const frameAction = referenceFrameActionPrompt(rawDetail);
     const referenceSpokenText = referenceLines[index] ?? '';
-    const adjustedVoiceover = replaceIdentityOnly(referenceSpokenText, replacements);
-    const adjustedCaption = replaceIdentityOnly(referenceCaptions[index] ?? '', replacements);
+    const adjustedVoiceover = rewrite(referenceSpokenText);
+    const adjustedCaption = rewrite(referenceCaptions[index] ?? '');
     const shotId = `replication-${shot.shotId}`;
     const speechLines = narrationLines.filter(line => line.visualShotIds.includes(shotId));
     const ownedLines = speechLines.filter(line => line.narrationOwnerShotId === shotId);
     const spokenText = ownedLines.map(line => line.draftText).join(' ');
     const referenceText = ownedLines.map(line => line.referenceText).join(' ');
-    const copyEdited = ownedLines.some(line => correctRepeatedSpokenWords(replaceIdentityOnly(line.referenceText, replacements).text) !== replaceIdentityOnly(line.referenceText, replacements).text)
+    const copyEdited = ownedLines.some(line => correctRepeatedSpokenWords(rewrite(line.referenceText).text) !== rewrite(line.referenceText).text)
       || correctRepeatedSpokenWords(adjustedCaption.text) !== adjustedCaption.text;
     return {
     shotId,
@@ -674,11 +678,11 @@ export function buildSocialTaskReferencePackage(input: {
     shots: scriptShots,
     narrationLines: scriptShots.some(shot=>shot.scriptOrigin==='budget_semantic_revision') ? [] : narrationLines,
     narrationSourceStatus: narrationLines.length ? 'asr_aligned' : 'missing_source_asr',
-    structureFidelitySummary: scriptShots.some(shot=>shot.scriptOrigin==='budget_semantic_revision') ? '按整片预算和目标时长合并语义功能镜；所有参考镜头因素保留many-to-one映射。口播为企业原创精简版本，参考原时长与逐字台词不声称保真。' : scriptShots.some(shot=>shot.scriptOrigin==='copy_edit_revision') ? '保留原始转写、句序与时间线；对明确重复的虚词做有记录的文案修订，配音与字幕使用修订稿。' : '口播逐字逐句冻结，仅替换企业名、品牌名或产品名；同时保留句序、停顿、时长、前三秒机制、镜头功能与节奏关系。',
+    structureFidelitySummary: input.planning?.materialRoutingPolicyVersion === 'type-aware.v3' ? '保留参考句序及分镜对应，替换识别出的竞品身份并移除未证实资质，以实际语音校准时间。' : scriptShots.some(shot=>shot.scriptOrigin==='budget_semantic_revision') ? '按整片预算和目标时长合并语义功能镜；所有参考镜头因素保留many-to-one映射。口播为企业原创精简版本，参考原时长与逐字台词不声称保真。' : scriptShots.some(shot=>shot.scriptOrigin==='copy_edit_revision') ? '保留原始转写、句序与时间线；对明确重复的虚词做有记录的文案修订，配音与字幕使用修订稿。' : '口播逐字逐句冻结，仅替换企业名、品牌名或产品名；同时保留句序、停顿、时长、前三秒机制、镜头功能与节奏关系。',
     originalityDifferenceSummary: '不做事实改写；画面按当前技术栈重制，音乐、音效、字幕动效和视觉包装使用全新版本。',
     createdAt,
   };
-  replicationScript = applyExactPresenterTemporalSplit({ script: replicationScript, presenterDenseSampling: exact.analysis.presenterDenseSampling, details: exact.details, referenceShotIds: shots.map(shot => shot.shotId) });
+  if (input.planning?.materialRoutingPolicyVersion !== 'type-aware.v3') replicationScript = applyExactPresenterTemporalSplit({ script: replicationScript, presenterDenseSampling: exact.analysis.presenterDenseSampling, details: exact.details, referenceShotIds: shots.map(shot => shot.shotId) });
   return {
     match: {
       recordId,

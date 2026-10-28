@@ -10,6 +10,7 @@ import {SocialDirectorG5ReviewPanel} from './SocialDirectorG5ReviewPanel';
 import {WeeklyContentQualityRecoveryPanel} from './WeeklyContentQualityRecoveryPanel';
 import SocialAgentWorkflowPanel from './SocialAgentWorkflowPanel';
 import SocialArtifactPreviewDialog from './SocialArtifactPreviewDialog';
+import SocialMeasuredMaterialRecoveryPanel from './SocialMeasuredMaterialRecoveryPanel';
 
 export default function WeeklyContentProductionView({target}:{target:WeeklyContentNavigation}) {
   const [view,setView]=useState<Awaited<ReturnType<typeof loadWeeklyContentProductionView>>|null>(null),[error,setError]=useState(''),[preview,setPreview]=useState(false);
@@ -25,6 +26,7 @@ export default function WeeklyContentProductionView({target}:{target:WeeklyConte
     {error?<p role="alert">{error}</p>:!view?<p role="status">正在核验原生产绑定与成片…</p>:<>
       {view.historical&&<p>当前内容任务已有后续运行；此处展示原运行的成片与逐镜记录。</p>}
       {!view.artifact&&<><p role="status">{view.task.productionProgress?.activity||(!view.binding.runId?'等待补齐生产输入；尚未启动制作。':'等待原生产运行更新。')}</p>{view.task.productionProgress&&<p className="text-xs">最近更新：{view.task.productionProgress.updatedAt}</p>}<p className="text-xs">审核原参考后，需要重新确认并发布周排期；旧任务不会自动改用新版本。</p><SocialAgentWorkflowPanel task={view.task} expanded onReviewReference={recordId=>void openReference(recordId)}/></>}
+      {!view.historical&&!view.artifact&&view.binding.runId&&<SocialMeasuredMaterialRecoveryPanel target={target} task={view.task} onChanged={()=>setRefreshVersion(v=>v+1)}/>}
       {!view.historical&&!view.artifact&&<WeeklyOwnedProductIdentityPanel scope={{tenantId:view.binding.scope.tenantId,programId:view.binding.scope.programId,packageId:view.binding.scope.packageId,packageVersion:view.binding.scope.packageVersion,publicationTaskId:view.binding.publicationTaskId,contentTaskId:view.binding.contentTaskId}} expectedRunId={view.binding.runId} onChanged={()=>setRefreshVersion(v=>v+1)}/>}
       {view.artifact&&<div><p>原成片 {view.artifact.artifactId} · {view.artifact.version} · {view.artifact.status}</p><button type="button" onClick={()=>setPreview(true)} className="btn-primary mt-2">预览这条成片</button></div>}
       {reviewError&&<p role="alert">{reviewError}</p>}

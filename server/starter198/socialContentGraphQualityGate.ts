@@ -1,4 +1,4 @@
-import { socialObject, socialJson, socialText } from './socialContentValidation.js';
+import { socialObject, socialJson, socialText, socialRequestHash } from './socialContentValidation.js';
 import { hasKnownFinalMediaCoverageFailure } from './socialFinalPrivacyCoverage.js';
 import { hasKnownCaptionMaskFailure } from './socialCaptionMaskFrameAudit.js';
 import { hasKnownFinalSensitiveFrameFailure } from './socialFinalSensitiveFrameAudit.js';
@@ -70,7 +70,9 @@ export function socialContentGraphQualityFailures(rawContent: unknown): string[]
   // A viral-replication artifact must carry the independent reference audit.
   // The generic helper permits null for non-replication productions, but
   // absence cannot mean success for a frozen replication run.
-  if (socialText(source.creationMode) === 'viral_replication' && content.replicationEvaluation == null)
+  const voiceDriven = report.policyVersion === 'voice-driven-slots.v1';
+  if (voiceDriven && !hasPassedVoiceDrivenVideoReview(report, source.outputSha256)) failures.push('voice_driven_quality_unverified');
+  if (!voiceDriven && socialText(source.creationMode) === 'viral_replication' && content.replicationEvaluation == null)
     failures.push('reference_evaluation_missing');
   if (content.workflowSchema !== 'social-content.auto-production.v3'
     || source.type !== 'actual_social_render' || !socialText(source.runId)
@@ -88,11 +90,38 @@ export function socialContentGraphQualityFailures(rawContent: unknown): string[]
   // independent scene/quality admissions rather than being treated as a pass here.
   if (hasSocialMeasuredMediaHardFailure(probe)) failures.push('measured_media_hard_failure');
   if (creative.approved !== true || !emptyFailures(creative.failedCriteria)) failures.push('creative_quality_unverified');
-  failures.push(...socialReplicationHardQualityFailures(content.replicationEvaluation));
+  if (!voiceDriven) failures.push(...socialReplicationHardQualityFailures(content.replicationEvaluation));
   if (review.automatedChecksPassed !== true || review.technicalChecksPassed !== true
     || review.creativeChecksPassed !== true || delivery.status !== 'publish_candidate'
     || review.state !== 'requires_user_approval') failures.push('review_admission_unverified');
   return failures;
+}
+
+export function hasPassedVoiceDrivenVideoReview(rawReport: unknown, outputSha256: unknown): boolean {
+  const report = object(rawReport), node = object(report.voiceDrivenReview), style = object(node.subtitleStyle), timeline = object(node.timeline);
+  const acceptance=object(node.userAcceptance);
+  const samples = Array.isArray(style.samples) ? style.samples.map(object) : [];
+  const samplePassed = (sample: Record<string, unknown>) => sample.subtitlePresent === true
+    && sample.font === true && sample.fontSize === true && sample.color === true;
+  const validSamples = samples.length >= 2 && samples.length <= 3 && samples.every(sample =>
+    /^[a-f0-9]{64}$/.test(socialText(sample.frameSha256)) && typeof sample.atSeconds === 'number' && Number.isFinite(sample.atSeconds) && sample.atSeconds >= 0);
+  const sampledPass = samples.length === 2 ? samples.every(samplePassed) : samples.length === 3 && samplePassed(samples[2]);
+  const measuredPassed=style.status === 'passed' && timeline.status === 'passed'&&sampledPass
+    && [timeline.maxLocalOffsetSeconds, timeline.cumulativeOffsetSeconds].every(offset =>
+      typeof offset === 'number' && Number.isFinite(offset) && offset >= 0 && offset <= 0.3 + 1e-9)
+    && Boolean(socialText(timeline.evidenceRef));
+  const acceptanceCore={...acceptance};delete acceptanceCore.recordHash;
+  const unknownAccepted=['passed','unknown','blocked'].includes(String(style.status))&&['passed','unknown'].includes(String(timeline.status))
+    &&(style.status!=='passed'||timeline.status==='unknown')&&/^[a-f0-9]{64}$/.test(socialText(acceptance.recordHash))
+    &&acceptance.schemaVersion==='social-video-quality-user-acceptance.v1'
+    &&(style.status==='blocked'?acceptance.decision==='accept_subtitle_style':['accept_unknown','accept_subtitle_style'].includes(String(acceptance.decision)))
+    &&acceptance.mediaSha256===outputSha256&&Boolean(socialText(acceptance.taskId))&&Boolean(socialText(acceptance.runId))
+    &&Boolean(socialText(acceptance.jobId))&&Boolean(socialText(acceptance.acceptedBy))
+    &&Number.isFinite(Date.parse(socialText(acceptance.acceptedAt)))&&socialRequestHash(acceptanceCore)===acceptance.recordHash;
+  return report.policyVersion === 'voice-driven-slots.v1' && node.schemaVersion === 'voice-driven-video-quality.v1'
+    && /^[a-f0-9]{64}$/.test(socialText(outputSha256)) && node.mediaSha256 === outputSha256
+    && style.mediaSha256 === outputSha256 && timeline.toleranceSeconds === 0.3
+    && ((validSamples&&measuredPassed)||unknownAccepted);
 }
 
 export function assertSocialContentGraphQuality(rawContent: unknown): void {

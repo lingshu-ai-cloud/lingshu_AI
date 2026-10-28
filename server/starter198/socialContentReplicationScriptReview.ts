@@ -250,7 +250,7 @@ export async function readSocialReplicationScriptReviewContext(input: {
   const script = parseStoredSocialReplicationScript(record.replication_script);
   if (!analysis || !script) throw new SocialContentWorkflowError('social_replication_script_review_not_ready', 409);
   const detail = await readSocialTaskDetail(input);
-  const identityGaps = socialReplicationIdentityGaps(script, detail?.enterpriseProductBinding);
+  const identityGaps = detail?.brief.materialRoutingPolicyVersion === 'type-aware.v3' ? [] : socialReplicationIdentityGaps(script, detail?.enterpriseProductBinding);
   const proposalAssessment = assessSocialReplicationProposal(script);
   return {
     expectedVersion: socialText(record.version), analysisId: analysis.analysisId,
@@ -337,7 +337,7 @@ export async function confirmSocialReplicationScript(input: {
         throw new SocialContentWorkflowError('social_replication_script_review_state_invalid', 409);
       }
       const detail = await readSocialTaskDetail(input);
-      if (socialReplicationIdentityGaps(script, detail?.enterpriseProductBinding).length) {
+      if (brief?.materialRoutingPolicyVersion !== 'type-aware.v3' && socialReplicationIdentityGaps(script, detail?.enterpriseProductBinding).length) {
         throw new SocialContentWorkflowError('social_replication_script_review_identity_unresolved', 409);
       }
       if (assessSocialReplicationProposal(script).status === 'blocked') {

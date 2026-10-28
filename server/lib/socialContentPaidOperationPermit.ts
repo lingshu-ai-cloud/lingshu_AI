@@ -54,13 +54,22 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
    ||row.intentFingerprint!==op.fingerprint||!/^[a-f0-9]{64}$/.test(row.requestFingerprint)||bindingHash!==hash(body))fail('execution_binding_corrupt');
   assertDependencies(id,row.dependencies);return row;
  };
- const assertWholePlanReserved=()=>{
+ const assertWholePlanReserved=(operationId:string)=>{
 	  const current=input.ledger.status(scope);
 	  if(!current)throw Error('social_paid_permit_whole_plan_budget_invalid');
   const maximum=current.limitCny;
 	  if(!Number.isFinite(current.limitCny)||current.limitCny<=0
 	   ||!Number.isFinite(current.retainedCny)||current.retainedCny<0)fail('whole_plan_budget_invalid');
-  if(current.limitCny>maximum||current.retainedCny>current.limitCny||current.retainedCny>maximum)throw Error('user_input_required:production_budget_decision_required:permit_total_exceeded');
+  if(current.retainedCny>maximum){
+   // A user-approved exception is specific to an existing ledger entry. It
+   // cannot turn an unrelated held operation into an over-cap submission.
+   const approved=current.entries.filter(e=>e.status!=='rejected'&&e.overageApproval);
+   const approvedMicros=approved.reduce((sum,e)=>sum+e.overageApproval!.extraMicros,0);
+   const exact=approved.find(e=>e.operationId===operationId&&(e.executionTaskId??scope.budgetTaskId??scope.taskId)===scope.taskId
+    &&e.runId===scope.runId&&e.planHash===scope.planHash);
+   if(!exact||!Number.isSafeInteger(approvedMicros)||Math.round(current.retainedCny*1e6)>Math.round(maximum*1e6)+approvedMicros)
+    throw Error('user_input_required:production_budget_decision_required:permit_total_exceeded');
+  }
   for(const op of operations){
    const entries=current.entries.filter(e=>e.operationId===op.operationId);
    if(entries.length!==1)fail('whole_plan_reservation_missing');
@@ -72,7 +81,7 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
  const result = {
   async bindExecution(request:{operationId:string;requestFingerprint:string;dependencies:SocialPaidExecutionDependency[]}){
    return withPaidOperationLock(path.join(root,'.locks'),key(request.operationId),async()=>{
-    await input.assertCurrent(scope);assertWholePlanReserved();const {op,intent}=bound(request.operationId);
+    await input.assertCurrent(scope);assertWholePlanReserved(request.operationId);const {op,intent}=bound(request.operationId);
     if(!intent.executionBindingPolicy||op.fingerprint!==socialPaidIntentOperation(scope,intent).fingerprint||!/^[a-f0-9]{64}$/.test(request.requestFingerprint))fail('execution_binding_policy_invalid');
     assertDependencies(request.operationId,request.dependencies);
     const body={schemaVersion:'paid-execution-binding.v1' as const,scopeHash:hash(scope),operationId:request.operationId,intentFingerprint:op.fingerprint,requestFingerprint:request.requestFingerprint,dependencies:[...request.dependencies].sort((a,b)=>a.operationId.localeCompare(b.operationId))};
@@ -94,7 +103,7 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
     submission:structuredClone(prior!.submission) as PaidOperationSubmission,submissionHash:String(prior!.submissionHash)};
   });},
   async beforeSubmit(request:PaidOperationSubmission){return withPaidOperationLock(path.join(root,'.locks'),key(request.operationId),async()=>{
-   await input.assertCurrent(scope);assertWholePlanReserved();const {op,intent}=bound(request.operationId);
+   await input.assertCurrent(scope);assertWholePlanReserved(request.operationId);const {op,intent}=bound(request.operationId);
    // This is only a budget hold. It has no provider request and must never
    // produce a submission claim, even if a caller retains the film permit.
    if(op.stage==='director_review_capacity'||intent.stage==='director_review_capacity')fail('capacity_not_submittable');

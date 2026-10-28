@@ -1,3 +1,4 @@
+import type {MeasuredSceneTime} from './socialContentMeasuredSceneTimeline.js';
 import type { admitSocialContentProduction } from './socialContentProductionAdmission.js';
 import { prepareSocialContentProductionDirector } from './socialContentProductionDirectorPreparation.js';
 import type { runSocialContentAutoProduction } from './socialContentProductionExecution.js';
@@ -35,6 +36,7 @@ export async function prepareSocialContentProductionPlanAndDirector(scope: {
   assetSupplyExecution: SocialAssetSupplyExecution | null;
   productionApproach: Admission['productionApproach'];
   productionMode: Material['productionMode'];
+  measuredSceneTimeline?:MeasuredSceneTime[];
   analysisFailures: Awaited<ReturnType<typeof analyzeSocialProductionAssetsWithCheckpoint>>['failures'];
   replicationContext: Parameters<typeof prepareSocialProductionScriptBaseline>[0]['replicationContext'];
   contentTemplateStructure: Parameters<typeof prepareSocialProductionScriptBaseline>[0]['contentTemplateStructure'];
@@ -89,7 +91,7 @@ export async function prepareSocialContentProductionPlanAndDirector(scope: {
       });
     }
   }
-  let plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, themeId: detail.theme?.themeId ?? null,
+  let plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, measuredSceneTimeline:scope.measuredSceneTimeline, themeId: detail.theme?.themeId ?? null,
     ...(assetSupplyExecution?{routedSceneAssets:assetSupplyExecution.shots.map(shot=>{
       const scene=agentWorkflow.directorBrief.scenes.find(scene=>scene.sceneId===shot.sceneId);
       return {sceneId:shot.sceneId,assetId:shot.assetId,durationSeconds:scene?scene.duration.endSeconds-scene.duration.startSeconds:undefined};

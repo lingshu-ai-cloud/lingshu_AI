@@ -42,8 +42,41 @@ export function selectVerifiedSocialMaterialSegment(shot:SocialAssetSupplyShotRe
 }
 
 /** Only explicit new plans call this selector; existing frozen jobs retain their routing. */
-export function selectTypeAwareSocialMaterial(input:{policyVersion?:'type-aware.v1'|'type-aware.v2';shot:SocialAssetSupplyShotRequest;inventory:Required<SocialAssetInventory>;materialType:BenchmarkMaterialType;referenceVisualContract?:SocialSceneVisualContract;presenterRefs:string[];buildProductSpec:()=>SocialProductSceneReplicationSpec}):{strategy:SocialShotSourceStrategy;refs:string[];instruction:string;materialRouting:SocialMaterialRouting;productSceneReplication?:SocialProductSceneReplicationSpec;blocked?:boolean}{
+export function selectTypeAwareSocialMaterial(input:{policyVersion?:'type-aware.v1'|'type-aware.v2'|'type-aware.v3';shot:SocialAssetSupplyShotRequest;inventory:Required<SocialAssetInventory>;materialType:BenchmarkMaterialType;referenceVisualContract?:SocialSceneVisualContract;presenterRefs:string[];buildProductSpec:()=>SocialProductSceneReplicationSpec}):{strategy:SocialShotSourceStrategy;refs:string[];instruction:string;materialRouting:SocialMaterialRouting;productSceneReplication?:SocialProductSceneReplicationSpec;blocked?:boolean}{
 const {shot,inventory,materialType,referenceVisualContract,presenterRefs}=input;
+      if (input.policyVersion === 'type-aware.v3') {
+        const match = shot.localVideoMatch;
+        const segment = shot.selectedMaterialSegment;
+        const visible = new Set([...inventory.customerVideoIds, ...inventory.factoryEvidenceAssetIds,
+          ...inventory.customerCaseEvidenceAssetIds, ...inventory.productEffectEvidenceAssetIds]);
+        const verified = materialType !== 'talking_head' && materialType !== 'unknown'
+          && match?.semanticMatch === 'verified' && Boolean(match.evidenceRef?.trim())
+          && Boolean(segment?.segmentId) && match.sourceRefs.length > 0
+          && match.sourceRefs.every(ref => visible.has(ref)) && match.sourceRefs.includes(segment!.sourceRef)
+          && Number.isFinite(segment!.startSeconds) && Number.isFinite(segment!.endSeconds)
+          && segment!.startSeconds >= 0 && segment!.endSeconds > segment!.startSeconds;
+        const refs = verified ? [...match!.sourceRefs] : [];
+        const materialRouting: SocialMaterialRouting = {
+          schemaVersion: 'social-material-routing.v1', materialType,
+          policy: materialType === 'talking_head' ? 'authorized_presenter' : 'local_only',
+          pendingReason: materialType === 'unknown' ? 'material_label_unresolved'
+            : materialType === 'talking_head' ? presenterRefs.length ? undefined : 'awaiting_shoot'
+            : verified ? undefined : 'awaiting_theme_material',
+          localMatch: { state: verified ? 'matched' : 'missing', sourceRefs: refs,
+            evidenceRef: verified ? match!.evidenceRef : null,
+            ...(verified ? { productRef: match!.productRef, sourceTier: match!.sourceTier, reuseKind: 'direct_cut' as const } : {}) },
+        };
+        if (materialType === 'talking_head') return {
+          strategy: 'authorized_digital_presenter', refs: presenterRefs, materialRouting, blocked: !presenterRefs.length,
+          instruction: presenterRefs.length ? '按对标真人口播标签使用本地已录入并绑定授权的数字人制作，不修改分镜结构。'
+            : '待拍：本地无已录入并绑定授权的数字人；保留本槽，其他可执行任务继续。仅受阻后才请求用户指定上传素材。',
+        };
+        return { strategy: 'customer_real_asset', refs, materialRouting, blocked: !verified,
+          instruction: materialType === 'unknown' ? '标签待补：先补充对标分析，仍无法确定时等待用户处理，不猜标签执行。'
+            : verified ? '按对标分镜标签匹配主题素材；不追加人物、动作、构图、SKU或视觉相似门槛。'
+            : '待补主题素材：保留当前槽和已有产物，其他可执行任务继续，不采用不匹配主题素材。' };
+      }
+
       const visible = new Set([...inventory.customerVideoIds,...inventory.factoryEvidenceAssetIds,...inventory.customerCaseEvidenceAssetIds,...inventory.productEffectEvidenceAssetIds]);
       const visual=normalizeSceneVisualContract(shot.visualContract??referenceVisualContract??{productPolicy:shot.productPolicy,productRef:shot.productRef});
       // The current task's selected product is authoritative. A frozen reference

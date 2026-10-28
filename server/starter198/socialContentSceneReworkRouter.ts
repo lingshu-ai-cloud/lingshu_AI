@@ -1,12 +1,14 @@
+import {publicSceneReworkCostEvidence} from './socialContentSceneReworkCostProjection.js';
 import { Router, type Request, type Response } from 'express';
 import type { Starter198Repository } from './repository.js';
 import { readSocialSceneReworkAvailability, readSocialSceneReworkStatus } from './socialContentSceneReworkRead.js';
-import { admitSocialSceneRework, confirmSocialSceneReworkAdmissionCost, previewSocialSceneReworkAdmission } from './socialContentSceneReworkAdmission.js';
+import { admitSocialSceneRework, confirmSocialSceneReworkAdmissionCost, previewSocialSceneReworkAdmission, decideSocialSceneReworkOverage } from './socialContentSceneReworkAdmission.js';
 import { requireSocialTask } from './socialContentRecords.js';
 import { socialObject } from './socialContentValidation.js';
 import { createSocialSceneReworkCostPolicyRouter } from './socialContentSceneReworkCostPolicyRouter.js';
 import { resumeSocialSceneRework } from './socialContentSceneReworkResume.js';
 import { resolveSceneCacheSourceRun } from './socialContentSceneCacheSource.js';
+import { isProductionBudgetBlock } from '../../shared/contracts/productionBudgetPolicy.js';
 
 /** Mounted beneath the existing authenticated social-content router. */
 export function createSocialSceneReworkRouter(input: {
@@ -22,8 +24,10 @@ export function createSocialSceneReworkRouter(input: {
     void handler(req, res).catch(error => {
       const code = error instanceof Error ? error.message : '';
       // Provider payloads, paths and credentials must never be rendered here.
-      const publicCode = /^(?:scene_rework_[a-z_]+|starter_198_[a-z_]+|social_content_[a-z_]+)$/.test(code)
-        ? code : 'scene_rework_unavailable';
+      const publicCode = isProductionBudgetBlock(code) ? 'scene_rework_budget_decision_required'
+        : /^social_task_budget_overage_[a-z_]+$/.test(code) ? code.replace('social_task_budget_', 'scene_rework_')
+        : /^(?:scene_rework_[a-z_]+|starter_198_[a-z_]+|social_content_[a-z_]+)$/.test(code)
+          ? code : 'scene_rework_unavailable';
       const status = typeof error === 'object' && error !== null && 'status' in error ? error.status : undefined;
       res.status(typeof status === 'number' && [400, 401, 403, 404, 409, 503].includes(status)
         ? status : publicCode === 'scene_rework_unavailable' ? 503 : 409).json({ error: publicCode });
@@ -37,7 +41,7 @@ export function createSocialSceneReworkRouter(input: {
     const identity = await input.authorize(req, res, level);
     const body = socialObject(req.body);
     const allowed = ['parentArtifactId', 'affectedSceneIds', 'expectedCacheHash', 'expectedPreviewHash',
-      'expectedQuoteHash', 'authorizedMaximumCostCny', 'expectedPolicyHash'];
+      'expectedQuoteHash', 'authorizedMaximumCostCny', 'expectedPolicyHash', 'overagePreviewHash'];
     if (!body || Object.keys(body).some(key => !allowed.includes(key))
       || typeof body.parentArtifactId !== 'string' || !/^[a-zA-Z0-9._:@-]{1,200}$/.test(body.parentArtifactId)
       || typeof body.expectedCacheHash !== 'string' || !/^[a-f0-9]{64}$/.test(body.expectedCacheHash)
@@ -71,7 +75,7 @@ export function createSocialSceneReworkRouter(input: {
     if (Object.keys(actual.body).some(key => !['parentArtifactId', 'affectedSceneIds', 'expectedCacheHash'].includes(key))) {
       throw new Error('scene_rework_selection_invalid');
     }
-    res.json({ item: await previewSocialSceneReworkAdmission(actual.base) });
+    res.json({ item: publicSceneReworkCostEvidence(await previewSocialSceneReworkAdmission(actual.base)) });
   }));
   router.post('/confirm-admission-cost', safe(async (req, res) => {
     const actual = await selection(req, res, 'start');
@@ -81,9 +85,26 @@ export function createSocialSceneReworkRouter(input: {
       || typeof actual.body.expectedQuoteHash !== 'string' || !/^[a-f0-9]{64}$/.test(actual.body.expectedQuoteHash)
       || typeof actual.body.authorizedMaximumCostCny !== 'number'
       || !Number.isFinite(actual.body.authorizedMaximumCostCny)) throw new Error('scene_rework_cost_confirmation_invalid');
-    res.json({ item: await confirmSocialSceneReworkAdmissionCost({ ...actual.base,
+    res.json({ item: publicSceneReworkCostEvidence(await confirmSocialSceneReworkAdmissionCost({ ...actual.base,
       expectedPreviewHash: actual.body.expectedPreviewHash, expectedQuoteHash: actual.body.expectedQuoteHash,
-      authorizedMaximumCostCny: actual.body.authorizedMaximumCostCny }) });
+      authorizedMaximumCostCny: actual.body.authorizedMaximumCostCny })) });
+  }));
+  router.post('/overage-preview', safe(async (req, res) => {
+    const actual = await selection(req, res, 'read');
+    if (Object.keys(actual.body).some(key => !['parentArtifactId','affectedSceneIds','expectedCacheHash','expectedPreviewHash'].includes(key))
+      || typeof actual.body.expectedPreviewHash !== 'string' || !/^[a-f0-9]{64}$/.test(actual.body.expectedPreviewHash))
+      throw new Error('scene_rework_selection_invalid');
+    res.json({item:await decideSocialSceneReworkOverage({...actual.base,expectedPreviewHash:actual.body.expectedPreviewHash})});
+  }));
+  router.post('/overage-confirm', safe(async (req, res) => {
+    const actual = await selection(req, res, 'start');
+    if (Object.keys(actual.body).some(key => !['parentArtifactId','affectedSceneIds','expectedCacheHash','expectedPreviewHash','overagePreviewHash'].includes(key))
+      || typeof actual.body.expectedPreviewHash !== 'string' || !/^[a-f0-9]{64}$/.test(actual.body.expectedPreviewHash)
+      || typeof actual.body.overagePreviewHash !== 'string' || !/^[a-f0-9]{64}$/.test(actual.body.overagePreviewHash))
+      throw new Error('scene_rework_selection_invalid');
+    await decideSocialSceneReworkOverage({...actual.base,expectedPreviewHash:actual.body.expectedPreviewHash,
+      overagePreviewHash:actual.body.overagePreviewHash});
+    res.json({item:{confirmed:true}});
   }));
   router.post('/:operationId/resume', safe(async (req, res) => {
     const identity = await input.authorize(req, res, 'start');

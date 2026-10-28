@@ -70,6 +70,9 @@ export async function evaluateSocialProductionReplication(input:{
   adaptedScript:string;
 }){
   const {detail,agentWorkflow,productionResultId,adaptedScript}=input;
+  // The tag-driven policy does not commission the legacy subjective fidelity
+  // evaluation. Null means not applicable, not a fabricated passed evaluation.
+  if(detail.brief.materialRoutingPolicyVersion==='type-aware.v3')return null;
   let replicationEvaluation = null;
   if (agentWorkflow.replicationJob) {
     const referenceVideoPath=await resolveSocialProductionReferenceVideoPath(input);

@@ -245,7 +245,7 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     || (referenceMode && !SOCIAL_REPLICATION_REFERENCE_MODES.includes(referenceMode as typeof SOCIAL_REPLICATION_REFERENCE_MODES[number]))) {
     throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
   }
-  if (record.materialRoutingPolicyVersion != null && record.materialRoutingPolicyVersion !== 'type-aware.v1' && record.materialRoutingPolicyVersion !== 'type-aware.v2') {
+  if (record.materialRoutingPolicyVersion != null && record.materialRoutingPolicyVersion !== 'type-aware.v1' && record.materialRoutingPolicyVersion !== 'type-aware.v2' && record.materialRoutingPolicyVersion !== 'type-aware.v3') {
     throw new SocialContentWorkflowError('social_material_routing_policy_invalid', 503);
   }
   return {
@@ -256,7 +256,7 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     title,
     objective,
     ...(record.referenceReuse != null ? {referenceReuse: parseSocialReferenceReuse(record.referenceReuse)} : {}),
-    ...(record.materialRoutingPolicyVersion === 'type-aware.v1' || record.materialRoutingPolicyVersion === 'type-aware.v2' ? { materialRoutingPolicyVersion: record.materialRoutingPolicyVersion } : {}),
+    ...(record.materialRoutingPolicyVersion === 'type-aware.v1' || record.materialRoutingPolicyVersion === 'type-aware.v2' || record.materialRoutingPolicyVersion === 'type-aware.v3' ? { materialRoutingPolicyVersion: record.materialRoutingPolicyVersion } : {}),
     ...(record.illustrativeSceneIds !== undefined ? { illustrativeSceneIds: parseIllustrativeSceneIds(record.illustrativeSceneIds) } : {}),
     productId: nullable(record.productId),
     ...(record.productIds !== undefined ? { productIds: strings(record.productIds, 'social_content_task_record_invalid') } : {}),
@@ -590,6 +590,7 @@ export async function taskRows(
 export function buildSocialWorkflowMaterialCandidates(input: {
   /** V2 leaves video SKU selection to the reference shot, not the task. Images stay product-bound. */
   deferVideoSkuFilter?: boolean;
+  themeOnly?: boolean;
   records: MaterialRecord[];
   /** Only overlays returned by the independent signed byte/visual reader. */
   reviewedFootageOverlays?: MaterialRecord[];
@@ -689,7 +690,9 @@ export function buildSocialWorkflowMaterialCandidates(input: {
     // Images remain available to historic product-identity flows. Fixed-yield
     // local video routes only receive versioned, authorized observed segments.
     // Unknown editorial boundaries retain the observed interval for trimming.
-    if (item.mediaType === 'video' && !item.segmentProfile?.productionEligible) return [];
+    if (item.mediaType === 'video' && !item.segmentProfile?.productionEligible
+      && (!input.themeOnly || !item.segmentProfile || item.segmentProfileRejectionReasons.some(reason =>
+        !['archetype_unclassified', 'analysis_confidence_low', 'human_review_required'].includes(reason)))) return [];
     const productCompatibility = resolveProductCompatibility({
       policy: productPolicy,
       requestedProductId,

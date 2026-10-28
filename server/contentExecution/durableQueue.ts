@@ -683,12 +683,12 @@ async function applyContentExecutionControl(input: {
 
 /** Serialize customer controls and automated review waits so a review pause
  * cannot overwrite a concurrent explicit customer pause. */
-export async function controlContentExecutionJob(input: Parameters<typeof applyContentExecutionControl>[0]): Promise<ContentExecutionJob> {
+export async function controlContentExecutionJob(input: Parameters<typeof applyContentExecutionControl>[0] & { beforeApply?: () => Promise<void> }): Promise<ContentExecutionJob> {
   const lease = await acquireDurableOperationLease({ dataStore: input.dataStore,
     tenantId: requiredIdentity(input.tenantId, 'tenant'), subjectId: requiredIdentity(input.jobId, 'job'),
     scope: 'content_execution_control', ownerId: `content-control:${randomUUID()}`, leaseDurationMs: 30_000 });
   if (!lease) throw new Error('content_execution_job_control_busy');
-  try { return await applyContentExecutionControl(input); }
+  try { await input.beforeApply?.(); return await applyContentExecutionControl(input); }
   finally { await releaseDurableOperationLease({ dataStore: input.dataStore, lease }).catch(() => undefined); }
 }
 

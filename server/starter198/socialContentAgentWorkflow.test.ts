@@ -792,3 +792,27 @@ test('an explicit 100-yuan task reports its own advisory ceiling instead of reco
  const result=socialExecutionBudgetStatus({scenes:[scene],budgetLimitCny:100} as never,{scenes:[{sceneId:scene.sceneId,duration:{startSeconds:0,endSeconds:38}}]} as never);
  assert.equal(result.estimatedCostCny,45.45);assert.equal(result.budgetLimitCny,100);assert.equal(result.exceeded,false);
 });
+
+test('v3 approved theme slot survives old hook/factor/reference-time checks and exposes only the new criteria', () => {
+  const typed = createSocialAssetSupplyPlan({ creationMode: 'viral_replication', productionApproach: 'ai_enhanced',
+    materialRoutingPolicyVersion: 'type-aware.v3', inventory: { customerVideoIds: ['owned-real'] },
+    shots: replicationScript.shots.map(shot => ({ shotId: shot.shotId, function: shot.purpose, materialType: 'product',
+      referenceShotId: shot.referenceShotId, plannedDurationSeconds: shot.endSeconds - shot.startSeconds,
+      selectedMaterialSegment: { sourceRef: 'owned-real', segmentId: shot.shotId, startSeconds: 0, endSeconds: 8 },
+      localVideoMatch: { sourceRefs: ['owned-real'], semanticMatch: 'verified', evidenceRef: 'theme-evidence' } })) });
+  const retimed = structuredClone(replicationScript);
+  retimed.shots[0]!.endSeconds = 2;
+  retimed.shots[1]!.startSeconds = 2;
+  const actual = buildSocialAgentWorkflow({ taskId: 'typed-v3-theme', taskVersion: '1', taskStatus: 'plan_review',
+    mode: 'instant', weeklyPlanId: null, brief: { ...brief, materialRoutingPolicyVersion: 'type-aware.v3' },
+    sources: [], factSourceRefs: [], assetSupplyPlan: typed,
+    referenceAnalysis, replicationScript: retimed,
+    materialCandidates: retimed.shots.map(shot => ({ assetId: 'owned-real', sourceRef: 'owned-real', segmentId: shot.shotId,
+      origin: 'my_materials', mediaType: 'video', label: '主题素材', matchScore: 1, matchedVoiceoverCueIds: [], timeRange: { startSeconds: 0, endSeconds: 8 } })) as never,
+    referenceReviewHandoff: { productionExecutionAllowed: false, versionHash: 'legacy-review' } });
+  assert.equal(actual.directorBrief.status, 'ready');
+  assert.equal(actual.executionPlanReview.approved, true);
+  assert.ok(actual.directorBrief.scenes.every(scene => scene.replicationFactors?.length === 0));
+  assert.ok(actual.directorBrief.scenes.every(scene => !scene.acceptanceCriteria.some(text => /逐帧|高阈值|OCR/.test(text))));
+  assert.ok(actual.executionPlan.scenes.every(scene => scene.selectedSourceStrategy === 'customer_real_asset'));
+});

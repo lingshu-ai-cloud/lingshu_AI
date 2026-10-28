@@ -1,9 +1,11 @@
+import {prepareSceneReworkPresenterPlan,hasSceneReworkPresenterAcceptedReceipt,type SceneReworkPresenterPlan} from './socialContentSceneReworkPresenter.js';
 import type { Record_ } from '../storage/datastore.js';
 import type { Starter198Repository } from './repository.js';
 import type { SocialSceneReworkIntent } from './socialContentSceneRework.js';
 import type { StoredSocialSceneCache } from './socialContentSceneReworkService.js';
 import { createSocialSceneReworkService } from './socialContentSceneReworkService.js';
 import { socialJson, socialObject, socialRequestHash } from './socialContentValidation.js';
+import { isVoiceDrivenFilm, VOICE_DRIVEN_FILM_MAXIMUM_CNY } from '../../shared/contracts/productionBudgetPolicy.js';
 
 export const SCENE_REWORK_COST_POLICIES = 'starter_social_scene_rework_cost_policies';
 export const LOCAL_SCENE_REWORK_STRATEGIES = new Set([
@@ -13,14 +15,14 @@ export const LOCAL_SCENE_REWORK_STRATEGIES = new Set([
 export interface SceneReworkCostScope {
   tenantId: string; taskId: string; runId: string; operationId: string; actorUserId: string;
 }
-export interface SceneReworkRouteQuote {
+interface SceneReworkRouteQuoteBase {
   type: 'scene_rework_route_quote'; version: 1; tenantId: string; taskId: string;
   executionRunId: string; operationId: string; cacheHash: string; planHash: string;
-  provider: 'qwen_image'; model: string; sceneIds: string[]; operationsPerScene: 1;
-  imagesPerOperation: 1; maximumCostCnyPerImage: number; totalUpperBoundCny: number;
+  model: string; sceneIds: string[]; totalUpperBoundCny: number;
   maximumOriginalBudgetCny: number; tariffSourceRef: string; tariffVersion: string;
   validUntil: string; recordHash: string;
 }
+export type SceneReworkRouteQuote = SceneReworkRouteQuoteBase & ({provider:'qwen_image';operationsPerScene:1;imagesPerOperation:1;maximumCostCnyPerImage:number}|{provider:'heygen';presenterPlan:SceneReworkPresenterPlan});
 export interface SceneReworkCostPolicy {
   type: 'scene_rework_cost_policy'; version: 1; scope: SceneReworkCostScope;
   quote: SceneReworkRouteQuote; authorizedMaximumCostCny: number; confirmedAt: string; recordHash: string;
@@ -53,6 +55,29 @@ async function quoteVerified(store: NonNullable<Starter198Repository['dataStore'
   const allRoutes = selected.flatMap(item => routes(item.shot));
   const localOnly = allRoutes.length > 0 && allRoutes.every(route => LOCAL_SCENE_REWORK_STRATEGIES.has(route));
   if (localOnly) return { localOnly: true, quote: null, gaps: [] };
+  if(isVoiceDrivenFilm(actual.plan)&&allRoutes.includes('authorized_digital_presenter')){
+    if(allRoutes.some(route=>route!=='authorized_digital_presenter'&&!LOCAL_SCENE_REWORK_STRATEGIES.has(route)))
+      return {localOnly:false,quote:null,gaps:['scene_rework_presenter_batch_budget_required']};
+    try {
+      const policies=await store.list<Record_>(SCENE_REWORK_COST_POLICIES,{where:{tenant_id:scope.tenantId,operation_id:scope.operationId},perPage:2});
+      if(policies.totalItems!==policies.items.length||policies.items.length>1)throw Error('scene_rework_cost_policy_ambiguous');
+      const saved=socialObject(socialJson(policies.items[0]?.payload)) as unknown as SceneReworkCostPolicy|null;
+      if(saved&&policies.items[0]!.content_hash!==socialRequestHash(saved))throw Error('scene_rework_cost_policy_corrupt');
+      const frozen=saved?.quote.provider==='heygen'?saved.quote.presenterPlan:undefined;
+      const jobs=frozen?await store.list<Record_>('content_execution_jobs',{where:{tenant_id:scope.tenantId,task_id:scope.taskId,run_id:scope.runId},perPage:2}):null;
+      const receipts=jobs?.totalItems===1&&jobs.items.length===1?jobs.items[0]?.provider_receipts:null;
+      const knownRecovery=Boolean(frozen&&(await hasSceneReworkPresenterAcceptedReceipt(frozen)||Array.isArray(receipts)&&receipts.length>0&&receipts.every(raw=>{
+        const row=socialObject(raw);return row?.provider==='heygen'&&['accepted','completed'].includes(String(row.state));
+      })));
+      const presenterPlan=await prepareSceneReworkPresenterPlan({repository:{dataStore:store} as Starter198Repository,actual,env,frozen,knownRecovery});
+      const value={type:'scene_rework_route_quote' as const,version:1 as const,tenantId:scope.tenantId,taskId:scope.taskId,
+        executionRunId:scope.runId,operationId:scope.operationId,cacheHash:actual.intent.cacheHash,planHash:actual.intent.planHash,
+        provider:'heygen' as const,model:'avatar_iv',sceneIds:selected.map(item=>String(item.sceneId)),presenterPlan,
+        maximumOriginalBudgetCny:VOICE_DRIVEN_FILM_MAXIMUM_CNY,totalUpperBoundCny:presenterPlan.totalUpperBoundCny,
+        tariffSourceRef:presenterPlan.operations[0]!.quote.quoteRef,tariffVersion:presenterPlan.recordHash,validUntil:presenterPlan.validUntil};
+      return {localOnly:false,quote:{...value,recordHash:socialRequestHash(value)},gaps:[]};
+    }catch(error){return {localOnly:false,quote:null,gaps:[error instanceof Error&&/^scene_rework_[a-z_]+$/.test(error.message)?error.message:'scene_rework_presenter_evidence_missing']};}
+  }
   const allowed = new Set([...LOCAL_SCENE_REWORK_STRATEGIES, 'non_evidentiary_ai_visual']);
   const paid = selected.filter(item => routes(item.shot).includes('non_evidentiary_ai_visual'));
   if (!paid.length || allRoutes.some(route => !allowed.has(route))
@@ -76,11 +101,12 @@ async function quoteVerified(store: NonNullable<Starter198Repository['dataStore'
     tenant_id: scope.tenantId, handoff_id: actual.handoffId, handoff_version: actual.handoffVersion,
   }, perPage: 2 });
   const handoff = socialObject(socialJson(handoffs.items[0]?.payload));
-  const maximumOriginalBudgetCny = socialObject(handoff?.executionPlan)?.budgetLimitCny;
+  const maximumOriginalBudgetCny = isVoiceDrivenFilm(actual.plan)
+    ? VOICE_DRIVEN_FILM_MAXIMUM_CNY : socialObject(handoff?.executionPlan)?.budgetLimitCny;
   const totalUpperBoundCny = Math.ceil(maximumCostCnyPerImage * paid.length * 100) / 100;
   if (handoffs.totalItems !== 1 || typeof maximumOriginalBudgetCny !== 'number'
     || !Number.isFinite(maximumOriginalBudgetCny)
-    || sceneReworkExceedsOriginalInternalBudget(scope.tenantId, totalUpperBoundCny, maximumOriginalBudgetCny)) {
+    || (!isVoiceDrivenFilm(actual.plan) && sceneReworkExceedsOriginalInternalBudget(scope.tenantId, totalUpperBoundCny, maximumOriginalBudgetCny))) {
     return { localOnly: false, quote: null, gaps: ['scene_rework_original_budget_upper_bound_required'] };
   }
   const value = { type: 'scene_rework_route_quote' as const, version: 1 as const,
@@ -115,8 +141,8 @@ export function createSocialSceneReworkCostPolicyService(repository: Starter198R
       || policy.quote.executionRunId !== scope.runId || policy.quote.operationId !== scope.operationId
       || !Number.isFinite(policy.authorizedMaximumCostCny)
       || policy.authorizedMaximumCostCny < policy.quote.totalUpperBoundCny
-      || sceneReworkExceedsOriginalInternalBudget(scope.tenantId, policy.authorizedMaximumCostCny,
-        policy.quote.maximumOriginalBudgetCny)) fail('scene_rework_cost_policy_corrupt');
+      || (policy.quote.totalUpperBoundCny <= policy.quote.maximumOriginalBudgetCny
+        && sceneReworkExceedsOriginalInternalBudget(scope.tenantId, policy.authorizedMaximumCostCny, policy.quote.maximumOriginalBudgetCny))) fail('scene_rework_cost_policy_corrupt');
     return policy;
   }
   const prepared = (scope: SceneReworkCostScope, actual: VerifiedActual) => quoteVerified(store!, env, scope, actual);
@@ -127,8 +153,8 @@ export function createSocialSceneReworkCostPolicyService(repository: Starter198R
     const quote = evidence.quote!;
     if (quote.recordHash !== input.expectedQuoteHash || !Number.isFinite(input.authorizedMaximumCostCny)
       || input.authorizedMaximumCostCny < quote.totalUpperBoundCny
-      || sceneReworkExceedsOriginalInternalBudget(scope.tenantId, input.authorizedMaximumCostCny,
-        quote.maximumOriginalBudgetCny)) fail('scene_rework_cost_confirmation_invalid');
+      || (!isVoiceDrivenFilm(actual.plan) && sceneReworkExceedsOriginalInternalBudget(scope.tenantId, input.authorizedMaximumCostCny,
+        quote.maximumOriginalBudgetCny))) fail('scene_rework_cost_confirmation_invalid');
     const existing = await saved(scope);
     if (existing) {
       if (existing.quote.recordHash !== input.expectedQuoteHash

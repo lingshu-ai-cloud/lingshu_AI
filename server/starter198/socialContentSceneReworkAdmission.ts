@@ -1,3 +1,4 @@
+import {verifyStoredSceneReworkMeasuredVoice} from './socialContentSceneReworkMeasuredVoice.js';
 import { randomUUID } from 'node:crypto';
 import type { Record_ } from '../storage/datastore.js';
 import type { Starter198Repository } from './repository.js';
@@ -8,13 +9,15 @@ import { assertOrchestratorAdmissionQuota } from './quota.js';
 import { socialJson, socialObject, socialRequestHash } from './socialContentValidation.js';
 import { createSocialSceneReworkIntent } from './socialContentSceneRework.js';
 import { createSocialSceneReworkService } from './socialContentSceneReworkService.js';
-import { createSocialSceneReworkCostPolicyService, type SceneReworkCostScope } from './socialContentSceneReworkCostPolicy.js';
+import { createSocialSceneReworkCostPolicyService, type SceneReworkCostScope, type SceneReworkCostPolicy } from './socialContentSceneReworkCostPolicy.js';
+import { reserveSceneReworkFilmBudget, sceneReworkOverageDecision } from './socialContentSceneReworkFilmBudget.js';
+import { isVoiceDrivenFilm } from '../../shared/contracts/productionBudgetPolicy.js';
 
 const fail = (code: string): never => { throw new Error(code); };
 export interface SceneReworkAdmissionSelection {
   repository: Starter198Repository; tenantId: string; actorUserId: string; taskId: string;
   sourceRunId: string; parentArtifactId: string; affectedSceneIds: string[];
-  expectedCacheHash?: string; env?: NodeJS.ProcessEnv;
+  expectedCacheHash?: string; env?: NodeJS.ProcessEnv; ledgerRoot?: string;
 }
 export interface SceneReworkAdmissionPreview {
   type: 'scene_rework_admission_preview'; version: 1; tenantId: string; taskId: string;
@@ -53,22 +56,38 @@ async function prepare(input: SceneReworkAdmissionSelection) {
   if (!source || source.tenant_id !== input.tenantId
     || !['succeeded', 'completed', 'failed'].includes(String(source.status))) fail('scene_rework_source_run_not_terminal');
   const operationIntent = createSocialSceneReworkIntent(context.cache, input.actorUserId,
-    input.affectedSceneIds, 'pending-admission');
-  if (context.cache.scenes.some(scene => !operationIntent.affectedSceneIds.includes(scene.sceneId)
+    input.affectedSceneIds, 'pending-admission', isVoiceDrivenFilm(context.plan) ? 'user_selected' : undefined);
+  if (!isVoiceDrivenFilm(context.plan) && context.cache.scenes.some(scene => !operationIntent.affectedSceneIds.includes(scene.sceneId)
     && scene.status !== 'passed')) fail('scene_rework_unselected_review_required');
   const executionRunId = socialRequestHash({ type: 'social_scene_rework_run', tenantId: input.tenantId,
     sourceRunId: input.sourceRunId, operationId: operationIntent.operationId }).slice(0, 15);
   const intent = createSocialSceneReworkIntent(context.cache, input.actorUserId,
-    input.affectedSceneIds, executionRunId);
+    input.affectedSceneIds, executionRunId, isVoiceDrivenFilm(context.plan) ? 'user_selected' : undefined);
   const costScope: SceneReworkCostScope = { tenantId: input.tenantId, taskId: input.taskId,
     runId: executionRunId, operationId: intent.operationId, actorUserId: input.actorUserId };
   const evidence = await createSocialSceneReworkCostPolicyService(input.repository, input.env)
     .readPrepared(costScope, { ...context, intent });
+  let measuredVoiceGap: string | undefined;
+  if (isVoiceDrivenFilm(context.plan)) {
+    if (!context.cache.measuredVoiceProof) measuredVoiceGap = 'scene_rework_measured_voice_proof_missing';
+    else try { await verifyStoredSceneReworkMeasuredVoice(input.repository, context.cache); }
+    catch { measuredVoiceGap = 'scene_rework_measured_voice_proof_invalid'; }
+  }
   const previewBody = { type: 'scene_rework_admission_preview' as const, version: 1 as const,
     tenantId: input.tenantId, taskId: input.taskId, sourceRunId: input.sourceRunId,
     parentArtifactId: input.parentArtifactId, affectedSceneIds: [...intent.affectedSceneIds],
     operationId: intent.operationId, executionRunId, cacheHash: intent.cacheHash, planHash: intent.planHash,
-    localOnly: evidence.localOnly, quote: evidence.quote, gaps: [...evidence.gaps] };
+    localOnly: evidence.localOnly, quote: evidence.quote, gaps: [
+      ...evidence.gaps,
+      // The existing cache freezes the render manifest, but does not yet bind
+      // the original independently measured voice receipt. Fail before any
+      // budget reservation or run creation; a manifest is not timing proof.
+      ...(measuredVoiceGap ? [measuredVoiceGap] : []),
+      ...(isVoiceDrivenFilm(context.plan) && context.plan.shots.some(shot =>
+        intent.affectedSceneIds.includes(shot.shotId) && shot.sourceStrategy === 'customer_real_asset'
+        && (!shot.materialRouting || ['talking_head','unknown'].includes(shot.materialRouting.materialType)))
+        ? ['scene_rework_human_route_unavailable'] : []),
+    ] };
   const preview: SceneReworkAdmissionPreview = { ...previewBody, previewHash: socialRequestHash(previewBody) };
   return { store: dataStore, service, source: source!, context, intent, costScope, resourceLimits, preview };
 }
@@ -107,19 +126,40 @@ export async function admitSocialSceneRework(input: SceneReworkAdmissionSelectio
     const actual = await prepare(input);
     if (actual.preview.previewHash !== input.expectedPreviewHash) fail('scene_rework_admission_preview_conflict');
     if (actual.preview.gaps.length) fail(actual.preview.gaps[0]!);
+    let run = await dataStore.getById<Record_>('workflow_runs', actual.preview.executionRunId);
+    if (!run) await assertOrchestratorAdmissionQuota({ repository: input.repository, tenantId: input.tenantId,
+      limits: actual.resourceLimits });
     if (actual.preview.localOnly) {
       if (input.expectedPolicyHash !== undefined) fail('scene_rework_cost_policy_not_required');
     } else {
-      const policy = await createSocialSceneReworkCostPolicyService(input.repository, input.env)
-        .requirePreparedConfirmed(actual.costScope, { ...actual.context, intent: actual.intent });
-      if (!policy || !input.expectedPolicyHash || input.expectedPolicyHash !== policy.recordHash) {
-        fail('scene_rework_cost_policy_confirmation_required');
+      const service = createSocialSceneReworkCostPolicyService(input.repository, input.env);
+      if (isVoiceDrivenFilm(actual.context.plan)) {
+        const quote = actual.preview.quote;
+        if (!quote) fail('scene_rework_trusted_tariff_upper_bound_missing');
+        // The automatic policy must not become immutable until the original film
+        // ledger has accepted the quote. A failed reservation may be retried with
+        // a later tariff; no policy, run, job or supplier request exists yet.
+        const policyBody = { type: 'scene_rework_cost_policy' as const, version: 1 as const,
+          scope: actual.costScope, quote: quote!, authorizedMaximumCostCny: quote!.totalUpperBoundCny,
+          confirmedAt: new Date().toISOString() };
+        const provisional: SceneReworkCostPolicy = { ...policyBody, recordHash: socialRequestHash(policyBody) };
+        await reserveSceneReworkFilmBudget({ repository: input.repository, policy: provisional, ledgerRoot: input.ledgerRoot,
+          voiceDriven: true, assertCurrent: async () => {
+            await assertDurableOperationLease({ dataStore, lease: lease! });
+            const fresh = await prepare(input);
+            if (fresh.preview.previewHash !== actual.preview.previewHash) fail('scene_rework_admission_preview_conflict');
+          } });
+        await assertDurableOperationLease({ dataStore, lease: lease! });
+        await service.confirmPrepared(actual.costScope, { ...actual.context, intent: actual.intent }, {
+          expectedQuoteHash: quote!.recordHash, authorizedMaximumCostCny: quote!.totalUpperBoundCny });
+      } else {
+        const policy = await service.requirePreparedConfirmed(actual.costScope, { ...actual.context, intent: actual.intent });
+        if (!policy || !input.expectedPolicyHash || input.expectedPolicyHash !== policy.recordHash) {
+          fail('scene_rework_cost_policy_confirmation_required');
+        }
       }
     }
-    let run = await dataStore.getById<Record_>('workflow_runs', actual.preview.executionRunId);
     if (!run) {
-      await assertOrchestratorAdmissionQuota({ repository: input.repository, tenantId: input.tenantId,
-        limits: actual.resourceLimits });
       const payload = { type: 'social_scene_rework_authorization', version: 1, tenantId: input.tenantId,
         taskId: input.taskId, sourceRunId: input.sourceRunId, executionRunId: actual.preview.executionRunId,
         parentArtifactId: input.parentArtifactId, parentArtifactHash: actual.intent.parentArtifactHash,
@@ -143,4 +183,32 @@ export async function admitSocialSceneRework(input: SceneReworkAdmissionSelectio
       executionRunId: actual.preview.executionRunId, actorUserId: input.actorUserId,
       affectedSceneIds: input.affectedSceneIds, changeKind: 'visual_asset' });
   } finally { await releaseDurableOperationLease({ dataStore, lease: lease! }); }
+}
+
+/** User choice is tied to the exact freshly priced operation and original film;
+ * neither endpoint accepts client prices or creates a job or supplier request. */
+export async function decideSocialSceneReworkOverage(input: SceneReworkAdmissionSelection & {
+  expectedPreviewHash:string; overagePreviewHash?:string;
+}) {
+  const dataStore=input.repository.dataStore;
+  if(!dataStore) return fail('scene_rework_persistent_store_required');
+  const lease=await acquireDurableOperationLease({dataStore,tenantId:input.tenantId,
+    scope:'social_scene_rework_admission',subjectId:input.tenantId,ownerId:randomUUID()});
+  if(!lease) return fail('scene_rework_admission_busy');
+  try {
+    const actual=await prepare(input);
+    if(actual.preview.previewHash!==input.expectedPreviewHash) return fail('scene_rework_admission_preview_conflict');
+    if(!isVoiceDrivenFilm(actual.context.plan)||actual.preview.localOnly||!actual.preview.quote)
+      return fail('scene_rework_overage_not_available');
+    if(actual.preview.gaps.length) return fail(actual.preview.gaps[0]!);
+    const quote=actual.preview.quote;
+    const body={type:'scene_rework_cost_policy' as const,version:1 as const,scope:actual.costScope,quote,
+      authorizedMaximumCostCny:quote.totalUpperBoundCny,confirmedAt:new Date().toISOString()};
+    const policy:SceneReworkCostPolicy={...body,recordHash:socialRequestHash(body)};
+    return await sceneReworkOverageDecision({repository:input.repository,policy,sourceRunId:input.sourceRunId,
+      actorUserId:input.actorUserId,ledgerRoot:input.ledgerRoot,previewHash:input.overagePreviewHash,
+      assertCurrent:async()=>{await assertDurableOperationLease({dataStore,lease});
+        const fresh=await prepare(input);
+        if(fresh.preview.previewHash!==actual.preview.previewHash) fail('scene_rework_admission_preview_conflict');}});
+  } finally { await releaseDurableOperationLease({dataStore,lease}); }
 }

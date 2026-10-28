@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { assertSocialContentGraphQuality, socialContentGraphQualityFailures } from './socialContentGraphQualityGate.js';
+import {socialVideoQualityAcceptanceRecord} from './socialVideoQualityAcceptance.js';
 
 const sha = 'a'.repeat(64);
 function acceptedContent() {
@@ -34,6 +35,33 @@ function acceptedContent() {
 test('only internally accepted real media can cross graph quality into human review', () => {
   assert.deepEqual(socialContentGraphQualityFailures(acceptedContent()), []);
   assert.doesNotThrow(() => assertSocialContentGraphQuality(acceptedContent()));
+});
+
+test('voice-driven review requires byte-bound actual checks and does not require legacy replication scores', () => {
+  const content = acceptedContent();
+  Object.assign(content.technicalQualityReport, { policyVersion: 'voice-driven-slots.v1' });
+  (content as { replicationEvaluation: unknown }).replicationEvaluation = null;
+  assert.ok(socialContentGraphQualityFailures(content).includes('voice_driven_quality_unverified'));
+  Object.assign(content.technicalQualityReport, { voiceDrivenReview: {
+    schemaVersion: 'voice-driven-video-quality.v1', mediaSha256: sha,
+    timeline: { status: 'passed', toleranceSeconds: 0.3, maxLocalOffsetSeconds: 0.1, cumulativeOffsetSeconds: 0.1, evidenceRef: 'measured:actual-film' },
+    subtitleStyle: { status: 'passed', mediaSha256: sha, samples: [0, 1].map(atSeconds => ({atSeconds,frameSha256:sha,subtitlePresent:true,font:true,fontSize:true,color:true})) },
+  } });
+  assert.deepEqual(socialContentGraphQualityFailures(content), []);
+  Object.assign(content.technicalQualityReport, { voiceDrivenReview: {
+    schemaVersion: 'voice-driven-video-quality.v1', mediaSha256: 'b'.repeat(64),
+    timeline: { status: 'passed', evidenceRef: 'measured:another-film' },
+    subtitleStyle: { status: 'passed', mediaSha256: sha, samples: [0, 1].map(atSeconds => ({atSeconds,frameSha256:sha,subtitlePresent:true,font:true,fontSize:true,color:true})) },
+  } });
+  assert.ok(socialContentGraphQualityFailures(content).includes('voice_driven_quality_unverified'));
+});
+
+test('explicit user receipt admits unknown measurement only for its frozen media hash',()=>{
+ const content=acceptedContent();Object.assign(content.technicalQualityReport,{policyVersion:'voice-driven-slots.v1'});(content as {replicationEvaluation:unknown}).replicationEvaluation=null;
+ const receipt=socialVideoQualityAcceptanceRecord({tenantId:'tenant',taskId:'task',runId:'run-a',jobId:'job',mediaSha256:sha,qualityInputHash:'b'.repeat(64),acceptedBy:'owner',acceptedAt:'2026-10-28T00:00:00.000Z'});
+ Object.assign(content.technicalQualityReport,{voiceDrivenReview:{schemaVersion:'voice-driven-video-quality.v1',mediaSha256:sha,timeline:{status:'passed',toleranceSeconds:0.3,maxLocalOffsetSeconds:0.1,cumulativeOffsetSeconds:0.1,evidenceRef:'measured:film'},subtitleStyle:{status:'unknown',mediaSha256:sha,samples:[]},userAcceptance:receipt}});
+ assert.deepEqual(socialContentGraphQualityFailures(content),[]);
+ receipt.acceptedBy='other';assert.ok(socialContentGraphQualityFailures(content).includes('voice_driven_quality_unverified'));
 });
 
 test('failed or missing technical, creative, reference and media evidence cannot reach waiting_review', () => {
@@ -97,4 +125,16 @@ test('measured final-media defects cannot be overwritten by aggregate approvals'
     finalPrivacyCoverage: { schemaVersion: 'final-privacy-coverage.v1', status: 'unknown' },
   };
   assert.ok(!socialContentGraphQualityFailures(content).includes('measured_media_hard_failure'));
+});
+
+test('explicit subtitle confirmation can cross human intervention but cannot bypass a failed cut timeline',()=>{
+ const content=acceptedContent();Object.assign(content.technicalQualityReport,{policyVersion:'voice-driven-slots.v1'});(content as {replicationEvaluation:unknown}).replicationEvaluation=null;
+ const base={tenantId:'tenant',taskId:'task',runId:'run-a',jobId:'job',mediaSha256:sha,qualityInputHash:'b'.repeat(64),acceptedBy:'owner',acceptedAt:'2026-10-28T00:00:00.000Z'};
+ const node={schemaVersion:'voice-driven-video-quality.v1',mediaSha256:sha,timeline:{status:'unknown',toleranceSeconds:0.3},subtitleStyle:{status:'blocked',mediaSha256:sha,samples:[]},userAcceptance:socialVideoQualityAcceptanceRecord(base)};
+ Object.assign(content.technicalQualityReport,{voiceDrivenReview:node});
+ assert.ok(socialContentGraphQualityFailures(content).includes('voice_driven_quality_unverified'));
+ node.userAcceptance=socialVideoQualityAcceptanceRecord(base,'accept_subtitle_style');
+ assert.deepEqual(socialContentGraphQualityFailures(content),[]);
+ node.timeline.status='blocked';assert.ok(socialContentGraphQualityFailures(content).includes('voice_driven_quality_unverified'));
+ node.timeline.status='unknown';node.userAcceptance.acceptedBy='another';assert.ok(socialContentGraphQualityFailures(content).includes('voice_driven_quality_unverified'));
 });

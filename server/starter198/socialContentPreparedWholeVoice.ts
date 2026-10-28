@@ -1,3 +1,8 @@
+import {measureSentenceSlots, validateSentenceSlots, type MeasuredSentenceSlot} from './socialContentSentenceSlotMapping.js';
+import type {SocialDirectorBriefScene} from '../../shared/contracts/socialContentAgentContract.js';
+import {VOICE_DRIVEN_SLOTS_AUDIO_POLICY} from '../lib/studioVoiceAutomationPolicy.js';
+import {assertVoiceDrivenFilmDuration} from '../../shared/contracts/productionBudgetPolicy.js';
+import {mapMeasuredSceneTimeline, type MeasuredSceneTime} from './socialContentMeasuredSceneTimeline.js';
 import { normalizePresenterMotherSpokenText } from '../../shared/contracts/presenterMotherSegments.js';
 import { nativeAudioTimingTransform, verifiedHeyGenNativeSubtitleTiming, verifiedNativePhraseCues } from '../lib/heygenNativeSubtitles.js';
 import { resolveActiveVoiceIntent } from '../lib/socialContentVoiceRouteRevision.js';
@@ -29,6 +34,9 @@ export function verifiedHeyGenNativeTiming(response:any,text:string,speed:number
   return {fit,result,cues:verifiedAudioCues(result,text,duration)};
 }
 export interface PreparedWholeVoice {
+  timingPolicy?: 'voice-driven-slots.v1';
+  measuredSceneTimeline?: MeasuredSceneTime[];
+  measuredSentenceSlots?: MeasuredSentenceSlot[];
   voice: Voice & { localPath: string; duration: number; cues: Array<{ start: number; end: number; text: string }> };
   inputHash: string;
   receiptRef: string;
@@ -48,20 +56,25 @@ export class WholeVoiceDurationRevisionRequired extends Error {
 export async function prepareSocialContentWholeVoice(input: {
   funding: Funding;
   targetDuration: number;
+  voiceDriven?: boolean;
   scenes: Array<{ shotId: string; spokenText: string; durationSeconds: number; startSeconds: number; endSeconds: number }>;
+  sentenceScenes?: Array<{shotId:string; spokenText:string; lines?:SocialDirectorBriefScene['voiceoverLines']}>;
   root?: string;
   alignmentRoot?: string;
   synthesize?: typeof synthesizeStudioVoiceForAutomation;
   align?: typeof alignStudioVoiceForAutomation;
 }): Promise<PreparedWholeVoice> {
   const funding = input.funding;
+  const sentenceLines = input.voiceDriven && input.sentenceScenes ? validateSentenceSlots(input.sentenceScenes) : null;
+  if (sentenceLines && paidProductionHash(input.sentenceScenes!.map(({shotId, spokenText}) => ({shotId, spokenText})))
+    !== paidProductionHash(input.scenes.map(({shotId, spokenText}) => ({shotId, spokenText})))) throw Error('sentence_slot_scenes_changed');
   const route = funding.routeBindings['voice:0:tts'];
   const nativeProvider = route?.provider === 'qwen' || route?.provider === 'minimax' || route?.provider === 'heygen' ? route.provider : undefined;
   const plan = resolveStudioVoiceExecutionPlan({ ...funding.voiceInput, nativeProvider, ...(route?.model==='avatar_iv'?{heygenSpeechMode:'native_video' as const}:{}) });
-  if (!plan.primary || plan.mode !== 'continuous' || plan.texts.length !== 1)
+  if (!plan.primary || (plan.mode !== 'continuous' && !(input.voiceDriven && plan.mode === 'sentences')) || plan.texts.length !== 1)
     throw Error('presenter_whole_track_continuous_native_voice_required');
   const primary=plan.primary;
-  const inputHash = paidProductionHash({ scope: funding.scope, voiceInput: funding.voiceInput, primary: plan.primary, scenes: input.scenes });
+  const inputHash = paidProductionHash({ scope: funding.scope, voiceInput: funding.voiceInput, primary: plan.primary, scenes: input.scenes, ...(input.voiceDriven?{timingPolicy:'voice-driven-slots.v1'}:{}) });
   const root = path.join(input.root || path.resolve('data/social-content-whole-voice'), sha(funding.scope.tenantId), sha(funding.scope.taskId), sha(funding.scope.runId));
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const stateFile = path.join(root, inputHash + '.json');
@@ -78,6 +91,7 @@ export async function prepareSocialContentWholeVoice(input: {
     try { state = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { /* first execution */ }
     if (state && (state.inputHash !== inputHash || paidProductionHash(state.scope) !== paidProductionHash(funding.scope)))
       throw Error('prepared_whole_voice_scope_changed');
+    if (state?.sentenceLines && paidProductionHash(state.sentenceLines) !== paidProductionHash(sentenceLines)) throw Error('sentence_slot_contract_changed');
     const paidContext = createNativeStudioVoicePaidContext(funding);
     let voice: Voice;
     if (state?.voice) {
@@ -88,7 +102,7 @@ export async function prepareSocialContentWholeVoice(input: {
       // A crash after a paid request is recovered only through the native
       // receipt/cache guard. It can never initiate a second supplier request.
       const candidate = await (input.synthesize || synthesizeStudioVoiceForAutomation)({
-        ...funding.voiceInput, targetDuration: input.targetDuration, paidContext,
+        ...funding.voiceInput, targetDuration: input.targetDuration, paidContext, ...(input.voiceDriven?{audioPolicy:VOICE_DRIVEN_SLOTS_AUDIO_POLICY}:{}),
       });
       if (!candidate.ok || !candidate.localPath || !candidate.url || !candidate.duration)
         throw Error(candidate.error || 'prepared_whole_voice_audio_missing');
@@ -173,14 +187,19 @@ export async function prepareSocialContentWholeVoice(input: {
     // Persist the paid original performance before checking the whole-film
     // maximum. Visual cuts may cross sentences; the source track stays intact.
     persist({ ...state, status: 'audio_aligned', voice: { ...voice, cues }, proof: { sourceReceiptRefs, alignmentReceiptRef, nativeVoice: { provider: primary.provider, model: primary.model, physicalVoiceId: primary.voiceId } } });
-    if (voice.duration > input.targetDuration + .02) {
+    if (!input.voiceDriven && voice.duration > input.targetDuration + .02) {
       throw new WholeVoiceDurationRevisionRequired(stateFile, voice.duration, input.targetDuration);
     }
-    measuredWholeTrackSceneRanges({ scenes: input.scenes, cues, durationSeconds: voice.duration });
+    if(input.voiceDriven)assertVoiceDrivenFilmDuration(voice.duration);
+    const measuredSentenceSlots=sentenceLines ? measureSentenceSlots(sentenceLines,cues) : undefined;
+    const measuredTimeline=input.voiceDriven?mapMeasuredSceneTimeline({scenes:input.scenes,cues,durationSeconds:voice.duration}):null;
+    measuredWholeTrackSceneRanges({ scenes: input.scenes, cues, durationSeconds: voice.duration, voiceDriven:input.voiceDriven });
     const result: PreparedWholeVoice = { voice: { ...voice, localPath: voice.localPath, duration: voice.duration, cues, alignmentSource },
+      ...(input.voiceDriven?{timingPolicy:'voice-driven-slots.v1' as const,measuredSceneTimeline:measuredTimeline!}:{}),
+      ...(measuredSentenceSlots ? {measuredSentenceSlots} : {}),
       inputHash, receiptRef:stateFile, wholeTrackSha256: state.wholeTrackSha256, sourceReceiptRefs, alignmentReceiptRef,
       nativeVoice: { provider: primary.provider, model: primary.model, physicalVoiceId: primary.voiceId } };
-    persist({ ...state, status: 'completed', voice: result.voice, proof:{sourceReceiptRefs,alignmentReceiptRef,nativeVoice:result.nativeVoice} });
+    persist({ ...state, status: 'completed', voiceDriven:input.voiceDriven===true, measuredTimeline, ...(sentenceLines ? {sentenceLines, measuredSentenceSlots} : {}), voice: result.voice, proof:{sourceReceiptRefs,alignmentReceiptRef,nativeVoice:result.nativeVoice} });
     return result;
   });
 }
@@ -213,7 +232,10 @@ export async function readPreparedWholeVoiceScene(input: {
   const cues=alignment.source==='heygen_native_subtitles'&&alignment.precision==='phrase'&&alignment.independentAsr===false
     ? verifiedNativePhraseCues(alignment.result,transcript,state.voice.duration) : verifiedAudioCues(alignment.result,transcript,state.voice.duration);
   if(paidProductionHash(cues)!==paidProductionHash(state.voice.cues))throw Error('prepared_whole_voice_measured_cues_changed');
-  const ranges=measuredWholeTrackSceneRanges({scenes:state.scenes,cues,durationSeconds:state.voice.duration});
+  if((state.voiceDriven===true)!==(input.prepared.timingPolicy==='voice-driven-slots.v1'))throw Error('prepared_whole_voice_timing_policy_changed');
+  if(state.sentenceLines && (paidProductionHash(measureSentenceSlots(state.sentenceLines,cues))!==paidProductionHash(input.prepared.measuredSentenceSlots) || paidProductionHash(state.measuredSentenceSlots)!==paidProductionHash(input.prepared.measuredSentenceSlots)))throw Error('sentence_slot_measurement_changed');
+  const ranges=measuredWholeTrackSceneRanges({scenes:state.scenes,cues,durationSeconds:state.voice.duration,voiceDriven:state.voiceDriven===true});
+  if(state.voiceDriven&&paidProductionHash(mapMeasuredSceneTimeline({scenes:state.scenes,cues,durationSeconds:state.voice.duration}))!==paidProductionHash(input.prepared.measuredSceneTimeline))throw Error('prepared_whole_voice_timeline_changed');
   const frozenGroupScene=state.scenes.some((item:{shotId:string})=>item.shotId===input.shotId);
   const failGroup = (reason: string): never => { throw Error('prepared_whole_voice_scene_not_frozen:' + reason + ':' + input.shotId); };
   if (frozenGroupScene && input.memberShotIds?.length && (input.memberShotIds.length !== 1 || input.memberShotIds[0] !== input.shotId)) failGroup('member_mismatch');
@@ -223,7 +245,7 @@ export async function readPreparedWholeVoiceScene(input: {
   const memberRanges=members.map(id=>ranges.get(id));
   if(memberScenes.some((scene:unknown)=>!scene)||memberRanges.some((range:unknown)=>!range))failGroup('member_missing');
   for (let index = 1; index < memberRanges.length; index++) if (Math.abs(memberRanges[index - 1]!.end - memberRanges[index]!.start) > .001) failGroup('window_noncontiguous');
-  const scene={shotId:input.shotId,spokenText:normalizePresenterMotherSpokenText(memberScenes.map((item:any)=>item.spokenText)),durationSeconds:memberScenes.reduce((sum:number,item:any)=>sum+item.durationSeconds,0)};
+  const scene={shotId:input.shotId,spokenText:normalizePresenterMotherSpokenText(memberScenes.map((item:any)=>item.spokenText)),durationSeconds:memberRanges.reduce((sum:number,item:any)=>sum+item.end-item.start,0)};
   const range={start:memberRanges[0]!.start,end:memberRanges.at(-1)!.end};
   if(scene.spokenText!==normalizePresenterMotherSpokenText([input.spokenText]))failGroup('text_mismatch');
   if(Math.abs((range.end-range.start)-scene.durationSeconds)>.02)failGroup('duration_mismatch');

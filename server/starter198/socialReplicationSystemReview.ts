@@ -20,7 +20,7 @@ export function replicationSystemReviewBlockers(task: SocialContentTaskDetail): 
   const script = task.replicationScript;
   if (analysis?.status !== 'ready' || !analysis.coverage?.fullTimelineCovered) reasons.push('reference_analysis_incomplete');
   if (!script || script.referenceAnalysisId !== analysis?.analysisId || !script.shots.length) reasons.push('script_analysis_mismatch');
-  if (script && socialReplicationIdentityGaps(script, task.enterpriseProductBinding).length) reasons.push('product_identity_unresolved');
+  if (task.brief.materialRoutingPolicyVersion !== 'type-aware.v3' && script && socialReplicationIdentityGaps(script, task.enterpriseProductBinding).length) reasons.push('product_identity_unresolved');
   const review = task.agentWorkflow?.executionPlanReview;
   if (!review || !socialContentReviewAdmissionAllowed(review)) reasons.push(...(review?.reasonCodes.length ? review.reasonCodes : ['execution_plan_unavailable']));
   if (review && (review.failedCriteria.length || review.requiredRevision.length || !review.sceneResults.length

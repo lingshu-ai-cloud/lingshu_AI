@@ -357,7 +357,8 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
 function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: SocialDirectorBrief, plan: SocialContentExecutionPlan): SocialExecutionPlanReview {
   const budget = socialExecutionBudgetStatus(plan, directorBrief, input.tenantId);
   const estimatedCost = budget.estimatedCostCny;
-  const budgetPreflightRequired=input.assetSupplyPlan.materialRoutingPolicyVersion==='type-aware.v2';
+  const themePolicy = input.assetSupplyPlan.materialRoutingPolicyVersion === 'type-aware.v3';
+  const budgetPreflightRequired=input.assetSupplyPlan.materialRoutingPolicyVersion==='type-aware.v2'||themePolicy;
   const budgetExceeded = budget.exceeded&&!budgetPreflightRequired;
   const planByScene = new Map(plan.scenes.map(scene => [scene.sceneId, scene]));
   const shootingPlanOnly = plan.selectedApproach === 'shooting_plan';
@@ -377,14 +378,16 @@ function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: Social
       plan: scenePlan,
       weekly: input.mode === 'weekly',
       rightsMissing: input.assetSupplyPlan.status === 'requires_rights_confirmation',
+      themePolicy,
+      pendingReason: themePolicy ? input.assetSupplyPlan.shots.find(shot => shot.shotId === scene.sceneId)?.materialRouting?.pendingReason : undefined,
       enforceTruthGates: input.assetSupplyPlan.materialRoutingPolicyVersion==='type-aware.v2',
       conceptPreview: input.brief.productionMode === 'concept_preview',
     })] : [];
   });
   const directorBlocked = directorBrief.status === 'blocked';
-  const referenceBlocked = input.brief.creationMode === 'viral_replication'
+  const referenceBlocked = !themePolicy && input.brief.creationMode === 'viral_replication'
     && input.referenceReviewHandoff?.productionExecutionAllowed !== true;
-  const fidelityFailures = input.brief.creationMode === 'viral_replication'
+  const fidelityFailures = !themePolicy && input.brief.creationMode === 'viral_replication'
     ? socialReferenceFidelityFailures({ referenceAnalysis: input.referenceAnalysis, replicationScript: input.replicationScript }) : [];
   const approved = !directorBlocked && !referenceBlocked && !budgetExceeded
     && sceneResults.length === directorBrief.scenes.length && sceneResults.every(result => result.approved);

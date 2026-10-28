@@ -10,6 +10,18 @@ import type { SocialProductionAsset } from './socialContentProductionPlan.js';
 import type { InternalSocialContentFormula } from './socialContentThemes.js';
 import { runVisualFfmpeg } from '../lib/renderVisualQuality.js';
 const baseline = { themeId: 'product_value', formulaReference: null, language: 'en', scenes: [{ voiceover: 'Meet GUIANFA.', narration: 'Meet GUIANFA.' }, { voiceover: 'DM us.', narration: 'DM us.' }] } as StoredSocialScriptBaseline;
+test('measured alignment remains available with optional speech QA disabled and quotes the film duration bound', async () => {
+    const readers = createProductionBudgetRuntimeReaders({tenantId: 'tenant', requiresMeasuredAlignment: true,
+        frozenTrackSeconds: 30, env: {DASHSCOPE_API_KEY: 'offline-only', TTS_ASR_QA_ENABLED: 'false'}});
+    const voice = await readers.readVoicePlan!(baseline);
+    assert.equal(voice?.requiresAsr, false);
+    assert.equal(voice?.requiresAlignment, true);
+    const route = await readers.resolveBoundRoute!({key:'voice:alignment',stage:'voice_alignment',shotId:null,
+        sourceRef:null,durationSeconds:20,text:voice!.lines.join(' '),frameCount:null,inputContractHash:'a'.repeat(64)});
+    assert.equal(route?.model, 'qwen3-asr-flash-filetrans');
+    assert.deepEqual(route?.maximumUnits, {audioSeconds: 30});
+    assert.ok(route!.maximumUnits.audioSeconds >= 25, 'a 25 second actual performance must fit even if its reference was 20 seconds');
+});
 test('real Studio sentence splitting and shared frozen direction determine clone/fallback/ASR', async () => {
     const native = await createProductionBudgetRuntimeReaders({ tenantId:'tenant', env: { MINIMAX_API_KEY: 'fixture-only', TTS_REQUIRE_MINIMAX: 'true', TTS_ASR_QA_ENABLED: 'false' } }).readVoicePlan!(baseline);
     assert.equal(native?.mode, 'continuous');

@@ -1,4 +1,4 @@
-import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
+import {productionBudgetMaximumCny} from '../../shared/contracts/productionBudgetPolicy.js';
 import { parseIllustrativeSceneIds as validateIllustrativeSceneIds } from '../../shared/contracts/illustrativeScenePolicy.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -257,11 +257,11 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
   }
   return {
     ...parseSocialReplicationContext(source),
-    materialRoutingPolicyVersion: 'type-aware.v2',
+    materialRoutingPolicyVersion: 'type-aware.v3',
     ...(source.illustrativeSceneIds !== undefined ? { illustrativeSceneIds: parseIllustrativeSceneIds(source.illustrativeSceneIds) } : {}),
     ...(source.referenceReuse != null ? {referenceReuse: parseSocialReferenceReuse(source.referenceReuse)} : {}),
     ...(source.presenterPolicy ? { presenterPolicy: source.presenterPolicy as 'none' | 'selected' } : {}),
-    ...(source.presenterSpeechReviewPolicy ? { presenterSpeechReviewPolicy: source.presenterSpeechReviewPolicy as 'independent_lip_sync' | 'heygen_native_human_review' } : {}),
+    presenterSpeechReviewPolicy: 'heygen_native_human_review',
     title: requiredText(source.title, 'social_content_title_invalid', 120),
     objective: requiredText(source.objective, 'social_content_objective_invalid', 1_000),
     productId: optionalText(source.productId, 'social_content_product_id_invalid', 200),
@@ -280,9 +280,9 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     cadence: optionalText(source.cadence, 'social_content_cadence_invalid', 200),
     requestedOutputCount: mode === 'instant' ? 1 : requestedOutputCount,
     weeklyBudgetCny: optionalNumber(source.weeklyBudgetCny, 'social_content_weekly_budget_invalid', 10_000_000),
-    perItemBudgetCny: optionalNumber(source.perItemBudgetCny, 'social_content_per_item_budget_invalid', 10_000_000)
-      ?? (Array.isArray(source.formats) && source.formats.length === 1 && source.formats[0] === 'social_image'
-        ? null : productionBudgetLimitCny(productionBudgetDuration({targetDurationSeconds}))),
+    perItemBudgetCny: Array.isArray(source.formats) && source.formats.length === 1 && source.formats[0] === 'social_image'
+      ? optionalNumber(source.perItemBudgetCny, 'social_content_per_item_budget_invalid', 10_000_000)
+      : productionBudgetMaximumCny({materialRoutingPolicyVersion:'type-aware.v3',targetDurationSeconds}),
     targetDurationSeconds,
     retryReserveCny: optionalNumber(source.retryReserveCny, 'social_content_retry_reserve_invalid', 10_000_000),
     planningMode: planningMode as CreateSocialContentTaskInput['planningMode'],

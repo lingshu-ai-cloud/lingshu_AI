@@ -1,3 +1,4 @@
+import {VOICE_DRIVEN_SLOTS_AUDIO_POLICY} from '../lib/studioVoiceAutomationPolicy.js';
 import { parseBoundHeyGenLogicalVoice } from '../lib/heygenVoiceCapabilities.js';
 import fs from 'fs';
 import path from 'path';
@@ -36,7 +37,7 @@ export function createStudioVoiceAutomation(ports: VoiceAutomationPorts) {
     qwenTtsLanguageType } = providers;
 
 
-async function persistTtsResult<T extends { url?: string }>(result: T, tenantId: string): Promise<T> {
+async function persistTtsResult<T extends { url?: string }>(result: T, tenantId: string, voiceDriven = false): Promise<T> {
   if (!result.url) return result;
   const file = path.basename(new URL(result.url, 'http://local').pathname);
   const filePath = path.join(tenantTtsDir(tenantId), file);
@@ -45,7 +46,7 @@ async function persistTtsResult<T extends { url?: string }>(result: T, tenantId:
   const durationMatch = diagnostics.match(/Duration: (\d+):(\d+):([\d.]+)/);
   const duration = durationMatch ? +durationMatch[1] * 3600 + +durationMatch[2] * 60 + +durationMatch[3] : 0;
   const volume = Number(diagnostics.match(/max_volume: ([-\d.]+) dB/)?.[1] ?? '-Infinity');
-  if (duration < 0.2 || volume < -60) return { ...result, ok: false, url: undefined, error: '配音为空或接近静音，请选择此语言的其他音色或服务' };
+  if (voiceDriven ? !(duration > 0) : duration < 0.2 || volume < -60) return { ...result, ok: false, url: undefined, error: '配音为空或接近静音，请选择此语言的其他音色或服务' };
   return { ...result, duration, ...(objectStorageEnabled() ? { url: await persistPrivateTtsAsset(tenantId, filePath) } : {}) };
 }
 
@@ -93,9 +94,12 @@ function resolveStudioVoiceExecutionPlan(input:{tenantId:string;text:string;voic
 async function synthesizeStudioVoiceForAutomation(input: {
   tenantId: string; text: string; language?: string; voice?: string; targetDuration?: number;
   paidContext?: StudioVoicePaidContext;
+  /** Trusted in-process worker capability; never forwarded from an HTTP body. */
+  audioPolicy?: typeof VOICE_DRIVEN_SLOTS_AUDIO_POLICY;
   style?: TtsStyleOptions; sentenceLines?: string[]; measuredSentenceTiming?: boolean;
 }): Promise<{ ok: boolean; source?: string; url?: string; localPath?: string; duration?: number; text?: string; error?: string; cues?: AlignedCue[]; alignmentSource?: string; qualityReport?: VoiceQualityReport }> {
   return withStudioVoicePaidContext(input.paidContext, () => runTenant(input.tenantId, async () => {
+    const voiceDriven=input.audioPolicy===VOICE_DRIVEN_SLOTS_AUDIO_POLICY;
     const spoken = String(input.text || '').trim();
     if (!spoken) return { ok: false, error: '口播为空' };
     if (!['zh','ja'].includes(normalizeTtsLanguage(input.language || 'en')) && /[\u4e00-\u9fff]/.test(spoken)) return { ok: false, error: '口播含中文，请先统一为目标语种后再生成配音。' };
@@ -130,7 +134,7 @@ async function synthesizeStudioVoiceForAutomation(input: {
       // metered seconds stay inside the whole-film reservation and the final
       // word is preserved instead of being cut off by the renderer.
       const frozenDuration = Number(input.targetDuration);
-      if (Number.isFinite(frozenDuration) && frozenDuration > .15 && duration > frozenDuration + .02) {
+      if (!voiceDriven && Number.isFinite(frozenDuration) && frozenDuration > .15 && duration > frozenDuration + .02) {
         const fitted = joined + '.fitted.wav';
         const ratio = duration / frozenDuration;
         if (ratio > 2) return { ok: false, source: audio.source, error: '口播明显超过成片时长，请调整脚本。' };
@@ -158,10 +162,10 @@ async function synthesizeStudioVoiceForAutomation(input: {
         end: Math.max(0, Math.min(spokenDuration, cue.end / postSpeed)),
         ...(cue.words ? { words: cue.words.map(word => ({ ...word, start: word.start / postSpeed, end: word.end / postSpeed })) } : {}),
       })).filter(cue => cue.text && cue.end > cue.start) : continuousCues;
-      const result = await persistTtsResult({ ok: true, url: ttsUrl(path.basename(joined)), duration }, input.tenantId);
-      const qualityReport = await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en', asrRequired: false,
+      const result = await persistTtsResult({ ok: true, url: ttsUrl(path.basename(joined)), duration }, input.tenantId,voiceDriven);
+      const qualityReport = voiceDriven ? undefined : await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en', asrRequired: false,
         deferAsrToAlignment: audio.source === 'heygen' && Boolean(input.paidContext) });
-      if (!qualityReport.passed) return { ok: false, source: audio.source, error: `口播质量未通过：${qualityReport.failures.join('；')}`, qualityReport };
+      if (qualityReport && !qualityReport.passed) return { ok: false, source: audio.source, error: `口播质量未通过：${qualityReport.failures.join('；')}`, qualityReport };
       // Proportional sentence splits of one continuous performance are useful
       // for subtitle preview, but they are not measured audio boundaries.
       // Never cache them as an ASR alignment or pass them to production as exact.
@@ -186,7 +190,7 @@ async function synthesizeStudioVoiceForAutomation(input: {
       // Every sentence render adds 150 ms of trailing silence to protect the
       // last phoneme. If speech itself fits the frozen interval, trim only that
       // padding; never time-compress or truncate spoken content here.
-      if (singleLineTarget > .15 && duration > singleLineTarget + .01
+      if (!voiceDriven && singleLineTarget > .15 && duration > singleLineTarget + .01
         && duration - .15 <= singleLineTarget + .01) {
         const trimmed = output + '.trimmed.wav';
         await execFileAsync(ffmpegBin, ['-y', '-i', output, '-af', `atrim=duration=${singleLineTarget}`,
@@ -201,9 +205,9 @@ async function synthesizeStudioVoiceForAutomation(input: {
     const joined = path.join(dir, randomUUID() + '.wav');
     const inputs = files.flatMap(file => ['-i', file]);
     await execFileAsync(ffmpegBin, ['-y', ...inputs, '-filter_complex', files.map((_,i) => '['+i+':a]').join('') + 'concat=n=' + files.length + ':v=0:a=1[joined];[joined]loudnorm=I=-16:TP=-1.5:LRA=7,alimiter=limit=0.95[out]', '-map', '[out]', '-c:a', 'pcm_s16le', joined], 60000);
-    const result = await persistTtsResult({ ok: true, url: ttsUrl(path.basename(joined)), duration: cursor }, input.tenantId);
-    const qualityReport = await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en', asrRequired: false });
-    if (!qualityReport.passed) return { ok: false, source: [...providers].join('+'), error: `口播质量未通过：${qualityReport.failures.join('；')}`, qualityReport };
+    const result = await persistTtsResult({ ok: true, url: ttsUrl(path.basename(joined)), duration: cursor }, input.tenantId,voiceDriven);
+    const qualityReport = voiceDriven ? undefined : await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en', asrRequired: false });
+    if (qualityReport && !qualityReport.passed) return { ok: false, source: [...providers].join('+'), error: `口播质量未通过：${qualityReport.failures.join('；')}`, qualityReport };
     fs.writeFileSync(joined + '.alignment.json', JSON.stringify({ text: spoken, cues, source: 'synthesized_sentence_audio' }));
     for (const file of files) fs.unlinkSync(file);
     return { ...result, localPath: joined, text: spoken, cues, source: [...providers].join('+'), alignmentSource: 'synthesized_sentence_audio', qualityReport };

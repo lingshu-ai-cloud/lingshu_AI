@@ -268,7 +268,7 @@ export interface SocialContentTaskBrief {
   /** Defaults to the zero-paid-provider customer-material edit. */
   productionApproach?: SocialProductionApproach;
   /** Explicit new-plan policy; omission preserves historical frozen routing. */
-  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2';
+  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2' | 'type-aware.v3';
   /** Explicitly confirmed non-evidentiary enterprise scene IDs; never applies to product/factory proof. */
   illustrativeSceneIds?: string[];
   referenceReuse?: SocialReferenceReuseBinding;
@@ -657,7 +657,7 @@ export interface CreateSocialContentTaskInput {
   productionMode?: SocialContentProductionMode;
   productionApproach?: SocialProductionApproach;
   mode?: SocialContentTaskMode;
-  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2';
+  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2' | 'type-aware.v3';
   illustrativeSceneIds?: string[];
   referenceReuse?: SocialReferenceReuseBinding;
   weeklyPlanId?: string | null;

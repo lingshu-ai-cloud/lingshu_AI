@@ -1,3 +1,4 @@
+import {assertVoiceDrivenFilmDuration} from '../../shared/contracts/productionBudgetPolicy.js';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -55,7 +56,8 @@ export async function prepareSocialContentProductionVoice(scope: {
       let voice: Awaited<ReturnType<typeof synthesizeStudioVoiceForAutomation>> | null = null;
       let duration = 0;
       let voiceDuration = 0;
-      const preserveReferenceTimeline = (agentWorkflow.replicationJob?.referenceMode ?? agentWorkflow.directorBrief.referenceMode ?? detail.brief.referenceMode) === 'single_source_fidelity';
+      const voiceDriven=detail.brief.materialRoutingPolicyVersion==='type-aware.v3';
+      const preserveReferenceTimeline = !voiceDriven && (agentWorkflow.replicationJob?.referenceMode ?? agentWorkflow.directorBrief.referenceMode ?? detail.brief.referenceMode) === 'single_source_fidelity';
       let narrationCheckpointInputHash = '';
       let narrationCheckpointReused = false;
       for (let revisionAttempt = 0; revisionAttempt <= 2; revisionAttempt += 1) {
@@ -165,6 +167,7 @@ export async function prepareSocialContentProductionVoice(scope: {
           provider: 'studio_tts', requestId: `social-tts:${narrationCheckpointInputHash}`,
           metadata: { narrationCheckpointInputHash, duration: voiceDuration, filmDuration: duration },
         });
+        if(voiceDriven){assertVoiceDrivenFilmDuration(voiceDuration);break;}
         if (voiceDuration <= contentHandoff.outputSpec.maximumDurationSeconds + 0.25) break;
         if(preparedWholeVoice)throw Error('director_revision_required:whole_track_speech_exceeds_frozen_film_requires_formal_replan');
         if (revisionAttempt >= 2) {

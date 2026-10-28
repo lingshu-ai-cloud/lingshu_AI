@@ -1,3 +1,4 @@
+import {mapMeasuredSceneTimeline} from './socialContentMeasuredSceneTimeline.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
@@ -20,7 +21,8 @@ export interface WholeTrackPresenterSpeech extends Omit<PresenterHookSpeechAudio
 }
 /** Visual cuts share one continuous voice performance. Words and sentences
  * may cross scene cuts; clips use exact frozen visual windows. */
-export function measuredWholeTrackSceneRanges(input:{scenes:Array<{shotId:string;spokenText:string;durationSeconds:number;startSeconds:number;endSeconds:number}>;cues:Array<{start:number;end:number;text:string}>;durationSeconds:number}) {
+export function measuredWholeTrackSceneRanges(input:{scenes:Array<{shotId:string;spokenText:string;durationSeconds:number;startSeconds:number;endSeconds:number}>;cues:Array<{start:number;end:number;text:string}>;durationSeconds:number;voiceDriven?:boolean}) {
+ if(input.voiceDriven)return new Map(mapMeasuredSceneTimeline(input).map(row=>[row.shotId,{start:row.start,end:row.end}]));
  const ranges=new Map<string,{start:number;end:number}>();let lastEnd=0;
  for(const cue of input.cues){
   if(!Number.isFinite(cue.start)||!Number.isFinite(cue.end)||cue.start<lastEnd-.03||cue.end<=cue.start||cue.end>input.durationSeconds+.02)throw Error('presenter_whole_track_alignment_invalid');

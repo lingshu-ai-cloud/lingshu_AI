@@ -32,11 +32,16 @@ export interface WholeTrackHeyGenFunding {
  * every video POST consumes its canonical whole-film operation exactly once. */
 export function createWholeTrackSocialHeyGenBridge(input:{
  funding:WholeTrackHeyGenFunding;prepared:PreparedWholeVoice;taskVersion:string;apiKey:string;
+ /** Server-only original voice scope after immutable repair-cache lineage verification. */
+ sourceVoiceScope?:SocialTaskBudgetScope;assertSourceVoice?:()=>Promise<void>;
  store:DataStore;dependencies?:Omit<SocialHeyGenBridgeDependencies,'client'|'speechAudio'|'wholeBudget'|'budget'>;
  transport?:typeof fetch;root?:string;
 }) {
  const dependencies=input.dependencies||{store:input.store,storageReady:objectStorageEnabled,download:defaultDownload,upload:objectStorageUpload,head:objectStorageHead};
  const funding=input.funding,keyHash=sha(input.apiKey);
+ const voiceScope=input.sourceVoiceScope??funding.scope;
+ if(voiceScope.tenantId!==funding.scope.tenantId||voiceScope.taskId!==funding.scope.taskId
+  ||(paidProductionHash(voiceScope)!==paidProductionHash(funding.scope)&&!input.assertSourceVoice))throw Error('whole_track_source_voice_scope_unverified');
  if(!input.apiKey||!dependencies.storageReady())throw Error('whole_track_heygen_configuration_missing');
  const root=path.join(input.root||path.resolve('data/social-content-whole-heygen'),sha(funding.scope.tenantId),sha(funding.scope.taskId),sha(funding.scope.runId));
  fs.mkdirSync(root,{recursive:true,mode:0o700});
@@ -140,7 +145,8 @@ export function createWholeTrackSocialHeyGenBridge(input:{
    durationSeconds:frozenDuration,
    actionPeakSeconds:Math.min(frozenDuration,Math.max(0,frozenDuration*.58)),
   };
-  const clip=await readPreparedWholeVoiceScene({prepared:input.prepared,scope:funding.scope,shotId:request.shotId,spokenText:request.script,
+  await input.assertSourceVoice?.();
+  const clip=await readPreparedWholeVoiceScene({prepared:input.prepared,scope:voiceScope,shotId:request.shotId,spokenText:request.script,
    ...(requirement.presenterGroupShotIds?{memberShotIds:requirement.presenterGroupShotIds}:{}),assertCurrent:funding.assertCurrent});
   if(Math.abs(clip.durationSeconds-frozenDuration)>.02)throw Error('whole_track_heygen_frozen_window_changed');
   const completedReceiptRef=path.join(root,sha(intent.operationId)+'.completed.json');

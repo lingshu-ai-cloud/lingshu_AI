@@ -207,7 +207,7 @@ export async function verifyNamedPresenterLock(input: {
  * social Seedance product-scene adapter is not a presenter reenactment adapter. */
 export function selectPresenterExecutions(input: {
   detail: Pick<SocialContentTaskDetail, 'agentWorkflow' | 'referenceVideoAnalysis' | 'assetSupplyPlan' | 'enterpriseProductBinding'> & {
-    brief?: Pick<SocialContentTaskBrief, 'creationMode' | 'presenterPolicy' | 'presenterAssetId' | 'presenterSpeechReviewPolicy'>;
+    brief?: Pick<SocialContentTaskBrief, 'creationMode' | 'presenterPolicy' | 'presenterAssetId' | 'presenterSpeechReviewPolicy' | 'materialRoutingPolicyVersion'>;
   };
   heygenReady: boolean;
   /** Must describe an actual social presenter first-frame executor, not product-scene Seedance. */
@@ -216,7 +216,7 @@ export function selectPresenterExecutions(input: {
 }): PresenterExecutionSelection[] {
   const workflow = input.detail.agentWorkflow;
   if (!workflow) return [];
-  if (input.detail.brief?.creationMode === 'material_processing') return selectOriginalTalkingPresenters(input);
+  if (input.detail.brief?.creationMode === 'material_processing' || input.detail.brief?.materialRoutingPolicyVersion === 'type-aware.v3') return selectOriginalTalkingPresenters(input);
   const references = new Map((input.detail.referenceVideoAnalysis?.shots ?? []).map(shot => [shot.shotId, shot]));
   const executionByScene = new Map(workflow.executionPlan.scenes.map(scene => [scene.sceneId, scene]));
   const supplyByScene = new Map((input.detail.assetSupplyPlan?.shots ?? []).map(shot => [shot.shotId, shot]));
@@ -330,6 +330,7 @@ export function selectPresenterExecutions(input: {
  * admission requirements; this selector never manufactures their evidence. */
 function selectOriginalTalkingPresenters(input: Parameters<typeof selectPresenterExecutions>[0]): PresenterExecutionSelection[] {
   const { detail } = input, brief = detail.brief!;
+  const themePolicy = brief.materialRoutingPolicyVersion === 'type-aware.v3';
   const scenes = new Map(detail.agentWorkflow!.directorBrief.scenes.map(scene => [scene.sceneId, scene]));
   const executions = new Map(detail.agentWorkflow!.executionPlan.scenes.map(scene => [scene.sceneId, scene]));
   return (detail.assetSupplyPlan?.shots ?? []).filter(shot => shot.sourceStrategy === 'authorized_digital_presenter').map(shot => {
@@ -339,9 +340,9 @@ function selectOriginalTalkingPresenters(input: Parameters<typeof selectPresente
     const ids = shot.digitalHumanPlan?.presenterAssetIds ?? [];
     const reasons = ['original_talking_presenter'];
     if (!scene || strategy !== 'authorized_digital_presenter') reasons.push('original_presenter_execution_plan_missing');
-    if (shot.digitalHumanPlan?.workflow !== 'material_processing' || shot.digitalHumanPlan.method !== 'talking') reasons.push('original_presenter_talking_method_required');
-    if (brief.presenterPolicy !== 'selected' || !brief.presenterAssetId || ids.length !== 1 || ids[0] !== brief.presenterAssetId) reasons.push('original_presenter_selected_asset_mismatch');
-    if (brief.presenterSpeechReviewPolicy !== 'heygen_native_human_review') reasons.push('presenter_speech_route_unavailable');
+    if (!themePolicy && (shot.digitalHumanPlan?.workflow !== 'material_processing' || shot.digitalHumanPlan.method !== 'talking')) reasons.push('original_presenter_talking_method_required');
+    if (themePolicy ? ids.length !== 1 || Boolean(brief.presenterAssetId && ids[0] !== brief.presenterAssetId) : brief.presenterPolicy !== 'selected' || !brief.presenterAssetId || ids.length !== 1 || ids[0] !== brief.presenterAssetId) reasons.push('original_presenter_selected_asset_mismatch');
+    if (!themePolicy && brief.presenterSpeechReviewPolicy !== 'heygen_native_human_review') reasons.push('presenter_speech_route_unavailable');
     if (!input.heygenReady) reasons.push('heygen_capability_unavailable');
     if (!input.budgetReady) reasons.push('presenter_budget_unavailable');
     const executable = reasons.length === 1;

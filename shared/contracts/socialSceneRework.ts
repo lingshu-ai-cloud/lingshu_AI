@@ -18,6 +18,7 @@ export interface SocialSceneReworkAvailability {
     sourceTiming: { startSeconds: number; endSeconds: number; durationSeconds: number } | null;
     status: 'passed' | 'failed' | 'review_required'; technicalReceiptId: string;
     checks?: Array<{ code: string; passed: boolean; message: string }> }>;
+  selectionMode?: 'user_selected';
   canRequest: boolean;
   blockingReasons: string[];
   existingOperations?: SocialSceneReworkStatus[];

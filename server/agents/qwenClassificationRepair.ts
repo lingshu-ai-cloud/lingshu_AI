@@ -39,8 +39,10 @@ export async function repairVideoShotClassifications(input: {
   analysis: VideoAiAnalysis;
   signal?: AbortSignal;
   complete: (prompt: string, maxTokens: number, signal?: AbortSignal) => Promise<string>;
+  /** Local material classification only; never rewrites narrative or source facts. */
+  materialOnlyIndexes?: number[];
 }): Promise<VideoAiAnalysis> {
-  const evidenceRows = (input.analysis.scriptDetails15s || []).map((shot, index) => ({
+  const allEvidenceRows = (input.analysis.scriptDetails15s || []).map((shot, index) => ({
     index: index + 1,
     time: shot.time,
     visual: shot.visual,
@@ -53,9 +55,17 @@ export async function repairVideoShotClassifications(input: {
     classificationEvidence: shot.classificationEvidence,
     needsReview: shot.needsReview,
   }));
+  const materialOnly = input.materialOnlyIndexes;
+  if (materialOnly && (!materialOnly.length || new Set(materialOnly).size !== materialOnly.length
+    || materialOnly.some(index => !Number.isInteger(index) || index < 1 || index > allEvidenceRows.length)))
+    throw Error('exact_classification_repair_indexes_invalid');
+  const evidenceRows = materialOnly ? allEvidenceRows.filter(row => materialOnly.includes(row.index)) : allEvidenceRows;
   if (!evidenceRows.length) throw new Error('exact_classification_repair_missing_shots');
   const evidence = untrustedPromptData('observed_shot_evidence', JSON.stringify(evidenceRows), 24_000);
-  const prompt = `你是视频镜头生产交接校验器。只输出合法 JSON：{"shots":[{"index":1,"materialType":"product","narrativeRole":"hook","classificationEvidence":"画面可见产品瓶身特写","needsReview":false}]}。
+  const prompt = materialOnly ? `你是既有观察证据的素材标签分类器。只输出JSON：{"shots":[{"index":1,"materialType":"product","classificationEvidence":"原观察证据中的原文片段","needsReview":false}]}。
+这不是重新观看视频。只分类下方列出的原镜头index，不增加、删除或重排镜头，不修改时间、口播、叙事用途，不提出动作、人物、构图或SKU要求。
+materialType仅取talking_head、factory、product、consumer_demo、general；无法根据既有可见画面证据确定时返回unknown并needsReview=true。classificationEvidence必须逐字引用本镜visual或observedFacts的一段原文，不得引用台词或用途猜画面。
+${evidence}` : `你是视频镜头生产交接校验器。只输出合法 JSON：{"shots":[{"index":1,"materialType":"product","narrativeRole":"hook","classificationEvidence":"画面可见产品瓶身特写","needsReview":false}]}。
 不得改写或补充观察事实，只能依据下方已经完成的逐镜证据分类；这不是再次分析视频。shots 必须按 index 完整返回 ${evidenceRows.length} 项。
 materialType 仅取 talking_head、factory、product、consumer_demo、general，不得返回 unknown；以镜头的主要可见主体为准。
 narrativeRole 仅取 hook、pain_point、capability_proof、product_intro、effect_proof、cta、transition，不得返回 unknown；第 1 镜必须为 hook，其余根据 purpose、字幕、台词和可见内容判断。
@@ -73,8 +83,28 @@ ${evidence}`;
   const indexes = repairRows.map(row => Number(row.index));
   if (repairRows.length !== evidenceRows.length
     || new Set(indexes).size !== evidenceRows.length
-    || indexes.some(index => !Number.isInteger(index) || index < 1 || index > evidenceRows.length)) {
+    || indexes.some(index => !Number.isInteger(index) || !evidenceRows.some(row => row.index === index))) {
     throw new Error(`exact_classification_repair_mismatch_${repairRows.length}_of_${evidenceRows.length}`);
+  }
+  if (materialOnly) {
+    for (const row of repairRows) {
+      const source = evidenceRows.find(item => item.index === Number(row.index))!;
+      const quote = String(row.classificationEvidence || '').trim();
+      const facts = [source.visual, ...(Array.isArray(source.observedFacts) ? source.observedFacts : [])]
+        .filter((value): value is string => typeof value === 'string');
+      if (!['talking_head','factory','product','consumer_demo','general','unknown'].includes(row.materialType)
+        || (row.materialType !== 'unknown' && (row.needsReview !== false || quote.length < 2
+          || !facts.some(value => value.includes(quote)))))
+        throw Error('exact_classification_material_evidence_invalid');
+    }
+    const merged = structuredClone(input.analysis);
+    for (const row of repairRows) {
+      const shot = merged.scriptDetails15s![Number(row.index) - 1]!;
+      shot.materialType = row.materialType;
+      shot.classificationEvidence = String(row.classificationEvidence || '').trim();
+      shot.needsReview = row.materialType === 'unknown' || row.needsReview === true;
+    }
+    return merged;
   }
   const normalized = mergeShotClassificationRepair(input.analysis, repairRows);
   const remainingError = exactVideoClassificationQualityError(normalized);

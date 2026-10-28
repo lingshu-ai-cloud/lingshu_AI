@@ -1,4 +1,4 @@
-import {isProductionBudgetBlock,PRODUCTION_BUDGET_DECISION_MESSAGE} from '../../shared/contracts/productionBudgetPolicy.js';
+import {isProductionBudgetBlock,productionBudgetDecisionMessage} from '../../shared/contracts/productionBudgetPolicy.js';
 export type ContentExecutionFailureClass =
   | 'network_timeout'
   | 'insufficient_balance'
@@ -46,7 +46,19 @@ export function classifyContentExecutionFailure(error: unknown, input: {
       publicReason: input.attempt >= reconciliationAttempts ? '供应商任务需要人工确认' : '供应商已受理，正在对账',
     };
   }
+  if (/(?:^|:)awaiting_theme_material(?::|$)/.test(lower)) {
+    const slots=raw.match(/(?:^|:)awaiting_theme_material:([^:\n]+)/i)?.[1]
+      ?.split(',').filter(id=>/^[\p{L}\p{N}_.-]{1,100}$/u.test(id)).slice(0,12).join('、');
+    return { failureClass: 'input_required', disposition: 'block', retryDelayMs: null, maxAttempts: 1,
+      publicReason: `对应分镜槽位${slots?`（${slots}）`:''}待补主题匹配且时长足够的素材；已有音频和素材已保留，补齐后继续原任务。` };
+  }
   if (/heygen_catalog_default_voice_unresolved/.test(lower)) return { failureClass: 'input_required', disposition: 'block', retryDelayMs: null, maxAttempts: 1, publicReason: 'HeyGen 尚未返回此人物的原配音色；人物授权仍有效，请刷新人物信息，或试听后主动选择声音' };
+  if (/subtitle_style_(?:blocked|unknown)/.test(lower)) return { failureClass: 'input_required', disposition: 'block', retryDelayMs: null, maxAttempts: 1,
+    publicReason: '字幕样式检查节点需要用户介入或确认，成片与抽样证据已保留。' };
+  if (/video_timeline_(?:blocked|unknown)/.test(lower)) return { failureClass: 'input_required', disposition: 'block', retryDelayMs: null, maxAttempts: 1,
+    publicReason: '音画同步检查节点需要处理，成片已保留。' };
+  if (/production_duration_decision_required/.test(lower)) return { failureClass: 'input_required', disposition: 'block', retryDelayMs: null, maxAttempts: 1,
+    publicReason: '整条成片的实际时长超过30秒，需要用户决定后续处理；已有音频和素材保留。' };
   if (/presenter_narration_capability_unavailable/.test(lower)) return { failureClass: 'input_required', disposition: 'block', retryDelayMs: null, maxAttempts: 1, publicReason: '人物授权仍有效；当前旁白声音能力未接通，需要核验同声配音或原口播音轨复用，换声前请试听确认' };
   if (/native_subtitle_|native_voice_timing_transform_changed|prepared_whole_voice_measured_cues_changed/.test(lower))
     return { failureClass: 'input_required', disposition: 'block', retryDelayMs: null, maxAttempts: 1,
@@ -95,7 +107,7 @@ export function classifyContentExecutionFailure(error: unknown, input: {
       publicReason: '成片已保留，部分质量检查未通过；请预览检查结果并修改，再继续验收。' };
   if(isProductionBudgetBlock(raw))return {
     failureClass:'input_required',disposition:'block',retryDelayMs:null,maxAttempts:1,
-    publicReason:PRODUCTION_BUDGET_DECISION_MESSAGE,
+    publicReason:productionBudgetDecisionMessage(raw),
   };
   if (/insufficient[_\s-]*(?:balance|credit)|余额不足|quota[_\s-]*(?:exceeded|insufficient)|monthly_budget_exceeded|budget_denied|budget_unavailable|预算不足/i.test(lower)) {
     return {

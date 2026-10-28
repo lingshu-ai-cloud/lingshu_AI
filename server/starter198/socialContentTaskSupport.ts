@@ -313,6 +313,7 @@ export async function refreshSocialTaskReferenceOutputs(input: {
   const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
   const verifiedContext = profile && (summary.brief.creationDialoguePlan?.selection.productIds.length || summary.brief.productIds?.length) ? guidedEnterpriseContext(profile, summary.brief.creationDialoguePlan?.selection.productIds ?? summary.brief.productIds!) : verifiedSocialScriptContext(profile, summary.brief.productId || summary.brief.productRef);
   const planning = {
+    materialRoutingPolicyVersion: summary.brief.materialRoutingPolicyVersion,
     targetDurationSeconds: summary.brief.targetDurationSeconds ?? null,
     budgetCny: productionBudgetMaximumCny(summary.brief),
     language: summary.brief.languages.some(language => /^en(?:glish)?$/i.test(language)) ? 'en' as const : 'zh' as const,

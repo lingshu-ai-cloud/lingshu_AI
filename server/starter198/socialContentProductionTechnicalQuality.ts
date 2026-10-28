@@ -12,6 +12,11 @@ import { socialRequestHash } from './socialContentValidation.js';
 import { writeExecutionStage } from './socialContentProductionRuntimeSupport.js';
 import type { readSocialTaskDetail } from './socialContentRecords.js';
 import type { probeSocialSceneMedia } from './socialSceneMediaHardProbe.js';
+import { staticSourceTimelineForHandoff } from './socialVideoStaticSourceTimeline.js';
+import type { SocialProductionAsset } from './socialContentProductionPlan.js';
+import { enforceVoiceDrivenVideoReview, VOICE_DRIVEN_VIDEO_POLICY } from './socialVideoQualityReview.js';
+import {readContentExecutionJob} from '../contentExecution/durableQueue.js';
+import {readAcceptedUnknownVideoQuality} from './socialVideoQualityAcceptance.js';
 
 type Execution = Parameters<typeof runSocialContentAutoProduction>[0];
 type Detail = NonNullable<Awaited<ReturnType<typeof readSocialTaskDetail>>>;
@@ -31,6 +36,7 @@ export async function inspectSocialContentProductionTechnicalQuality(input: {
   detail: Detail;
   agentWorkflow: NonNullable<Detail['agentWorkflow']>;
   contentHandoff: SocialDirectorContentHandoff;
+  assets: SocialProductionAsset[];
   renderResult: RenderResult;
   manifest: Record<string, unknown>;
   duration: number;
@@ -42,6 +48,28 @@ export async function inspectSocialContentProductionTechnicalQuality(input: {
   const { execution, detail, agentWorkflow, contentHandoff, renderResult } = input;
   await writeExecutionStage({ ...execution, stage: 'quality_check',
     message: '内容 Agent 正在检查成片画面、音轨和字幕。' });
+  const voiceDriven = input.manifest.videoWorkflowPolicy === VOICE_DRIVEN_VIDEO_POLICY;
+  let voiceDrivenReview: Awaited<ReturnType<typeof enforceVoiceDrivenVideoReview>> | undefined;
+  if (voiceDriven) {
+    const qualityInputHash=socialRequestHash({ mediaSha256: renderResult.receipt.sha256, timeline: input.timeline, policy: VOICE_DRIVEN_VIDEO_POLICY });
+    voiceDrivenReview = await enforceVoiceDrivenVideoReview({ outputPath: renderResult.outputPath, duration: input.duration,
+      scenes: input.timeline, subtitleAssSidecar: renderResult.receipt.subtitleAssSidecar,
+      inspectSubtitleStyleFrame: execution.runtime?.inspectSubtitleStyleFrame,
+      measureVideoTimeline: execution.runtime?.measureVideoTimeline ?? staticSourceTimelineForHandoff({
+        scenes: contentHandoff.scenes, assets: input.assets, runFfmpeg: execution.runtime?.runFfmpeg }),
+      runFfmpeg: execution.runtime?.runFfmpeg }, async report => {
+      await recordCurrentContentExecutionCheckpoint({ stage: 'social.video_node_quality', version: '1',
+      inputHash: qualityInputHash,
+        payload: report });
+    },async report=>{
+      const store=execution.repository.dataStore;if(!store)return null;
+      const job=await readContentExecutionJob(store,execution.tenantId,execution.taskId,execution.runId);
+      const receipt=job?readAcceptedUnknownVideoQuality(job,report.mediaSha256,qualityInputHash):null;
+      return receipt as unknown as Record<string,unknown>|null;
+    });
+    // Persist evidence before the established input-required/block projection.
+    // Unknown is never silently promoted to passed or sent to paid rework.
+  }
   const { quality, sceneQuality, audio, measuredDurationSeconds } = await executeSocialQualityStage({
     outputPath: renderResult.outputPath, duration: input.duration,
     scenes: input.timeline.map(clip => ({ start: clip.targetStart, end: clip.targetEnd })),
@@ -50,10 +78,11 @@ export async function inspectSocialContentProductionTechnicalQuality(input: {
     inspectScenes: execution.runtime?.inspectScenes ?? inspectRenderedScenes,
     runFfmpeg: execution.runtime?.runFfmpeg ?? runVisualFfmpeg,
     checkpointEnabled: Boolean(execution.graphPhase),
+    minimalVideoPolicy: voiceDriven,
     verifyDuration: input.preserveReferenceTimeline,
     expectedBgm: { ...input.bgmQualitySource, volume: contentHandoff.bgmSelection.volume },
   });
-  const finalFidelityFailures = socialProductionReferenceFidelityFailures(agentWorkflow, contentHandoff, {
+  const finalFidelityFailures = voiceDriven ? [] : socialProductionReferenceFidelityFailures(agentWorkflow, contentHandoff, {
     referenceAnalysis: detail.referenceVideoAnalysis,
     renderedDurationSeconds: measuredDurationSeconds ?? input.duration,
     renderedTimeline: input.timeline.map(clip => ({ sceneId: clip.sceneId,
@@ -77,7 +106,8 @@ export async function inspectSocialContentProductionTechnicalQuality(input: {
   }, { tenantId: execution.tenantId, taskId: execution.taskId, runId: execution.runId });
   const { technicalApproved, technicalFailures } = applyMeasuredSocialTechnicalQuality({ preliminaryApproved, technicalFailures: preliminaryFailures, mediaHardProbe });
   const technicalQualityReport: InitialSceneQualityReport = {
-    schemaVersion: 'initial-scene-quality.v1', policyVersion: SOCIAL_TECHNICAL_REVIEW_POLICY, visual: quality, scenes: sceneQuality,
+    ...(voiceDrivenReview ? { voiceDrivenReview } : {}),
+    schemaVersion: 'initial-scene-quality.v1', policyVersion: voiceDriven ? VOICE_DRIVEN_VIDEO_POLICY : SOCIAL_TECHNICAL_REVIEW_POLICY, visual: quality, scenes: sceneQuality,
     sourceTextReview: Array.isArray(input.manifest.sourceTextReview) ? input.manifest.sourceTextReview as InitialSceneQualityReport['sourceTextReview'] : [],
     audio: { ok: audio.ok && (!audio.bgm || audio.bgm.passed),
       error: !audio.ok ? '成片音轨无法解码' : audio.bgm?.failure ?? null,

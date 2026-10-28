@@ -18,10 +18,10 @@ function fixture(duration=30,maximum=productionBudgetLimitCny(duration)){
     assertCurrent:async()=>{},verifyRejection:async()=>false};
   return {root,ports,ledger:new SocialContentTaskBudget(root,ports),clean:()=>fs.rmSync(root,{recursive:true,force:true})};
 }
-test('the duration rate remains a default target; explicit confirmed limits survive creation and projection',()=>{
+test('new creation uses 15 yuan; legacy projections retain their explicit confirmed limits',()=>{
   for(const [duration,expected] of [[15,7.5],[30,15],[60,30]]){
     const brief=parseCreateSocialTask({title:'offline',objective:'production budget',mode:'instant',targetDurationSeconds:duration,perItemBudgetCny:10});
-    assert.equal(brief.perItemBudgetCny,10);assert.equal(defaultBrief({...brief,materialRoutingPolicyVersion:'type-aware.v1'}).perItemBudgetCny,10);
+    assert.equal(brief.perItemBudgetCny,15);assert.equal(defaultBrief({...brief,materialRoutingPolicyVersion:'type-aware.v1',perItemBudgetCny:10}).perItemBudgetCny,10);
     assert.equal(productionBudgetLimitCny(duration),expected);
   }
   assert.equal(productionBudgetDuration(),30);
@@ -39,7 +39,8 @@ test('60-second authorized film can reserve 30 yuan; a replay cannot enlarge its
 });
 test('an explicitly approved 100-yuan film keeps its ceiling across retries and blocks the next cent',async()=>{
   const brief=parseCreateSocialTask({title:'authorized film',objective:'production',mode:'instant',targetDurationSeconds:38,perItemBudgetCny:100});
-  assert.equal(brief.perItemBudgetCny,100);assert.equal(defaultBrief(brief).perItemBudgetCny,100);
+  assert.equal(brief.perItemBudgetCny,15);assert.equal(defaultBrief({...brief,materialRoutingPolicyVersion:'type-aware.v1',perItemBudgetCny:100}).perItemBudgetCny,100);
+  assert.equal(defaultBrief(brief).perItemBudgetCny,15,'new requests cannot treat a supplied higher cap as user approval');
   const f=fixture(38,100);try{
     await f.ledger.reserveBatch(scope,[operation('first:90')]);
     await f.ledger.markOutcome(scope,'first:90','unknown','pending-provider-receipt');

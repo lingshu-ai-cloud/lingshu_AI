@@ -21,12 +21,12 @@ test('artifact evidence and scene repair retain the root film ledger across rest
   await ledger.markOutcome(scope,'first-attempt','unknown','awaiting-bill');
   const policy={scope:{tenantId:'t',taskId:'film',runId:'repair',operationId:'revision-1',actorUserId:'owner'},quote:{provider:'qwen_image',model:'fixture',tariffSourceRef:'trusted-fixture',planHash:'c'.repeat(64),totalUpperBoundCny:2,recordHash:'d'.repeat(64),validUntil:'2099-01-01'},recordHash:'e'.repeat(64)} as SceneReworkCostPolicy;
   let checks=0;
-  const repair=await reserveSceneReworkFilmBudget({repository,policy,ledgerRoot:root,assertCurrent:async()=>{checks++;}});
+  const repair=await reserveSceneReworkFilmBudget({repository,policy,ledgerRoot:root,voiceDriven:true,assertCurrent:async()=>{checks++;}});
   await repair.beforeExecute();
-  const replay=await reserveSceneReworkFilmBudget({repository,policy,ledgerRoot:root,assertCurrent:async()=>{checks++;}});
+  const replay=await reserveSceneReworkFilmBudget({repository,policy,ledgerRoot:root,voiceDriven:true,assertCurrent:async()=>{checks++;}});
   await replay.beforeExecute();assert.ok(checks>0);
   const before=ledger.status(scope)!;assert.equal(before.retainedCny,15);assert.equal(before.entries.length,2);
-  await assert.rejects(reserveSceneReworkFilmBudget({repository,policy:{...policy,scope:{...policy.scope,operationId:'revision-2'}},ledgerRoot:root,assertCurrent:async()=>{}}),/production_budget_decision_required/);
+  await assert.rejects(reserveSceneReworkFilmBudget({repository,policy:{...policy,scope:{...policy.scope,operationId:'revision-2'}},ledgerRoot:root,voiceDriven:true,assertCurrent:async()=>{}}),/production_budget_decision_required/);
   assert.deepEqual(ledger.status(scope),before);
   const evidence=await readSocialProductionBudgetEvidence({execution:{repository,tenantId:'t',taskId:'film',runId:'repair',runtime:{productionBudgetReadPorts:{ledgerRoot:root}}} as never,brief:{targetDurationSeconds:30} as never,scenes:[{duration:{startSeconds:0,endSeconds:30}}]});
   assert.equal(evidence!.retainedCny,15);assert.equal(evidence!.budgetTaskId,'film');assert.equal(evidence!.maximumCny,15);

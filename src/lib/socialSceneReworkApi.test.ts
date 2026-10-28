@@ -24,3 +24,25 @@ test('actual production workspace binding requires matching scope and complete u
  for(const gap of [42,{},''])assert.throws(()=>parseSceneReworkAvailability({...a,productionWorkspaceGap:gap},scope),/scene_rework_workspace_invalid/);
  assert.equal(parseSceneReworkAvailability({...a,productionWorkspaceBinding:null,productionWorkspaceGap:'真实生产工作区尚未保存'},scope).productionWorkspaceGap,'真实生产工作区尚未保存');
 });
+test('voice-driven user selection retains real receipt statuses and rejects forged selection modes',()=>{
+ const voice={...a,selectionMode:'user_selected' as const,scenes:[{...a.scenes[0],status:'review_required' as const},a.scenes[1]]};
+ const actual=parseSceneReworkAvailability(voice,scope);
+ assert.equal(actual.scenes[0]!.status,'review_required');
+ assert.equal(sceneReworkSelectionAllowed(actual,['3']),true);
+ assert.equal(sceneReworkSelectionAllowed(actual,['2']),true);
+ assert.equal(sceneReworkSelectionAllowed(actual,['missing']),false);
+ assert.equal(sceneReworkSelectionAllowed(actual,['2','2']),false);
+ assert.throws(()=>parseSceneReworkAvailability({...voice,selectionMode:'anything'},scope),/scene_rework_response_invalid/);
+});
+test('overage choice submits only server preview identity and never a client price',async()=>{
+ const oldFetch=globalThis.fetch,oldStorage=globalThis.localStorage;
+ Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:()=>null}});
+ const preview={type:'scene_rework_admission_preview' as const,version:1 as const,...scope,affectedSceneIds:['3'],operationId:'op',executionRunId:'independent',cacheHash:'c'.repeat(64),planHash:'e'.repeat(64),localOnly:false,quote:null,gaps:[],previewHash:'d'.repeat(64)};
+ let calls=0;globalThis.fetch=async(url,init)=>{calls++;const body=JSON.parse(String(init?.body));
+  assert.deepEqual(body,{parentArtifactId:'artifact',affectedSceneIds:['3'],expectedCacheHash:'c'.repeat(64),expectedPreviewHash:'d'.repeat(64),...(calls===2?{overagePreviewHash:'f'.repeat(64)}:{})});
+  assert.match(String(url),calls===1?/overage-preview$/:/overage-confirm$/);
+  return new Response(JSON.stringify({item:calls===1?{previewHash:'f'.repeat(64),retainedCny:14,plannedCny:2,totalCny:16,extraCny:1}:{confirmed:true}}));};
+ try{const {socialSceneReworkApi}=await import('./socialSceneReworkApi');const p=await socialSceneReworkApi.overagePreview(scope,a,['3'],preview);assert.equal(p.extraCny,1);
+  await socialSceneReworkApi.confirmOverage(scope,a,['3'],preview,p);assert.equal(calls,2);
+ }finally{globalThis.fetch=oldFetch;Object.defineProperty(globalThis,'localStorage',{configurable:true,value:oldStorage});}
+});

@@ -1,3 +1,8 @@
+import {readMissingLabelRuntimeOverlay} from './socialContentMissingLabelOverlay.js';
+import {verifyMeasuredSupplyVoice,projectMeasuredDirectorScenes} from './socialContentMeasuredSupplyTimeline.js';
+import {VOICE_DRIVEN_BUDGET_STAGES_SCHEMA,beforeVoiceBudgetPlan,preserveBeforeVoiceOperations,voiceDrivenWholeTrackPlan,type VoiceDrivenBudgetStages} from './socialContentVoiceDrivenBudgetStages.js';
+import type {PreparedWholeVoice} from './socialContentPreparedWholeVoice.js';
+import type {SocialDirectorBriefScene} from '../../shared/contracts/socialContentAgentContract.js';
 import {CONTENT_GRAPH_VERSION,VISUAL_PRESENTER_GRAPH_VERSION} from '../contentExecution/langgraphIdentity.js';
 import {freezeSocialPresenterBudgetGroups} from './socialContentPresenterGroups.js';
 import { readCurrentConfirmedPresenterFirstFrame } from './socialContentPresenterFirstFrameCurrent.js';
@@ -35,7 +40,7 @@ import { createSocialContentVerifiedTariffReader } from '../lib/socialContentVer
 import { SocialContentTaskBudget, type SocialTaskBudgetScope } from '../lib/socialContentTaskBudget.js';
 import {resolveSocialContentCostLineage} from './socialContentCostLineage.js';
 import {automaticallyConfirmPresenterFirstFrameApproval,readConfirmedPresenterFirstFrameApproval} from './socialContentPresenterFirstFrameApproval.js';
-import {productionBudgetDuration,productionBudgetLimitCny,productionBudgetMaximumCny,productionBudgetExceeded,productionBudgetDecisionError} from '../../shared/contracts/productionBudgetPolicy.js';
+import {productionBudgetDuration,productionBudgetLimitCny,productionBudgetMaximumCny,productionBudgetExceeded,productionBudgetDecisionError,isVoiceDrivenFilm,assertVoiceDrivenFilmDuration} from '../../shared/contracts/productionBudgetPolicy.js';
 import {currentPresenterFirstFrameAssetProvenanceHash,loadPresenterMaster} from './socialContentPresenterFirstFrameRuntime.js';
 import {carryForwardWeeklyCandidateExactProductionCost} from '../runtime/weeklyCandidateExactProductionEscrowPorts.js';
 export interface ProductionBudgetReadPorts {
@@ -55,7 +60,7 @@ export interface ProductionBudgetReadPorts {
     readConfirmedPresenterFirstFrame?: (input:{scope:SocialTaskBudgetScope;group:FrozenPresenterGroup})=>Promise<Awaited<ReturnType<typeof readConfirmedPresenterFirstFrameApproval>>>;
     /** Produces the paid review images only after the complete whole-film
      * reservation exists. Dynamic presenter video remains confirmation-gated. */
-    preparePresenterFirstFrameReviews?: (input:{scope:SocialTaskBudgetScope;groups:FrozenPresenterGroup[];requirements:PaidStageRequirement[];intents:SocialApprovedBudgetPlan['paidOperations'];paidPermit:ReturnType<typeof createSocialContentPaidOperationPermit>})=>Promise<void>;
+    preparePresenterFirstFrameReviews?: (input:{scope:SocialTaskBudgetScope;groups:FrozenPresenterGroup[];requirements:PaidStageRequirement[];intents:SocialApprovedBudgetPlan['paidOperations'];paidPermit:ReturnType<typeof createSocialContentPaidOperationPermit>;directorScenes?:SocialDirectorBriefScene[]})=>Promise<void>;
     ledgerRoot?: string;
     carryForwardWeeklyExactCost?: typeof carryForwardWeeklyCandidateExactProductionCost;
     /** Pre-bound server-only v2 carry seam. The composition layer must close
@@ -91,6 +96,9 @@ export interface ProductionBudgetPreflightInput {
     /** Read canonical prices and retained spend without reservations, checkpoints
      * or provider submissions. Used to allocate the whole-film residual. */
     quoteOnly?: boolean;
+    /** Server-produced actual voice receipt; never supplied by an HTTP body. */
+    measuredVoice?: PreparedWholeVoice;
+    measuredDirectorScenes?: SocialDirectorBriefScene[];
     ports?: ProductionBudgetReadPorts;
 }
 export function initialVoicePlanReadOptions(mode: ProductionBudgetPreflightInput['initialVoiceExecutionMode']) {
@@ -249,14 +257,21 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     if (socialText(row.run_id) !== input.runId)
         return error('run_superseded');
     const graph = await import('./socialContentProductionGraph.js');
-    const loadDetail = () => input.graphApprovedContext ? graph.readSocialProductionGraphDetail(input, input.graphApprovedContext) : readSocialTaskDetail(input);
+    const loadAuthorityDetail = () => input.graphApprovedContext ? graph.readSocialProductionGraphDetail(input, input.graphApprovedContext) : readSocialTaskDetail(input);
+    const authorityDetail=await loadAuthorityDetail();
+    const labelOverlay=authorityDetail?await readMissingLabelRuntimeOverlay({...input,detail:authorityDetail,
+      planHash:input.graphApprovedContext?graph.socialProductionGraphInput(authorityDetail,input.graphApprovedContext).inputHash:undefined}):null;
+    const loadDetail = () => labelOverlay || input.graphApprovedContext ? (input.graphApprovedContext
+      ?graph.readSocialProductionGraphDetail({...input,missingLabelOverlay:labelOverlay??undefined,runtimeMaterialRecovery:true},input.graphApprovedContext)
+      :readSocialTaskDetail({...input,missingLabelOverlay:labelOverlay??undefined})) : loadAuthorityDetail();
     const detail = await loadDetail();
     if (!detail?.agentWorkflow || !input.supplyPlan)
         return error('approved_execution_missing');
-    const approved = input.graphApprovedContext?.agentWorkflow || detail.agentWorkflow, review = approved.executionPlanReview, plan = approved.executionPlan;
+    const approved = ((labelOverlay || input.graphApprovedContext && socialRequestHash(detail.agentWorkflow)!==socialRequestHash(authorityDetail?.agentWorkflow)) ? detail.agentWorkflow : input.graphApprovedContext?.agentWorkflow) || detail.agentWorkflow, review = approved.executionPlanReview, plan = approved.executionPlan;
     if (!review.approved || review.executionPlanId !== plan.executionPlanId || review.executionPlanVersion !== plan.version || review.directorBriefId !== approved.directorBrief.directorBriefId || review.directorBriefVersion !== approved.directorBrief.version)
         return error('approved_review_changed');
     const productionDurationSeconds=productionBudgetDuration({...brief,scenes:approved.directorBrief.scenes});
+    if (isVoiceDrivenFilm(detail.brief)) assertVoiceDrivenFilmDuration(productionDurationSeconds);
     const policyMaximumCny=productionBudgetMaximumCny({...brief,scenes:approved.directorBrief.scenes});
     const baselineHash = socialRequestHash(input.baseline);
     if (socialRequestHash(socialJson(row.script_baseline)) !== baselineHash)
@@ -264,6 +279,30 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     const binding = socialObject(job.checkpoints['social.executor']?.payload);
     const prior = job.checkpoints[STAGE];
     const priorPayload = socialObject(prior?.payload);
+    const stagesValue=socialObject(priorPayload?.voiceDrivenBudgetStages);
+    const budgetStages=stagesValue?.schemaVersion===VOICE_DRIVEN_BUDGET_STAGES_SCHEMA?stagesValue as unknown as VoiceDrivenBudgetStages:null;
+    if(budgetStages&&!isVoiceDrivenFilm(detail.brief))return error('voice_driven_budget_policy_changed');
+    if(budgetStages&&(!['before_voice','after_voice'].includes(budgetStages.phase)
+      ||paidProductionHash(budgetStages.originalDirectorScenes)!==paidProductionHash(approved.directorBrief.scenes)
+      ||paidProductionHash(budgetStages.originalSnapshot.shots)!==paidProductionHash(input.supplyPlan.shots)
+      ||(budgetStages.phase==='before_voice'&&(paidProductionHash(budgetStages.sourcePlan)!==paidProductionHash(priorPayload?.plan)
+        ||paidProductionHash(budgetStages.sourceRequirements)!==paidProductionHash(priorPayload?.requirements)))))return error('voice_driven_budget_stage_changed');
+    let measuredBindingHash:string|undefined,measuredDirectorScenes:SocialDirectorBriefScene[]|undefined;
+    if(input.measuredVoice){
+      if(!budgetStages)return error('historical_budget_cannot_adopt_measured_timeline');
+      const proof=await verifyMeasuredSupplyVoice({prepared:input.measuredVoice,scope:budgetStages.originalSnapshot.scope,scenes:approved.directorBrief.scenes,spokenScenes:input.baseline.scenes});
+      for(const receipt of proof.sourceReceipts){
+        const intent=budgetStages.sourcePlan.paidOperations.find(item=>item.operationId===receipt.operationId&&item.stage==='tts');
+        const raw=JSON.parse(fs.readFileSync(receipt.receiptRef,'utf8'));
+        if(!intent||raw.inputContractHash!==intent.inputContractHash||raw.provider!==intent.provider||raw.model!==intent.model)return error('measured_budget_original_voice_intent_changed');
+      }
+      measuredBindingHash=paidProductionHash(proof);
+      measuredDirectorScenes=projectMeasuredDirectorScenes({scenes:approved.directorBrief.scenes,timeline:proof.timeline});
+      if(!input.measuredDirectorScenes||paidProductionHash(measuredDirectorScenes)!==paidProductionHash(input.measuredDirectorScenes))return error('measured_director_projection_changed');
+      if(budgetStages.phase==='after_voice'&&budgetStages.measuredBindingHash!==measuredBindingHash)return error('measured_budget_evidence_changed');
+    }
+    const extendingMeasuredBudget=Boolean(budgetStages?.phase==='before_voice'&&input.measuredVoice&&!input.recoveryOnly);
+
     const voiceAmendment = job.checkpoints[VOICE_ROUTE_AMENDMENT_STAGE]?.payload as VoiceRouteAmendment | undefined;
     if (voiceAmendment && voiceAmendment.state !== 'active') return error('voice_route_amendment_pending');
     // A retry of the same run must retain its original paid-operation scope.
@@ -279,13 +318,20 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
       authorization: async()=>{throw Error('budget_probe_read_only');}, quote:async()=>{throw Error('budget_probe_read_only');},
       assertCurrent:async()=>{},verifyRejection:async()=>false,
     }).status({tenantId:input.tenantId,taskId:input.taskId,...inheritedBudgetScope,runId:input.runId,planHash:calculatedPlanHash});
+    if(input.measuredVoice&&budgetStages)for(const receiptRef of input.measuredVoice.sourceReceiptRefs){
+      const raw=JSON.parse(fs.readFileSync(receiptRef,'utf8')),entry=ledgerProbe?.entries.find(item=>item.operationId===raw.operationId);
+      const intent=budgetStages.sourcePlan.paidOperations.find(item=>item.operationId===raw.operationId&&item.stage==='tts');
+      if(!entry||!intent||!['accepted','unknown','completed'].includes(entry.status)||entry.runId!==input.runId
+        ||entry.planHash!==budgetStages.sourcePlan.scope.planHash||entry.fingerprint!==socialPaidIntentOperation(budgetStages.sourcePlan.scope,intent).fingerprint)return error('measured_budget_original_voice_payment_missing');
+    }
     const fundedPlanHashes=[...new Set((ledgerProbe?.entries||[]).filter(entry=>(entry.executionTaskId??costLineage.budgetTaskId)===input.taskId&&entry.runId===input.runId&&entry.status!=='rejected').map(entry=>entry.planHash))];
     const planHash = fundedPlanHashes.length===1 ? fundedPlanHashes[0]! : calculatedPlanHash;
-    const graphBindingHash=input.graphApprovedContext?graph.socialProductionGraphInput(detail,input.graphApprovedContext).inputHash:null;
+    const graphBindingHash=input.graphApprovedContext?graph.socialProductionGraphInput(authorityDetail!,input.graphApprovedContext).inputHash:null;
     if (input.graphApprovedContext && graphBindingHash !== planHash&&!graph.matchesAuthorizedCorrectionContext(job,input.graphApprovedContext,planHash,ledgerProbe?.correctionAuthorization?.recordHash,graphBindingHash || undefined))
         return error('graph_binding_changed');
     const initialWorkflowHash = socialRequestHash({ plan: detail.agentWorkflow.executionPlan, review: detail.agentWorkflow.executionPlanReview, director: detail.agentWorkflow.directorBrief });
     const scope: SocialTaskBudgetScope = { tenantId: input.tenantId, taskId: input.taskId, ...inheritedBudgetScope,runId: input.runId, planHash };
+    if(budgetStages&&(paidProductionHash(budgetStages.originalSnapshot.scope)!==paidProductionHash(scope)||paidProductionHash(budgetStages.sourcePlan.scope)!==paidProductionHash(scope)))return error('voice_driven_budget_scope_changed');
     const assertCurrent = async () => {
         await assertCurrentContentExecutionActive();
         await assertSocialContentOrderActive(store,input.tenantId,input.taskId);
@@ -295,7 +341,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         if (socialText(current.run_id) !== input.runId || socialRequestHash(socialObject(socialJson(current.brief))) !== socialRequestHash(brief))
             return error('task_authority_changed');
         const live = await loadDetail();
-        if (!live?.agentWorkflow || (input.graphApprovedContext ? graph.socialProductionGraphInput(live, input.graphApprovedContext).inputHash !== graphBindingHash : socialRequestHash({ plan: live.agentWorkflow.executionPlan, review: live.agentWorkflow.executionPlanReview, director: live.agentWorkflow.directorBrief }) !== initialWorkflowHash))
+        if (!live?.agentWorkflow || (input.graphApprovedContext ? graph.socialProductionGraphInput((await loadAuthorityDetail())!, input.graphApprovedContext).inputHash !== graphBindingHash : socialRequestHash({ plan: live.agentWorkflow.executionPlan, review: live.agentWorkflow.executionPlanReview, director: live.agentWorkflow.directorBrief }) !== initialWorkflowHash))
             return error('approved_review_changed');
         const active = await readContentExecutionJob(store, input.tenantId, input.taskId, input.runId);
         if (paidProductionHash(active?.checkpoints[VOICE_ROUTE_AMENDMENT_STAGE]?.payload || null) !== paidProductionHash(voiceAmendment || null)) return error('voice_route_amendment_changed');
@@ -322,6 +368,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     // code or routing changes and spend beyond the user's original cap.
     if (input.quoteOnly && (input.recoveryOnly || prior)) return error('quote_requires_unfunded_plan');
     if (input.recoveryOnly || prior) {
+      if(!extendingMeasuredBudget){
         // Read-only recovery cannot obtain a new quote, reserve or reset task expenses.
         if (!prior || prior.inputHash !== planHash)
             return error('existing_whole_film_reservation_missing');
@@ -398,7 +445,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
             if(operations.length!==operationIds.length)return error('presenter_background_original_reservation_missing');
             if(!input.ports?.preparePresenterFirstFrameReviews)return error('presenter_background_recovery_port_missing');
             const paidPermit=createSocialContentPaidOperationPermit({scope,operations,intents:frozenPlan.paidOperations,ledger,root:path.join(input.ports.ledgerRoot||process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR||'data/social-content-task-budget','.permits'),assertCurrent,assertNewSubmit:input.ports.assertNewSubmit});
-            await input.ports.preparePresenterFirstFrameReviews({scope,groups:recoveryPresenterGroups,requirements,intents:frozenPlan.paidOperations,paidPermit});backgroundRestored=true;
+            await input.ports.preparePresenterFirstFrameReviews({scope,groups:recoveryPresenterGroups,requirements,intents:frozenPlan.paidOperations,paidPermit,directorScenes:measuredDirectorScenes??(budgetStages?.phase==='after_voice'?budgetStages.measuredDirectorScenes:undefined)});backgroundRestored=true;
           }
         }
         const confirmedApprovals=new Map<string,Awaited<ReturnType<typeof readConfirmedPresenterFirstFrameApproval>>>();
@@ -469,9 +516,10 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         const paidPermit = createSocialContentPaidOperationPermit({scope,operations,intents:activeIntents,
           ledger,root:path.join(input.ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget','.permits'),assertCurrent,
           assertNewSubmit:input.ports?.assertNewSubmit});
-        if(!backgroundRestored)await input.ports?.preparePresenterFirstFrameReviews?.({scope,groups:recoveryPresenterGroups,requirements,intents:activeIntents,paidPermit});
+        if(!backgroundRestored)await input.ports?.preparePresenterFirstFrameReviews?.({scope,groups:recoveryPresenterGroups,requirements,intents:activeIntents,paidPermit,directorScenes:measuredDirectorScenes??(budgetStages?.phase==='after_voice'?budgetStages.measuredDirectorScenes:undefined)});
         await assertCurrent();
-        return {status:'reserved' as const,scope,reserved:{scope,operations,intents:activeIntents,quotes:activeQuotes,status:activeStatus,ledger},paidPermit,requirements,routeBindings:activeRouteBindings};
+        return {status:'reserved' as const,voiceDrivenBudgetStage:budgetStages?.phase,scope,reserved:{scope,operations,intents:activeIntents,quotes:activeQuotes,status:activeStatus,ledger},paidPermit,requirements,routeBindings:activeRouteBindings};
+      }
     }
     const ports = input.ports, assetInputs: FrozenPaidProduction['assets'] = [];
     const cached = job.checkpoints['social.material_analysis'];
@@ -496,12 +544,17 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         assetInputs.push({ assetId: asset.id, contentHash: sha, type: asset.type, verifiedAnalysisRef: reuseRef, analysisMode: asset.type === 'image' ? 'image' : 'qwen_batches', frameCount, analysisBatchFrameCounts: batches });
     }
     const lines = input.baseline.scenes.map(scene => (scene.voiceover || scene.narration || '').trim()).filter(Boolean);
-    const voice = lines.length ? await (ports?.readVoicePlan || (async () => null))(
+    if(extendingMeasuredBudget){
+      const currentVoice=await ports?.readVoicePlan?.(input.baseline,initialVoicePlanReadOptions(input.initialVoiceExecutionMode));
+      if(!currentVoice||paidProductionHash(voiceDrivenWholeTrackPlan(currentVoice,true))!==paidProductionHash(budgetStages!.originalSnapshot.voice))return error('measured_budget_voice_route_changed');
+    }
+    const selectedVoicePlan = extendingMeasuredBudget ? budgetStages!.originalSnapshot.voice : lines.length ? await (ports?.readVoicePlan || (async () => null))(
         input.baseline,
         initialVoicePlanReadOptions(input.initialVoiceExecutionMode),
     ) : { mode: 'none' as const, lines: [], requiresClone: false, allowFallback: false, requiresAsr: false, reuseReceiptRef: null };
-    if (!voice)
+    if (!selectedVoicePlan)
         return error('selected_voice_runtime_route_missing');
+    const voice=voiceDrivenWholeTrackPlan(selectedVoicePlan,isVoiceDrivenFilm(detail.brief));
     // Repair allowance bounds incremental work, not a new whole-film ceiling.
     // The original lower ceiling and every retained charge remain authoritative.
     const amount = Math.min(policyMaximumCny,costLineage.kind==='creative_repair'?costLineage.originalMaximumCny??ledgerProbe?.limitCny??NaN:policyMaximumCny), retry = Number(brief?.retryReserveCny || 0);
@@ -517,8 +570,9 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     // the retry impossible because recovery is deliberately read-only. Runtime
     // still exposes attempt one only after attempt-zero QA fails.
     const authorizedRetryShots = productRetryReservationShotIds(input.supplyPlan.shots, directedRetryShotIds);
-    const initialFrozenScenes:FrozenPaidProduction['scenes']=approved.directorBrief.scenes.map(scene => ({ ...(voice.mode === 'continuous' && voice.requiresAlignment && input.supplyPlan?.shots.some(shot => shot.shotId === scene.sceneId && shot.sourceStrategy === 'authorized_digital_presenter'&&shot.digitalHumanPlan?.method!=='reenact') ? {presenterSpeech:'whole_track' as const} : {}), shotId: scene.sceneId, durationSeconds: scene.duration.endSeconds - scene.duration.startSeconds, spokenText: input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.voiceover || input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.narration || '' }));
-    const {scenes:frozenScenes,presenterGroups}=freezeSocialPresenterBudgetGroups({taskId:input.taskId,scenes:initialFrozenScenes,directorScenes:approved.directorBrief.scenes,shots:input.supplyPlan.shots,reference:detail.referenceVideoAnalysis,aspectRatio:detail.brief.aspectRatio||'9:16',groupingPolicy:binding?.executor==='langgraph'&&(binding.graphVersion===VISUAL_PRESENTER_GRAPH_VERSION||binding.graphVersion===CONTENT_GRAPH_VERSION)?'visual.v2':'legacy.v1'});
+    const executionDirectorScenes=measuredDirectorScenes??approved.directorBrief.scenes;
+    const initialFrozenScenes:FrozenPaidProduction['scenes']=executionDirectorScenes.map(scene => ({ ...((voice.mode === 'continuous'||isVoiceDrivenFilm(detail.brief)) && voice.requiresAlignment && input.supplyPlan?.shots.some(shot => shot.shotId === scene.sceneId && shot.sourceStrategy === 'authorized_digital_presenter'&&shot.digitalHumanPlan?.method!=='reenact') ? {presenterSpeech:'whole_track' as const} : {}), shotId: scene.sceneId, durationSeconds: scene.duration.endSeconds - scene.duration.startSeconds, spokenText: input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.voiceover || input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.narration || '' }));
+    const {scenes:frozenScenes,presenterGroups}=freezeSocialPresenterBudgetGroups({taskId:input.taskId,scenes:initialFrozenScenes,directorScenes:executionDirectorScenes,shots:input.supplyPlan.shots,reference:detail.referenceVideoAnalysis,aspectRatio:detail.brief.aspectRatio||'9:16',groupingPolicy:binding?.executor==='langgraph'&&(binding.graphVersion===VISUAL_PRESENTER_GRAPH_VERSION||binding.graphVersion===CONTENT_GRAPH_VERSION)?'visual.v2':'legacy.v1'});
     let automaticWeeklyG5=false;
     const weeklyAuthority=socialObject(brief?._weeklyAuthority),frozenWeek=socialObject(weeklyAuthority?.weeklyPackage),frozenPublication=socialObject(weeklyAuthority?.publicationTask);
     if(costLineage.kind==='original'&&frozenWeek&&frozenPublication){
@@ -534,7 +588,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
       }
     }
     const snapshot: FrozenPaidProduction = { scope, baselineHash, recordHash: '', approval: { approved: true, reviewRef: review.reviewId, sourceHash: '', planHash }, authorization: { ref: `task-budget:${socialRequestHash({ tenantId: input.tenantId, taskId: input.taskId, createdBy: row.created_by, budget: amount, retry })}`, productionDurationSeconds, maximumCny: amount }, maximumRetries: retry > 0 || authorizedRetryShots.length ? 1 : 0, directedRetryShotIds: authorizedRetryShots,
-        scenes:frozenScenes, presenterGroups, shots: input.supplyPlan.shots, assets: assetInputs, voice, finalReview: automaticWeeklyG5?'paid_capacity':'local' };
+        scenes:frozenScenes, presenterGroups, shots: input.supplyPlan.shots, assets: extendingMeasuredBudget?budgetStages!.originalSnapshot.assets:assetInputs, voice, finalReview: automaticWeeklyG5?'paid_capacity':'local' };
     if(costLineage.maximumAdditionalCostCny!==null)snapshot.authorization.maximumExecutionCny=costLineage.maximumAdditionalCostCny;
     snapshot.approval.sourceHash = paidProductionApprovalHash(snapshot);
     snapshot.recordHash = paidProductionRecordHash(snapshot);
@@ -610,10 +664,16 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
             // local provider reader must bind real bytes and exact scene requirements.
             return localSupplyProof(req);
         } });
-    const planned = await planner.plan(scope);
+    let planned = await planner.plan(scope);
     if (!planned.plan)
         return error(planned.gaps.join('|'));
-    if (!planned.plan.paidOperations.length) {
+    if(extendingMeasuredBudget){
+      const preserved=preserveBeforeVoiceOperations({stages:budgetStages!,plan:planned.plan!,requirements:planned.requirements,routeBindings,shots:input.supplyPlan.shots});
+      planned={...planned,plan:preserved.plan,requirements:preserved.requirements};
+      Object.assign(routeBindings,preserved.routeBindings);
+    }
+    const stagedFresh=!prior&&isVoiceDrivenFilm(detail.brief)&&presenterGroups.length>0&&planned.requirements.some(requirement=>requirement.stage==='voice_alignment');
+    if (!planned.plan!.paidOperations.length) {
         if(!input.quoteOnly&&productionBudgetExceeded(ledgerProbe?.retainedCny??0,Math.min(amount,ledgerProbe?.limitCny??amount)))return error('production_budget_decision_required:local_repair_total_exceeded');
         if (input.quoteOnly) return {status: 'quoted' as const, scope, items: [], maximumCny: Math.min(amount, ledgerProbe?.limitCny ?? amount), retainedCny: ledgerProbe?.retainedCny || 0, wholeTaskUpperBoundCny: ledgerProbe?.retainedCny || 0};
         return { status: 'local' as const, scope };
@@ -631,7 +691,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     // keeping over-budget retries free, the stage breakdown is durable in the
     // graph node failure reason and makes the degradation decision auditable.
     const preview = await authority.prepare(scope);
-    const previewItems = planned.plan.paidOperations.map(intent => {
+    const previewItems = planned.plan!.paidOperations.map(intent => {
       const quote=preview.quotes.get(intent.operationId);
       if(!quote || !Number.isFinite(quote.upperBoundCny) || quote.upperBoundCny<=0 || !quote.quoteRef) return error(`formal_paid_route_quote_missing:${intent.operationId}`);
       return ({
@@ -650,22 +710,31 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
 
     const revisionCeiling=costLineage.maximumAdditionalCostCny===null?Infinity:retained+costLineage.maximumAdditionalCostCny-childRetained;
     if (input.quoteOnly) return { status: 'quoted' as const, scope, items: previewItems,
-      maximumCny: Math.min(amount, planned.plan.maximumCny, ledgerProbe?.limitCny ?? amount,revisionCeiling),
+      maximumCny: Math.min(amount, planned.plan!.maximumCny, ledgerProbe?.limitCny ?? amount,revisionCeiling),
       retainedCny: retained, wholeTaskUpperBoundCny };
     if(productionBudgetExceeded(wholeTaskUpperBoundCny,revisionCeiling===Infinity?Number.MAX_SAFE_INTEGER:revisionCeiling))return error('revision_incremental_allowance_exceeded');
-    if (formalPaidRouteExceedsInternalBudget(input.tenantId, wholeTaskUpperBoundCny, Math.min(planned.plan.maximumCny,ledgerProbe?.limitCny??amount),productionDurationSeconds)) {
+    if (formalPaidRouteExceedsInternalBudget(input.tenantId, wholeTaskUpperBoundCny, Math.min(planned.plan!.maximumCny,ledgerProbe?.limitCny??amount),productionDurationSeconds)) {
       return error('formal_paid_route_budget_exceeded:'+productionBudgetDecisionError({maximumCny:Math.min(amount,ledgerProbe?.limitCny??amount),retainedCny:retained,plannedAdditionalCny:wholeTaskUpperBoundCny-retained,totalCny:wholeTaskUpperBoundCny}).message);
+    }
+    let nextStages:VoiceDrivenBudgetStages|undefined;
+    if(stagedFresh){
+      const source=beforeVoiceBudgetPlan({plan:planned.plan!,requirements:planned.requirements,routeBindings,shots:input.supplyPlan.shots});
+      nextStages={schemaVersion:VOICE_DRIVEN_BUDGET_STAGES_SCHEMA,phase:'before_voice',originalSnapshot:snapshot,originalDirectorScenes:approved.directorBrief.scenes,sourcePlan:source.plan,sourceRequirements:source.requirements,sourceRoutes:source.routeBindings};
+      planned={...planned,plan:source.plan,requirements:source.requirements};
+    }else if(extendingMeasuredBudget){
+      nextStages={...budgetStages!,phase:'after_voice',measuredBindingHash,measuredDirectorScenes};
     }
     const reserved = await authority.prepareAndReserve(scope);
     const formalPaidRouteUpperBoundCny=Object.values(reserved.quotes).reduce((sum,quote)=>sum+quote.upperBoundCny,0);
-    if(formalPaidRouteExceedsInternalBudget(input.tenantId, reserved.status.retainedCny, Math.min(planned.plan.maximumCny,reserved.status.limitCny),productionDurationSeconds))
+    if(formalPaidRouteExceedsInternalBudget(input.tenantId, reserved.status.retainedCny, Math.min(planned.plan!.maximumCny,reserved.status.limitCny),productionDurationSeconds))
       return error(`formal_paid_route_budget_exceeded:${formalPaidRouteUpperBoundCny.toFixed(6)}`);
     await recordCurrentContentExecutionCheckpoint({ stage: STAGE, version: '1', inputHash: planHash, payload: { scopeHash: paidProductionHash(scope), baselineHash,
-      paidBaselineContractHash: paidBaselineContractHash(input.baseline), presenterVoiceBinding:voice.presenterBinding || null, operationIds: reserved.operations.map(o => o.operationId), requirements: planned.requirements, routeBindings, quotes: reserved.quotes, formalPaidRouteUpperBoundCny, wholeTaskRetainedCny:reserved.status.retainedCny, plan: planned.plan } });
+      paidBaselineContractHash: paidBaselineContractHash(input.baseline), presenterVoiceBinding:voice.presenterBinding || null, operationIds: reserved.operations.map(o => o.operationId), requirements: planned.requirements, routeBindings, quotes: reserved.quotes, formalPaidRouteUpperBoundCny, wholeTaskRetainedCny:reserved.status.retainedCny, plan: planned.plan!,...(nextStages?{voiceDrivenBudgetStages:nextStages}:{}) } });
     const paidPermit = createSocialContentPaidOperationPermit({ ...reserved, root: path.join(ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget', '.permits'), assertCurrent,
       assertNewSubmit:ports?.assertNewSubmit });
-    await input.ports?.preparePresenterFirstFrameReviews?.({scope,groups:presenterGroups,requirements:planned.requirements,intents:planned.plan.paidOperations,paidPermit});
+    const activePresenterGroups=stagedFresh?[]:presenterGroups;
+    await input.ports?.preparePresenterFirstFrameReviews?.({scope,groups:activePresenterGroups,requirements:planned.requirements,intents:planned.plan!.paidOperations,paidPermit,directorScenes:executionDirectorScenes});
     const approvalReader=input.ports?.readConfirmedPresenterFirstFrame??(async({scope,group}:{scope:SocialTaskBudgetScope;group:FrozenPresenterGroup})=>readOrAutomaticallyConfirmPresenterFirstFrame(store,scope,group));
-    for(const group of presenterGroups)if(!await approvalReader({scope,group}))return error(`presenter_first_frame_confirmation_missing:${group.groupId}`);
-    return { status: 'reserved' as const, scope, reserved, paidPermit, requirements: planned.requirements, routeBindings };
+    for(const group of activePresenterGroups)if(!await approvalReader({scope,group}))return error(`presenter_first_frame_confirmation_missing:${group.groupId}`);
+    return { status: 'reserved' as const, voiceDrivenBudgetStage:nextStages?.phase, scope, reserved, paidPermit, requirements: planned.requirements, routeBindings };
 }

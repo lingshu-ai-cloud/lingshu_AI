@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { createHash } from 'node:crypto';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { weeklyVideoQualityEvidence } from './weeklyVideoQualityEvidence.js';
+const digest = (value: string) => createHash('sha256').update(value).digest('hex');
+
+test('only original blocked render with verified bytes exposes whitelisted frame observations', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'quality-projection-'));
+  const roots = { render: path.join(root, 'render'), quality: path.join(root, 'quality') };
+  const mediaHash = digest('video'), frameHash = digest('frame');
+  const scope = digest(JSON.stringify(['tenant', 'task', 'run']));
+  const renderPath = path.join(roots.render, scope, `${mediaHash}.mp4`), framePath = path.join(roots.quality, mediaHash, `5-${frameHash}.png`);
+  await mkdir(path.dirname(renderPath), { recursive: true }); await mkdir(path.dirname(framePath), { recursive: true });
+  await writeFile(renderPath, 'video'); await writeFile(framePath, 'frame');
+  const report = { schemaVersion:'voice-driven-video-quality.v1',mediaSha256:mediaHash,timeline:{status:'unknown',reason:'/secret'},subtitleStyle:{schemaVersion:'subtitle-style-sampling.v1',mediaSha256:mediaHash,status:'blocked',samples:[{atSeconds:1,frameSha256:frameHash,framePath,subtitlePresent:true,font:true,fontSize:false,color:true,reason:'/secret'}]}};
+  const job = {tenantId:'tenant',taskId:'task',runId:'run',status:'blocked',lastError:'user_input_required:subtitle_style_blocked:private',checkpoints:{'social.graph_render':{version:'2',payload:{sha256:mediaHash,cachePath:renderPath}},'social.video_node_quality':{version:'1',payload:report}}} as any;
+  const row = {tenant_id:'tenant',task_id:'task',run_id:'run'};
+  const store = {list:async()=>({items:[row],totalItems:1})} as any;
+  const read = () => weeklyVideoQualityEvidence(store,job,roots);
+  const result = await read(); assert.deepEqual(result,{mediaSha256:mediaHash,subtitleStatus:'blocked',timelineStatus:'unknown',samples:[{frameSha256:frameHash,atSeconds:1,subtitlePresent:true,font:true,fontSize:false,color:true}]});
+  assert.doesNotMatch(JSON.stringify(result),/secret|framePath|\.png/);
+  row.run_id='other'; assert.equal(await read(),null); row.run_id='run';
+  job.status='running'; assert.equal(await read(),null); job.status='blocked';
+  report.mediaSha256=digest('other'); assert.equal(await read(),null); report.mediaSha256=mediaHash;
+  await writeFile(framePath,'tampered'); assert.equal(await read(),null);
+  await writeFile(framePath,'frame'); await writeFile(renderPath,'tampered'); assert.equal(await read(),null);
+});

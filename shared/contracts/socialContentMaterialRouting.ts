@@ -62,6 +62,7 @@ export interface SocialProductSceneReplicationSpec {
 export interface SocialMaterialRouting {
   reusePolicy?: import('../socialMaterialReusePolicy.js').SocialMaterialReusePolicy;
   schemaVersion: 'social-material-routing.v1';
+  pendingReason?: 'awaiting_shoot' | 'awaiting_theme_material' | 'material_label_unresolved';
   materialType: BenchmarkMaterialType;
   policy: 'local_only' | 'local_first_product_i2v' | 'authorized_presenter' | 'illustrative_video';
   illustrativeVideo?: { purpose: 'design' | 'shopping' | 'meeting'; provider: 'seedance'; durationSeconds: number; disclosure: 'AI 场景示意' };

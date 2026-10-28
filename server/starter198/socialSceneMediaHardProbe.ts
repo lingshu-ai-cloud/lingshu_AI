@@ -159,6 +159,7 @@ async function sensitiveScreenEvidence(filePath:string,start:number,end:number):
 /** Byte-bound container, codec, frame-window, PCM and conservative visible-caption checks. It cannot establish lip sync or visual privacy. */
 export async function probeSocialSceneMedia(input:{filePath:string;manifest:Record<string,unknown>;frozenVoiceCues?:unknown[];subtitleRenderEvidence?:{schemaVersion:'rendered-subtitle-track.v1';outputSha256:string;assSha256:string|null;filterApplied:boolean};frameRenderEvidence?:{schemaVersion:'renderer-frame-attestation.v1';outputSha256:string;fps:30;durationSeconds:number;expectedFrames:number};captionMaskSources?:{baselinePath:string;baselineSha256:string;assPath:string;assSha256:string}}):Promise<SocialSceneMediaHardProbe>{
  const bytes=await readFile(input.filePath),mediaSha256=createHash('sha256').update(bytes).digest('hex');
+ const voiceDriven=input.manifest.videoWorkflowPolicy==='voice-driven-slots.v1';
  const timeline=Array.isArray(input.manifest.timeline)?input.manifest.timeline.map(socialObject):[];
  const timelineHash=socialRequestHash(timeline);
  const spec=socialObject(input.manifest.spec),expectedDuration=number(spec?.duration);
@@ -175,8 +176,8 @@ export async function probeSocialSceneMedia(input:{filePath:string;manifest:Reco
  const subtitles=socialObject(input.manifest.subtitles),rawCues=Array.isArray(subtitles?.cues)?subtitles.cues:[];
  const cues=rawCues.map(socialObject).flatMap(cue=>{const start=number(cue?.start),end=number(cue?.end),text=typeof cue?.text==='string'?cue.text:'';return start!==null&&end!==null&&text?[{start,end,text}]:[];});
  const captionManifestInvalid=rawCues.length!==cues.length;
- const captionTimeline=auditCaptionTimeline({duration:expectedDuration,timeline:timeline.map(item=>item??{}),rawCues});
- const captionSpeechAlignment=auditCaptionSpeechAlignment({duration:expectedDuration,rawCaptions:rawCues,rawVoiceCues:input.frozenVoiceCues});
+ const captionTimeline=voiceDriven?undefined:auditCaptionTimeline({duration:expectedDuration,timeline:timeline.map(item=>item??{}),rawCues});
+ const captionSpeechAlignment=voiceDriven?undefined:auditCaptionSpeechAlignment({duration:expectedDuration,rawCaptions:rawCues,rawVoiceCues:input.frozenVoiceCues});
  const sensitiveFrozenSpeechEvidence=auditSensitiveFrozenSpeech(input.frozenVoiceCues);
  const frameContract=readSocialRenderFrameContract(input.manifest),frameReceipt=input.frameRenderEvidence;
  const trustedFrames=frameContract&&frameReceipt?.schemaVersion==='renderer-frame-attestation.v1'&&frameReceipt.outputSha256===mediaSha256&&frameReceipt.fps===frameContract.fps&&frameReceipt.durationSeconds===frameContract.durationSeconds&&frameReceipt.expectedFrames===frameContract.expectedFrames?frameContract.expectedFrames:undefined;
@@ -188,14 +189,14 @@ export async function probeSocialSceneMedia(input:{filePath:string;manifest:Reco
  const renderTrack=input.subtitleRenderEvidence;
  const subtitleTrack:NonNullable<SocialSceneMediaHardProbe['subtitleTrack']>=renderTrack?.schemaVersion==='rendered-subtitle-track.v1'&&renderTrack.outputSha256===mediaSha256&&renderTrack.filterApplied&&/^[a-f0-9]{64}$/.test(renderTrack.assSha256??'')?{status:'rendered',assSha256:renderTrack.assSha256,reason:'渲染器报告 ASS 字节摘要和字幕滤镜，且回执绑定最终 MP4 字节'}:{status:'unknown',assSha256:null,reason:'缺少与最终 MP4 字节绑定的渲染器 ASS 字幕轨回执'};
  const maskSources=input.captionMaskSources;
- const captionMaskAudit=maskSources&&subtitleTrack.status==='rendered'&&subtitleTrack.assSha256===maskSources.assSha256&&expectedDuration!==null&&width&&height
+ const captionMaskAudit=!voiceDriven&&maskSources&&subtitleTrack.status==='rendered'&&subtitleTrack.assSha256===maskSources.assSha256&&expectedDuration!==null&&width&&height
   ?await import('./socialCaptionMaskFrameAudit.js').then(module=>module.auditCaptionMaskFrames({finalPath:input.filePath,baselinePath:maskSources.baselinePath,assPath:maskSources.assPath,expectedFinalSha256:mediaSha256,expectedBaselineSha256:maskSources.baselineSha256,expectedAssSha256:maskSources.assSha256,durationSeconds:expectedDuration,width,height,frozenCues:cues})).catch(()=>undefined)
   :undefined;
  // Exhaustive OCR is only attempted for an independently frame-counted short
  // render (at most 10 seconds / 300 frames). Longer films must not spend
  // minutes on an observation that cannot itself approve G4. Matching text may be packaging
  // or other scene text, so it must never turn the G4 caption check positive.
- const captionDecodedFrameAudit=shouldRunDefaultCaptionDecodedFrameAudit({subtitleRendered:subtitleTrack.status==='rendered',coverageStatus:finalPrivacyCoverage?.status,coverageSha256:finalPrivacyCoverage?.finalMp4Sha256,mediaSha256,decodedFrames:finalPrivacyCoverage?.video.decodedFrames,expectedDurationSeconds:expectedDuration,cueCount:cues.length,manifestValid:!captionManifestInvalid})
+ const captionDecodedFrameAudit=!voiceDriven&&shouldRunDefaultCaptionDecodedFrameAudit({subtitleRendered:subtitleTrack.status==='rendered',coverageStatus:finalPrivacyCoverage?.status,coverageSha256:finalPrivacyCoverage?.finalMp4Sha256,mediaSha256,decodedFrames:finalPrivacyCoverage?.video.decodedFrames,expectedDurationSeconds:expectedDuration,cueCount:cues.length,manifestValid:!captionManifestInvalid})
   ?await auditCaptionDecodedFrames({filePath:input.filePath,cues,maxFrames:300,maxDurationSeconds:10}).catch(()=>undefined)
   :undefined;
  const finalSensitiveFrameAudit=finalPrivacyCoverage?.status==='observed'&&finalPrivacyCoverage.finalMp4Sha256===mediaSha256
@@ -228,9 +229,9 @@ export async function probeSocialSceneMedia(input:{filePath:string;manifest:Reco
   if(audioWindowDecoded&&frozenVoiceSha256&&voicePath){const frozen=await decodeAudio(voicePath);const correlation=frozen.ok?pcmCorrelation(frozen.stdout,audioWindow.stdout):null;
    audioIdentity=correlation===null?{status:'unknown',correlation:null,reason:'当前窗口无足够的有效主音轨采样可比对'}:correlation>=0.85?{status:'passed',correlation,reason:'冻结主音轨与最终 MP4 同窗声学波形一致；未证明真人口型同步'}:!mixedMusic&&correlation<0.2?{status:'failed',correlation,reason:'无背景音乐时最终 MP4 音轨与冻结主音轨明显不一致'}:{status:'unknown',correlation,reason:'混音或压缩后的声学差异不足以独立判定音轨身份'};
   }
-  const clockMatches=Math.abs(measuredDurationSeconds-expectedDuration)<=0.15&&endSeconds<=measuredDurationSeconds+0.05;
+  const clockMatches=Math.abs(measuredDurationSeconds-expectedDuration)<=(voiceDriven?0.3+1e-9:0.15)&&endSeconds<=measuredDurationSeconds+(voiceDriven?0.3+1e-9:0.05);
   const durationPassed=clockMatches&&startFrameDecoded&&endFrameDecoded;
-  const caption=durationPassed?(captionManifestInvalid?{status:'unknown' as const,cueCount:rawCues.length,observedTextHashes:[],reason:'冻结字幕清单含无效 cue，不能省略后宣称完整核对'}:await captionEvidence(input.filePath,cues,startSeconds,endSeconds)):undefined;
+  const caption=!voiceDriven&&durationPassed?(captionManifestInvalid?{status:'unknown' as const,cueCount:rawCues.length,observedTextHashes:[],reason:'冻结字幕清单含无效 cue，不能省略后宣称完整核对'}:await captionEvidence(input.filePath,cues,startSeconds,endSeconds)):undefined;
   const privacy=durationPassed?await sensitiveScreenEvidence(input.filePath,startSeconds,endSeconds):undefined;
   scenes.push({sceneId,startSeconds,endSeconds,startFrameDecoded,endFrameDecoded,audioWindowDecoded,audioIdentity,...(caption?{captionEvidence:caption}:{}),...(privacy?{sensitiveScreenEvidence:privacy}:{}),durationPassed,reason:durationPassed?`媒体时钟 ${measuredDurationSeconds}s；冻结镜头 ${startSeconds}-${endSeconds}s 双边界已解码`:'媒体时钟与冻结时间轴不符，或镜头边界缺少可解码帧'});
  }

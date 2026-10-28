@@ -54,11 +54,11 @@ export async function prepareSocialProductionMaterialRouting(input:{
           ...(selected.enterpriseProductAssetLock?{enterpriseProductAssetLock:structuredClone(selected.enterpriseProductAssetLock)}:{}),
           digitalHumanPlan:{...shot.digitalHumanPlan,method:'reenact' as const,silentMotion:true}};
       })};
-      reviewedSupplyPlan=assetSupplyPlanWithDynamicPresenterBackgroundLocks({plan:reviewedSupplyPlan,selections:presenterExecutions,
+      if (detail.brief.materialRoutingPolicyVersion !== 'type-aware.v3') reviewedSupplyPlan=assetSupplyPlanWithDynamicPresenterBackgroundLocks({plan:reviewedSupplyPlan,selections:presenterExecutions,
         referenceReuse:detail.brief.referenceReuse,referenceAnalysis:detail.referenceVideoAnalysis,
         scenes:agentWorkflow.directorBrief.scenes});
     }
-  if (productionApproach !== 'shooting_plan') assertSocialPresenterRouteAvailable(reviewedSupplyPlan,new Set(),{policy:detail.brief.presenterSpeechReviewPolicy,heyGenShotIds:new Set(presenterExecutions.filter(item=>item.executionStatus==='ready'&&item.providerId==='heygen').map(item=>item.sceneId))});
+  if (productionApproach !== 'shooting_plan') assertSocialPresenterRouteAvailable(reviewedSupplyPlan,new Set(),{policy:detail.brief.materialRoutingPolicyVersion === 'type-aware.v3' ? 'heygen_native_human_review' : detail.brief.presenterSpeechReviewPolicy,heyGenShotIds:new Set(presenterExecutions.filter(item=>item.executionStatus==='ready'&&item.providerId==='heygen').map(item=>item.sceneId))});
 	  const rawAssets = await (input.runtime?.loadProductionAssets ?? taskProductionAssets)({
 	    tenantId: input.tenantId,
 	    sources: detail.sources,
@@ -77,7 +77,7 @@ export async function prepareSocialProductionMaterialRouting(input:{
 	    if (zeroAssetRoute && !(error instanceof Error && error.message.startsWith('product_footage_'))) return [];
 	    throw error;
 	  });
-    if(detail.brief.materialRoutingPolicyVersion!=='type-aware.v2'&&reviewedSupplyPlan&&input.graphApprovedContext?.version===detail.version&&input.graphApprovedContext.assetSupplyPlan){
+    if(!['type-aware.v2','type-aware.v3'].includes(detail.brief.materialRoutingPolicyVersion??'')&&reviewedSupplyPlan&&input.graphApprovedContext?.version===detail.version&&input.graphApprovedContext.assetSupplyPlan){
       const rebound=rebindDivergentLocalRoutesFromApprovedContext({plan:reviewedSupplyPlan,approved:input.graphApprovedContext.assetSupplyPlan,assets:rawAssets});
       reviewedSupplyPlan=rebound.plan;
       if(rebound.rebindings.length){
@@ -89,7 +89,7 @@ export async function prepareSocialProductionMaterialRouting(input:{
           JSON.stringify({...evidence,evidenceHash:socialRequestHash(evidence)},null,2),{mode:0o600});
       }
     }
-    if(usesTypeAwareRouting&&detail.brief.materialRoutingPolicyVersion!=='type-aware.v2'){
+    if(usesTypeAwareRouting&&!['type-aware.v2','type-aware.v3'].includes(detail.brief.materialRoutingPolicyVersion??'')){
       if(!reviewedSupplyPlan)throw Error('type_aware_execution_plan_missing');
       assertCompleteTypeAwareExecutionPlan(reviewedSupplyPlan,canonicalTypeAwareSupplyPlan?.shots.map(shot=>shot.shotId));
     }

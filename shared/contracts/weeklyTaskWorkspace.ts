@@ -23,6 +23,14 @@ export type WeeklyTaskWorkspaceRuntime = {
     providerReceipts:Array<{provider:string;requestId:string;state:string;providerTaskId:string|null;updatedAt:string}>;
   };
   checkpoints:Array<{key:string;version:string;inputHash:string;updatedAt:string}>;
+  /** Read-only, scoped summary of blocked measured-material slots. */
+  pendingMaterials:Array<{shotId:string;theme:'factory'|'product'|'consumer_demo'|'general';requiredSeconds:number;reason:'awaiting_theme_material'}>;
+  /** Initial planning blockers; durations are reference estimates, not voice measurements. */
+  initialMaterialBlocks:Array<{shotId:string;materialType:'talking_head'|'factory'|'product'|'consumer_demo'|'general';reason:'awaiting_shoot'|'awaiting_theme_material';referenceDurationSeconds:number|null;shootingTaskId:string|null}>;
+  /** Existing frozen request status before a content run exists; not material verification. */
+  preRunMaterialRequests:Array<{requestId:string;requirement:string;status:'missing'|'pending_verification'|'accepted'|'rejected'|'cancelled'}>;
+  /** Hash-verified evidence for the currently blocked render, never an acceptance. */
+  videoQuality: {mediaSha256:string;qualityInputHash?:string;subtitleStatus:'passed'|'blocked'|'unknown';timelineStatus:'passed'|'blocked'|'unknown';samples:Array<{frameSha256?:string;atSeconds:number;subtitlePresent:boolean|null;font:boolean|null;fontSize:boolean|null;color:boolean|null}>}|null;
   nextActions:Array<{code:WeeklyTaskWorkspaceNextActionCode;label:string;userRequired:boolean}>;
   mayChargeAgain:{status:'possible'|'not_expected'|'unknown';reason:string};
 };

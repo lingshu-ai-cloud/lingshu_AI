@@ -1,3 +1,8 @@
+import {initialMaterialPlanHash} from './socialContentInitialMaterialPlanIdentity.js';
+import {autoCompleteMissingBenchmarkLabels} from './socialContentMissingLabelCompletion.js';
+import {readMissingLabelRuntimeOverlay} from './socialContentMissingLabelOverlay.js';
+import {assertCurrentContentExecutionActive,assertSocialContentOrderActive} from '../contentExecution/context.js';
+import {socialRequestHash} from './socialContentValidation.js';
 import { upgradeSocialArtifactTechnicalPolicy } from './socialContentTechnicalPolicyUpgrade.js';
 import { assertSocialPresenterRouteAvailable } from './socialContentPresenterRouteAdmission.js';
 import { completeSocialCacheFinalization } from './socialContentCacheFinalization.js';
@@ -18,6 +23,10 @@ import { finishShootingPlanExecution } from './socialContentShootingPlanExecutio
 import { readSocialTaskDetail, requireSocialTask } from './socialContentRecords.js';
 import { SocialContentWorkflowError, socialJson, socialObject, socialText } from './socialContentValidation.js';
 import { socialExecutionExternalCost } from './socialContentAgentWorkflow.js';
+import { blockOnInitialMaterialSupply } from './socialContentInitialMaterialBlock.js';
+import { blockOnMissingBenchmarkLabels } from './socialContentMissingLabelBlock.js';
+import {applyInitialMaterialRecovery} from './socialContentMaterialRecovery.js';
+import {ensureInitialShootTasks,readInitialShootTaskVersions} from './socialContentInitialShootTask.js';
 
 type Input = Parameters<typeof runSocialContentAutoProduction>[0];
 
@@ -44,12 +53,15 @@ export async function admitSocialContentProduction(input: Input) {
       tenantId: input.tenantId, package: pkg,
       publicationTaskId: String(publication.publicationTaskId), frozenPlanning: pkg.agentPlanning });
   }
-  let detail = await readSocialTaskDetail(input);
+  let detail = await(input.graphApprovedContext
+    ?(await import('./socialContentProductionGraph.js')).readSocialProductionGraphDetail(input,input.graphApprovedContext)
+    :readSocialTaskDetail(input));
   if (!detail) throw new Error('社媒内容任务不存在');
-  const usesTypeAwareRouting = ['type-aware.v1', 'type-aware.v2']
+  const usesTypeAwareRouting = ['type-aware.v1', 'type-aware.v2', 'type-aware.v3']
     .includes(detail.brief.materialRoutingPolicyVersion ?? '')
     && (detail.brief.productionApproach ?? 'ai_enhanced') === 'ai_enhanced';
-  const canonicalTypeAwareSupplyPlan = usesTypeAwareRouting ? detail.assetSupplyPlan : null;
+  let canonicalTypeAwareSupplyPlan = usesTypeAwareRouting ? detail.assetSupplyPlan : null;
+  const labelAuthorityDetail=detail;
   if (input.graphPhase && input.graphApprovedContext) {
     detail = { ...detail, ...structuredClone(input.graphApprovedContext) };
   }
@@ -70,7 +82,7 @@ export async function admitSocialContentProduction(input: Input) {
     detail.assetSupplyPlan = bindCanonicalTypeAwareRouting(detail.assetSupplyPlan, canonicalTypeAwareSupplyPlan);
   }
   const productionApproach = detail.brief.productionApproach ?? 'ai_enhanced';
-  if (detail.brief.creationMode === 'viral_replication' && productionApproach !== 'shooting_plan') {
+  if (detail.brief.materialRoutingPolicyVersion !== 'type-aware.v3' && detail.brief.creationMode === 'viral_replication' && productionApproach !== 'shooting_plan') {
     const gaps = replicationExecutionGaps(detail);
     if (gaps.length) {
       await writeExecutionStage({ ...input, stage: 'replication_handoff_gate',
@@ -112,6 +124,48 @@ export async function admitSocialContentProduction(input: Input) {
     }
     return { completed: true as const };
   }
+  if (productionApproach !== 'shooting_plan' && detail.brief.materialRoutingPolicyVersion === 'type-aware.v3') {
+    const graph=await import('./socialContentProductionGraph.js');
+    const labelPlanHash=graph.socialProductionGraphInput(labelAuthorityDetail,input.graphApprovedContext).inputHash;
+    const assertLabelCurrent=async()=>{
+      await assertCurrentContentExecutionActive();
+      if(input.repository.dataStore)await assertSocialContentOrderActive(input.repository.dataStore,input.tenantId,input.taskId);
+      const live=await requireSocialTask(input);
+      if(live.run_id!==input.runId||socialRequestHash(socialJson(live.brief))!==socialRequestHash(socialJson(admissionRow.brief)))
+        throw Error('benchmark_label_task_authority_changed');
+    };
+    const labelPorts=input.runtime?.productionBudgetReadPorts;
+    const labelOverlay=await readMissingLabelRuntimeOverlay({...input,detail:labelAuthorityDetail,planHash:input.graphApprovedContext?labelPlanHash:undefined})
+      ??await autoCompleteMissingBenchmarkLabels({...input,detail:labelAuthorityDetail,planHash:labelPlanHash,
+        assertCurrent:assertLabelCurrent,ports:{ledgerRoot:labelPorts?.ledgerRoot,readTariff:labelPorts?.readTariff,
+          assertNewSubmit:labelPorts?.assertNewSubmit,...input.runtime?.benchmarkLabelCompletionPorts}});
+    if(labelOverlay){
+      const repaired=await(input.graphApprovedContext
+        ?graph.readSocialProductionGraphDetail({...input,missingLabelOverlay:labelOverlay},input.graphApprovedContext)
+        :readSocialTaskDetail({...input,missingLabelOverlay:labelOverlay}));
+      if(!repaired)throw Error('benchmark_label_runtime_detail_missing');
+      detail=repaired;canonicalTypeAwareSupplyPlan=repaired.assetSupplyPlan;
+    }
+    await blockOnMissingBenchmarkLabels({tenantId: input.tenantId, taskId: input.taskId, runId: input.runId,
+      taskVersion: detail.version, plan: detail.assetSupplyPlan, analysisStatus:labelOverlay?'completed_unresolved':'unavailable', sourceIdentity: {detail,
+        readRecord: input.repository.dataStore ? id => input.repository.dataStore!.getById<Record<string, unknown>>('trend_videos', id) : undefined}});
+    if (!detail.assetSupplyPlan) throw Error('type_aware_frozen_plan_missing');
+    const recovered = await applyInitialMaterialRecovery({repository: input.repository, tenantId: input.tenantId,
+      taskId: input.taskId, runId: input.runId, taskVersion:detail.version,plan: detail.assetSupplyPlan});
+    detail.assetSupplyPlan = recovered.plan;
+    if(input.graphApprovedContext&&initialMaterialPlanHash(recovered.plan)!==recovered.originalPlanHash){
+      const runtimeDetail=await graph.readSocialProductionGraphDetail({...input,missingLabelOverlay:labelOverlay??undefined,runtimeMaterialRecovery:true},input.graphApprovedContext);
+      if(!runtimeDetail?.assetSupplyPlan)throw Error('material_recovery_runtime_detail_missing');
+      detail=runtimeDetail;canonicalTypeAwareSupplyPlan=runtimeDetail.assetSupplyPlan;
+    }
+    if(!detail.assetSupplyPlan)throw Error('material_recovery_runtime_detail_missing');
+    const shootingTaskIds=input.repository.dataStore?await ensureInitialShootTasks({store:input.repository.dataStore,
+      tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,taskVersion:detail.version,
+      plan:detail.assetSupplyPlan,scenes:detail.agentWorkflow?.directorBrief.scenes}):{};
+    await blockOnInitialMaterialSupply({tenantId: input.tenantId, taskId: input.taskId, runId: input.runId,
+      taskVersion: detail.version, plan: detail.assetSupplyPlan, originalPlanHash: recovered.originalPlanHash,
+      shootingTaskIds,shootingTaskVersions:input.repository.dataStore?await readInitialShootTaskVersions(input.repository.dataStore,input.tenantId,shootingTaskIds):{},referenceScenes: detail.agentWorkflow?.directorBrief.scenes});
+  }
   const agentWorkflow = detail.agentWorkflow;
   if (!agentWorkflow || !socialContentReviewAdmissionAllowed({
     approved: agentWorkflow.executionPlanReview.approved,
@@ -123,7 +177,7 @@ export async function admitSocialContentProduction(input: Input) {
   }
   assertTaskPresenterPolicy(detail.brief, detail.assetSupplyPlan);
   let presenterExecutions: ReturnType<typeof selectPresenterExecutions> = [];
-  if (detail.brief.creationMode === 'viral_replication') {
+  if (detail.brief.materialRoutingPolicyVersion !== 'type-aware.v3' && detail.brief.creationMode === 'viral_replication') {
     if (agentWorkflow.directorBrief.scenes.some(scene => scene.productionRouting?.needsPreciseLipSync
       || scene.productionRouting?.presenterIdentityReplacementRequired)) {
       const namedPresenter = await verifyNamedPresenterLock({ store: input.repository.dataStore ?? null,
@@ -143,7 +197,7 @@ export async function admitSocialContentProduction(input: Input) {
   if (productionApproach !== 'shooting_plan') {
     const heygenBridge = input.repository.dataStore
       ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore, input.tenantId) : null;
-    const wholeFilmPresenterConfigured = ['type-aware.v1', 'type-aware.v2']
+    const wholeFilmPresenterConfigured = ['type-aware.v1', 'type-aware.v2', 'type-aware.v3']
       .includes(detail.brief.materialRoutingPolicyVersion || '')
       && process.env.SOCIAL_CONTENT_HEYGEN_ENABLED === 'true'
       && process.env.HEYGEN_GENERATION_ENABLED === 'true'
@@ -160,7 +214,7 @@ export async function admitSocialContentProduction(input: Input) {
             && Boolean(process.env.SEEDANCE_API_KEY?.trim()) && objectStorageEnabled()),
     });
     if (presenterExecutions.length) {
-      const original = detail.brief.creationMode === 'material_processing';
+      const original = detail.brief.creationMode === 'material_processing' || detail.brief.materialRoutingPolicyVersion === 'type-aware.v3';
       await writeExecutionStage({ ...input, stage: 'presenter_stack_selection',
         message: presenterExecutions.every(item => item.executionStatus === 'ready')
           ? original
@@ -178,7 +232,7 @@ export async function admitSocialContentProduction(input: Input) {
   if (productionApproach !== 'shooting_plan') assertSocialPresenterRouteAvailable(detail.assetSupplyPlan,
     new Set(presenterExecutions.filter(item => item.executionStatus === 'ready' && item.providerId === 'seedance'
       && item.decision.measurements.lipSyncRequired === false).map(item => item.sceneId)),
-    { policy: detail.brief.presenterSpeechReviewPolicy, heyGenShotIds: new Set(presenterExecutions.filter(item => item.executionStatus === 'ready' && item.providerId === 'heygen').map(item => item.sceneId)) });
+    { policy: detail.brief.materialRoutingPolicyVersion === 'type-aware.v3' ? 'heygen_native_human_review' : detail.brief.presenterSpeechReviewPolicy, heyGenShotIds: new Set(presenterExecutions.filter(item => item.executionStatus === 'ready' && item.providerId === 'heygen').map(item => item.sceneId)) });
   await writeExecutionStage({ ...input, stage: 'execution_plan_approved',
     message: '内容 Agent 已提交逐镜执行方案，编导 Agent 自动审核通过，开始锁定并执行。',
     extra: { agentWorkflowSchema: agentWorkflow.schemaVersion,
