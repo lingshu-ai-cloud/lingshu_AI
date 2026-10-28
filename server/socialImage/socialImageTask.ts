@@ -284,6 +284,10 @@ export async function updateSocialImageTask(store: DataStore, tenantId: string, 
     };
     next.referenceSnapshot = { ...frozen, fingerprint: createHash('sha256').update(JSON.stringify(frozen)).digest('hex') };
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'referenceUrls') || Object.prototype.hasOwnProperty.call(patch, 'referenceSnapshot')) {
+    next.referenceProductCheck = undefined;
+    if (current.referenceProductCheck?.decision === 'absent' && current.status === 'blocked' && !Object.prototype.hasOwnProperty.call(patch, 'status')) next.status = 'draft';
+  }
   next.productionRuntime = evolveSocialImageProductionRuntime(current, next, now);
   if (next.status === 'approved') next.publishable = socialImageTaskCanPublish({ ...next, publishable: false, status: 'approved' });
   const issues = socialImageTaskIssues(next);

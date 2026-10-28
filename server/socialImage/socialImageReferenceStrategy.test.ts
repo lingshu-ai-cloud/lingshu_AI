@@ -18,10 +18,12 @@ import { compileEvidenceGuidedSocialImage, compileSocialImageReferencePlan, deri
   inspectSocialImageCandidateFactors, prepareSocialImageReferenceStrategy, socialImageFrozenGraphMatches,
   socialImageFrozenSourceIssue } from './socialImageReferenceStrategy.js';
 import { socialImageV3RenderSpecInputHash, socialImageV3ResolvedAssetIssue } from './socialImagePaidPrerequisites.js';
+import { confirmReferenceProduct } from './socialImageReferenceProductCheck.js';
 
 class MemoryStore implements DataStore {
   private sequence = 0;
   readonly rows = new Map<string, Record_[]>();
+  supportsAtomicCompareAndSwapFor = async () => true;
   async getById<T = Record_>(collection: string, id: string): Promise<T | null> {
     return (this.rows.get(collection) || []).find(item => item.id === id) as T || null;
   }
@@ -40,7 +42,20 @@ class MemoryStore implements DataStore {
     rows[index] = { ...rows[index], ...structuredClone(data) };
     return true;
   }
-  async delete(): Promise<boolean> { return false; }
+  async compareAndSwap(collection: string, id: string, expected: Record<string, unknown>, data: Record<string, unknown>): Promise<boolean> {
+    const rows = this.rows.get(collection) || [];
+    const index = rows.findIndex(item => item.id === id);
+    const current = rows[index];
+    if (!current || Object.entries(expected).some(([key, value]) => JSON.stringify(current[key]) !== JSON.stringify(value))) return false;
+    rows[index] = { ...current, ...structuredClone(data) };
+    return true;
+  }
+  async delete(collection: string, id: string): Promise<boolean> {
+    const rows = this.rows.get(collection) || [];
+    const next = rows.filter(row => row.id !== id);
+    this.rows.set(collection, next);
+    return next.length !== rows.length;
+  }
   async list<T = Record_>(collection: string, query: ListQuery = {}): Promise<ListResult<T>> {
     const items = (this.rows.get(collection) || []).filter(row => Object.entries(query.where || {})
       .every(([key, value]) => String(row[key] ?? '') === String(value)));
@@ -171,8 +186,11 @@ async function preparedViralTask(imageType: 'product_poster' | 'carousel' = 'pro
   });
   assert.equal(setReference.kind, 'updated');
   if (setReference.kind !== 'updated') throw new Error('reference_fixture_update_failed');
+  const checked = await confirmReferenceProduct({ store, tenantId: 'tenant-a', userId: 'owner', taskId: created.id,
+    expectedVersion: setReference.task.version, decision: 'present',
+    readReference: async () => ({ bytes: referenceBytes, mimeType: 'image/png' }) });
   let task = await recordSocialImageBusinessContext({ store, tenantId: 'tenant-a', taskId: created.id,
-    expectedVersion: setReference.task.version, now });
+    expectedVersion: checked.version, now });
   const asset = await inspectSocialImageAsset({ assetId: 'product-a', role: 'product', required: true,
     bytes: productBytes, mimeType: 'image/png', authorization: socialImageAssetAuthorization({
       id: 'product-a', tenantId: 'tenant-a', scope: 'own', rightsStatus: 'authorized',

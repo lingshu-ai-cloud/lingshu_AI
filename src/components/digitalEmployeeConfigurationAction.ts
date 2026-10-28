@@ -12,6 +12,7 @@ import {
   type WeeklyGoal,
 } from '../lib/digitalEmployees';
 import { EMPTY_GOAL } from './smartBusiness/WeeklyGoalPanel';
+import { defaultFacebookPromotionPlans } from '../lib/defaultFacebookPromotion';
 import type { EnterpriseOnboardingConfirmation } from '../../shared/contracts/enterpriseOnboarding';
 
 type ConfigurationApi = Pick<typeof digitalEmployeeApi,
@@ -85,6 +86,7 @@ export function createDigitalEmployeeConfigurationAction(context: ConfigurationA
           endsAt: plan.deliveryDate,
           constraints: [`制作预算上限：${plan.budgetCapCny} 元`, '真实发布前绑定账号并取得授权', fingerprintConstraint],
           videoPlans,
+          promotionPlans: defaultFacebookPromotionPlans(videoPlans),
         });
         recoveryGoal = created.goal || recoveryGoal;
         if (!created.goal) throw new Error('推荐计划创建失败');

@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { materialCanonicalId, weeklyMaterialRequestsApi } from './weeklyMaterialRequestsApi';
+
+test('declining shooting uses the scoped existing material request and does not submit production', async () => {
+  const original = globalThis.fetch; const previousStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: () => 'token' } });
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), '/api/overseas/social-programs/program%2Fa/material-requests/request%2Fb/decline-shooting');
+    assert.equal(init?.method, 'POST');assert.deepEqual(JSON.parse(String(init?.body)), {expectedSubmissionVersion:0,expectedConsumers:[{taskId:'task',packageId:'week',packageVersion:2}]});
+    return Response.json({ item: { status: 'cancelled' } });
+  };
+  try { assert.equal((await weeklyMaterialRequestsApi.declineShooting('program/a', {requestId:'request/b',submissions:[],consumers:[{taskId:'task',packageId:'week',packageVersion:2,requirement:'photo'}]} as any)).status, 'cancelled'); }
+  finally { globalThis.fetch = original; Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: previousStorage }); }
+});
 test('canonical selections only use actual cloud record IDs, never arbitrary local asset IDs', () => {
   assert.equal(materialCanonicalId({ id: 'pb-1234567890abcde' }), '1234567890abcde');
   for (const id of ['local-file', '1234567890abcde', 'pb-short', 'pb-../private']) assert.equal(materialCanonicalId({ id }), null);

@@ -694,7 +694,7 @@ async function publishVideoToAccountWithLease(
     }
     if (account.platform === 'linkedin') {
       video = await publishLinkedInWithDurableReceipt({
-        tenantId: input.tenantId, accountId: input.accountId, account, filePath,
+        tenantId: input.tenantId, accountId: input.accountId, account, filePath, imagePaths,
         title: input.title, commentary: socialInput.description || '', tracked, directAttempt,
         finalizeTracking: input.finalizeTracking, onProviderReceipt: input.onProviderReceipt,
         beforeEffect: () => publishLease.beforeEffect(), revalidate: () => revalidatePublishSource(input),

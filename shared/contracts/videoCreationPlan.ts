@@ -20,7 +20,7 @@ export interface VideoCreationPlan {
   estimatedCostRange?: {
     minCny: number;
     maxCny: number;
-    basis: 'blended_master' | 'included_platform_adaptation' | 'verified_storyboard_provider_envelope';
+    basis: 'blended_master' | 'included_platform_adaptation' | 'verified_storyboard_provider_envelope' | 'published_model_estimate';
   };
   /** Frozen publication copy produced together with the video brief. */
   publication?: {
@@ -191,6 +191,8 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
         ? 'included_platform_adaptation' as const
         : value.estimatedCostRange.basis === 'verified_storyboard_provider_envelope'
           ? 'verified_storyboard_provider_envelope' as const
+          : value.estimatedCostRange.basis === 'published_model_estimate'
+            ? 'published_model_estimate' as const
           : 'blended_master' as const,
     } } : {}),
     ...(value.publication && typeof value.publication === 'object' ? { publication: {

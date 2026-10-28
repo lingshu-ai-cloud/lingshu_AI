@@ -8,14 +8,17 @@ import { socialImageV3PaidPrerequisiteIssue } from './socialImagePaidPrerequisit
 import { socialImageFrozenGraphMatches } from './socialImageReferenceStrategy.js';
 import { localCompositeRepairCandidate } from './socialImageLocalCompositeRepair.js';
 import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
+import { referenceProductCheckIssue } from './socialImageReferenceProductPolicy.js';
+import { readSocialImageReferenceBytes } from './socialImageReferenceBytes.js';
 export interface ImageExecutionPorts {
     prepare(task: SocialImageCreationTask): Promise<void>;
     plan(task: SocialImageCreationTask): Promise<void>;
     render(task: SocialImageCreationTask): Promise<void>;
     quality(task: SocialImageCreationTask): Promise<void>;
     repair?(task: SocialImageCreationTask): Promise<{ additionalPaidQualityRequired: boolean }>;
+    readReference?: typeof readSocialImageReferenceBytes;
 }
-function repairedCandidateNeedsVerifiedQualityBudget(task: SocialImageCreationTask): boolean {
+function repairedCandidateNeedsQualityReview(task: SocialImageCreationTask): boolean {
     const current = task.outputs.find(output => output.state !== 'superseded');
     if (!current || current.state !== 'quality_checking' || current.qualityPreflight) return false;
     return task.repairInstructions.some(instruction => instruction.status === 'completed'
@@ -42,6 +45,12 @@ export async function executeImageProduction(store: DataStore, job: ContentExecu
         let task = await read();
         if (task.status === 'approved' || task.approvedArtifact)
             return;
+        if (!task.outputs.some(output => output.state !== 'superseded')) {
+            const url = task.referenceSnapshot?.imageUrls[0] || task.referenceUrls[0] || '';
+            const reference = url ? await (ports.readReference || readSocialImageReferenceBytes)(job.tenantId, url) : null;
+            const issue = referenceProductCheckIssue(task, reference?.bytes || null);
+            if (issue) throw new Error(issue);
+        }
         if (!task.productionRuntime?.nodes.some(node => node.nodeId === 'adaptation' && node.status === 'completed')) {
             await ports.prepare(task);
             task = await read();
@@ -68,16 +77,16 @@ export async function executeImageProduction(store: DataStore, job: ContentExecu
             && localCompositeRepairCandidate(task) && ports.repair) {
             const repaired = await ports.repair(task);
             task = await read();
-            // An already-paid visual QA needs a separately verified budget for
-            // another provider call. Local recomposition itself costs nothing.
+            // Local recomposition is free; a second visual QA needs an explicit
+            // review of the previous provider receipt, not a budget ceiling.
             if (repaired.additionalPaidQualityRequired)
-                throw new Error('social_image_repair_quality_budget_unverified');
+                throw new Error('social_image_repair_quality_requires_review');
         }
         if (task.productionRuntime?.nodes.find(node => node.nodeId === 'quality_check')?.status !== 'completed') {
             // The decision survives worker restarts; never call visual QA on a
             // repaired candidate whose predecessor already consumed QA.
-            if (repairedCandidateNeedsVerifiedQualityBudget(task))
-                throw new Error('social_image_repair_quality_budget_unverified');
+            if (repairedCandidateNeedsQualityReview(task))
+                throw new Error('social_image_repair_quality_requires_review');
             await ports.quality(task);
             task = await read();
         }
@@ -85,8 +94,8 @@ export async function executeImageProduction(store: DataStore, job: ContentExecu
             && localCompositeRepairCandidate(task) && ports.repair) {
             const repaired = await ports.repair(task);
             task = await read();
-            if (repaired.additionalPaidQualityRequired || repairedCandidateNeedsVerifiedQualityBudget(task))
-                throw new Error('social_image_repair_quality_budget_unverified');
+            if (repaired.additionalPaidQualityRequired || repairedCandidateNeedsQualityReview(task))
+                throw new Error('social_image_repair_quality_requires_review');
             await ports.quality(task);
             task = await read();
         }

@@ -9,6 +9,7 @@ import { isDiscoveryVideoEligible } from '../../shared/contracts/discoveryVideoP
 import { productionReferenceAdmission, type ProductionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
 import { referenceContentIdentity, sameReferenceContent, type ReferenceContentIdentity } from './referenceContentIdentity.js';
 import { estimateSeedanceCostCny } from '../lib/seedanceBudget.js';
+import { estimateWeeklyMixedProduction } from '../../shared/contracts/weeklyMixedContentPlan.js';
 
 type EvidenceRecord = { id: string; [key: string]: unknown };
 type BenchmarkAccount = {
@@ -375,7 +376,10 @@ export function enrichPackageWithContentSignals(input: {
       const providerRange = master && effectiveRoute === 'clone'
         ? verifiedStoryboardProviderCostRange(reference?.analysis || plan.benchmarkAnalysis)
         : null;
-      const costRange = master ? providerRange || masterVideoCostRange() : includedAdaptationCostRange();
+      const costRange = master ? providerRange || (input.pack.mixedContentSlots
+        ? { minCny: estimateWeeklyMixedProduction([]).unitVideoMinCny,
+          maxCny: estimateWeeklyMixedProduction([]).unitVideoMaxCny, basis: 'published_model_estimate' as const }
+        : masterVideoCostRange()) : includedAdaptationCostRange();
       enriched.set(index, normalizeVideoPlan({
         ...plan,
         contentId: plan.contentId || `weekly-${input.goal.startsAt}-${index + 1}`,
@@ -419,8 +423,11 @@ export function enrichPackageWithContentSignals(input: {
   });
   const plans = normalized.map((plan, index) => enriched.get(index) || plan);
   const budgetMode = input.pack.directorPlan?.productionBudgetMode === 'economy' ? 'economy' : 'protected';
-  const productionBudgetMin = Math.round(plans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0) * 100) / 100;
-  const productionBudgetMax = Math.round(plans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || 0), 0) * 100) / 100;
+  const imageQuote = input.pack.mixedContentSlots ? estimateWeeklyMixedProduction(input.pack.mixedContentSlots) : null;
+  const imageMin = imageQuote ? imageQuote.minCny - imageQuote.videoOriginals * imageQuote.unitVideoMinCny : 0;
+  const imageMax = imageQuote ? imageQuote.maxCny - imageQuote.videoOriginals * imageQuote.unitVideoMaxCny : 0;
+  const productionBudgetMin = Math.round((plans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0) + imageMin) * 100) / 100;
+  const productionBudgetMax = Math.round((plans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || 0), 0) + imageMax) * 100) / 100;
   const productionBudget = budgetMode === 'economy' ? productionBudgetMin : productionBudgetMax;
   const result: WeeklyPackage = {
     ...input.pack,

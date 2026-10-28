@@ -1,5 +1,5 @@
 import type { SocialPlatform } from '../integrations/social.js';
-import { getLinkedInPost, linkedInAuthorUrn, linkedInRequiredPublishingScope, publishLinkedInVideo } from '../integrations/linkedin.js';
+import { getLinkedInPost, linkedInAuthorUrn, linkedInRequiredPublishingScope, publishLinkedInImages, publishLinkedInVideo } from '../integrations/linkedin.js';
 import { socialAccessToken } from '../lib/accountCredentials.js';
 import { store } from '../storage/index.js';
 import type { PostRecord } from './waLink.js';
@@ -64,6 +64,7 @@ export async function publishLinkedInWithDurableReceipt(input: {
   accountId: string;
   account: LinkedInAccountRecord;
   filePath?: string;
+  imagePaths?: string[];
   title: string;
   commentary: string;
   tracked: PostRecord;
@@ -73,8 +74,12 @@ export async function publishLinkedInWithDurableReceipt(input: {
   beforeEffect: () => Promise<void>;
   revalidate: () => Promise<void>;
   markProviderStarted: () => void;
+  /** Test seam; production always uses the existing LinkedIn adapter. */
+  publishImages?: typeof publishLinkedInImages;
 }): Promise<unknown> {
-  if (!input.filePath) throw publishingError('LinkedIn 发布需要本地 MP4 视频文件', 400);
+  const imagePaths = input.imagePaths || [];
+  if (input.filePath && imagePaths.length) throw publishingError('LinkedIn 发布不能同时包含视频和图片', 400);
+  if (!input.filePath && !imagePaths.length) throw publishingError('LinkedIn 发布需要视频或图片', 400);
   const requiredScope = linkedInRequiredPublishingScope(input.account);
   if (!scopesOf(input.account).has(requiredScope)) throw publishingError(`LinkedIn 账号缺少 ${requiredScope} 发布权限，请重新授权`, 403);
   const persistReceipt = async (receiptId: string) => {
@@ -89,12 +94,18 @@ export async function publishLinkedInWithDurableReceipt(input: {
     }
     if (input.onProviderReceipt) await input.onProviderReceipt(receiptId);
   };
-  return publishLinkedInVideo({
-    accessToken: socialAccessToken(input.account as unknown as Record<string, unknown>), account: input.account,
-    filePath: input.filePath, title: input.title, commentary: input.commentary,
+  const authorization = {
     async beforeInitialize() { await input.beforeEffect(); await input.revalidate(); input.markProviderStarted(); },
     async beforeUpload() { await input.beforeEffect(); await input.revalidate(); },
     async beforePublish() { await input.beforeEffect(); await input.revalidate(); },
     onProviderReceipt: persistReceipt,
+  };
+  const accessToken = socialAccessToken(input.account as unknown as Record<string, unknown>);
+  if (imagePaths.length) return (input.publishImages || publishLinkedInImages)({
+    accessToken, account: input.account, imagePaths, title: input.title, commentary: input.commentary, ...authorization,
+  });
+  return publishLinkedInVideo({
+    accessToken, account: input.account,
+    filePath: input.filePath!, title: input.title, commentary: input.commentary, ...authorization,
   });
 }

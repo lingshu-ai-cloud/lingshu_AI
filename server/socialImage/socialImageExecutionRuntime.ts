@@ -15,7 +15,6 @@ import { socialImagePackagingLabelHint } from './socialImagePackagingLabel.js';
 import { repairSocialImageLocalComposite } from './socialImageLocalCompositeRepair.js';
 import type { ImageExecutionPorts } from './socialImageExecution.js';
 import type { SocialImageElementInventory } from '../../shared/contracts/socialImageProduction.js';
-import { requireSocialImageBudgetLimit } from './socialImageBudgetGate.js';
 export function socialImagePlanningFailureCode(error: unknown): string {
     if (error && typeof error === 'object' && 'body' in error)
         return String((error as { body?: { code?: string } }).body?.code || 'social_image_planning_failed');
@@ -26,12 +25,6 @@ export function createImageExecutionPorts(store: DataStore, job: ContentExecutio
     const allowPaidCall = async () => {
         if (process.env.SOCIAL_IMAGE_EXECUTION_PAID_ENABLED === 'false')
             throw new Error('social_image_paid_execution_disabled');
-        const content = await store.list<{ brief?: unknown }>('starter_social_content_tasks', {
-            where: { tenant_id: job.tenantId, task_id: job.taskId }, perPage: 2,
-        });
-        if (content.totalItems !== 1 || content.items.length !== 1)
-            throw new Error('social_image_content_task_unavailable');
-        requireSocialImageBudgetLimit(content.items[0]!.brief);
         if(isSubscriptionEnforced()&&!isEntitled(await getTenantSubscription(job.tenantId)))throw new Error('social_image_subscription_required');
         const quota = await consumeIdentityDemoQuota({ tenantId: job.tenantId, userId: job.userId }, 'generation');
         if (!quota.ok)
@@ -96,6 +89,6 @@ export function createImageExecutionPorts(store: DataStore, job: ContentExecutio
             else await renderSocialImagePaidWorker(command(task)); },
         quality: async (task) => { await preflightImage(command(task)); },
         repair: async (task) => repairSocialImageLocalComposite({ store, tenantId: job.tenantId,
-            taskId: task.id, expectedVersion: task.version, enterpriseProductAsset: assets.enterpriseProductAsset }),
+            taskId: task.id, expectedVersion: task.version }),
     };
 }

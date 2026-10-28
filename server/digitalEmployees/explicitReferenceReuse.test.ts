@@ -55,6 +55,14 @@ try {
     await reconcileDigitalEmployeeRun(tenant, run.id);
     assert.notEqual(collection.status, 'skipped', 'a reference that requires review cannot waive the detailed-analysis prerequisite');
     assert.notEqual(analysis.status, 'succeeded', 'review-required evidence cannot enter production as a completed exact analysis');
+    for (const task of tasks) { task.status = 'succeeded'; task.output = {}; task.blocked_reason = ''; }
+    review.status = 'pending';
+    records.weekly_plans[0].plan.businessPackage.referenceSourcePolicy = 'existing_library_only';
+    run.status = 'running'; collection.status = 'pending'; analysis.status = 'pending'; collection.business_refs = [];
+    await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(collection.status, 'waiting_human', 'insufficient local references must block instead of collecting');
+    assert.match(collection.blocked_reason, /未发起新的采集/);
+    assert.equal(records.scheduled_tasks?.length || 0, 0);
   });
   console.log('Explicit reference reuse, tenant ownership and review gate tests passed');
 } finally { Object.assign(store, original); globalThis.fetch = originalFetch; }

@@ -213,6 +213,17 @@ function openAiPayloadShape(payload: any): Record<string, unknown> {
   };
 }
 
+export class ImageProviderConfigurationError extends Error {
+  constructor() {
+    super('OPENAI_API_KEY is not configured');
+    this.name = 'ImageProviderConfigurationError';
+  }
+}
+
+export function assertOpenAiImageConfigured(): void {
+  if (!String(process.env.OPENAI_API_KEY || '').trim()) throw new ImageProviderConfigurationError();
+}
+
 async function generateOpenAiImage(input: {
   prompt: string;
   ratio: string;
@@ -222,7 +233,7 @@ async function generateOpenAiImage(input: {
   recoveryOnly?: boolean;
 }): Promise<GeneratedImage> {
   const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
-  if (!apiKey) throw new Error('OPENAI_API_KEY is not configured');
+  assertOpenAiImageConfigured();
   const model = 'gpt-image-2';
   const quality = input.quality;
   const size = openAiSizeFor(input.ratio);

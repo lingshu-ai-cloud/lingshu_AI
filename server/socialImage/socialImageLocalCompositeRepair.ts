@@ -9,6 +9,7 @@ import { socialImageOwnedMaterialUrl } from './socialImagePaidJob.js';
 import { assertSocialImageCurrentContentTask } from './socialImageProductionRun.js';
 import { socialImageCanvasForAspectRatio } from './referenceCanvas.js';
 import { readSocialImageTask, updateSocialImageTask } from './socialImageTask.js';
+import { isVerifiedTransparentProductCutout } from '../lib/productIdentityPreparation.js';
 
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 const validHash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -42,7 +43,6 @@ function ownedMaterial(items: MaterialRecord[], tenantId: string, id: string): M
 /** Recompose the saved plate and frozen product/copy. This function never contacts an image provider. */
 export async function repairSocialImageLocalComposite(input: {
   store: DataStore; tenantId: string; taskId: string; expectedVersion: number;
-  enterpriseProductAsset: (tenantId: string, id: string) => Promise<{ name: string; bytes: Buffer } | null>;
   materials?: MaterialRecord[];
   readBytes?: typeof readTenantMaterialBytes;
   writeMaterial?: typeof createGeneratedImageMaterial;
@@ -77,15 +77,18 @@ export async function repairSocialImageLocalComposite(input: {
   const readBytes = input.readBytes || readTenantMaterialBytes;
   const background = (await readBytes(plate, tenantId)).bytes;
   const priorImage = (await readBytes(original, tenantId)).bytes;
-  const product = await input.enterpriseProductAsset(tenantId, productId);
-  if (!product || hash(background) !== provenance.plateSha256 || hash(priorImage) !== original.contentSha256
-    || hash(product.bytes) !== provenance.productSha256) throw new Error('social_image_local_repair_bytes_changed');
+  const cutoutId = String(provenance.productCutoutMaterialId || '');
+  if (!cutoutId) throw new Error('social_image_product_cutout_required');
+  const cutoutMaterial = ownedMaterial(items, tenantId, cutoutId);
+  const product = (await readBytes(cutoutMaterial, tenantId)).bytes;
+  if (hash(background) !== provenance.plateSha256 || hash(priorImage) !== original.contentSha256
+    || hash(product) !== provenance.productSha256 || cutoutMaterial.contentSha256 !== provenance.productSha256
+    || !await isVerifiedTransparentProductCutout(product)) throw new Error('social_image_local_repair_bytes_changed');
   const canvas = socialImageCanvasForAspectRatio(task.deliverySpec.aspectRatio);
   const oldVersion = String(provenance.localComposition);
-  const bytes = await composeFixedSocialLayers({ background, products: [product.bytes], poster: task.renderBrief!,
+  const bytes = await composeFixedSocialLayers({ background, products: [product], poster: task.renderBrief!,
     width: canvas.width, height: canvas.height, recipe: task.replicationRecipe,
-    productTreatment: oldVersion === 'integrated-scene-and-copy-v1' || oldVersion === 'integrated-scene-b2b-v2'
-      ? 'integrated_scene' : 'framed_source',
+    productTreatment: 'cutout',
     referenceTextRegion: task.hookFactorSpec?.factors.some(factor => factor.factorId === 'reference-text-hierarchy'
       && factor.validator.observableTarget === 'top_left') ? 'top_left' : undefined,
     repairContrast: oldVersion === 'identity-locked-b2b-v1' || oldVersion === 'fixed-product-and-copy-v2' || oldVersion === 'integrated-scene-and-copy-v1'
@@ -97,7 +100,8 @@ export async function repairSocialImageLocalComposite(input: {
     tenantId, sourceType: 'ai_generated_marketing_image', productId,
     stableKey: `${jobId}:composed-poster:${oldVersion === 'fixed-product-and-copy-v1' ? 'local-repair-v2' : 'contrast-repair-v3'}`,
     provenance: { socialImageTaskId: task.id, socialImageJobId: jobId, socialImageInputHash: inputHash,
-      backgroundMaterialId: plateId, plateSha256: hash(background), productSha256: hash(product.bytes),
+      backgroundMaterialId: plateId, plateSha256: hash(background), productSha256: hash(product),
+      productCutoutMaterialId: cutoutId,
       originalOutputId: old.id, originalMaterialId: original.id,
       localComposition: oldVersion === 'identity-locked-b2b-v1' ? 'identity-locked-b2b-v2-contrast'
         : oldVersion === 'integrated-scene-b2b-v2' ? 'integrated-scene-b2b-v3-contrast'

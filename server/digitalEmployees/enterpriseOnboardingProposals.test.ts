@@ -39,3 +39,13 @@ test('AI onboarding proposals reject invented product identities and malformed p
   })), (error: unknown) => error instanceof EnterpriseOnboardingProposalError && error.code === 'enterprise_onboarding_proposal_invalid');
   await assert.rejects(generateEnterpriseOnboardingProposals(draft(), async () => 'not-json'), /enterprise_onboarding_proposal_invalid/);
 });
+
+test('AI onboarding proposals ignore legacy main-platform suggestions', async () => {
+  const result = await generateEnterpriseOnboardingProposals(draft(), async () => JSON.stringify({
+    companyIntro: { value: '北辰设备提供灌装设备', sourceRefs: ['company.primaryBusiness'] },
+    brandTone: { value: '专业', sourceRefs: ['company.brandName'] },
+    focusProducts: [{ productId: 'p1', category: '包装设备', highlights: '玻璃瓶灌装', sourceRefs: ['product:p1:description'] }],
+    market: { targetBuyer: '采购负责人', primaryPlatform: 'youtube', language: '英语', sourceRefs: ['targetMarket'] },
+  }));
+  assert.equal(result.market.primaryPlatform, '');
+});

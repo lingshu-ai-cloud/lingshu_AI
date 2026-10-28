@@ -322,12 +322,34 @@ export function createDigitalEmployeeRunCoordinator(deps: Pick<DigitalEmployeeAp
             await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.inventory_reused', summary: output.summary, payload: inventoryPreflight });
             continue;
           }
+          if (businessPackage?.referenceSourcePolicy === 'existing_library_only') {
+            const summary = inventory.requiredCount
+              ? `现有爆款库可用参考 ${inventory.reusableCount}/${inventory.requiredCount} 条，还缺 ${inventory.missingCount} 条；未发起新的采集。`
+              : '本周内容无需爆款视频参考，未发起新的采集。';
+            const output = { dataStatus: inventory.requiredCount ? 'library_reference_insufficient' : 'not_required', summary, inventoryPreflight, referenceIds: inventory.selectedReferenceIds };
+            const status = inventory.requiredCount ? 'waiting_human' : 'skipped';
+            const previous = jsonObject<Record<string, unknown>>(task.output, {});
+            if (task.status === status && previous.dataStatus === output.dataStatus && previous.summary === summary
+              && JSON.stringify(previous.referenceIds) === JSON.stringify(output.referenceIds)) continue;
+            await store.update(COLLECTION.tasks, task.id, { status, output, blocked_reason: inventory.requiredCount ? summary : '', updated_at: new Date().toISOString() });
+            task.status = status; task.output = output; task.blocked_reason = inventory.requiredCount ? summary : '';
+            await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: inventory.requiredCount ? 'task.library_reference_insufficient' : 'task.not_required', level: inventory.requiredCount ? 'warning' : 'info', summary, payload: inventoryPreflight });
+            continue;
+          }
           const previousOutput = jsonObject<Record<string, unknown>>(task.output, {});
           const summary = inventory.requiredCount
             ? `爆款库可直接使用 ${inventory.reusableCount}/${inventory.requiredCount} 条，还缺 ${inventory.missingCount} 条；只采集并分析缺口。`
             : '本周计划没有需要爆款参考的独立视频；将按已确认的社媒采集目标继续。';
           task.output = { ...previousOutput, inventoryPreflight, inventorySummary: summary };
           await store.update(COLLECTION.tasks, task.id, { output: task.output, updated_at: new Date().toISOString() });
+        }
+        if (task.task_key === 'scheduled_source_collection' && businessPackage?.referenceSourcePolicy === 'existing_library_only' && !videoTask?.videoPlans?.length) {
+          const summary = '本周内容无需爆款视频参考，未发起新的采集。';
+          const output = { dataStatus: 'not_required', summary };
+          await store.update(COLLECTION.tasks, task.id, { status: 'skipped', output, blocked_reason: '', updated_at: new Date().toISOString() });
+          task.status = 'skipped'; task.output = output; task.blocked_reason = '';
+          await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.not_required', summary });
+          continue;
         }
         if (task.task_key === 'viral_analysis' && videoTask?.videoPlans?.length && videoTask.videoPlans.every(video => video.route !== 'clone')) {
           const output = { dataStatus: 'not_required', summary: '本轮视频均未指定爆款裂变，无需等待参考分析。' };

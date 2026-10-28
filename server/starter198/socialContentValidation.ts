@@ -1,4 +1,5 @@
 import {productionBudgetDuration,productionBudgetLimitCny} from '../../shared/contracts/productionBudgetPolicy.js';
+import { isContentProductionPlatform } from '../../shared/contracts/contentProductionPlatforms.js';
 import { parseIllustrativeSceneIds as validateIllustrativeSceneIds } from '../../shared/contracts/illustrativeScenePolicy.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -305,6 +306,15 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     topic,
     legacyCreationRoute: legacyCreationRoute as CreateSocialContentTaskInput['legacyCreationRoute'],
   };
+}
+
+/** Creation boundary: old tasks remain readable, while new production stays on the supported platforms. */
+export function productionTaskInput(value: unknown): CreateSocialContentTaskInput {
+  const parsed = parseCreateSocialTask(value);
+  if (parsed.platforms?.some(platform => !isContentProductionPlatform(platform))) {
+    throw new SocialContentWorkflowError('social_content_production_platform_unsupported', 400);
+  }
+  return parsed;
 }
 
 export function parseCreateSocialWeeklyPlan(value: unknown): CreateSocialWeeklyPlanInput {

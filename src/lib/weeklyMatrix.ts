@@ -148,7 +148,9 @@ export function fillMatrixVideos(pack: WeeklyPackage, defaults: Partial<VideoCre
   const unassigned = sourcePlans.filter(plan => !plan.matrix?.accountId);
   const plans: VideoCreationPlan[] = [];
   for (const row of rows) {
-    const targetCount = Math.max(0, row.weeklyCount - row.sourceProjectIds.length);
+    const targetCount = pack.mixedContentSlots
+      ? pack.mixedContentSlots.filter(slot => slot.accountId === row.accountId && slot.kind === 'video' && slot.productionRole === 'original').length
+      : Math.max(0, row.weeklyCount - row.sourceProjectIds.length);
     const authored = (assignedByAccount.get(row.accountId) || []).slice(0, targetCount);
     for (const plan of authored) plans.push(bindMatrixVideo(plan, row));
     while (plans.filter(plan => plan.matrix?.accountId === row.accountId).length < targetCount && unassigned.length) {
@@ -168,15 +170,20 @@ export function fillMatrixVideos(pack: WeeklyPackage, defaults: Partial<VideoCre
   let tasks = pack.tasks.map(task => task.templateId === 'production' ? production : task.templateId === 'publishing' ? { ...task, sourceProjectIds: projects } : task);
   if (!existing && plans.length) tasks = [...tasks, production];
   const videoTarget = linkedPlans.length;
-  const publishTarget = rows.reduce((sum, row) => sum + row.weeklyCount, 0) || videoTarget;
+  const publishTarget = pack.mixedContentSlots?.length || rows.reduce((sum, row) => sum + row.weeklyCount, 0) || videoTarget;
   const directorPlan = pack.directorPlan ? {
     ...pack.directorPlan,
     originalTarget: videoTarget,
     platformVersionTarget: videoTarget,
     publishTarget,
-    productionBudgetMin: Math.max(pack.directorPlan.productionBudgetMin || 0, videoTarget * MASTER_VIDEO_COST_MIN_CNY),
-    productionBudget: Math.max(pack.directorPlan.productionBudget || 0, videoTarget * MASTER_VIDEO_COST_POINT_CNY),
-    productionBudgetMax: Math.max(pack.directorPlan.productionBudgetMax || 0, videoTarget * MASTER_VIDEO_COST_MAX_CNY),
+    // Mixed content carries its own public-model estimate (including original
+    // images). The historic per-video floor is neither that quote nor a cap.
+    productionBudgetMin: pack.mixedContentSlots ? pack.directorPlan.productionBudgetMin
+      : Math.max(pack.directorPlan.productionBudgetMin || 0, videoTarget * MASTER_VIDEO_COST_MIN_CNY),
+    productionBudget: pack.mixedContentSlots ? pack.directorPlan.productionBudget
+      : Math.max(pack.directorPlan.productionBudget || 0, videoTarget * MASTER_VIDEO_COST_POINT_CNY),
+    productionBudgetMax: pack.mixedContentSlots ? pack.directorPlan.productionBudgetMax
+      : Math.max(pack.directorPlan.productionBudgetMax || 0, videoTarget * MASTER_VIDEO_COST_MAX_CNY),
   } : pack.directorPlan;
   return { ...pack, ...(directorPlan ? { directorPlan } : {}), tasks };
 }
@@ -191,11 +198,16 @@ export function matrixIssues(pack: WeeklyPackage): string[] {
   const issues: string[] = [];
   if (new Set(rows.map(row => row.accountId)).size !== rows.length) issues.push('同一账号只能有一份本周矩阵安排');
   for (const row of rows) {
-    if (!row.accountId || !['facebook', 'instagram', 'tiktok', 'youtube'].includes(row.platform)) issues.push('请选择有效的矩阵账号');
+    if (!row.accountId || !['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin'].includes(row.platform)) issues.push('请选择有效的矩阵账号');
     if (![row.audience, row.productName, row.objective, row.contentDirection, row.cta].every(Boolean) || !(row.language in VIDEO_LANGUAGES)) issues.push('请补齐矩阵账号的受众、产品、语言、目标、内容方向和行动引导');
     if (!Number.isInteger(row.weeklyCount) || row.weeklyCount < 1 || row.weeklyCount > 30) issues.push('每个账号本周计划条数须为 1–30');
     const assigned = plans.filter(plan => plan.matrix?.accountId === row.accountId);
-    if (assigned.length + row.sourceProjectIds.length !== row.weeklyCount) issues.push(`${row.platform} 账号的内容数量与本周计划不一致，请补齐视频计划或调整条数`);
+    const plannedCount = pack.mixedContentSlots
+      ? pack.mixedContentSlots.filter(slot => slot.accountId === row.accountId).length
+      : assigned.length + row.sourceProjectIds.length;
+    if (plannedCount !== row.weeklyCount) issues.push(`${row.platform} 账号的内容数量与本周计划不一致，请补齐内容计划或调整条数`);
+    if (pack.mixedContentSlots && assigned.length !== pack.mixedContentSlots.filter(slot => slot.accountId === row.accountId
+      && slot.kind === 'video' && slot.productionRole === 'original').length) issues.push('本周视频任务与混合内容制作位不一致');
     if (publishing && row.connected !== false && !pack.authorization.accountIds.includes(row.accountId)) issues.push('已连接矩阵账号不在本周允许发布的账号范围内');
     if (assigned.some(plan => {
       const hasIndependentProduct = Boolean(plan.productId?.trim() && plan.productName.trim());

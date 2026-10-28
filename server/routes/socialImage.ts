@@ -31,6 +31,13 @@ import { acceptSocialImageQualityByHuman } from '../socialImage/socialImageHuman
 import { continueSocialImageProduction } from '../socialImage/socialImageProductionContinuation.js';
 
 export const socialImageRouter = Router();
+const imageRunFailure = (error: unknown, fallbackCode: string): SocialImageProductionRunError => {
+  if (error instanceof SocialImageProductionRunError) return error;
+  if (error instanceof Error && /local_store_atomic_lock_busy_reconciliation_required|durable_lease_storage_unavailable/.test(error.message)) {
+    return new SocialImageProductionRunError('local_store_reconciliation_required', 503);
+  }
+  return new SocialImageProductionRunError(fallbackCode, 503);
+};
 registerSocialImageExecutionRoutes(socialImageRouter,store);
 registerSocialImageFormalPlanRoutes(socialImageRouter, store,
   async (tenantId, productId) => (await enterpriseProductAsset(tenantId, productId))?.bytes || null);
@@ -77,7 +84,7 @@ socialImageRouter.post('/content-tasks/:contentTaskId/runs', async (req, res) =>
     res.setHeader('Cache-Control', 'private, no-store');
     res.status(result.resumed ? 200 : 201).json({ ok: true, ...result, snapshot: projectSocialImageProductionSnapshot(result.task) });
   } catch (error) {
-    const failure = error instanceof SocialImageProductionRunError ? error : new SocialImageProductionRunError('social_image_run_unavailable', 503);
+    const failure = imageRunFailure(error, 'social_image_run_unavailable');
     res.status(failure.status).json({ ok: false, code: failure.code, error: failure.code });
   }
 });
@@ -133,7 +140,7 @@ socialImageRouter.post('/tasks/:id/refresh-content-task', async (req, res) => {
     res.setHeader('Cache-Control', 'private, no-store');
     res.json({ ok: true, task, snapshot: projectSocialImageProductionSnapshot(task) });
   } catch (error) {
-    const failure = error instanceof SocialImageProductionRunError ? error : new SocialImageProductionRunError('social_image_binding_refresh_failed', 503);
+    const failure = imageRunFailure(error, 'social_image_binding_refresh_failed');
     res.status(failure.status).json({ ok: false, code: failure.code, error: failure.code });
   }
 });
@@ -317,7 +324,7 @@ socialImageRouter.patch('/tasks/:id', async (req, res) => {
     const expectedVersion = Number(req.body?.expectedVersion);
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) { res.status(400).json({ ok: false, error: '缺少有效任务版本' }); return; }
     const patch = req.body?.patch || {};
-    const protectedFields = ['productionRuntime', 'hookFactorSpec', 'adaptationSpec', 'directorReviewDecision', 'approvalDecisions', 'approvedArtifact', 'repairPlans', 'deliveryPackages'];
+    const protectedFields = ['productionRuntime', 'hookFactorSpec', 'adaptationSpec', 'directorReviewDecision', 'approvalDecisions', 'approvedArtifact', 'repairPlans', 'deliveryPackages', 'referenceProductCheck'];
     if (protectedFields.some(field => Object.prototype.hasOwnProperty.call(patch, field)) || patch.status === 'approved') {
       res.status(403).json({ ok: false, code: 'social_image_governed_fields_server_owned', error: '图片节点结果与验收凭证只能由对应 Agent、Worker 或显式验收接口写入' }); return;
     }
@@ -512,9 +519,15 @@ socialImageRouter.post('/tasks/:id/render-layered', async (req, res) => {
 
 socialImageRouter.post('/tasks/:id/quality/preflight', async (req, res) => {
   try {
+    const tenantId = (res.locals as AuthLocals).tenantId;
     const result = await preflightImage({ store, tenantId: (res.locals as AuthLocals).tenantId, taskId: req.params.id,
       expectedVersion: Number(req.body?.expectedVersion), enterpriseProductAsset, outputImageBytes,
-      allowPaidCall: async () => { if (!await consumeDemoQuota(req, res, 'generation')) throw new ImageQuotaResponseHandled(); return true; } });
+      allowPaidCall: async () => {
+        const task = await readSocialImageTask(store, tenantId, req.params.id);
+        if (!task) throw new Error('social_image_task_missing');
+        if (!await consumeDemoQuota(req, res, 'generation')) throw new ImageQuotaResponseHandled();
+        return true;
+      } });
     res.json(result);
 } catch (error) {
     if (error instanceof ImageQuotaResponseHandled) return;

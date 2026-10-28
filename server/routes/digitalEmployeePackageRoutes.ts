@@ -137,6 +137,7 @@ export function createDigitalEmployeePackageRoutes(deps: Pick<DigitalEmployeeApp
   function registerPostGoalsGoalIdPackageDetails() {
     digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) => {
       const { tenantId, userId } = res.locals as AuthLocals;
+      try {
       await withLocalQueue(goalApprovalQueues, `${tenantId}:package-details:${req.params.goalId}`, async () => {
         const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, req.params.goalId, tenantId);
         if (!goal || goal.status !== 'draft') {
@@ -284,6 +285,15 @@ export function createDigitalEmployeePackageRoutes(deps: Pick<DigitalEmployeeApp
           await releaseDurableOperationLease({ dataStore: store, lease }).catch(() => undefined);
         }
       });
+      } catch (error) {
+        if (res.headersSent) return;
+        const code = error instanceof Error && /local_store_atomic_lock_busy_reconciliation_required|durable_lease_storage_unavailable/.test(error.message)
+          ? 'local_store_reconciliation_required' : 'weekly_package_detail_service_unavailable';
+        console.error('[weekly-package] detail request failed', { code, goalId: req.params.goalId });
+        res.status(503).json({ error: code, message: code === 'local_store_reconciliation_required'
+          ? '本地任务存储写锁需要核对；原计划已保留，请勿重复提交或启动付费制作。'
+          : '任务详情暂时无法读取或保存；原计划已保留，请查看原任务状态。' });
+      }
     });
   }
 
@@ -309,6 +319,9 @@ export function createDigitalEmployeePackageRoutes(deps: Pick<DigitalEmployeeApp
         if (new Set(pack.tasks.map(t => t.templateId)).size !== pack.tasks.length || pack.tasks.some(t => !TASK_TEMPLATES.some(template => template.id === t.templateId))) { res.status(400).json({ error: 'invalid_templates' }); return; }
         const old = body.businessPackage as WeeklyPackage | undefined;
         if (pack.revision !== (old?.revision || 0)) { res.status(409).json({ error: 'package_changed', message: '计划已更新，请刷新后重新调整。' }); return; }
+        // The collection boundary is server-owned and frozen with the draft;
+        // older clients must not remove it while editing unrelated fields.
+        if (old?.referenceSourcePolicy === 'existing_library_only') pack.referenceSourcePolicy = 'existing_library_only';
         // Drafts may contain missing dependencies so deleting a producer can be
         // followed by selecting an existing input. Execution validates completeness.
         const members = await listTenantEmployees(res.locals as AuthLocals, req.headers.authorization);

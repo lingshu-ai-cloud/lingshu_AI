@@ -2,6 +2,7 @@ import sharp from 'sharp';
 import type { SocialImageReplicationRecipe } from '../../shared/contracts/socialImageCreation.js';
 import { socialImageRectOverlapRatio } from '../../shared/contracts/socialImageLayerGraph.js';
 import { connectedBorderToAlpha } from './layerRenderer.js';
+import { isVerifiedTransparentProductCutout } from '../lib/productIdentityPreparation.js';
 import { normalizeSocialImageReferenceLayerBlueprints } from './socialImageTask.js';
 import { isSocialImageBuyerPoster, socialImageBuyerLayout, socialImageBuyerOverlaySvg } from './socialImageBuyerOverlay.js';
 import type { BuyerCopyBacking, BuyerPosterTone } from './socialImageBuyerOverlay.js';
@@ -144,6 +145,15 @@ async function softenFramedProductEdges(bytes: Buffer): Promise<Buffer> {
   return sharp(bytes).ensureAlpha().composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer();
 }
 
+/** Preserve an existing alpha channel; it is not evidence that a cutout passed review. */
+async function hasTransparentPixels(bytes: Buffer): Promise<boolean> {
+  const image = sharp(bytes);
+  if (!(await image.metadata()).hasAlpha) return false;
+  const stats = await image.stats();
+  const alpha = stats.channels.at(-1);
+  return Boolean(alpha && alpha.min < 255 && alpha.max > 0);
+}
+
 /** Source-photo borders fade to zero; the label and center pixels stay unchanged. */
 async function featherBuyerPhotoEdges(bytes: Buffer): Promise<Buffer> {
   const { width = 0, height = 0 } = await sharp(bytes).metadata();
@@ -211,6 +221,13 @@ export async function composeFixedSocialLayers(input: {
   repairContrast?: boolean;
 }): Promise<Buffer> {
   const { width, height } = input;
+  // A caller selecting the cutout route must supply an already separated
+  // transparent asset. Never turn an opaque product photo into a purported
+  // cutout by border removal or rectangular feathering at composition time.
+  if (input.productTreatment === 'cutout' && (!input.products.length
+    || !(await Promise.all(input.products.map(isVerifiedTransparentProductCutout))).every(Boolean))) {
+    throw new Error('social_image_reviewed_product_cutout_required');
+  }
   if (input.productTreatment === 'integrated_scene') {
     const overlay = isSocialImageBuyerPoster(input.poster)
       ? socialImageBuyerOverlaySvg(width, height, input.poster, Boolean(input.repairContrast),
@@ -220,7 +237,7 @@ export async function composeFixedSocialLayers(input: {
       .composite([{ input: overlay, left: 0, top: 0 }])
       .png({ compressionLevel: 9 }).toBuffer();
   }
-  if (isSocialImageBuyerPoster(input.poster) && input.productTreatment === 'framed_source') {
+  if (isSocialImageBuyerPoster(input.poster) && ['framed_source', 'cutout'].includes(input.productTreatment || '')) {
     const source = input.products[0];
     if (!source) throw new Error('social_image_buyer_product_source_missing');
     const scene = await sharp(input.background).rotate().resize(width, height,
@@ -229,7 +246,8 @@ export async function composeFixedSocialLayers(input: {
     const heroWidth = Math.round(width * Math.min(.55, .97 - layout.copyRight - .01));
     const heroHeight = Math.round(height * .58);
     const fitted = await sharp(source).rotate().resize(heroWidth, heroHeight, { fit: 'inside' }).png().toBuffer();
-    const hero = await featherBuyerPhotoEdges(fitted);
+    const hero = input.productTreatment === 'cutout' || await hasTransparentPixels(source)
+      ? fitted : await featherBuyerPhotoEdges(fitted);
     const size = await sharp(hero).metadata();
     const left = Math.max(Math.round(width * (layout.copyRight + .01)),
       Math.min(width - (size.width || heroWidth),
@@ -262,7 +280,7 @@ export async function composeFixedSocialLayers(input: {
     composites.push({ input: referenceMaskSvg(maskWidth, maskHeight, mask), left: Math.round(mask.bounds.x * width), top: Math.round(mask.bounds.y * height), zIndex: mask.zIndex });
   }
   for (let index = 0; index < input.products.length; index += 1) {
-    const transparent = input.productTreatment === 'framed_source'
+    const transparent = input.productTreatment === 'framed_source' || input.productTreatment === 'cutout'
       ? input.products[index]!
       : await connectedBorderToAlpha(input.products[index]!);
     const productWidth = Math.round(Math.min(slotWidth * 1.18, stage.width * width * (input.referenceTextRegion === 'top_left' ? .65
@@ -271,7 +289,8 @@ export async function composeFixedSocialLayers(input: {
     // Keep the source aspect ratio. A square product photo in a tall slot used
     // to acquire large synthetic white bars above and below the package.
     const fitted = await sharp(transparent).resize(productWidth, productHeight, { fit: 'inside' }).png().toBuffer();
-    const rendered = input.productTreatment === 'framed_source' ? await softenFramedProductEdges(fitted) : fitted;
+    const rendered = input.productTreatment === 'framed_source' && !await hasTransparentPixels(input.products[index]!)
+      ? await softenFramedProductEdges(fitted) : fitted;
     const renderedSize = await sharp(rendered).metadata();
     composites.push({
       input: rendered,

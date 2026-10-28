@@ -59,6 +59,9 @@ export function createStudioPosterRenderRoutes(deps: Pick<StudioApplicationPorts
             plannedImageTask = imageTask;
           } else if (v3ImageTask) {
             v3SingleInput = socialImageV3SingleRenderInput(imageTask, imageJobId);
+            if (imageTask.contentBrief.productRefs.length) {
+              throw new SocialImagePaidJobError('social_image_product_cutout_queue_required');
+            }
           }
         } catch (error) {
           const code = error instanceof SocialImagePaidJobError ? error.code

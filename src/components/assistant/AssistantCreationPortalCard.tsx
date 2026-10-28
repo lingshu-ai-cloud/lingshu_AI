@@ -10,16 +10,18 @@ import { assistantSourcePortalSchema, type AssistantSourcePortal } from '../../.
 import AssistantProductionPortal, { productionPortalNavigation } from './AssistantProductionPortal';
 import AssistantReplicationScene from './AssistantReplicationScene';
 import { openContentGenerationQueue } from '../../lib/contentGenerationQueue';
+import { isContentProductionPlatform } from '../../../shared/contracts/contentProductionPlatforms';
 const AssistantHookScene = lazy(() => import('./AssistantHookScene'));
 const AssistantCampaignScene = lazy(() => import('./AssistantCampaignScene'));
 const AssistantScenarioPlanner = lazy(() => import('./AssistantScenarioPlanner'));
 
 export function creationPortalNavigation(value: AssistantCreationPortal, requestId = Date.now()) {
   const portal = assistantCreationPortalSchema.parse(value);
+  const productionPlatforms = portal.platforms.filter(isContentProductionPlatform);
   const request: SocialContentCreateRequest = {
     requestId, themeId: 'product_value', mode: 'instant', creationPath: portal.imageReplication ? 'viral_replication' : 'material_processing',
     materialInput: 'none', managedMode: 'one_click_managed', assistantEntry: portal,
-    prefill: { title: portal.title, topic: portal.objective, platforms: portal.platforms },
+    prefill: { title: portal.title, topic: portal.objective, platforms: productionPlatforms.length ? productionPlatforms : ['facebook'] },
     specialRequirements: portal.objective,
     ...(portal.imageReplication ? { sourceContext: {
       originLabel: '来自灵小枢对话', referenceContentType: 'image' as const,
@@ -40,6 +42,7 @@ export default function AssistantCreationPortalCard({ portal }: { portal: Assist
     ? { ...portal, selectedProducts: portal.selectedProducts.map(({ id, name }) => ({ id, name })) } : portal);
   if (!valid.success) return null;
   const item = valid.data;
+  const unsupportedProductionPlatform = item.platforms.some(platform => !isContentProductionPlatform(platform));
   if (item.imageReplication) return <AssistantImageReplicationScene portal={item}
     request={creationPortalNavigation(item).contentCreationRequest}/>;
   if (item.scenario === 'viral_replication') return <AssistantReplicationScene portal={item}/>;
@@ -65,7 +68,7 @@ export default function AssistantCreationPortalCard({ portal }: { portal: Assist
     }}>
     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-surface-2 text-accent" aria-hidden="true">{item.imageReplication ? <Images size={22}/> : <Clapperboard size={22}/>}</span>
     <span className="min-w-0 flex-1"><strong className="block text-sm font-semibold">{item.imageReplication ? '图文爆款复刻' : '内容创作'}</strong>
-      <span className="mt-0.5 block text-xs text-text-secondary">{item.imageReplication ? '确认参考图和产品后创建复刻任务' : item.requestedOutputCount === null ? '数量待确认' : `${item.requestedOutputCount}条${item.outputType === 'video' ? '视频' : '内容'}`} · 打开</span>
+      <span className="mt-0.5 block text-xs text-text-secondary">{item.imageReplication ? '确认参考图和产品后创建复刻任务' : item.requestedOutputCount === null ? '数量待确认' : `${item.requestedOutputCount}条${item.outputType === 'video' ? '视频' : '内容'}`} · 打开{unsupportedProductionPlatform ? '；当前仅制作 LinkedIn / Facebook，默认改为 Facebook' : ''}</span>
     </span><ArrowRight size={17} className="shrink-0 text-text-muted" aria-hidden="true"/>
   </button>;
 }

@@ -72,6 +72,7 @@ test('selected content quick actions preserve tenant, state, task and run identi
     assert.equal(enqueues, 0, 'stale input must fail before production');
     assert.equal((await request('/assistant-actions/create', {title:'新任务',objective:''})).status, 400);
     assert.equal((await request('/assistant-actions/create', {title:'缺截止时间的周任务',objective:'制作一条产品介绍',mode:'weekly'})).status, 400);
+    assert.equal((await request('/assistant-actions/create', {title:'不支持的平台',objective:'制作内容',platforms:['youtube']})).status, 400);
     const createInput = {title:'待补资料的单条内容',objective:'制作一条产品介绍',mode:'instant'};
     const createdResponse = await request('/assistant-actions/create', createInput, 't', 'create-blocked-once');
     assert.equal(createdResponse.status, 201);

@@ -15,6 +15,9 @@ import { recordSocialImageBusinessContext, recordSocialImageNodeOutput, SocialIm
 import { projectSocialImageProductionSnapshot } from '../socialImage/socialImageProductionRuntime.js';
 import { analyzeSocialImageReference, inspectSocialImageAsset, socialImageAssetAuthorization, socialImageAssetManifest } from '../socialImage/socialImageEvidenceWorker.js';
 import { readSocialImageReferenceBytes } from '../socialImage/socialImageReferenceBytes.js';
+import { referenceProductCheckIssue } from './socialImageReferenceProductPolicy.js';
+import { readReferenceStyle } from './socialImageReferenceStyle.js';
+import { resolveSocialImageProductCutout } from './socialImageProductCutout.js';
 import { inspectSocialImageCandidateFactors, prepareSocialImageReferenceStrategy, socialImageFrozenGraphMatches, socialImageFrozenSourceIssue } from '../socialImage/socialImageReferenceStrategy.js';
 import { localProductOcrReadiness, recognizeProductImageLocally, recognizeProductImageTokensLocally } from '../lib/localProductOcr.js';
 import { runSocialImageVisualPreflight } from '../socialImage/socialImageQualityPreflight.js';
@@ -151,6 +154,7 @@ export async function prepareImageEvidence(input: ImageWorkflowInput) {
     const referenceReadable = Boolean(reference && inventory);
     const referenceHash = reference?.bytes.length ? createHash('sha256').update(reference.bytes).digest('hex')
         : createHash('sha256').update(referenceUrl || 'missing-reference').digest('hex');
+    const styleObservation = referenceReadable ? await readReferenceStyle({ store, tenantId, sourceRecordId: task.referenceSnapshot?.sourceRecordId, sourceSha256: referenceHash }).catch(() => null) : null;
     const imageAssetRef = { objectType: 'social-image-reference', id: task.referenceSnapshot?.sourceRecordId || task.id,
         version: 1, contentHash: referenceHash };
     const referenceValue = {
@@ -159,7 +163,7 @@ export async function prepareImageEvidence(input: ImageWorkflowInput) {
         platform: task.referenceSnapshot?.platform || null, account: task.referenceSnapshot?.accountName || null,
         publishedAt: null, rightsPolicy: 'structure_only' as const, performanceEvidence: [], relativePerformance: null,
         referencePurpose: ['structure', 'visual_hook'] as Array<'structure' | 'visual_hook'>,
-        fingerprint: task.referenceSnapshot?.fingerprint || referenceHash,
+        fingerprint: task.referenceSnapshot?.fingerprint || referenceHash, styleObservation,
     };
     task = await recordSocialImageNodeOutput({ store, tenantId, taskId: task.id, expectedVersion: task.version,
         nodeId: 'reference_snapshot', status: referenceReadable ? 'completed' : 'blocked', value: referenceValue,
@@ -218,6 +222,12 @@ export async function renderImageLayers(input: ImageWorkflowInput) {
         const sourceIssue = socialImageFrozenSourceIssue({ task, productBytes: assets, referenceBytes: reference?.bytes || null });
         if (sourceIssue) {
             throw imageCommandFailure(422, { ok: false, code: sourceIssue, error: sourceIssue });
+        }
+        const productIssue = referenceProductCheckIssue(task, reference?.bytes || null);
+        if (productIssue) throw imageCommandFailure(422, { ok: false, code: productIssue, error: '参考图产品确认已失效，请重新确认。' });
+        for (const productId of assets.keys()) {
+            const cutout = await resolveSocialImageProductCutout({ tenantId, productId });
+            assets.set(productId, cutout.bytes);
         }
     }
     const rendered = await renderSocialImageLayerGraph({ graph: renderGraph, assets });

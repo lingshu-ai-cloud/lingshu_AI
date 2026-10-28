@@ -36,6 +36,21 @@ export function AssistantWeeklyObjectiveChoices({ experience, busy, onSelect, on
   </div>;
 }
 
+export function AssistantWeeklyReferenceChoices({ experience }: { experience: AssistantWeeklyPlanExperience }) {
+  const gap = experience.referenceGap;
+  if (!gap) return null;
+  return <section className="ls-assistant-bubble-enter ml-7 space-y-3 rounded-xl border border-border bg-surface p-4 text-sm text-text-primary" aria-label="周任务缺少爆款参考" role="status">
+    <Alert type="warning" showIcon title={`还缺 ${gap.missingCount} 条爆款视频`} description={`本周需要 ${gap.requiredCount} 条独立、可用于制作的参考。周任务尚未确立，也未开始生产。`}/>
+    <p className="text-text-secondary">导入或采集后，视频仍需完成逐镜分析与复核，才能绑定到计划。</p>
+    <div className="flex flex-wrap gap-2">
+      <Button disabled={experience.busy} onClick={() => experience.openReferenceLibrary('inspiration')}>手动录入爆款视频</Button>
+      <Button type="primary" loading={experience.busy} onClick={() => void experience.collectReferencesNow()}>立即采集一批</Button>
+      <Button disabled={experience.busy} onClick={() => void experience.retryReferenceCheck()}>重新核验周计划</Button>
+    </div>
+    {experience.referenceMessage && <Alert type="info" showIcon title={experience.referenceMessage} />}
+  </section>;
+}
+
 export function AssistantWeeklyPlanOverlay({ experience, reduceMotion }: { experience: AssistantWeeklyPlanExperience; reduceMotion: boolean }) {
   const data = experience.proposal;
   const goal = data?.goal || experience.draft;

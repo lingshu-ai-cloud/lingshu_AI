@@ -3,12 +3,15 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import type { Material } from '../../lib/studioApi.js';
 import {
+  CONTAINED_PRODUCT_PREVIEW_ASPECT_RATIO,
   materialBelongsToKnownProduct,
   materialHasAuthoritativeAspectRatio,
   materialIntrinsicAspectRatio,
   materialMatchesProduct,
+  materialUsesContainedProductPreview,
   neutralProductSceneLabel,
   productSceneSlotHasReadyMaterial,
+  selectProductCoverMaterial,
 } from './ProductMaterialGroup.js';
 
 const componentSource = readFileSync(new URL('./ProductMaterialGroup.tsx', import.meta.url), 'utf8');
@@ -44,6 +47,24 @@ test('产品素材按稳定产品身份归组，企业通用素材保持独立',
   assert.equal(materialMatchesProduct(material({ productName: products[0].name }), products[0]), true, '兼容尚未补齐 ID 的历史素材');
   assert.equal(materialBelongsToKnownProduct(material(), products), false);
   assert.equal(materialBelongsToKnownProduct(material({ productId: 'product-1' }), products), true);
+});
+
+test('产品集合封面优先使用企业资料原始产品图，抠图只留在详情', () => {
+  const cutout = material({
+    id: 'cutout',
+    productId: 'product-1',
+    sourceType: 'local-upload',
+    materialV2: {
+      schemaVersion: 'material-asset.v2', assetRole: 'exact_product', contentRole: 'transparent_cutout',
+      productIdentityLevel: 'exact', enterpriseCommon: false, subjectRefs: [], sceneType: null,
+      personProductContact: 'none', occlusion: 'none', cleanPlate: null, cameraMotion: null,
+      labelReadability: 'high', templateEligible: false, reuseScore: 1, segmentCandidates: [],
+    },
+  });
+  const original = material({ id: 'original', productId: 'product-1', sourceType: 'enterprise_product_table' });
+  assert.equal(selectProductCoverMaterial([cutout, original], products[0])?.id, 'original');
+  assert.equal(selectProductCoverMaterial([cutout], products[0])?.id, 'cutout', '缺少原图时仍应保留可用兜底');
+  assert.match(componentSource, /selectProductCoverMaterial\(materials, product\)/, '产品卡不能再按列表顺序让抠图抢占封面');
 });
 
 test('预制场景只用中性序号，不向前端暴露具体画面分类', () => {
@@ -112,4 +133,34 @@ test('素材与产品卡使用瀑布流和真实比例，不再固定 9:16', () 
   assert.match(componentSource, /columns=\{\{ xs: 1, sm: 2, md: 2, lg: 3, xl: 3, xxl: 3 \}\}/, '抽屉内容应限制在 2–3 列');
   assert.doesNotMatch(componentSource, /aspect-\[9\/16\]/);
   assert.doesNotMatch(dashboardSource.slice(dashboardSource.indexOf("innerView === 'library'")), /aspect-\[9\/16\]/);
+});
+
+test('透明产品抠图使用等尺寸棋盘格容器完整展示，不按极端原图比例撑高抽屉', () => {
+  const cutout = material({
+    materialV2: {
+      schemaVersion: 'material-asset.v2',
+      assetRole: 'exact_product',
+      contentRole: 'transparent_cutout',
+      productIdentityLevel: 'exact',
+      enterpriseCommon: false,
+      subjectRefs: ['product:product-1'],
+      sceneType: null,
+      personProductContact: 'none',
+      occlusion: 'none',
+      cleanPlate: null,
+      cameraMotion: null,
+      labelReadability: 'high',
+      templateEligible: false,
+      reuseScore: 1,
+      segmentCandidates: [],
+    },
+  });
+  assert.equal(CONTAINED_PRODUCT_PREVIEW_ASPECT_RATIO, 1, '抠图卡与同组方形图片保持相同尺寸');
+  assert.equal(materialUsesContainedProductPreview(cutout), true);
+  assert.equal(materialUsesContainedProductPreview(material()), false);
+  assert.match(componentSource, /contained \? CONTAINED_PRODUCT_PREVIEW_ASPECT_RATIO : materialIntrinsicAspectRatio\(material\)/, '透明抠图加载前后应保持固定占位');
+  assert.match(componentSource, /objectFit: contained \? 'contain' : 'cover'/, '透明抠图必须完整显示，不能裁切瓶身');
+  assert.match(componentSource, /contained \? 'ls-transparent-media-preview' : ''/, '透明抠图必须显示透明棋盘格，不能伪装成普通深色底图');
+  assert.match(componentSource, /contained=\{materialUsesContainedProductPreview\(material\)\}/, '产品详情卡必须启用透明抠图展示模式');
+  assert.match(componentSource, /contained=\{materialUsesContainedProductPreview\(coverMaterial\)\}/, '产品集合封面也不能被极端抠图比例撑高');
 });

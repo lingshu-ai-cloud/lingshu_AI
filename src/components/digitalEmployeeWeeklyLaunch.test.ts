@@ -17,7 +17,7 @@ const prepared = {
   ...draft,
   plan: { businessPackage: {
     ...draft.plan!.businessPackage!,
-    revision: 4,
+    revision: 3,
     detailGeneration: {
       status: 'ready', startedAt: '2026-10-23T07:55:00Z', generatedAt: '2026-10-23T07:56:00Z',
       estimatedMinutes: 2, usageCostCny: null, readyCount: 1, blockedCount: 0, blockers: [],

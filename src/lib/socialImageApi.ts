@@ -11,12 +11,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...authHeader(), ...(init?.headers || {}) },
   });
   const payload = await response.json().catch(() => ({})) as T & { error?: string };
-  if (!response.ok) throw Object.assign(new Error(payload.error || `HTTP ${response.status}`), { status: response.status, payload });
+  if (!response.ok) throw Object.assign(new Error(payload.error === 'local_store_reconciliation_required'
+    ? '本地任务存储需要安全恢复。请保留原任务，维护完成后再恢复，勿重复创建或付费。'
+    : payload.error || `HTTP ${response.status}`), { status: response.status, payload });
   return payload;
 }
 
 export const socialImageApi = {
+  confirmReferenceProduct: (task:SocialImageCreationTask,decision:'auto'|'present'|'absent') => request<{ok:true;task:SocialImageCreationTask}>(`/tasks/${encodeURIComponent(task.id)}/reference-product-check`,{method:'POST',body:JSON.stringify({expectedVersion:task.version,decision})}),
   enqueueExecution: (task:SocialImageCreationTask) => request<{ok:true;task:SocialImageCreationTask;execution:SocialImageExecutionReceipt}>(`/tasks/${encodeURIComponent(task.id)}/execution`,{method:'POST',body:JSON.stringify({expectedVersion:task.version})}),
+  retryExecution: (task:SocialImageCreationTask) => request<{ok:true;task:SocialImageCreationTask;execution:SocialImageExecutionReceipt}>(`/tasks/${encodeURIComponent(task.id)}/execution/retry`,{method:'POST',body:JSON.stringify({expectedVersion:task.version})}),
   getContentExecution: (contentId:string) => request<{ok:true;task:SocialImageCreationTask;execution:SocialImageExecutionReceipt|null}>(`/content-tasks/${encodeURIComponent(contentId)}/execution`),
   createOrResumeRun: (contentTaskId: string, input: {
     expectedContentTaskVersion: string;

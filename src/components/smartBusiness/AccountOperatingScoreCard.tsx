@@ -60,7 +60,6 @@ export default function AccountOperatingScoreCard({ companyName, score, preview 
         <div className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border" aria-label="账号分四个过程维度">
           {score.dimensions.map(dimension => { const Icon = dimensionIcons[dimension.key]; return <button key={dimension.key} type="button" onClick={() => setOpen(true)} className="min-w-0 bg-surface p-3 text-left outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"><span className="flex items-center gap-1.5 text-xs text-text-secondary"><Icon size={14} className="text-accent" aria-hidden="true"/>{dimension.label}</span><strong className="mt-1 block text-lg font-semibold tabular-nums text-text-primary">{dimension.points ?? '—'}<span className="ml-1 text-[11px] font-normal text-text-muted">/ 25</span></strong></button>; })}
         </div>
-        <p className="mt-3 text-xs leading-5 text-text-secondary">评价持续经营动作，不以单次播放量、订单量或询盘量直接打分；待数据不记为 0 分。</p>
       </div>
     </section>
     <Modal open={open} onCancel={() => setOpen(false)} footer={null} width={800} destroyOnHidden title="账号分 · 过程健康详情" aria-describedby="account-operating-score-description">

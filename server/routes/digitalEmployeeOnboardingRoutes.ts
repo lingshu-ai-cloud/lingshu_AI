@@ -78,7 +78,7 @@ export function createDigitalEmployeeOnboardingRoutes(deps: Pick<DigitalEmployee
           if(goal.status!=='draft')throw Error('原计划已执行，不接受新的初始化确认');
           const requestId=String(req.body?.requestId||'');if(!/^[a-zA-Z0-9-]{8,100}$/.test(requestId))throw Error('请求身份缺失');
           if(!pack||pack.revision!==Number(req.body?.revision))throw Error('计划版本已变化');
-          const state:InitialPreparation={requestId,goalId,revision:pack.revision,confirmedBy:userId,confirmedAt:new Date().toISOString(),status:'collecting',sources:sourceScope(),candidateIds:[],reason:''};
+          const state:InitialPreparation={requestId,goalId,revision:pack.revision,confirmedBy:userId,confirmedAt:new Date().toISOString(),status:'collecting',sources:sourceScope(),candidateIds:[],reason:'',...(pack.referenceSourcePolicy==='existing_library_only'?{referenceSourcePolicy:'existing_library_only' as const}:{})};
           await replaceInitialPreparationPlan({dataStore:store,collection:COLLECTION.plans,expected:plan,tenantId,nextPlan:{...body,initialPreparation:state},conflictMessage:'计划版本已变化，请重新确认'});
           await resumeInitialPreparationPlan(tenantId,goalId);
         });const latest=await first<PlanRecord>(COLLECTION.plans,{tenant_id:tenantId,goal_id:goalId});res.status(202).json({preparation:jsonObject<{initialPreparation?:InitialPreparation}>(latest?.plan,{}).initialPreparation});

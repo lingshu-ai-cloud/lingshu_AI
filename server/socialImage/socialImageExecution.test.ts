@@ -21,6 +21,7 @@ import {STARTER_COLLECTIONS} from '../starter198/repository.js';
 import {createOrResumeBoundSocialImageRun} from './socialImageProductionRun.js';
 import {readSocialImageTask,updateSocialImageTask} from './socialImageTask.js';
 import {enqueueImageExecution,imageExecutionReceipt,readImageExecutionJob} from './socialImageExecutionQueue.js';
+import {confirmReferenceProduct} from './socialImageReferenceProductCheck.js';
 import {executeImageProduction,type ImageExecutionPorts} from './socialImageExecution.js';
 import {localCompositeRepairCandidate,repairSocialImageLocalComposite} from './socialImageLocalCompositeRepair.js';
 import {tenantAssetRelativePath} from '../lib/assetAccess.js';
@@ -94,7 +95,10 @@ async function setup(){
  const created=await createOrResumeBoundSocialImageRun(store,'tenant-a',{contentTaskId:'content-a',expectedContentTaskVersion:'7',idempotencyKey:'image-queue-test-001',entrySource:'assistant',imageType:'product_poster'});
  const result=await updateSocialImageTask(store,'tenant-a',created.task.id,created.task.version,{referenceUrls:['/reference.png'],referenceSnapshot:{imageUrls:['/reference.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
  if(result.kind!=='updated')throw Error('fixture failed');
- return {store,task:result.task,input:{store,tenantId:'tenant-a',userId:'owner',taskId:result.task.id,expectedVersion:result.task.version}};
+ const bytes=await sharp({create:{width:10,height:10,channels:3,background:'#123456'}}).png().toBuffer();
+ const readReference=async(tenantId:string)=>tenantId==='tenant-a'?{bytes,mimeType:'image/png'}:null;
+ const task=await confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:result.task.id,expectedVersion:result.task.version,decision:'present',readReference});
+ return {store,task,readReference,input:{store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:task.version,readReference}};
 }
 async function settle(store:DataStore,task:Awaited<ReturnType<typeof setup>>['task']){
  for(let i=0;i<200;i++){const job=await readImageExecutionJob(store,'tenant-a',task);if(job&&['blocked','succeeded'].includes(job.status))return job;await new Promise(resolve=>setTimeout(resolve,10));}throw Error('worker did not settle');
@@ -105,6 +109,41 @@ test('confirmation persists one receipt; replay after reload does not enqueue or
  assert.equal(first.execution.status,'queued');assert.equal((await readImageExecutionJob(store,'tenant-a',task))?.attempt,0);
  await assert.rejects(enqueueImageExecution({...input,tenantId:'tenant-b'}),/social_image_task_missing/);
  const rows=await store.list('content_execution_jobs');assert.equal(rows.totalItems,1);
+});
+test('reference product confirmation is tenant and byte-bound; an absent product never creates a job',async()=>{
+ const {store,task,input}=await setup();
+ const changed=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{referenceSnapshot:{imageUrls:['/replacement.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
+ assert.equal(changed.kind,'updated');if(changed.kind!=='updated')throw Error('fixture');
+ assert.equal(changed.task.referenceProductCheck,undefined);
+ await assert.rejects(enqueueImageExecution({...input,expectedVersion:changed.task.version}),/confirmation_required/);
+ await assert.rejects(confirmReferenceProduct({store,tenantId:'tenant-b',userId:'owner',taskId:task.id,expectedVersion:changed.task.version,decision:'present',readReference:input.readReference}),/task_missing/);
+ const absent=await confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:changed.task.version,decision:'absent',readReference:input.readReference});
+ assert.equal(absent.status,'blocked');assert.equal(absent.referenceProductCheck?.decision,'absent');
+ await assert.rejects(enqueueImageExecution({...input,expectedVersion:absent.version}),/shoot_required/);
+ assert.equal((await store.list('content_execution_jobs')).totalItems,0);
+ const replaced=await updateSocialImageTask(store,'tenant-a',task.id,absent.version,{referenceSnapshot:{imageUrls:['/new-photo.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
+ assert.equal(replaced.kind,'updated');if(replaced.kind==='updated'){assert.equal(replaced.task.id,task.id);assert.equal(replaced.task.status,'draft');assert.equal(replaced.task.referenceProductCheck,undefined);}
+});
+test('agent product observation admits only a same-tenant exact-byte analyzed reference',async()=>{
+ const {store,task,readReference}=await setup();
+ const source=(await readReference('tenant-a'))!;
+ const hash=createHash('sha256').update(source.bytes).digest('hex');
+ await store.create('trend_videos',{id:'post-a',tenant_id:'tenant-a',aiAnalysis:JSON.stringify({contentFormat:'image',imageEvidence:{version:2,status:'analyzed',productionLabels:[{sourceSha256:hash,kind:'product_only',confidence:.94,evidence:'仅可见产品与纯色背景'}]}})});
+ const changed=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{referenceSnapshot:{sourceRecordId:'post-a',imageUrls:['/reference.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
+ assert.equal(changed.kind,'updated');if(changed.kind!=='updated')throw Error('fixture');
+ const checked=await confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:changed.task.version,decision:'auto',readReference});
+ assert.equal(checked.referenceProductCheck?.decision,'present');
+ assert.equal(checked.referenceProductCheck?.confirmedBy,'agent:image-post-evidence.v2');
+ const noSource=await updateSocialImageTask(store,'tenant-a',task.id,checked.version,{referenceSnapshot:{imageUrls:['/reference.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
+ assert.equal(noSource.kind,'updated');if(noSource.kind!=='updated')throw Error('fixture');
+ await assert.rejects(confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:noSource.task.version,decision:'auto',readReference}),/social_image_reference_product_uncertain/);
+ await store.create('trend_videos',{id:'post-b',tenant_id:'tenant-a',aiAnalysis:JSON.stringify({contentFormat:'image',imageEvidence:{version:2,status:'analyzed',productionLabels:[{sourceSha256:hash,kind:'shoot_required',productPresence:'absent',confidence:.91,evidence:'仅可见人物，没有产品'}]}})});
+ const withoutProduct=await updateSocialImageTask(store,'tenant-a',task.id,noSource.task.version,{referenceSnapshot:{sourceRecordId:'post-b',imageUrls:['/reference.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
+ assert.equal(withoutProduct.kind,'updated');if(withoutProduct.kind!=='updated')throw Error('fixture');
+ const blocked=await confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:withoutProduct.task.version,decision:'auto',readReference});
+ assert.equal(blocked.referenceProductCheck?.decision,'absent');
+ assert.equal(blocked.status,'blocked');
+ assert.equal((await store.list('content_execution_jobs')).totalItems,0);
 });
 test('legacy timed-out planning receipt identifies the unknown provider outcome without replaying it',async()=>{
  const {store,input}=await setup();const queued=await enqueueImageExecution(input);
@@ -117,6 +156,12 @@ test('legacy timed-out planning receipt identifies the unknown provider outcome 
  const job=await readImageExecutionJob(store,'tenant-a',queued.task);
  assert.ok(job);assert.equal(imageExecutionReceipt(job).lastError,'social_image_planning_outcome_requires_review');
 });
+test('missing image provider configuration is projected as a stable actionable code',async()=>{
+ const {store,input}=await setup();const queued=await enqueueImageExecution(input);
+ await store.update('content_execution_jobs',queued.execution.jobId,{status:'blocked',last_error:'user_input_required:OPENAI_API_KEY is not configured'});
+ const job=await readImageExecutionJob(store,'tenant-a',queued.task);
+ assert.ok(job);assert.equal(imageExecutionReceipt(job).lastError,'social_image_provider_credentials_missing');
+});
 test('stale inputs and cancelled canonical task cannot create a dispatch job',async()=>{
  const {store,input}=await setup();await assert.rejects(enqueueImageExecution({...input,expectedVersion:1}),/version_conflict/);
  await store.update(STARTER_COLLECTIONS.socialContentTasks,'content-row',{status:'cancelled'});
@@ -125,7 +170,7 @@ test('stale inputs and cancelled canonical task cannot create a dispatch job',as
 test('a new worker claims the durable image job without the browser and records a stable block, without paid retry',async()=>{
  const {store,task,input}=await setup();const queued=await enqueueImageExecution(input);let calls=0;
  const stop=async()=>{calls++;throw Error('social_image_required_asset_rights_unverified');};
- const ports:ImageExecutionPorts={prepare:stop,plan:stop,render:stop,quality:stop};
+ const ports:ImageExecutionPorts={prepare:stop,plan:stop,render:stop,quality:stop,readReference:input.readReference};
  const worker=new DurableContentExecutionWorker({dataStore:store,allowedJobIds:[queued.execution.jobId],execute:job=>executeImageProduction(store,job,ports)});
  await worker.drain();const job=await settle(store,task);assert.equal(job.status,'blocked');assert.equal(job.attempt,1);assert.equal(calls,1);
  await worker.drain();assert.equal(calls,1);const replay=await enqueueImageExecution(input);assert.equal(replay.execution.status,'blocked');
@@ -135,12 +180,19 @@ test('changes after queue confirmation are fenced before the first production co
  const {store,task,input}=await setup();const queued=await enqueueImageExecution(input);
  const changed=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{contentBrief:{...task.contentBrief,coreClaim:'changed'}});assert.equal(changed.kind,'updated');
  let calls=0;const operation=async()=>{calls++;};
- const worker=new DurableContentExecutionWorker({dataStore:store,allowedJobIds:[queued.execution.jobId],execute:job=>executeImageProduction(store,job,{prepare:operation,plan:operation,render:operation,quality:operation})});
+ const worker=new DurableContentExecutionWorker({dataStore:store,allowedJobIds:[queued.execution.jobId],execute:job=>executeImageProduction(store,job,{prepare:operation,plan:operation,render:operation,quality:operation,readReference:input.readReference})});
  await worker.drain();const job=await settle(store,task);assert.equal(calls,0);assert.match(job.lastError||'',/confirmed_inputs_changed/);worker.stop();
+});
+test('worker rechecks actual reference bytes after queue admission without running a production step',async()=>{
+ const {store,task,input}=await setup();const queued=await enqueueImageExecution(input);let calls=0;
+ const operation=async()=>{calls++;};
+ const worker=new DurableContentExecutionWorker({dataStore:store,allowedJobIds:[queued.execution.jobId],execute:job=>executeImageProduction(store,job,{prepare:operation,plan:operation,render:operation,quality:operation,readReference:async()=>({bytes:Buffer.from('changed'),mimeType:'image/png'})})});
+ await worker.drain();const job=await settle(store,task);assert.equal(calls,0);assert.match(job.lastError||'',/reference_product_confirmation_required/);worker.stop();
 });
 test('one local repair reuses the saved plate and frozen product, then cannot repair again',async()=>{
  const {store,task}=await setup();
- const product=await sharp({create:{width:80,height:100,channels:3,background:'#f5f5f5'}}).png().toBuffer();
+ const product=await sharp({create:{width:80,height:100,channels:4,background:'#00000000'}})
+  .composite([{input:await sharp({create:{width:50,height:70,channels:4,background:'#f5f5f5ff'}}).png().toBuffer(),left:15,top:15}]).png().toBuffer();
  const plate=await sharp({create:{width:1200,height:1200,channels:3,background:'#809caa'}}).png().toBuffer();
  const original=await sharp({create:{width:1200,height:1200,channels:3,background:'#576870'}}).png().toBuffer();
  const jobId='paid-job-1',inputHash='a'.repeat(64),oldId='output-1';
@@ -152,9 +204,10 @@ test('one local repair reuses the saved plate and frozen product, then cannot re
   socialImageTaskId:task.id,socialImageJobId:jobId,socialImageInputHash:inputHash,model:'gpt-image-2'});
  const originalRecord=material('original',original,'ai_generated_marketing_image',{
   socialImageTaskId:task.id,socialImageJobId:jobId,socialImageInputHash:inputHash,
-  backgroundMaterialId:'plate',plateSha256:digest(plate),productSha256:digest(product),
+  backgroundMaterialId:'plate',plateSha256:digest(plate),productSha256:digest(product),productCutoutMaterialId:'cutout',
   localComposition:'fixed-product-and-copy-v1',
  });
+ const cutoutRecord=material('cutout',product,'enterprise_product_cutout',{});
  const changed=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{
   status:'review_required',step:'review',
   renderBrief:{headline:'Visible headline',subheadline:'Fresh copy',originBadge:'',trustBadges:[],sellingPoints:[],
@@ -173,9 +226,8 @@ test('one local repair reuses the saved plate and frozen product, then cannot re
  assert.equal(localCompositeRepairCandidate(changed.task)?.id,oldId);
  let writes=0;
  const repaired=await repairSocialImageLocalComposite({store,tenantId:'tenant-a',taskId:task.id,
-  expectedVersion:changed.task.version,materials:[plateRecord,originalRecord],
-  enterpriseProductAsset:async()=>({name:'Product A',bytes:product}),
-  readBytes:async item=>({bytes:item.id==='plate'?plate:original,mimeType:'image/png'}),
+  expectedVersion:changed.task.version,materials:[plateRecord,originalRecord,cutoutRecord],
+  readBytes:async item=>({bytes:item.id==='plate'?plate:item.id==='cutout'?product:original,mimeType:'image/png'}),
   writeMaterial:async input=>{writes++;return {...material('repaired',input.bytes,'ai_generated_marketing_image',input.provenance||{}),
    sourceProvider:'deterministic-compositor'} as any;},
  });
@@ -186,7 +238,7 @@ test('one local repair reuses the saved plate and frozen product, then cannot re
  assert.equal(localCompositeRepairCandidate(repaired.task),null);
  await assert.rejects(repairSocialImageLocalComposite({store,tenantId:'tenant-a',taskId:task.id,
   expectedVersion:repaired.task.version,materials:[plateRecord,originalRecord],
-  enterpriseProductAsset:async()=>({name:'Product A',bytes:product})}),/not_eligible/);
+  }),/not_eligible/);
 });
 test('canonical list hydration uses image run receipt while leaving video run pointer empty',async()=>{
  const {store,input}=await setup();const queued=await enqueueImageExecution(input);
@@ -196,12 +248,27 @@ test('canonical list hydration uses image run receipt while leaving video run po
  assert.equal(item.runId,null);assert.equal(item.execution?.id,queued.execution.jobId);assert.equal(item.execution?.status,'queued');
 });
 test('HTTP confirms with 202 only after persistence; content deep link restores the same queue receipt',async()=>{
- const {store,task}=await setup();const app=express();app.use(express.json());app.use((_req,res,next)=>{res.locals={tenantId:'tenant-a',userId:'owner'};next();});registerSocialImageExecutionRoutes(app,store);
+ const {store,task,readReference}=await setup();const app=express();app.use(express.json());app.use((_req,res,next)=>{res.locals={tenantId:'tenant-a',userId:'owner'};next();});registerSocialImageExecutionRoutes(app,store,{readReference});
  const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));const address=server.address();if(!address||typeof address==='string')throw Error('listen');const origin=`http://127.0.0.1:${address.port}`;
  try{let response=await fetch(`${origin}/tasks/${task.id}/execution`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expectedVersion:task.version})});assert.equal(response.status,202);const receipt=await response.json();
  response=await fetch(`${origin}/content-tasks/content-a/execution`);assert.equal(response.status,200);const restored=await response.json();assert.equal(restored.execution.jobId,receipt.execution.jobId);assert.equal(restored.task.id,task.id);
+ const blocked=await store.getById<Record_>('content_execution_jobs',receipt.execution.jobId);assert.ok(blocked);
+ await store.update('content_execution_jobs',receipt.execution.jobId,{status:'blocked',last_error:'user_input_required:social_image_planning_failed'});
+ response=await fetch(`${origin}/tasks/${task.id}/execution/retry`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expectedVersion:task.version})});assert.equal(response.status,202);const retried=await response.json();assert.equal(retried.execution.jobId,receipt.execution.jobId);assert.equal(retried.execution.status,'queued');
  response=await fetch(`${origin}/tasks/${task.id}/execution`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expectedVersion:'wrong'})});assert.equal(response.status,400);
  }finally{await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
+});
+test('HTTP reference decision is agent-only and missing analysis never queues',async()=>{
+ const {store,task,readReference}=await setup();const app=express();app.use(express.json());app.use((_req,res,next)=>{res.locals={tenantId:'tenant-a',userId:'owner'};next();});registerSocialImageExecutionRoutes(app,store,{readReference});
+ const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));const address=server.address();if(!address||typeof address==='string')throw Error('listen');const origin=`http://127.0.0.1:${address.port}`;
+ const post=(suffix:string,body:unknown)=>fetch(`${origin}/tasks/${task.id}/${suffix}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+ try {
+  assert.equal((await post('reference-product-check',{expectedVersion:task.version,decision:'absent',confirmedBy:'fake'})).status,400);
+  assert.equal((await post('reference-product-check',{expectedVersion:task.version,decision:'absent'})).status,400);
+  const uncertain=await post('reference-product-check',{expectedVersion:task.version,decision:'auto'});assert.equal(uncertain.status,422);
+  assert.equal((await uncertain.json()).code,'social_image_reference_product_uncertain');
+  assert.equal((await store.list('content_execution_jobs')).totalItems,0);
+ } finally {await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
 });
 
 const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -227,7 +294,7 @@ async function inventoryFor(bytes: Buffer, focal: 'top_left' | 'bottom_right') {
     ocr: async () => [{ text: 'OLD BRAND', bbox: textBox(focal), confidence: .94 }] });
 }
 
-async function preparedViralTask(imageType: 'product_poster' | 'carousel' = 'product_poster', route: 'local' | 'paid' = 'local', language: 'zh' | 'en' = 'zh') {
+async function preparedViralTask(imageType: 'product_poster' | 'carousel' = 'product_poster', route: 'local' | 'paid' = 'local', language: 'zh' | 'en' = 'zh', style?:'advertising'|'imitable') {
   const referenceBytes = await referenceImage('top_left', '#123358');
   const inventory = await inventoryFor(referenceBytes, 'top_left');
   const productBytes = await sharp({ create: { width: 180, height: 260, channels: 3, background: '#ffffff' } }).png().toBuffer();
@@ -239,8 +306,9 @@ async function preparedViralTask(imageType: 'product_poster' | 'carousel' = 'pro
   });
   assert.equal(setReference.kind, 'updated');
   if (setReference.kind !== 'updated') throw new Error('reference_fixture_update_failed');
+  const checked=await confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:created.id,expectedVersion:setReference.task.version,decision:'present',readReference:async()=>({bytes:referenceBytes,mimeType:'image/png'})});
   let task = await recordSocialImageBusinessContext({ store, tenantId: 'tenant-a', taskId: created.id,
-    expectedVersion: setReference.task.version, now });
+    expectedVersion: checked.version, now });
   const asset = await inspectSocialImageAsset({ assetId: 'product-a', role: 'product', required: true,
     bytes: productBytes, mimeType: 'image/png', authorization: socialImageAssetAuthorization({
       id: 'product-a', tenantId: 'tenant-a', scope: 'own', rightsStatus: 'authorized',
@@ -258,7 +326,8 @@ async function preparedViralTask(imageType: 'product_poster' | 'carousel' = 'pro
     nodeId: 'reference_snapshot', status: 'completed', value: { referenceId: referenceRef.id,
       sourceUrl: '/tenant-owned/reference.png', sourceRecordId: referenceRef.id, imageAssetRef: referenceRef,
       platform: null, account: null, publishedAt: null, rightsPolicy: 'structure_only', performanceEvidence: [],
-      relativePerformance: null, referencePurpose: ['structure', 'visual_hook'], fingerprint: referenceRef.contentHash },
+      relativePerformance: null, referencePurpose: ['structure', 'visual_hook'], fingerprint: referenceRef.contentHash,
+      ...(style?{styleObservation:{kind:style,elements:['soft_light','asymmetric'],sourceSha256:referenceRef.contentHash,analysisVersion:'image-post-evidence.v2'}}:{}) },
     inputRefs: [], evidenceRefs: [referenceRef], createdBy: { kind: 'worker', id: 'offline_reference_fixture' }, now });
   const snapshotNode = task.productionRuntime!.nodeOutputs.filter(node => node.nodeId === 'reference_snapshot').at(-1)!;
   task = await recordSocialImageNodeOutput({ store, tenantId: 'tenant-a', taskId: task.id, expectedVersion: task.version,
@@ -290,8 +359,11 @@ test('viral image task freezes the existing GPT Image 2 route without sending a 
     expectedVersion:director.version});
   assert.equal(socialImageV3PaidPrerequisiteIssue(planned,'execute'),null);
   assert.equal(planned.layerGraph,undefined);
-  const execution=planned.productionRuntime!.nodeOutputs.filter(node=>node.nodeId==='execution_plan').at(-1)!.value as {renderRoute:string};
+  const execution=planned.productionRuntime!.nodeOutputs.filter(node=>node.nodeId==='execution_plan').at(-1)!.value as {renderRoute:string;fallbackRoutes:string[]};
   assert.equal(execution.renderRoute,'/api/overseas/studio/fb-poster/render');
+  assert.ok(execution.fallbackRoutes.includes('reference_style_unverified_ad_fallback'));
+  const renderNode=planned.productionRuntime!.nodeOutputs.filter(node=>node.nodeId==='render_spec').at(-1)!.value as {layoutConstraints:Record<string,unknown>};
+  assert.equal(renderNode.layoutConstraints.referenceStyleStrategy,'advertising_fallback.v1');
   const spec=planned.productionRuntime!.nodeOutputs.filter(node=>node.nodeId==='render_spec').at(-1)!.value as {idempotencyKey:string};
   const now=new Date().toISOString();
   const patch=await admitSocialImageV3QueuedJob(store,'tenant-a',planned,{status:'generating',step:'generate',
@@ -304,6 +376,17 @@ test('viral image task freezes the existing GPT Image 2 route without sending a 
     assert.equal(frozen?.referenceImageUrls.length,0,'structure-only crawled bytes must not go to image provider');
     assert.match(frozen?.imagePrompt||'',/Reference layout measurements/);
   }
+});
+
+test('frozen plan distinguishes byte-bound imitable style from advertising style',async()=>{
+ for(const [style,expected] of [['imitable','reference_emulation.v1'],['advertising','advertising.v1']] as const){
+  const {store,task}=await preparedViralTask('product_poster','paid','zh',style);
+  const director=await recordSocialImageV3DirectorBrief({store,tenantId:'tenant-a',taskId:task.id,expectedVersion:task.version,result:{poster:{headline:'产品 A',subheadline:'',originBadge:'',trustBadges:[],sellingPoints:[],process:[],categories:[],bottomBar:[],cta:''},caption:'产品 A',hashtags:[],fieldsToConfirm:[],provenance:'ai'}});
+  const plan=await compileSocialImageV3PaidPlan({store,tenantId:'tenant-a',taskId:director.id,expectedVersion:director.version});
+  const spec=plan.productionRuntime!.nodeOutputs.filter(node=>node.nodeId==='render_spec').at(-1)!.value as {layoutConstraints:Record<string,unknown>};
+  assert.equal(spec.layoutConstraints.referenceStyleStrategy,expected);
+  assert.deepEqual(spec.layoutConstraints.referenceStyleElements,style==='imitable'?['soft_light','asymmetric']:[]);
+ }
 });
 
 test('structure-only benchmark copy is excluded from the paid planning request', async () => {
@@ -417,6 +500,9 @@ test('planner input rejection never claims an external request',async()=>{
 
 test('durable image worker claims one frozen GPT Image 2 unit and never submits it twice', async () => {
   const {store,task,productBytes,referenceBytes}=await preparedViralTask('product_poster','paid');
+  const cutoutBytes=await sharp({create:{width:40,height:80,channels:4,background:'#00000000'}})
+    .composite([{input:await sharp({create:{width:20,height:60,channels:4,background:'#00aabbff'}}).png().toBuffer(),left:10,top:10}]).png().toBuffer();
+  const cutoutHash=digest(cutoutBytes);
   const director=await recordSocialImageV3DirectorBrief({store,tenantId:'tenant-a',taskId:task.id,
     expectedVersion:task.version,result:{poster:{headline:'产品 A',subheadline:'产品展示',originBadge:'',
       trustBadges:[],sellingPoints:[],process:[],categories:[],bottomBar:[],cta:'联系了解'},
@@ -427,13 +513,15 @@ test('durable image worker claims one frozen GPT Image 2 unit and never submits 
   const input={store,tenantId:'tenant-a',taskId:planned.id,expectedVersion:planned.version,
     enterpriseProductAsset:async()=>({name:'产品 A',bytes:productBytes}),allowPaidCall:async()=>true,
     ports:{enterpriseContext:async()=>`公司名称：示例企业\n产品1：${planned.contentBrief.productNames[0]}`,
+      productCutout:async()=>({bytes:cutoutBytes,materialId:'verified-cutout',contentSha256:cutoutHash}),
       referenceBytes:async()=>({bytes:referenceBytes,mimeType:'image/png'}),
       submit:async(request:Parameters<typeof import('./socialImagePaidSingleRender.js').submitClaimedSocialImageSingleRender>[0])=>{
         submitted++;
         assert.equal(request.references.length, 0, 'the model receives no product or benchmark identity pixels');
         assert.match(request.prompt,/BACKGROUND PLATE ONLY/);
         assert.match(request.prompt,/Do not draw any product/);
-        assert.ok(request.composition?.productBytes.equals(productBytes));
+        assert.ok(request.composition?.productBytes.equals(cutoutBytes));
+        assert.equal(request.composition?.productCutoutId,'verified-cutout');
         assert.equal(request.task.generationJobs.at(-1)?.status,'running');
         const saved=await completeSocialImagePaidJob({store,tenantId:'tenant-a',taskId:request.task.id,
           jobId:request.jobId,inputHash:request.inputHash,provider:'openai',output:{id:'candidate-paid',
@@ -441,6 +529,21 @@ test('durable image worker claims one frozen GPT Image 2 unit and never submits 
             mediaUrl:'/media/fixture.png',contentHash:'a'.repeat(64),qualityChecks:[]}});
         return {task:saved};
       }}};
+  const previousKey=process.env.OPENAI_API_KEY;
+  await assert.rejects(renderSocialImagePaidWorker({...input,ports:{...input.ports,
+    productCutout:async()=>{throw new Error('social_image_product_cutout_required');}}}),
+  /social_image_product_cutout_required/);
+  assert.equal((await readSocialImageTask(store,'tenant-a',planned.id))?.generationJobs.length,0,
+    'missing cutout must block before any paid job or provider claim');
+  try {
+    delete process.env.OPENAI_API_KEY;
+    const {submit: _submit, ...preflightPorts}=input.ports;
+    await assert.rejects(renderSocialImagePaidWorker({...input,ports:preflightPorts}),/OPENAI_API_KEY is not configured/);
+    assert.equal((await readSocialImageTask(store,'tenant-a',planned.id))?.generationJobs.length,0,
+      'missing configuration must not create a paid job or an unknown provider outcome');
+  } finally {
+    if(previousKey===undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY=previousKey;
+  }
   const rendered=await renderSocialImagePaidWorker(input);
   assert.equal(rendered.outputs.length,1);
   assert.equal(rendered.generationJobs[0]?.status,'quality_checking');
@@ -450,9 +553,9 @@ test('durable image worker claims one frozen GPT Image 2 unit and never submits 
 
 
 test('persisted worker resumes a frozen plan, renders real pixels, and never repeats completed work after restart (visual QA fixture)',async()=>{
- const {store,task,productBytes}=await preparedViralTask();
- const queued=await enqueueImageExecution({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:task.version});let renders=0,qa=0;
- const ports:ImageExecutionPorts={prepare:async()=>{throw Error('must reuse evidence');},plan:async()=>{throw Error('must reuse plan');},
+ const {store,task,productBytes,referenceBytes}=await preparedViralTask();
+ const queued=await enqueueImageExecution({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:task.version,readReference:async()=>({bytes:referenceBytes,mimeType:'image/png'})});let renders=0,qa=0;
+ const ports:ImageExecutionPorts={readReference:async()=>({bytes:referenceBytes,mimeType:'image/png'}),prepare:async()=>{throw Error('must reuse evidence');},plan:async()=>{throw Error('must reuse plan');},
  render:async current=>{renders++;const rendered=await renderSocialImageLayerGraph({graph:current.layerGraph!,assets:new Map([['product-a',productBytes]])});assert.ok(rendered.bytes.length>100);
  const saved=await updateSocialImageTask(store,'tenant-a',current.id,current.version,{status:'review_required',step:'review',outputs:[{id:'candidate-queue',role:'single',label:'主视觉',state:'quality_checking',version:1,mediaUrl:'/fixture-candidate.png',contentHash:digest(rendered.bytes),qualityChecks:[]}]});assert.equal(saved.kind,'updated');},
  quality:async current=>{qa++;const checks=current.outputs.map(output=>({...output,qualityChecks:[{key:'reference_structure_similarity' as const,verdict:'pass' as const,severity:'soft' as const,note:'offline structural QA fixture'},...SOCIAL_IMAGE_HARD_CHECKS.map(key=>({key,verdict:'pass' as const,severity:'hard' as const,note:'offline visual fixture'})),...(current.hookFactorSpec?.factors||[]).map(factor=>({key:`hook_factor:${factor.factorId}` as const,verdict:'pass' as const,severity:'soft' as const,note:'offline factor fixture',evidence:[`candidate-sha256:${output.contentHash}`,...factor.evidenceRefs.map(ref=>`reference-region-sha256:${ref.contentHash}`)]}))]}));
@@ -464,10 +567,10 @@ test('persisted worker resumes a frozen plan, renders real pixels, and never rep
 });
 
 test('worker uses one local repair after free OCR failure and only then runs visual QA',async()=>{
- const {store,task}=await preparedViralTask();
- const queued=await enqueueImageExecution({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:task.version});
+ const {store,task,referenceBytes}=await preparedViralTask();
+ const queued=await enqueueImageExecution({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:task.version,readReference:async()=>({bytes:referenceBytes,mimeType:'image/png'})});
  let renders=0,qualityCalls=0,repairs=0;
- const ports:ImageExecutionPorts={prepare:async()=>{throw Error('evidence already ready');},
+ const ports:ImageExecutionPorts={readReference:async()=>({bytes:referenceBytes,mimeType:'image/png'}),prepare:async()=>{throw Error('evidence already ready');},
   plan:async()=>{throw Error('plan already ready');},
   render:async current=>{renders++;const saved=await updateSocialImageTask(store,'tenant-a',current.id,current.version,{
    status:'review_required',step:'review',outputs:[{id:'candidate-1',role:'single',label:'主视觉',state:'quality_checking',
@@ -500,8 +603,8 @@ test('worker uses one local repair after free OCR failure and only then runs vis
  assert.equal(qualityCalls,2);assert.equal((await readSocialImageTask(store,'tenant-a',task.id))?.outputs[0]?.state,'superseded');
 });
 test('an already-paid QA cannot silently trigger another paid QA after local repair',async()=>{
- const {store,task}=await preparedViralTask();
- const queued=await enqueueImageExecution({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:task.version});
+ const {store,task,referenceBytes}=await preparedViralTask();
+ const queued=await enqueueImageExecution({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:task.version,readReference:async()=>({bytes:referenceBytes,mimeType:'image/png'})});
  const staged=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{status:'review_required',step:'review',
   outputs:[{id:'old',role:'single',label:'主视觉',state:'repair_required',version:1,materialId:'old-material',
    contentHash:'a'.repeat(64),qualityChecks:[{key:'label_ocr',verdict:'fail',severity:'hard',note:'clipped'}],
@@ -510,7 +613,7 @@ test('an already-paid QA cannot silently trigger another paid QA after local rep
    instruction:'reflow',status:'pending',fromVersion:1}]});
  assert.equal(staged.kind,'updated');
  let qa=0,repair=0;
- const ports:ImageExecutionPorts={prepare:async()=>{throw Error('unexpected prepare');},
+ const ports:ImageExecutionPorts={readReference:async()=>({bytes:referenceBytes,mimeType:'image/png'}),prepare:async()=>{throw Error('unexpected prepare');},
   plan:async()=>{throw Error('unexpected plan');},render:async()=>{throw Error('unexpected render');},
   quality:async()=>{qa++;},repair:async current=>{repair++;
    const saved=await updateSocialImageTask(store,'tenant-a',current.id,current.version,{
@@ -522,11 +625,11 @@ test('an already-paid QA cannot silently trigger another paid QA after local rep
  const worker=new DurableContentExecutionWorker({dataStore:store,allowedJobIds:[queued.execution.jobId],
   execute:job=>executeImageProduction(store,job,ports)});
  await worker.drain();const job=await settle(store,task);worker.stop();
- assert.equal(job.status,'blocked');assert.match(job.lastError||'',/social_image_repair_quality_budget_unverified/);
+ assert.equal(job.status,'blocked');assert.match(job.lastError||'',/social_image_repair_quality_requires_review/);
  assert.equal(qa,0);assert.equal(repair,1);
  // A later dispatch must reach the same budget gate before invoking QA.
  const persisted=await readImageExecutionJob(store,'tenant-a',task);
  assert.ok(persisted);
- await assert.rejects(executeImageProduction(store,persisted!,ports),/social_image_repair_quality_budget_unverified/);
+ await assert.rejects(executeImageProduction(store,persisted!,ports),/social_image_repair_quality_requires_review/);
  assert.equal(qa,0);assert.equal(repair,1);
 });

@@ -64,7 +64,7 @@ import {
   SocialContentWorkflowError,
   parseArtifactDecision,
   parseArtifactBatchDecision,
-  parseCreateSocialTask,
+  productionTaskInput,
   parseCreateSocialWeeklyPlan,
   parseDeliveryPackage,
   parseMetrics,
@@ -137,6 +137,10 @@ function sendFailure(res: Response, error: unknown): void {
   if (error instanceof Starter198RepositoryError) {
     const code = error.code === 'starter_198_not_provisioned' ? 'profile_not_enabled' : error.code;
     res.status(error.code === 'starter_198_not_provisioned' ? 403 : 503).json({ error: code, message: code });
+    return;
+  }
+  if (error instanceof Error && /local_store_atomic_lock_busy_reconciliation_required|durable_lease_storage_unavailable/.test(error.message)) {
+    res.status(503).json({ error: 'local_store_reconciliation_required', message: '本地任务存储写锁需要核对；原请求可能已保存，请先查看任务列表。' });
     return;
   }
   console.error('[social-content] unhandled request failure:', error);
@@ -351,7 +355,7 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
       repository,
       ...identity,
       idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
-      value: parseCreateSocialTask(req.body),
+      value: productionTaskInput(req.body),
       now: now(),
     });
     res.status(201).json({ task });

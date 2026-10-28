@@ -27,6 +27,7 @@ import { assistantAttachmentKind } from './AssistantComposer';
 import { buildAssistantChatMessages, type UploadedAssistantAttachment } from './assistantChatPrompt';
 import { assistantProductionIntent, assistantCreationPortal } from './assistantProductionIntake';
 import { assistantImageReplicationPortal } from './assistantImageReplicationIntent';
+import { assistantImageRevisionTarget, ASSISTANT_IMAGE_REVISION_EVENT } from '../../lib/assistantImageRevision';
 import { ASSISTANT_HOME_PROMPTS, assistantReplyPresentationForPromptId, assistantReplyPresentationForText, isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
 import { runAssistantProductionRequest } from './assistantProductionRequest';
 import type { useContentTaskIntake } from './useContentTaskIntake';
@@ -206,6 +207,17 @@ export function useAssistantSend(input: AssistantSendInput) {
     const clarifiedDiagram = pendingMapFileRef.current && /(?:业务|路线图|思维导图|流程图|战略)/u.test(visibleText);
     const fileIntent = assistantFileIntent(visibleText) || (clarifiedDiagram ? { format: 'jpg' as const, diagram: true, needsMapScope: false } : null);
     const lastMessage = thread.messages.at(-1);
+    const imageRevisionId = page === 'strategy' && !uploadedAttachments.length && !options.businessScene && !options.companyReport
+      ? assistantImageRevisionTarget(thread.messages, visibleText) : null;
+    if (imageRevisionId) {
+      const event = new CustomEvent(ASSISTANT_IMAGE_REVISION_EVENT, { cancelable: true, detail: { taskId: imageRevisionId, instruction: visibleText } });
+      window.dispatchEvent(event);
+      if (event.defaultPrevented) {
+        setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: '已收到修改意见。' }]);
+        if (!options.preserveDraft) setDraftInput(threadAgent, '');
+        setFollowingLatest(threadAgent, true); persistThread(threadAgent); return;
+      }
+    }
     const imagePortal = !options.businessScene && !fileIntent && !creationAction ? assistantImageReplicationPortal(visibleText, uploadedAttachments) : null;
     const scene = !options.businessScene && !imagePortal && ['strategy','socialInspiration'].includes(page) && !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? assistantScenarioIntake(visibleText) : null;
     if (scene) {

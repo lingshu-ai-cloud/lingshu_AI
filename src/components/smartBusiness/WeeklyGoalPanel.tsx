@@ -4,10 +4,12 @@ import { Check, Megaphone, Plus, Trash2, Video } from 'lucide-react';
 import { day as shanghaiDay } from '../../../shared/mobile-domain.mjs';
 import { socialOperatingProfile } from '../../../shared/contracts/socialOperatingProfile';
 import { weeklyPublishingPlatforms } from '../../../shared/contracts/weeklyPublishingTargets';
+import { isContentProductionPlatform } from '../../../shared/contracts/contentProductionPlatforms';
 import { MASTER_VIDEO_COST_MAX_CNY, MASTER_VIDEO_COST_MIN_CNY } from '../../../shared/contracts/contentCostModel';
 import { scheduleWeeklyVideos } from '../../lib/weeklyGoalSchedule';
 import { buildPresetMatrixVideoPlans, WEEKLY_TASK_PACKAGE_PRESETS, weeklyTaskPackagePreset, type WeeklyTaskPackagePresetId } from '../../lib/weeklyTaskPackagePresets';
 import { defaultMatrixPlan } from '../../lib/weeklyMatrix';
+import { DEFAULT_FACEBOOK_PROMOTION_CNY, defaultFacebookPromotionPlans } from '../../lib/defaultFacebookPromotion';
 import { loadSocialContentStage, readSocialContentStage, type SocialContentStageProfile } from '../../lib/socialContentStage';
 import type { DigitalEmployeeConfig, WeeklyGoal, WeeklyPromotionPlan } from '../../lib/digitalEmployees';
 import WeeklyPlanConfirmationCard from '../WeeklyPlanConfirmationCard';
@@ -28,7 +30,7 @@ export function isoDay(offset: number): string {
 
 export const EMPTY_GOAL = {
   businessLine: 'full_funnel' as BusinessLine,
-  contentPlatforms: ['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin'] as PublishingPlatform[],
+  contentPlatforms: ['facebook', 'linkedin'] as PublishingPlatform[],
   title: '本周内容增长目标', objective: '形成一组面向目标市场、证据充分且可进入审批的内容执行包',
   metric: 'approved_content_packages', baseline: 0, target: 5, unit: '项', startsAt: isoDay(0), endsAt: isoDay(6), scope: '',
   constraints: ['对外发布必须审批'],
@@ -37,7 +39,7 @@ export const EMPTY_GOAL = {
 export type GoalDraft = Omit<WeeklyGoal, 'id' | 'status' | 'version' | 'createdAt' | 'updatedAt'>;
 
 const withContentIds = (plans: VideoPlan[]): VideoPlan[] => plans.map(plan => plan.contentId ? plan : { ...plan, contentId: crypto.randomUUID() });
-const initialPromotionPlans = (plans: VideoPlan[]): WeeklyPromotionPlan[] => plans.slice(0, 2).flatMap(plan => plan.contentId ? [{ contentId: plan.contentId, budgetCny: 100 }] : []);
+const initialPromotionPlans = (plans: VideoPlan[]): WeeklyPromotionPlan[] => defaultFacebookPromotionPlans(plans);
 
 function videoOptionLabel(plan: VideoPlan, index: number): string {
   const subject = plan.theme.split(/[；;]/)[0]?.trim() || `第 ${index + 1} 条视频`;
@@ -60,7 +62,8 @@ export function GoalPanel({
 }) {
   const configuredTargetPlatforms = weeklyPublishingPlatforms(config.publishingTargets, config.socialCadence);
   const profilePlatforms = [...new Set(socialOperatingProfile(config.socialOperatingProfile).accounts.map(account => account.platform))];
-  const configuredPlatforms = (configuredTargetPlatforms.length ? configuredTargetPlatforms : profilePlatforms.length ? profilePlatforms : ['youtube']) as PublishingPlatform[];
+  const productionPlatforms = (configuredTargetPlatforms.length ? configuredTargetPlatforms : profilePlatforms).filter(isContentProductionPlatform);
+  const configuredPlatforms = (productionPlatforms.length ? productionPlatforms : ['facebook', 'linkedin']) as PublishingPlatform[];
   const requestedPlatform = contentPlatform !== 'all' && configuredPlatforms.includes(contentPlatform) ? contentPlatform : null;
   const initialStageProfile = readSocialContentStage();
   const initialPresetId: WeeklyTaskPackagePresetId = initialStageProfile?.presetId
@@ -150,7 +153,10 @@ export function GoalPanel({
       const nextIds = new Set(nextPlans.map(plan => plan.contentId).filter(Boolean));
       return {
         ...current, videoPlans: nextPlans, contentPlatforms, target: nextPlans.length,
-        promotionPlans: (current.promotionPlans || []).filter(item => nextIds.has(item.contentId)),
+        promotionPlans: [
+          ...(current.promotionPlans || []).filter(item => nextIds.has(item.contentId)),
+          ...defaultFacebookPromotionPlans(additions).filter(item => !(current.promotionPlans || []).some(existing => existing.contentId === item.contentId)),
+        ],
       };
     });
   };
@@ -164,7 +170,7 @@ export function GoalPanel({
   const addPromotion = () => {
     const next = availablePromotionPlans[0];
     if (!next?.contentId) return;
-    setForm(current => ({ ...current, promotionPlans: [...(current.promotionPlans || []), { contentId: next.contentId!, budgetCny: 100 }] }));
+    setForm(current => ({ ...current, promotionPlans: [...(current.promotionPlans || []), { contentId: next.contentId!, budgetCny: next.platform === 'facebook' ? DEFAULT_FACEBOOK_PROMOTION_CNY : 100 }] }));
   };
 
   const reviewBudget = () => {
@@ -180,7 +186,7 @@ export function GoalPanel({
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
-      <Steps current={stage === 'plan' ? 0 : 1} responsive={false} items={[{ title: '确认执行方案' }, { title: '确认预算并启动' }]} />
+      <Steps current={stage === 'plan' ? 0 : 1} responsive={false} items={[{ title: '确认执行方案' }, { title: '查看费用参考并启动' }]} />
       {stage === 'budget' ? (
         <WeeklyPlanConfirmationCard
           busy={busy}
@@ -247,7 +253,7 @@ export function GoalPanel({
 
             {businessLine !== 'customer_conversion' && <section aria-labelledby="weekly-promotion-title" className="border-t border-border pt-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2"><Megaphone size={18} className="text-accent" /><div><h3 id="weekly-promotion-title" className="text-base font-semibold text-text-primary">投流计划</h3><p className="mt-1 text-xs text-text-muted">选要投的内容，填写每条预算。</p></div></div>
+                <div className="flex items-center gap-2"><Megaphone size={18} className="text-accent" /><div><h3 id="weekly-promotion-title" className="text-base font-semibold text-text-primary">投流计划</h3><p className="mt-1 text-xs text-text-muted">Facebook 默认每条约 US$5（暂按 ¥36 估算），可在启动前调整。</p></div></div>
                 <Button htmlType="button" icon={<Plus size={15} />} disabled={!availablePromotionPlans.length} onClick={addPromotion}>添加一条</Button>
               </div>
               {promotions.length ? <div className="mt-3 space-y-2">{promotions.map((promotion, index) => <div key={`${promotion.contentId}-${index}`} className="grid gap-2 rounded-lg border border-border p-3 sm:grid-cols-[1fr_180px_40px]">
@@ -267,7 +273,7 @@ export function GoalPanel({
           </div>
 
           <div className="mt-6 flex justify-end">
-            <Button type="primary" htmlType="button" disabled={busy} onClick={reviewBudget} className="inline-flex items-center gap-2"><Check size={16} />方案无误，核算预算</Button>
+            <Button type="primary" htmlType="button" disabled={busy} onClick={reviewBudget} className="inline-flex items-center gap-2"><Check size={16} />方案无误，查看费用参考</Button>
           </div>
         </section>
       )}

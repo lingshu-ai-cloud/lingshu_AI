@@ -23,6 +23,14 @@ test('HTTP material requests enforce authenticated identity, explicit versions a
  const created=await post('',create);assert.equal(created.status,201);const request=(await created.json()).item;
  assert.equal((await post('',create)).status,201);assert.equal((await store.list('social_weekly_material_requests')).totalItems,1);
  const foreign=await fetch(`${base}/${request.requestId}`,{headers:{'x-tenant':'other','x-user':'other-user'}});assert.equal(foreign.status,404);
+ const shooting=await post('',{...create,requirementKey:'factory-shooting'});const shootingRequest=(await shooting.json()).item;
+ const expectedConsumers=shootingRequest.consumers.map(({taskId,packageId,packageVersion}:{taskId:string;packageId:string;packageVersion:number})=>({taskId,packageId,packageVersion}));
+ const declineBody={expectedConsumers,expectedSubmissionVersion:0};
+ assert.equal((await post(`/${shootingRequest.requestId}/decline-shooting`,{...declineBody,actorUserId:'uploader'})).status,400);
+ assert.equal((await post(`/${shootingRequest.requestId}/decline-shooting`,declineBody,'other-user','other')).status,404);
+ assert.equal((await post(`/${shootingRequest.requestId}/decline-shooting`,{...declineBody,expectedConsumers:[{...expectedConsumers[0],packageVersion:2}]},'uploader')).status,409);
+ const declined=await post(`/${shootingRequest.requestId}/decline-shooting`,declineBody,'uploader');assert.equal(declined.status,200);
+ const declineResult=(await declined.json()).item;assert.equal(declineResult.status,'cancelled');assert.equal(declineResult.history.at(-1).actor,'uploader');
  const submit={materialRecordIds:['material0000001'],expectedSubmissionVersion:0};
  assert.equal((await post(`/${request.requestId}/submissions`,submit)).status,403);
  assert.equal((await post(`/${request.requestId}/submissions`,{...submit,actorUserId:'uploader'},'uploader')).status,400);

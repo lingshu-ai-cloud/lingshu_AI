@@ -2,7 +2,7 @@ import BusinessHealthOverview from './smartBusiness/BusinessHealthOverview';
 import { labels as sharedTaskLabels } from '../../shared/mobile-domain.mjs';
 import { getScrollBehavior } from '../lib/usePrefersReducedMotion';
 import { PAGE_REGISTRY, type Page } from '../pageRegistry';
-import { Alert, Button, Collapse, Modal, Tag } from 'antd';
+import { Alert, Button, Modal, Tag } from 'antd';
 import { OnboardingPanel } from './smartBusiness/DigitalEmployeeOnboardingPanel';
 import { GoalPanel, type GoalDraft, type BusinessLine, type ContentPlatform } from './smartBusiness/WeeklyGoalPanel';
 import type { OnboardingConfigurationInput } from './digitalEmployeeConfigurationAction';
@@ -282,10 +282,12 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
         if (metric === "settled_cost") { setWorkspaceView("review"); return; }
         setWeeklyPlanDetailsOpen(true);
       } : undefined}
-      notice={publishingSetupRequired
+      notice={!activeRun && !viewGoalId && missingReferenceMasters.length > 0
+        ? <><p className="mr-auto text-xs leading-5 text-text-secondary"><strong className="text-warning">参考不足：</strong>本周 {missingReferenceMasters.length} 条复刻视频尚未绑定通过逐镜精确分析的爆款参考，当前不能开始生产。先完成参考分析，再重新匹配计划。</p><Button size="small" onClick={() => onNavigate?.('inspirationMarket')}>查看爆款参考</Button></>
+        : publishingSetupRequired
         ? <><p className="mr-auto text-xs leading-5 text-text-secondary"><strong className="text-warning">发布准备待完成：</strong>{publishingReadiness?.summary}。内容生产可以继续，系统不会把未连接账号当成已就绪。</p><Button size="small" onClick={openPublishingAccountSetup}>配置发布账号</Button></>
-        : !activeRun && !viewGoalId && (missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
-        ? <p className="mr-auto text-xs text-text-secondary">可直接开始任务；{detailGeneration?.blockedCount || missingReferenceMasters.length || missingProductMasters.length} 条内容的待补资料将在对应制作步骤提示，不阻止其他内容推进。账号连接与发布授权在正式发布前核验。</p>
+        : !activeRun && !viewGoalId && (missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
+        ? <p className="mr-auto text-xs leading-5 text-text-secondary">本周计划尚有制作条件未通过，请先查看计划与任务详情，补齐后再开始生产；系统不会把缺失证据视为已就绪。</p>
         : undefined}
     /></Suspense>;
     const sampleWeeklyPlan = sampleWeekly && <Suspense fallback={deferredWorkspaceFallback}><WeeklyCommandCenter data={data} statusLabel="执行中" actions={<>
@@ -312,7 +314,7 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
             <aside aria-label="企业经营分" className="min-w-0 border-t border-border xl:border-l xl:border-t-0 [&_section]:rounded-none [&_section]:border-0"><BusinessHealthOverview summaryOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange} onOpenAccountHealth={() => setHealthDialogOpen(true)}/></aside><Suspense fallback={deferredWorkspaceFallback}><BusinessInterpretation data={data} onViewReview={() => setWorkspaceView("review")}/></Suspense></div>}
           <div className="grid grid-cols-1 gap-4 pb-6 pt-2">
             <main className="min-w-0">
-              {workspaceView === "today" ? <Collapse className="mx-auto max-w-[1440px]" items={[{ key: 'health', label: '经营评分口径与账号明细', children: dashboard }]}/> : dashboard}
+              {workspaceView !== "today" && workspaceView !== "rules" ? dashboard : null}
             </main>
           </div>
         </div>

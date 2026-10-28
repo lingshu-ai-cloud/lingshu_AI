@@ -34,8 +34,8 @@ const modalMountCount = readTsxFiles(componentsRoot)
   .reduce((count, source) => count + (source.match(/<ContentGenerationQueueModal\b/g)?.length || 0), 0);
 
 assert.equal(modalMountCount, 1, '内容生成队列弹窗必须只在全局应用壳挂载一次');
-assert.match(shell, /<ContentGenerationQueueModal onOpenAgentSettings=/, '应用壳必须承载唯一的全局队列弹窗');
-assert.match(modal, /const show=[^\n]+setRequest\(detail\);setOpen\(true\)/, '统一事件必须携带请求并打开弹窗');
+assert.match(shell, /<ContentGenerationQueueModal\s*\/>/, '应用壳必须承载唯一的全局队列弹窗');
+assert.match(modal, /const show=[^\n]+setRequest\(detail\);setSettingsOpen\(false\);setOpen\(true\)/, '统一事件必须携带请求并打开弹窗');
 assert.match(modal, /addEventListener\(CONTENT_GENERATION_QUEUE_OPEN_EVENT,show\)/, '任意入口必须通过同一全局事件打开弹窗');
 assert.match(modal, /request\.source==='weekly'\?'周任务包':'内容生成队列'/, '弹窗标题必须反映周任务包或统一队列范围');
 assert.match(modal, /request\.source==='weekly'\?'本周全部计划任务':'周计划 \+ 临时单条'/, '弹窗必须明确当前任务来源范围');
@@ -60,9 +60,9 @@ assert.match(helper, /detail: \{ requestId: requestSequence, view: 'tasks', metr
 assert.match(workspace, /setTaskId\(request\.taskId\|\|null\);setContentId\(request\.contentId\|\|null\)/, '工作区必须响应新的任务或内容聚焦请求');
 assert.match(workspace, /queueMode&&selected\?<CreationTaskDetailDrawer[^>]*inline/, '队列弹窗内必须以内联详情承接聚焦请求，不能再打开第二个抽屉');
 
-assert.match(modal, />Agent 设置<\/Button>/, '统一队列弹窗必须提供明确的 Agent 设置入口');
-assert.match(modal, /setOpen\(false\);onOpenAgentSettings\(\)/, '进入 Agent 设置前必须关闭队列弹窗');
-assert.match(shell, /onNavigate\('digitalEmployees'\); window\.setTimeout\(openAgentSettings, 0\)/, 'Agent 设置入口必须导航到现有经营总览设置，而不是创建平行设置页');
+assert.match(modal, /setSettingsOpen\(value=>!value\)/, 'Agent 设置应在当前周任务包弹窗内切换');
+assert.match(modal, /<OnboardingPanel key=\{revision\} initial=\{overview\.config\}/, 'Agent 设置应复用现有规则表单');
+assert.doesNotMatch(shell, /onNavigate\('digitalEmployees'\); window\.setTimeout\(openAgentSettings, 0\)/, 'Agent 设置不得跳转经营总览');
 assert.match(configuredWorkspace, /addEventListener\(AGENT_SETTINGS_OPEN_EVENT, openSettings\)/, '经营总览必须接收全局 Agent 设置入口');
 assert.match(configuredWorkspace, /setWorkspaceView\('rules'\)/, 'Agent 设置入口必须切换到既有设置视图');
 assert.match(configuredWorkspace, /mode="rules" initialSettingsOpen/, '既有 Agent 设置视图必须直接展开完整设置编辑器');

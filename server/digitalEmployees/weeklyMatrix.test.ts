@@ -19,6 +19,8 @@ const rows = [row('a'), row('b', { language: 'es', audience: '零售买家', obj
 const targets = rows.map(r => ({ accountId: r.accountId, platform: r.platform, accountLabel: r.accountId }));
 const base: WeeklyPackage = { revision: 1, maturity: 'growing', participation: 'agent', matrixPlan: rows, authorization: { mode: 'each', accountIds: ['a', 'b'], maxPublishItems: 2, customerIds: [], maxCustomerMessages: 0 }, tasks: [{ templateId: 'publishing', title: '发布', dueAt: '2026-09-20', ownerId: '', ownerName: '', notes: '', sourceProjectIds: [] }] };
 const filled = fillMatrixVideos(base, {}, '2026-09-20');
+const linkedInPack = fillMatrixVideos({ ...base, matrixPlan: [row('li', { platform: 'linkedin' })], authorization: { ...base.authorization, accountIds: ['li'] } }, {}, '2026-09-20');
+assert.deepEqual(matrixIssues(linkedInPack), [], 'LinkedIn is a supported platform and must pass account matrix validation');
 assert.equal(base.tasks.length, 1, 'editing a draft must not mutate the saved package');
 assert.deepEqual(matrixIssues(filled), []);
 assert.deepEqual(fillMatrixVideos(filled, {}, '2026-09-20'), filled, 'repeated sync must not duplicate deliverables');

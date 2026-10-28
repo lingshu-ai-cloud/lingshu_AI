@@ -79,6 +79,17 @@ export function createTaskBusinessPreparation(deps: TaskBusinessPreparationDepen
     config: DigitalEmployeeConfig;
     snapshot: BusinessSnapshot;
   }): Promise<boolean> {
+    if (input.task.task_key === 'scheduled_source_collection') {
+      const plan = await tenantRecord<PlanRecord>(COLLECTION.plans, input.run.plan_id, input.tenantId);
+      const body = jsonObject<Record<string, unknown>>(plan?.plan, {});
+      const pack = body.businessPackage as WeeklyPackage | undefined;
+      if (pack?.referenceSourcePolicy === 'existing_library_only') {
+        const reason = '本周只使用现有爆款库，不会创建或执行新的采集任务。';
+        await store.update(COLLECTION.tasks, input.task.id, { blocked_reason: reason, updated_at: new Date().toISOString() });
+        input.task.blocked_reason = reason;
+        return false;
+      }
+    }
     const adapter = currentExecutionAdapters()?.prepare;
     if (adapter) return adapter(input);
     // Set up the scheduled record before opening its existing production control.

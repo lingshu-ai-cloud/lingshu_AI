@@ -1,6 +1,7 @@
 import type { ReviewTodo } from './reviewTodos';
 import type { VideoCreationPlan } from './videoCreationPlan';
 import type { WeeklyPromotionPlan } from '../../shared/contracts/weeklyPromotionPlan';
+import type { WeeklyMixedContentSlot } from '../../shared/contracts/weeklyMixedContentPlan';
 import { matrixIssues, type MatrixAccountPlan } from './weeklyMatrix';
 import { directorIssues, type ContentDirectorPlan } from './contentDirector';
 
@@ -85,6 +86,10 @@ export interface WeeklyOperatingContext {
   };
 }
 export interface WeeklyPackage {
+  /** Frozen discovery policy. Older plans without this field keep their original behavior. */
+  referenceSourcePolicy?: 'existing_library_only';
+  /** Frozen 15 publication positions: 10 originals and five no-generation adaptations. */
+  mixedContentSlots?: WeeklyMixedContentSlot[];
   directorPlan?: ContentDirectorPlan;
   matrixPlan?: MatrixAccountPlan[];
   reviewTodos?: ReviewTodo[];
@@ -121,12 +126,24 @@ export function packageIssues(pack: WeeklyPackage, startsAt: string, endsAt: str
     if (task.templateId === 'production' && !task.videoPlans?.length) issues.push('制作视频需要至少一条具体视频安排');
   }
   const videoPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+  if (pack.mixedContentSlots) {
+    const slots = pack.mixedContentSlots;
+    const ids = new Set(slots.map(slot => slot.slotId));
+    const originals = slots.filter(slot => slot.productionRole === 'original');
+    if (slots.length !== 15 || ids.size !== 15 || originals.length !== 10
+      || originals.filter(slot => slot.kind === 'video').length !== 6
+      || originals.filter(slot => slot.kind === 'image').length !== 4
+      || slots.some(slot => slot.productionRole === 'adaptation'
+        && !originals.some(original => original.slotId === slot.originalSlotId && original.kind === slot.kind))) {
+      issues.push('图文周计划的制作位与发布位不一致');
+    }
+  }
   if (pack.directorPlan && pack.tasks.some(task => task.templateId === 'production')) {
     const originals = videoPlans.filter(plan => plan.productionRole !== 'platform_adaptation');
     if (originals.length !== pack.directorPlan.originalTarget) issues.push(`实际制作视频为 ${originals.length} 条，与本周目标 ${pack.directorPlan.originalTarget} 条不一致`);
     if (videoPlans.length !== pack.directorPlan.platformVersionTarget) issues.push(`平台交付版本为 ${videoPlans.length} 条，与编导目标 ${pack.directorPlan.platformVersionTarget} 条不一致`);
-    const estimated = videoPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0);
-    if (estimated + pack.directorPlan.productionSpent > (pack.directorPlan.productionBudgetMax || pack.directorPlan.productionBudget)) issues.push('内容计划预计费用与已用金额超过生产预算');
+    // Display estimates are not a production ceiling. Provider admission uses
+    // its own durable authorization and quota checks at the paid boundary.
   }
   return [...new Set([...issues, ...matrixIssues(pack), ...directorIssues(pack.directorPlan, { requirePublishing: ids.has('publishing') })])];
 }

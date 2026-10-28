@@ -11,7 +11,7 @@ function completeDraft(): EnterpriseOnboardingDraft {
   return {
     schemaVersion: ENTERPRISE_ONBOARDING_SCHEMA_VERSION,
     revision: 3,
-    currentStep: 4,
+    currentStep: 3,
     confirmationId: 'onboarding:confirmation-001',
     baseFactVersion: 'fact-v1',
     companyName: '灵枢科技', brandName: 'Aurelia', industry: '工业自动化',
@@ -40,7 +40,7 @@ test('draft normalization retains at most three real focus products and valid pr
   assert.deepEqual(normalized?.sources, { companyName: 'user_provided', products: 'ai_suggested' });
 });
 
-test('confirmation rejects incomplete focus facts and accepts the complete four-step result', () => {
+test('confirmation rejects incomplete focus facts and accepts the complete three-step result', () => {
   const draft = completeDraft();
   const incomplete = validateEnterpriseOnboardingConfirmation({
     ...draft,
@@ -54,6 +54,12 @@ test('confirmation rejects incomplete focus facts and accepts the complete four-
   assert.equal(complete.missing.length, 0);
   assert.equal(complete.confirmation?.draftRevision, 3);
   assert.equal(complete.confirmation?.focusProductIds.length, 2);
+});
+
+test('onboarding no longer requires a main platform selection', () => {
+  const parsed = validateEnterpriseOnboardingConfirmation({ ...completeDraft(), primaryPlatform: '', draftRevision: 3 });
+  assert.deepEqual(parsed.missing, []);
+  assert.ok(parsed.confirmation);
 });
 
 test('asset normalization drops malformed evidence instead of promoting it into enterprise facts', () => {

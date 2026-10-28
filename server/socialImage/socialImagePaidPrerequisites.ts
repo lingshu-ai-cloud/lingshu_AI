@@ -3,6 +3,7 @@ import type { SocialImageCreationTask } from '../../shared/contracts/socialImage
 import type { SocialImageLayerGraph } from '../../shared/contracts/socialImageLayerGraph.js';
 import type { SocialImageNodeEnvelope, SocialImageProductionNodeId, SocialImageNodeValueMap } from '../../shared/contracts/socialImageProduction.js';
 import { socialImageCanvasForAspectRatio } from './referenceCanvas.js';
+import { referenceProductCheckHashIssue } from './socialImageReferenceProductPolicy.js';
 import { taskContextSnapshotIssue } from './taskContextSnapshot.js';
 
 const HASH = /^[a-f0-9]{64}$/;
@@ -107,6 +108,8 @@ export function socialImageV3PaidPrerequisiteIssue(task: SocialImageCreationTask
     const reference = latestOutput(task, 'reference_snapshot')?.value as SocialImageNodeValueMap['reference_snapshot'] | undefined;
     if (!reference || !['structure_only', 'permitted'].includes(reference.rightsPolicy)
       || !HASH.test(reference.imageAssetRef?.contentHash || '')) return 'social_image_reference_rights_or_bytes_unverified';
+    const productIssue = referenceProductCheckHashIssue(task, reference.imageAssetRef.contentHash);
+    if (productIssue) return productIssue;
   } else {
     for (const nodeId of PREPARATION_NODES.slice(1)) {
       if (runtime.nodes.find(node => node.nodeId === nodeId)?.status !== 'skipped'

@@ -129,6 +129,15 @@ test('unapproved browser collection stops before a click or execution', async ()
   assert.deepEqual(f.clicks, []); assert.match(f.task.blocked_reason, /待编导确认/);
 });
 
+test('library-only weekly plans cannot create or run a collector, including through adapters', async () => {
+  const f = fixture('scheduled_source_collection');
+  f.tables.set(C.plans, [{ id: 'plan', tenant_id: 'a', plan: { businessPackage: { referenceSourcePolicy: 'existing_library_only' } } }]);
+  let calls = 0;
+  assert.equal(await f.prepare({ currentExecutionAdapters: () => ({ prepare: async () => { calls++; return true; } }), browserExecutionEnabled: () => true,
+    async ensureDigitalEmployeeSocialCollectionTask() { calls++; throw Error('must_not_collect'); }, async runScheduledTaskNow() { calls++; throw Error('must_not_run'); } }), false);
+  assert.equal(calls, 0); assert.deepEqual(f.clicks, []); assert.match(f.task.blocked_reason, /现有爆款库/);
+});
+
 const schedule = { id: 'schedule', taskType: 'social_discovery_collection', enabled: true, cronExpr: '0 9 * * *', cronLabel: 'Daily', lastRun: '' };
 
 test('browser collection persists its boundary before the click and executes only inside it', async () => {

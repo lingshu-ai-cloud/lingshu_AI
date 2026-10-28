@@ -23,10 +23,26 @@ test('embedded image replication stays a compact assistant reply', () => {
 
 test('image choices remain visible and production shows only the current automatic stage', () => {
   assert.match(designSystemSource, /\.ant-select \.ant-select-input\s*\{[^}]*background:\s*transparent/, 'Ant Select 内部搜索输入不得遮住已选平台、产品或语言');
-  assert.match(designSystemSource, /\.ant-select \.ant-select-selection-item\s*\{[^}]*color:\s*var\(--ls-text\)/, '已选值必须使用当前主题可读文字色');
-  assert.match(conversationSource, /单条费用上限（元，必填）/, '付费制作前必须先明确单条费用上限');
-  assert.match(conversationSource, /step === 2 && budgetLimitCny == null/, '未确认费用上限时不得把任务送进自动生产');
+  assert.match(designSystemSource, /\.ant-select \.ant-select-content\s*\{[^}]*color:\s*var\(--ls-text\)/, 'Ant 6 已选值必须使用当前主题可读文字色');
+  assert.match(conversationSource, /预计费用（图片模型环节）/, '确认生成前展示模型成本估算范围');
+  assert.doesNotMatch(conversationSource, /请先填写本次制作费用上限|保存并等待费用核验/, '不能用费用核验阻止新任务');
   assert.doesNotMatch(executionSource, /<Timeline|stages\.map/, '会话进度不得展开全部内部节点');
   assert.match(executionSource, /data-image-current-stage=\{activeStage\[0\]\}/, '会话进度只显示当前真实节点');
+  assert.match(executionSource, /原参考记录缺少可核验的风格标签，系统已按广告式产品图制作/, '旧记录降级时说明缺少标签，不误称图片风格无法判断');
   assert.match(executionSource, /working\?<Spin size="small"\/>/, '自动生产时必须显示持续工作状态');
+  assert.doesNotMatch(executionSource, /这条任务未记录制作费用上限/, '缺少预算不阻塞生产');
+});
+
+test('product presence stays system-owned and uncertain references retain the same task for replacement', () => {
+  assert.doesNotMatch(conversationSource, /<fieldset|<Radio\.Group|参考图中是否有产品|请人工核对/);
+  assert.match(conversationSource, /confirmReferenceProduct\(task, 'auto'\)/);
+  assert.match(conversationSource, /let task = awaitingReference \|\| await createImageReplicationDraft/);
+  assert.match(conversationSource, /socialImageApi\.updateTask\(task, \{ referenceUrls/);
+  assert.match(conversationSource, /setAwaitingReference\(pendingTask\)/);
+});
+
+test('confirmation form omits redundant language guidance and optional creative requirements', () => {
+  assert.doesNotMatch(conversationSource, /图片创作文案与帖子配文使用同一语言/);
+  assert.doesNotMatch(conversationSource, /补充创作要求（可选）|这次重点表达什么|希望客户采取的行动/);
+  assert.match(conversationSource, /product && !product\.highlights\?\.trim\(\).*补充产品卖点（必填）/);
 });

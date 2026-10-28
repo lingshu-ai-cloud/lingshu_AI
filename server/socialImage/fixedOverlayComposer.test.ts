@@ -17,6 +17,23 @@ test('fixed GIF compositor preserves exact canvas and produces a visible product
   assert.ok(result.length > background.length);
 });
 
+test('cutout treatment refuses an opaque source instead of silently feathering it', async () => {
+  const background = await sharp({ create: { width: 320, height: 320, channels: 3, background: '#376b9f' } }).png().toBuffer();
+  const opaque = await sharp({ create: { width: 80, height: 80, channels: 3, background: '#fff' } }).png().toBuffer();
+  await assert.rejects(composeFixedSocialLayers({ background, products: [opaque], poster: { headline: 'PRODUCT' },
+    width: 320, height: 320, productTreatment: 'cutout' }), /social_image_reviewed_product_cutout_required/);
+});
+
+test('cutout treatment preserves transparent product silhouette and original center pixel', async () => {
+  const background = await sharp({ create: { width: 320, height: 320, channels: 3, background: '#376b9f' } }).png().toBuffer();
+  const cutout = await sharp({ create: { width: 80, height: 80, channels: 4, background: '#00000000' } })
+    .composite([{ input: Buffer.from('<svg width="80" height="80"><rect x="20" y="8" width="40" height="64" fill="#d23838"/></svg>') }]).png().toBuffer();
+  const result = await composeFixedSocialLayers({ background, products: [cutout], poster: { headline: 'PRODUCT' },
+    width: 320, height: 320, productTreatment: 'cutout' });
+  const product = await sharp(result).extract({ left: 160, top: 196, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  assert.deepEqual([...product], [210, 56, 56]);
+});
+
 test('integrated scene receives copy without pasting a second product photo', async () => {
   const scene = await sharp({ create: { width: 320, height: 320, channels: 3, background: '#416db7' } }).png().toBuffer();
   const unrelatedProduct = await sharp({ create: { width: 80, height: 80, channels: 3, background: '#ff0000' } }).png().toBuffer();
@@ -194,6 +211,15 @@ test('single poster frame preserves the source product label pixels instead of c
   const edge = (Math.floor(info.height * .61) * info.width + 60) * info.channels;
   assert.ok(data[edge]! < data[center]! - 70,
     'a framed source photo fades into the scene instead of retaining a hard rectangular edge');
+});
+
+test('a source with real transparency retains edge pixels instead of receiving a rectangular feather', async () => {
+  const background = await sharp({ create: { width: 320, height: 400, channels: 3, background: '#0000ff' } }).png().toBuffer();
+  const product = await sharp({ create: { width: 100, height: 100, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite([{ input: Buffer.from('<svg width="100" height="100"><rect x="0" y="20" width="30" height="60" fill="#ff0000"/></svg>') }]).png().toBuffer();
+  const result = await composeFixedSocialLayers({ background, products: [product], poster: {}, width: 320, height: 400, productTreatment: 'framed_source' });
+  const rgb = await sharp(result).extract({ left: 62, top: 244, width: 1, height: 1 }).removeAlpha().raw().toBuffer();
+  assert.ok(rgb[0]! > 245 && rgb[2]! < 10, 'an opaque source edge is not faded merely because it is near the image boundary');
 });
 
 test('reference-left poster wraps a long headline and keeps the original square product photo inside its slot', async () => {

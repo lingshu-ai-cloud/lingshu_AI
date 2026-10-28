@@ -19,13 +19,13 @@ test('all product languages survive intake, task creation, image run and fallbac
     for (const text of Object.values(copy)) assert.ok(text.trim());
     if (code !== 'en') assert.notEqual(copy.caption, neutralSocialImageCopy('en').caption, code);
     const intake = { step: 2, productId: 'p', objective: '独立包装', audience: '品牌采购', callToAction: '咨询',
-      platform: 'instagram', aspectRatio: '4:5', language: code, submitted: false };
+      platform: 'facebook', aspectRatio: '4:5', language: code, submitted: false };
     const portal = assistantImageReplicationPortal('复刻一张图文海报')!;
     assert.ok(assistantCreationPortalSchema.safeParse({ ...portal, imageReplication: { intake } }).success, code);
     let writes = 0;
     const result = await createImageReplicationDraft({
       draft: { reference: { url: '/reference.png', title: '参考' }, product: { id: 'p', name: '产品' },
-        objective: '独立包装', audience: '品牌采购', platform: 'instagram', aspectRatio: '4:5', language: code, callToAction: '咨询' },
+        objective: '独立包装', audience: '品牌采购', platform: 'facebook', aspectRatio: '4:5', language: code, callToAction: '咨询' },
       operationKey: `language-${code}`, entrySource: 'assistant', isCurrent: () => true,
       ports: {
         createTask: async value => { writes++; assert.deepEqual(value.languages, [code]); return { taskId: 'content', version: 'v1' } as SocialContentTaskDetail; },

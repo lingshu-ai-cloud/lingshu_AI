@@ -15,6 +15,7 @@ const floatingRemindersSource = fs.readFileSync(new URL('./assistant/AssistantFl
 const launcherSource = fs.readFileSync(new URL('./assistant/AssistantLauncher.tsx', import.meta.url), 'utf8');
 const weeklyPlanSource = fs.readFileSync(new URL('./assistant/AssistantWeeklyPlanExperience.tsx', import.meta.url), 'utf8');
 const weeklyPlanHookSource = fs.readFileSync(new URL('./assistant/useAssistantWeeklyPlanExperience.ts', import.meta.url), 'utf8');
+const weeklyLaunchPreparationSource = fs.readFileSync(new URL('../lib/weeklyPlanLaunchPreparation.ts', import.meta.url), 'utf8');
 const decisionCenterSource = fs.readFileSync(new URL('./assistant/AssistantDecisionCenter.tsx', import.meta.url), 'utf8');
 const decisionApiSource = fs.readFileSync(new URL('../lib/assistantDecisionApi.ts', import.meta.url), 'utf8');
 const launcherRetractionSource = fs.readFileSync(new URL('./assistant/useAssistantLauncherRetraction.ts', import.meta.url), 'utf8');
@@ -80,7 +81,7 @@ assert.match(weeklyPlanHookSource, /function guidanceQuestions[\s\S]{0,1200}miss
 assert.match(weeklyPlanHookSource, /const prepare[\s\S]{0,1200}setGuidance\([\s\S]{0,280}questions\[0\]/, '打开周计划只能进入第一道逐项问答，不能后台创建计划');
 assert.match(weeklyPlanHookSource, /const answer[\s\S]{0,1500}setDraft\(guidedDraft[\s\S]{0,220}setModalOpen\(true\)/, '收集完成后必须先生成本地方案草案并打开确认弹窗');
 assert.match(weeklyPlanHookSource, /const confirmPlan[\s\S]{0,900}completeOnboarding[\s\S]{0,300}digitalEmployeeApi\.createGoal\(draft\)[\s\S]{0,260}setStage\('budget'\)/, '用户确认方案后才能保存补充资料、创建计划并进入预算确认');
-assert.match(weeklyPlanHookSource, /digitalEmployeeApi\.overview\(\)[\s\S]{0,700}next\.goal && next\.plan[\s\S]{0,220}setProposal\(next\);[\s\S]{0,100}setModalOpen\(true\)/, '已有周计划时必须在当前会话打开同一份真实计划');
+assert.match(weeklyPlanHookSource, /next\.goal && next\.plan[\s\S]{0,140}weeklyReferenceReadiness\(next\.goal\.id\)[\s\S]{0,650}setProposal\(next\); setStage\('budget'\); setModalOpen\(true\)/, '已有周计划必须先核验参考绑定，只有完整计划才在当前会话打开预算确认');
 assert.doesNotMatch(weeklyPlanHookSource, /const prepare[\s\S]{0,900}lingshu:navigate|const prepare[\s\S]{0,900}lingshu:open-weekly-plan/, '首页发送创建周计划后不得跳转到经营总览');
 assert.doesNotMatch(weeklyPlanHookSource, /我们就在这里制定本周计划|每次只问一个问题，最多 3 个/, '不得把内部流程说明直接回复给用户');
 assert.match(weeklyPlanHookSource, /function suggestedWeeklyObjectives[\s\S]{0,700}return \[[\s\S]{0,500}\];/, '缺少经营目标时必须生成三个企业上下文建议');
@@ -95,7 +96,8 @@ assert.match(weeklyPlanHookSource, /企业基础档案尚未建立。请先完�
 assert.match(weeklyPlanSource, /确认方案，查看预算[\s\S]*确认预算并开始运营/, '周计划弹窗必须分开确认执行方案和预算启动');
 assert.doesNotMatch(weeklyPlanSource, /Checkbox|generationAuthorized|确认授权/, '周计划弹窗不得增加独立授权复选框或授权按钮');
 assert.match(weeklyPlanHookSource, /confirmedWeeklyExecution/, '启动成功必须由真实运行与任务回执确认');
-assert.match(weeklyPlanHookSource, /approveGoal\(current\.goal\.id, current\.plan\.businessPackage\.revision, true\)/, '周计划确认必须发送显式生成授权');
+assert.match(weeklyPlanHookSource, /prepareWeeklyPlanForLaunch\(current[\s\S]{0,500}approveGoal\(current\.goal\.id, preparedPackage\.revision, true\)/, '周计划确认必须先准备同一计划版本，再发送显式生成授权');
+assert.match(weeklyLaunchPreparationSource, /generatePackageDetails\(goal\.id\)[\s\S]{0,2200}detail\?\.status === 'ready'/, '灵小枢与经营总览必须共享真实制作详情准备门禁');
 assert.match(decisionCenterSource, /contentGenerationAuthorized: action\.id === 'approve_and_start'/, '助手待办点击计划确认动作时必须自动记录生成授权');
 assert.doesNotMatch(decisionCenterSource, /授权数字员工开始生成内容|确认授权并开始/, '助手待办不得增加独立生成授权确认');
 assert.match(decisionApiSource, /contentGenerationAuthorized[\s\S]*newContentGenerationAuthorization/, '助手待办接口必须发送显式生成授权合同');

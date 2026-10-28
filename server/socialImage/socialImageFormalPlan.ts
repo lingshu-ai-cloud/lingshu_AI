@@ -140,6 +140,10 @@ export async function compileSocialImageV3PaidPlan(input: {
   }
   const director = completed(task, 'director_brief');
   const manifest = completed(task, 'asset_manifest').value as SocialImageNodeValueMap['asset_manifest'];
+  const referenceStyle = task.creationPath === 'viral_replication'
+    ? (completed(task, 'reference_snapshot').value as SocialImageNodeValueMap['reference_snapshot']).styleObservation : null;
+  const styleStrategy = referenceStyle?.kind === 'imitable' ? 'reference_emulation.v1'
+    : referenceStyle?.kind === 'advertising' ? 'advertising.v1' : 'advertising_fallback.v1';
   const selectedAssetRefs: SocialImageVersionedRef[] = task.enterpriseAssets.filter(asset => asset.required).map(asset => {
     const observed = manifest.assets.find(item => item.assetId === asset.assetId && item.role === asset.role);
     if (!observed || !observed.readable || observed.rights !== 'cleared') {
@@ -160,7 +164,7 @@ export async function compileSocialImageV3PaidPlan(input: {
       { layerId: 'headline', role: 'text', sourceRef: null },
     ],
     estimatedCost: { currency: 'CNY', amount: null }, estimatedDurationSeconds: null,
-    fallbackRoutes: [], unmetCriteria: [],
+    fallbackRoutes: task.creationPath === 'viral_replication' && styleStrategy === 'advertising_fallback.v1' ? ['reference_style_unverified_ad_fallback'] : [], unmetCriteria: [],
   };
   task = await recordSocialImageNodeOutput({ store: input.store, tenantId: input.tenantId, taskId: task.id,
     expectedVersion: task.version, nodeId: 'execution_plan', status: 'completed', value: execution,
@@ -179,6 +183,10 @@ export async function compileSocialImageV3PaidPlan(input: {
       role: task.enterpriseAssets.find(asset => asset.assetId === assetRef.id)?.role || 'scene' })),
     layoutConstraints: { layoutRecipe: task.creativeRecipe.layoutRecipe,
       imageTextRelation: task.creativeRecipe.imageTextRelation,
+      ...(task.creationPath === 'viral_replication' ? { referenceStyleStrategy: styleStrategy,
+        referenceStyleReason: referenceStyle ? 'byte_bound_prior_observation' : 'style_not_verified',
+        referenceStyleSourceSha256: referenceStyle?.sourceSha256 || null, referenceStyleAnalysisVersion: referenceStyle?.analysisVersion || null,
+        referenceStyleElements: referenceStyle?.kind === 'imitable' ? referenceStyle.elements : [] } : {}),
       frozenPlanVersion: task.renderPlan?.version || null, frozenPlanSourceHash: task.renderPlan?.sourceHash || null,
       quality: task.deliverySpec.imageGeneration?.quality || 'low', pendingRepairs },
     textLayers: [{ role: 'headline', text: poster.headline, region: 'headline' },

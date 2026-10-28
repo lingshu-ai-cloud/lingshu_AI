@@ -19,6 +19,14 @@ export interface ProductMaterialGroupProduct {
   name: string;
 }
 
+export const CONTAINED_PRODUCT_PREVIEW_ASPECT_RATIO = 1;
+
+export function materialUsesContainedProductPreview(
+  material: Pick<Material, 'type' | 'materialV2'> | undefined,
+): boolean {
+  return material?.type === 'image' && material.materialV2?.contentRole === 'transparent_cutout';
+}
+
 export function neutralProductSceneLabel(index: number): string {
   return `预制场景 ${index + 1}`;
 }
@@ -39,6 +47,17 @@ export function materialBelongsToKnownProduct(
   return products.some(product => materialMatchesProduct(material, product));
 }
 
+export function selectProductCoverMaterial(
+  materials: ReadonlyArray<Material>,
+  product: ProductMaterialGroupProduct,
+): Material | undefined {
+  const productMaterials = materials.filter(material => materialMatchesProduct(material, product));
+  return productMaterials.find(material => material.type === 'image' && material.sourceType === 'enterprise_product_table')
+    || productMaterials.find(material => material.type === 'image' && material.materialV2?.contentRole !== 'transparent_cutout')
+    || productMaterials.find(material => material.type === 'image')
+    || productMaterials.find(material => material.type === 'video');
+}
+
 export function productSceneSlotHasReadyMaterial(slot: ProductScenePreparationSlotView): boolean {
   return slot.status === 'ready'
     && Boolean(String(slot.materialId || '').trim())
@@ -50,36 +69,44 @@ function IntrinsicMedia({
   material,
   src,
   type,
+  contained = false,
   children,
 }: {
   alt: string;
   material?: Material;
   src: string;
   type: 'image' | 'video';
+  contained?: boolean;
   children?: ReactNode;
 }) {
-  const [aspectRatio, setAspectRatio] = useState(() => materialIntrinsicAspectRatio(material));
+  const [aspectRatio, setAspectRatio] = useState(() => (
+    contained ? CONTAINED_PRODUCT_PREVIEW_ASPECT_RATIO : materialIntrinsicAspectRatio(material)
+  ));
   const [state, setState] = useState<'loading' | 'ready' | 'error'>(src ? 'loading' : 'error');
 
   useEffect(() => {
-    setAspectRatio(materialIntrinsicAspectRatio(material));
+    setAspectRatio(contained ? CONTAINED_PRODUCT_PREVIEW_ASPECT_RATIO : materialIntrinsicAspectRatio(material));
     setState(src ? 'loading' : 'error');
-  }, [material?.aspectRatio, material?.height, material?.width, src]);
+  }, [contained, material?.aspectRatio, material?.height, material?.width, src]);
 
   const updateRatio = (width: number, height: number, mediaSource: 'image' | 'video') => {
     const posterMustNotOverrideVideo = material?.type === 'video'
       && mediaSource === 'image'
       && materialHasAuthoritativeAspectRatio(material);
-    if (!posterMustNotOverrideVideo && width > 0 && height > 0) setAspectRatio(width / height);
+    if (!contained && !posterMustNotOverrideVideo && width > 0 && height > 0) setAspectRatio(width / height);
     setState('ready');
   };
 
   return (
-    <div className="relative w-full overflow-hidden bg-surface-2" style={{ aspectRatio }}>
+    <div
+      className="relative w-full overflow-hidden bg-surface-2"
+      data-media-fit={contained ? 'contain' : 'cover'}
+      style={{ aspectRatio }}
+    >
       <LsMediaStateFrame
         state={state}
         label={state === 'error' ? '素材预览暂不可用' : '正在加载素材'}
-        className="absolute inset-0"
+        className={`absolute inset-0 ${contained ? 'ls-transparent-media-preview' : ''}`}
       >
         {type === 'image' ? (
           <LsProgressiveMedia
@@ -88,7 +115,7 @@ function IntrinsicMedia({
             preview={false}
             width="100%"
             height="100%"
-            style={{ objectFit: 'cover' }}
+            style={{ objectFit: contained ? 'contain' : 'cover' }}
             onLoad={event => {
               const image = event.target as HTMLImageElement;
               updateRatio(image.naturalWidth, image.naturalHeight, 'image');
@@ -144,6 +171,7 @@ function ProductCover({
       material={coverMaterial}
       src={coverUrl}
       type={coverMaterial?.type === 'video' && !coverMaterial.poster ? 'video' : 'image'}
+      contained={materialUsesContainedProductPreview(coverMaterial)}
     />
   );
 }
@@ -163,9 +191,8 @@ export function ProductMaterialGroupCard({
   error?: boolean;
   onOpen: (product: ProductMaterialGroupProduct) => void;
 }) {
-  const productMaterials = materials.filter(material => materialMatchesProduct(material, product));
   const productSlots = slots.filter(slot => slot.productId === product.id);
-  const coverMaterial = productMaterials.find(material => material.type === 'image') || productMaterials.find(material => material.type === 'video');
+  const coverMaterial = selectProductCoverMaterial(materials, product);
   const sourceImageUrl = productSlots.find(slot => slot.sourceImageUrl)?.sourceImageUrl;
 
   return (
@@ -217,6 +244,7 @@ function MaterialDetailTile({
             material={material}
             src={mediaUrl}
             type={material.type === 'video' && !material.poster ? 'video' : 'image'}
+            contained={materialUsesContainedProductPreview(material)}
           >
             {material.type === 'video' ? (
               <button

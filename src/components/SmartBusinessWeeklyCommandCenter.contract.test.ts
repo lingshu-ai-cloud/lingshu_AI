@@ -95,6 +95,9 @@ assert.match(planDetails, /h-\[112px\][\s\S]*<img[\s\S]*爆款视频缩略图/, 
 assert.match(planList, /src=\{item\.thumbnailUrl\}/, '计划摘要必须优先使用已有内容缩略图回退链路，不能只依赖爆款引用封面');
 assert.match(detailDialog, /src=\{selectedPlan\.item\.thumbnailUrl\}/, '详情弹窗必须沿用内容缩略图回退链路');
 assert.match(detailDialog, /查看爆款原片/, '二级详情必须保留查看准确爆款原片的入口');
+assert.match(detailDialog, /selectedPlan\.reference\?\.referenceId[\s\S]*<AuthenticatedVideo[\s\S]*encodeURIComponent\(selectedPlan\.reference\.referenceId\)/, '绑定参考时必须能在详情中播放准确的视频');
+assert.match(detailDialog, /尚未选定可播放的爆款参考视频/, '没有参考时不得展示伪造的预览');
+assert.match(planDetails, /display\.totals\.versionCount\} 条[\s\S]*display\.totals\.originalCount\} 条原创制作[\s\S]*条平台适配/, '展示平台版本数量时必须区分原创制作与平台适配');
 assert.doesNotMatch(commandCenter, /本周计划爆款依据|计划依据 · 爆款参考/, '经营首页不得展开爆款依据，避免挤占主视图');
 assert.match(planDetails, /title="本周计划"[\s\S]{0,160}aria-label="详细周计划"/, '详细周计划必须通过可随时关闭的抽屉查看');
 assert.match(planDetails, /编导结构尚未写入本周计划|内容结构待确认/, '内容结构缺失时必须使用明确的待确认降级状态');

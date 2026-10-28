@@ -28,6 +28,8 @@ assert.match(panel, /presetManuallyChanged\.current = true/,
 assert.match(panel, /ant-select-selection-item[^"\n]*text-text-primary[\s\S]*ant-select-selection-search-input[^"\n]*bg-transparent/,
   'the task-package select must keep its chosen label readable in dark appearance');
 assert.match(panel, /promotionPlans:[\s\S]{0,200}budgetCny/, 'per-video promotion choices must remain part of the submitted goal');
+assert.match(panel, /initialPromotionPlans = \(plans: VideoPlan\[\]\): WeeklyPromotionPlan\[\] => defaultFacebookPromotionPlans\(plans\)/,
+  'new manual weekly plans must persist the same Facebook per-content promotion default');
 assert.doesNotMatch(panel, /digitalEmployeeApi|productionApi|fetch\(/,
   'goal editing must not create a second service submission path');
 

@@ -26,7 +26,7 @@ test('publishing and follow-up cannot disable required human approval', () => {
 });
 
 test('legacy cadence fallback and enterprise language remain explicit', () => {
-  assert.deepEqual(platformCountsFromCadence('', 5), { youtube: 1, tiktok: 1, instagram: 1, facebook: 1, linkedin: 1 });
+  assert.deepEqual(platformCountsFromCadence('', 5), { facebook: 3, linkedin: 3 });
   assert.equal(primaryEnterpriseLanguage('中文、英语'), '中文');
   assert.equal(primaryEnterpriseLanguage(''), '英语');
 });

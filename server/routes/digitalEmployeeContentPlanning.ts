@@ -107,6 +107,23 @@ export function createDigitalEmployeeContentPlanning(deps: ContentPlanningDepend
     const masterPlans = plans.filter(plan => plan.productionRole !== 'platform_adaptation');
     if (!production || !plans.length) throw new Error('周视频计划中还没有内容任务');
     const generatedAt = new Date().toISOString();
+    if (input.pack.referenceSourcePolicy === 'existing_library_only') {
+      const cloneMasters = masterPlans.filter(plan => plan.route === 'clone');
+      const unboundCount = cloneMasters.filter(plan => !plan.referenceId).length;
+      if (unboundCount) {
+        const blocker = `本周 ${cloneMasters.length} 条复刻视频中有 ${unboundCount} 条尚未绑定通过逐镜精确分析的爆款参考；请先在灵感集市完成分析，再重新匹配本周计划`;
+        return { ...input.pack,
+          detailGeneration: { status: 'blocked', startedAt: generatedAt, generatedAt,
+            estimatedMinutes: 0, usageCostCny: null, readyCount: 0,
+            blockedCount: unboundCount, blockers: [blocker] },
+          tasks: input.pack.tasks.map(task => task.templateId !== 'production' ? task : { ...task,
+            videoPlans: (task.videoPlans || []).map(plan => plan.referenceId ? plan : normalizeVideoPlan({ ...plan,
+              preproduction: previewForBlockedPlan({ plan, generatedAt, blockers: [blocker] }),
+            })),
+          }),
+        };
+      }
+    }
     const frozenProfile = await ensureFrozenEnterpriseProfileForRun(
       input.tenantId,
       input.plan,

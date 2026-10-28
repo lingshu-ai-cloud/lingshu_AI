@@ -3,6 +3,7 @@ import { Alert, Button, Input, Select, Space } from 'antd';
 import { createAssistantCatalogProduct, readAssistantProductCatalog, type AssistantCatalogProduct } from '../../lib/assistantProductCatalog';
 import { socialContentApi } from '../../lib/socialContentApi';
 import { submitContentIntakeBatch } from '../../lib/assistantContentIntakeBatch';
+import { isContentProductionPlatform } from '../../../shared/contracts/contentProductionPlatforms';
 
 export const CONTENT_INTAKE_QUESTIONS = [
   '这次要为哪个产品制作内容？请从企业知识库选择一个或多个产品，也可以新建产品。',
@@ -70,8 +71,8 @@ export function useContentTaskIntake(options: Options) {
       if (!value || value.length > 1000) { setError('请填写1～1000字的内容目标。'); return true; }
       setObjective(value); advance(value, 2);
     } else if (step === 2) {
-      const resolved = ({ tiktok: 'tiktok', 抖音: 'tiktok', instagram: 'instagram', ig: 'instagram', facebook: 'facebook', fb: 'facebook', youtube: 'youtube', linkedin: 'linkedin', '领英': 'linkedin' } as Record<string, string>)[value.toLowerCase()];
-      if (resolved) { setPlatform(resolved); advance(resolved, 3); } else setError('请选择下面的平台，或输入 TikTok、Instagram、Facebook、YouTube、LinkedIn。');
+      const resolved = ({ facebook: 'facebook', fb: 'facebook', linkedin: 'linkedin', '领英': 'linkedin' } as Record<string, string>)[value.toLowerCase()];
+      if (isContentProductionPlatform(resolved)) { setPlatform(resolved); advance(resolved, 3); } else setError('制作平台仅支持 Facebook 和 LinkedIn。');
     } else if (step === 3) {
       const date = value.replace(' ', 'T');
       if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(date) || !Number.isFinite(Date.parse(`${date}+08:00`)) || Date.parse(`${date}+08:00`) <= Date.now()) {
@@ -95,7 +96,7 @@ export function useContentTaskIntake(options: Options) {
   };
   const submit = async () => {
     if (locked.current || step !== 4) return;
-    if (!selected.length || !objective.trim() || !platform || Date.parse(`${dueAt}+08:00`) <= Date.now() || !Number.isFinite(Date.parse(`${dueAt}+08:00`))) { setError('信息不完整或截止时间已过，请返回修改。'); return; }
+    if (!selected.length || !objective.trim() || !isContentProductionPlatform(platform) || Date.parse(`${dueAt}+08:00`) <= Date.now() || !Number.isFinite(Date.parse(`${dueAt}+08:00`))) { setError('信息不完整、制作平台不支持或截止时间已过，请返回修改。'); return; }
     locked.current = true; setBusy(true); setError(''); const epoch = generation.current;
     try {
       await submitContentIntakeBatch<Receipt>({ ids: selected, keys: keys.current, completed: completed.current,
@@ -134,7 +135,7 @@ export function useContentTaskIntake(options: Options) {
       <Input.TextArea aria-label="内容目标" placeholder="也可以直接在下方对话输入框回答" value={objective} maxLength={1000} onChange={event => setObjective(event.target.value)} />
       <Button type="primary" disabled={!objective.trim()} onClick={() => answer(objective)}>回答并继续</Button>
     </>}
-    {step === 2 && <Space wrap>{['tiktok', 'instagram', 'facebook', 'youtube', 'linkedin'].map(item => <Button key={item} onClick={() => answer(item)}>{item}</Button>)}</Space>}
+    {step === 2 && <Space wrap>{['facebook', 'linkedin'].map(item => <Button key={item} onClick={() => answer(item)}>{item}</Button>)}</Space>}
     {step === 3 && <>
       <Input aria-label="交付截止时间（北京时间）" type="datetime-local" value={dueAt} onChange={event => setDueAt(event.target.value)} />
       <Button type="primary" onClick={() => { if (!dueAt || !Number.isFinite(Date.parse(`${dueAt}+08:00`)) || Date.parse(`${dueAt}+08:00`) <= Date.now()) { setError('请选择未来的北京时间。'); return; } advance(`${dueAt.replace('T', ' ')} 北京时间`, 4); }}>确认时间</Button>

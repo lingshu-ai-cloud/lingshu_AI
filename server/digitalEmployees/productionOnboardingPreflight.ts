@@ -21,6 +21,8 @@ import type { DataStore } from '../storage/datastore.js';
 import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
 import type { EnterpriseProfile } from '../routes/enterprise.js';
 import { verifyEnterpriseFactContent } from '../routes/enterprise.js';
+import { normalizeProfile } from '../routes/enterpriseProfileStore.js';
+import { frozenEnterpriseProfileMatchesCanonical } from './configuration.js';
 import { collectProductionAssets } from './contentProduction.js';
 import type { AssetCandidate } from './contentProductionContracts.js';
 
@@ -280,8 +282,9 @@ export function enterpriseOnboardingEvidence(
   assets: AssetCandidate[],
   budgetConfirmed: boolean,
   materialRequirements?: FixedYieldLocalMaterialRequirement[],
+  confirmedByCanonical = false,
 ): ProductionOnboardingEvidence {
-  const confirmed = confirmedEnterpriseFacts(profile);
+  const confirmed = confirmedByCanonical || confirmedEnterpriseFacts(profile);
   const companyReady = confirmed && Boolean(text(profile.company?.name) && text(profile.company?.industry) && text(profile.company?.description));
   const brandReady = confirmed && Boolean(text(profile.brand?.name) && (text(profile.brand?.tone) || text(profile.brand?.style) || text(profile.brand?.usp)));
   const productFactsReady = confirmed && Boolean((profile.products?.items ?? []).some(product => text(product.name)
@@ -369,12 +372,25 @@ export async function readServerProductionOnboardingReadiness(input: {
   budgetConfirmed: boolean;
   assets?: AssetCandidate[];
 }): Promise<ServerProductionOnboardingReadiness> {
-  const [presenterDefaults, assets] = await Promise.all([
+  const [presenterDefaults, assets, profiles] = await Promise.all([
     input.store.list<{ tenant_id?: string; payload?: Record<string, unknown> }>('studio_production_defaults', {
       where: { tenant_id: input.tenantId }, page: 1, perPage: 2,
     }),
     input.assets ? Promise.resolve(input.assets) : collectProductionAssets(input.tenantId, input.profile),
+    input.store.list<{ tenant_id?: string; profile?: unknown }>('tenant_profiles', {
+      where: { tenant_id: input.tenantId }, page: 1, perPage: 2,
+    }),
   ]);
+  const raw = profiles.totalItems === 1 && profiles.items.length === 1 && profiles.items[0]?.tenant_id === input.tenantId
+    ? profiles.items[0].profile : null;
+  let canonical: EnterpriseProfile | null = null;
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) canonical = normalizeProfile(parsed as EnterpriseProfile);
+  } catch { /* malformed profiles do not establish confirmed facts */ }
+  const snapshotVerified = Boolean(canonical && confirmedEnterpriseFacts(canonical)
+    && canonical.factVersion?.id === input.profile.factVersion?.id
+    && frozenEnterpriseProfileMatchesCanonical(input.profile, canonical));
   const evidence = enterpriseOnboardingEvidence(
     input.profile,
     presenterDefaults.items,
@@ -382,7 +398,20 @@ export async function readServerProductionOnboardingReadiness(input: {
     assets,
     input.budgetConfirmed,
     requiredFixedYieldLocalMaterials(input.plans),
+    snapshotVerified,
   );
+  if (input.profile.factVersion?.contentHash && !confirmedEnterpriseFacts(input.profile) && !snapshotVerified) {
+    return {
+      ready: false,
+      blockers: [{
+        code: 'enterprise_facts_mismatch',
+        message: '无法核验企业资料的已确认版本，可能是资料变更或历史快照不完整；请核对资料后重新确认并更新周计划',
+        action: 'complete_enterprise_profile',
+      }],
+      requiredArchetypes: requiredFixedYieldArchetypes(input.plans),
+      evidence,
+    };
+  }
   return evaluateServerProductionOnboardingReadiness({
     preferences: compatibleProductionOnboardingPreferences(input.profile, evidence, input.preferences),
     evidence,

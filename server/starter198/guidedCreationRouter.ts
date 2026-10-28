@@ -5,7 +5,8 @@ import { creationSelectionSchema } from '../../shared/contracts/contentCreationD
 import { contentCreationTurn, CreationDialogueError, type CreationEvidencePorts } from '../assistantContext/contentCreationDialogue.js';
 import { creationEvidencePorts } from '../lib/socialContentLegacyPorts.js';
 import { createSocialContentTask, addSocialTaskSource, startSocialContentTask } from './socialContentTasks.js';
-import { parseCreateSocialTask, parseSocialSource, requireIdempotencyKey, SocialContentWorkflowError } from './socialContentValidation.js';
+import { productionTaskInput, parseSocialSource, requireIdempotencyKey, SocialContentWorkflowError } from './socialContentValidation.js';
+import { isContentProductionPlatform } from '../../shared/contracts/contentProductionPlatforms.js';
 import type { Starter198Repository } from './repository.js';
 import type { Starter198OrchestratorQueuePort } from './runtimePorts.js';
 import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
@@ -42,11 +43,12 @@ export function createGuidedCreationRouter(input: { repository: Starter198Reposi
     const presenter = digital ? (await evidence.presenters(identity.tenantId)).find(row => validateHeyGenPresenterRecord(row).ok) : undefined;
     if (digital && !presenter) throw new CreationDialogueError('creation_presenter_required', 422, '人物及音色授权已变化，请重新核验。');
     const reference = await evidence.reference(identity.tenantId, plan.guided.narration.sourceReferenceId);
-    const platform = typeof reference?.platform === 'string' ? reference.platform.trim() : '';
-    if (!platform) throw new CreationDialogueError('creation_platform_required', 422, '当前参考尚未记录发布平台，请补齐来源信息。');
+    const referencePlatform = typeof reference?.platform === 'string' ? reference.platform.trim() : '';
+    if (!referencePlatform) throw new CreationDialogueError('creation_platform_required', 422, '当前参考尚未记录来源平台，请补齐来源信息。');
+    const platform = isContentProductionPlatform(referencePlatform) ? referencePlatform : 'facebook';
     const source = guidedReferenceSource(reference, plan.guided.narration);
     const scene = guide.scene;
-    const value = parseCreateSocialTask({ title: `${scene?.campaign?.name || products.map(row => row.name).join('、')} · ${scene?.kind === 'campaign' ? '活动内容' : '自由创作'}`.slice(0, 120), objective: scene?.campaign ? `为${scene.campaign.name}制作视频；优惠政策：${scene.campaign.offer}；卖点：${scene.campaign.sellingPoints}`.slice(0,1000) : scene?.hook?.direction || '面向海外B2B买家，使用企业已核验产品、工厂、资质、服务信息与询盘CTA制作视频。', productId: products[0]?.id,
+    const value = productionTaskInput({ title: `${scene?.campaign?.name || products.map(row => row.name).join('、')} · ${scene?.kind === 'campaign' ? '活动内容' : '自由创作'}`.slice(0, 120), objective: scene?.campaign ? `为${scene.campaign.name}制作视频；优惠政策：${scene.campaign.offer}；卖点：${scene.campaign.sellingPoints}`.slice(0,1000) : scene?.hook?.direction || '面向海外B2B买家，使用企业已核验产品、工厂、资质、服务信息与询盘CTA制作视频。', productId: products[0]?.id,
       productRef: products[0]?.name, platforms: [platform], languages: guide.languages, targetDurationSeconds: Math.round(plan.guided.nodes.reduce((sum, node) => sum + node.duration, 0) * 1000) / 1000, mode: 'instant', themeId: 'supplier_capability',
       creationMode: 'viral_replication', managementMode: guide.productionMode === 'manual' ? 'advanced' : 'one_click_managed',
       productionApproach: digital || guide.assignments.some(row => row.intent === 'generate') ? 'ai_enhanced' : 'material_cut',

@@ -3,16 +3,15 @@ import { Alert, Button, Input, Select, Space, Spin } from 'antd';
 import { ChevronDown, Zap } from 'lucide-react';
 import { assistantWeeklyActionsApi, weeklyActionScopeTokens, type WeeklyAssistantAction, type WeeklyActionContext, type WeeklyActionReceipt, type WeeklyCapacityProposal } from '../../lib/assistantWeeklyActionsApi';
 import type { WeeklyScheduleCapacityInput, WeeklyScheduleProposal } from '../../../shared/contracts/socialWeeklyScheduleRevision';
+import { isContentProductionPlatform } from '../../../shared/contracts/contentProductionPlatforms';
 
 export const WEEKLY_ACTION_LABELS: Record<WeeklyAssistantAction, string> = {
   create: '新建一条内容', revise: '修改已有内容', publish: '发布指定成片',
 };
 export const STANDALONE_CONTENT_PACKAGE_KEY = '__standalone_content__';
 const STANDALONE_PLATFORM_OPTIONS = [
-  { value: 'tiktok', label: 'TikTok' },
-  { value: 'youtube', label: 'YouTube' },
-  { value: 'instagram', label: 'Instagram' },
   { value: 'facebook', label: 'Facebook' },
+  { value: 'linkedin', label: 'LinkedIn' },
 ];
 export function standaloneContentNavigation(input: { requestId: number; product: { id: string; name: string }; goal: string; platform: string }) {
   const goal = input.goal.trim();
@@ -20,7 +19,7 @@ export function standaloneContentNavigation(input: { requestId: number; product:
     page: 'smartAssets', view: 'create', studioEntry: true,
     contentCreationRequest: {
       requestId: input.requestId, themeId: 'product_value', mode: 'instant', creationPath: 'material_processing', materialInput: 'none', managedMode: 'one_click_managed',
-      prefill: { title: `${input.product.name}内容`, topic: goal, productId: input.product.id, productName: input.product.name, platforms: [input.platform] },
+      prefill: { title: `${input.product.name}内容`, topic: goal, productId: input.product.id, productName: input.product.name, platforms: [isContentProductionPlatform(input.platform) ? input.platform : 'facebook'] },
       identityMappings: { selectedProductIds: [input.product.id], selectedProductNames: [input.product.name], products: [{ sourceTerm: input.product.name, productId: input.product.id, productName: input.product.name }] },
       specialRequirements: goal,
     },

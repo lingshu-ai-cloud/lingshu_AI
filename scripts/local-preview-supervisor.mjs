@@ -235,6 +235,25 @@ function scheduleBackendRestart(reason) {
   }, 800);
 }
 
+// Source reloads must not interrupt an in-flight atomic local-store write.
+// A dead owner is deliberately NOT reclaimed here; use the audited recovery CLI.
+function backendHasActiveStoreLock(service) {
+  if (service.name !== 'backend' || !service.child?.pid) return false;
+  const directory = path.join(runtimeRoot, 'data', 'local-store');
+  let names;
+  try { names = fs.readdirSync(directory).filter(name => name.endsWith('.json.lock')); }
+  catch { return false; }
+  for (const name of names) {
+    try {
+      const owner = JSON.parse(fs.readFileSync(path.join(directory, name, 'owner.json'), 'utf8'));
+      if (owner.schema !== 'local-collection-lock.v1' || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 || owner.host !== os.hostname()) continue;
+      const group = Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(owner.pid)], { encoding: 'utf8', timeout: 1_000 }).trim());
+      if (group === service.child.pid) return true;
+    } catch { /* Missing or dead owner is handled only by audited reconciliation. */ }
+  }
+  return false;
+}
+
 for (const directory of (process.env.LINGSHU_PREVIEW_BACKEND_SOURCE_WATCH === '0' ? [] : ['server', 'shared'])) {
   try {
     fs.watch(path.join(runtimeRoot, directory), { recursive: true }, (_event, filename) => {
@@ -263,9 +282,23 @@ setInterval(() => {
 function terminate(service) {
   const child = service.child;
   if (!child) return;
+  if (backendHasActiveStoreLock(service)) {
+    if (!service.lockWaitTimer) {
+      log('backend restart deferred while a local-store atomic write is active');
+      service.lockWaitTimer = setTimeout(() => {
+        service.lockWaitTimer = undefined;
+        if (service.child === child) terminate(service);
+      }, 1_000);
+    }
+    return;
+  }
   try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
   setTimeout(() => {
     if (service.child !== child) return;
+    if (backendHasActiveStoreLock(service)) {
+      log('backend force kill cancelled: a local-store atomic write is active');
+      return;
+    }
     log(`${service.name} did not exit in time; force killing its process group`);
     try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
   }, 3_000).unref();

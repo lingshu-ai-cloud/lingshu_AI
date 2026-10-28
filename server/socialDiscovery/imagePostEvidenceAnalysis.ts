@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { normalizeImageReferenceProductionLabels } from '../../shared/contracts/imageReferenceProductionLabel.js';
 import { analyzeImagePostEvidenceWithGemini } from '../agents/gemini.js';
 import { analyzeImagePostEvidenceWithQwen } from '../agents/qwen.js';
 import type { ImagePostEvidenceAnalysis } from '../agents/qwenContracts.js';
@@ -80,9 +82,15 @@ export function createImagePostEvidenceAnalyzer(input: {
       images, title: item.title, caption: item.caption, platform: item.platform,
       tags: [...new Set([...item.tags, ...tagsFromKeyword(keyword, item.platform)])],
     };
+    const labelSources = urls.map((_, index) => {
+      const image = images.find(item => item.imageIndex === index + 1);
+      return { imageIndex: index + 1, sourceSha256: image ? createHash('sha256').update(Buffer.from(image.base64, 'base64')).digest('hex') : null };
+    });
+    const withProductionLabels = (analysis: ImagePostEvidenceAnalysis): ImagePostEvidenceAnalysis => ({ ...analysis,
+      productionLabels: normalizeImageReferenceProductionLabels(analysis.productionLabels, labelSources) });
     try {
       const analysis = await (input.analyzeQwen || analyzeImagePostEvidenceWithQwen)(evidenceInput);
-      return { status: 'analyzed', analysis, provider: 'qwen' };
+      return { status: 'analyzed', analysis: withProductionLabels(analysis), provider: 'qwen' };
     } catch (qwenError) {
       console.warn('[videos] Qwen image post analysis failed, trying Gemini:', qwenError instanceof Error ? qwenError.message : qwenError);
       try {
@@ -90,7 +98,7 @@ export function createImagePostEvidenceAnalyzer(input: {
           images, title: item.title, caption: item.caption, platform: item.platform,
           tags: [...new Set([...item.tags, ...tagsFromKeyword(keyword, item.platform)])],
         });
-        return { status: 'analyzed', analysis, provider: 'gemini' };
+        return { status: 'analyzed', analysis: withProductionLabels(analysis), provider: 'gemini' };
       } catch (geminiError) {
         console.warn('[videos] Gemini image post analysis failed:', geminiError instanceof Error ? geminiError.message : geminiError);
         const qwenMessage = qwenError instanceof Error ? qwenError.message : String(qwenError);

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { defaultWeeklyGoal, type GoalDraft } from '../../lib/defaultWeeklyGoal';
-import { digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
+import { DigitalEmployeeApiError, digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
+import { socialDiscoveryApi } from '../../lib/socialDiscoveryApi';
 import type { DigitalEmployeeConfig, DigitalEmployeeOverview } from '../../lib/digitalEmployees';
 import { confirmedWeeklyExecution, weeklyStartConflictFromError, weeklyStartResultNeedsReconciliation } from '../../lib/weeklyStartValidation';
 import { notifyWeeklyWorkUpdated, WEEKLY_WORK_UPDATED_EVENT } from '../../lib/weeklyWorkEvents';
 import { ASSISTANT_WEEKLY_PLAN_OPEN_EVENT } from '../../lib/assistantWeeklyPlanEvents';
+import { prepareWeeklyPlanForLaunch } from '../../lib/weeklyPlanLaunchPreparation';
 
 type GuidanceKey = 'companyName' | 'focusProducts' | 'targetMarkets' | 'customerProfile' | 'weeklyObjective';
 type GuidanceQuestion = { key: GuidanceKey; prompt: string };
@@ -81,6 +83,8 @@ export function useAssistantWeeklyPlanExperience() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [celebrating, setCelebrating] = useState(false);
+  const [referenceGap, setReferenceGap] = useState<{ missingCount: number; requiredCount: number } | null>(null);
+  const [referenceMessage, setReferenceMessage] = useState('');
   const refresh = useCallback(async () => {
     const next = await digitalEmployeeApi.overview();
     setOverview(next);
@@ -96,14 +100,23 @@ export function useAssistantWeeklyPlanExperience() {
 
   const prepare = useCallback(async () => {
     setError('');
+    setReferenceMessage('');
     const next = await digitalEmployeeApi.overview();
     if (!next.config) throw new Error('企业基础档案尚未建立。请先完成首页的新手卡片，之后我会在这里逐项补充周计划信息。');
     setOverview(next); setGuidance(null); setDraft(null);
     if (next.goal && next.plan) {
+      const readiness = await digitalEmployeeApi.weeklyReferenceReadiness(next.goal.id);
+      if (!readiness.ready) {
+        setReferenceGap({ missingCount: readiness.missingCount, requiredCount: readiness.requiredCount });
+        setProposal(next); setStage('plan'); setModalOpen(false);
+        return `本周计划还缺 ${readiness.missingCount} 条可用于制作的爆款视频。周任务尚未确立，请选择手动录入或立即采集。`;
+      }
+      setReferenceGap(null);
       setProposal(next); setStage('budget'); setModalOpen(true);
       return '已在当前窗口打开本周计划。你可以核对方案和预算；只有再次确认后才会启动运营。';
     }
     const questions = guidanceQuestions(next.config);
+    setReferenceGap(null);
     setProposal(null); setStage('plan'); setModalOpen(false);
     setGuidance({ config: next.config, questions, index: 0, answers: {} });
     return questionPrompt(questions[0]!);
@@ -136,16 +149,53 @@ export function useAssistantWeeklyPlanExperience() {
 
   const confirmPlan = useCallback(async () => {
     if (!draft || !guidance || busy) return;
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setReferenceMessage('');
     try {
       const configChanged = Object.keys(guidance.answers).some(key => key !== 'weeklyObjective');
       if (configChanged) await digitalEmployeeApi.completeOnboarding(guidance.config);
       const created = await digitalEmployeeApi.createGoal(draft);
       if (!created.goal || !created.plan?.businessPackage) throw new Error('周计划方案尚未生成完整，请稍后重试。');
-      setOverview(created); setProposal(created); setGuidance(null); setStage('budget');
-    } catch (cause) { setError(cause instanceof Error ? cause.message : '周计划方案保存失败'); }
+      setOverview(created); setProposal(created); setGuidance(null); setReferenceGap(null); setStage('budget');
+    } catch (cause) {
+      if (cause instanceof DigitalEmployeeApiError && cause.code === 'weekly_reference_shortage') {
+        const count = Number(cause.details.missingCount);
+        const required = Number(cause.details.requiredCount);
+        if (Number.isSafeInteger(count) && count > 0 && Number.isSafeInteger(required) && required >= count) {
+          setReferenceGap({ missingCount: count, requiredCount: required });
+          setModalOpen(false);
+          return;
+        }
+      }
+      setError(cause instanceof Error ? cause.message : '周计划方案保存失败');
+    }
     finally { setBusy(false); }
   }, [busy, draft, guidance]);
+
+  const openReferenceLibrary = useCallback((view: 'inspiration' | 'accounts') => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', view);
+    window.history.replaceState(window.history.state, '', url);
+    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'socialInspiration', view } }));
+  }, []);
+
+  const collectReferencesNow = useCallback(async () => {
+    if (busy || !referenceGap) return;
+    setBusy(true); setReferenceMessage('');
+    try {
+      const scope = await socialDiscoveryApi.getScope();
+      if (!scope.persisted || scope.needsConfirmation) {
+        setReferenceMessage('首次采集需要先确认采集范围。已打开对标账号设置；确认后点击“立即采集”。');
+        openReferenceLibrary('accounts');
+        return;
+      }
+      const result = await socialDiscoveryApi.run({ triggerType: 'manual' });
+      setReferenceMessage(result.skipped
+        ? `本次采集未启动：${result.reason || '请检查采集范围与运行状态'}。周任务仍未创建。`
+        : '已发起采集。新视频完成逐镜分析与复核后，返回这里重新核验周计划；采集入库不等于可用于制作。');
+    } catch (cause) {
+      setReferenceMessage(cause instanceof Error ? cause.message : '采集未启动，请检查采集设置。');
+    } finally { setBusy(false); }
+  }, [busy, referenceGap, openReferenceLibrary]);
 
   useEffect(() => {
     const open = () => { void prepare().catch(cause => setError(cause instanceof Error ? cause.message : '当前周计划暂时无法读取')); };
@@ -168,8 +218,13 @@ export function useAssistantWeeklyPlanExperience() {
       return true;
     };
     try {
+      const prepared = await prepareWeeklyPlanForLaunch(current, {
+        onObserved: next => { setOverview(next); setProposal(next); },
+      });
+      const preparedPackage = prepared.plan?.businessPackage;
+      if (!preparedPackage) throw new Error('任务包准备结果与当前周目标不一致，本周任务尚未启动。');
       requestSent = true;
-      let next = await digitalEmployeeApi.approveGoal(current.goal.id, current.plan.businessPackage.revision, true);
+      let next = await digitalEmployeeApi.approveGoal(current.goal.id, preparedPackage.revision, true);
       let finished = finish(next);
       if (!finished) { reconciliationRead = true; next = await digitalEmployeeApi.overview(current.goal.id); finished = finish(next); }
       if (!finished) throw new Error('启动请求已经发出，但暂未取得可确认的运行回执。系统不会自动重复启动，请稍后刷新查看。');
@@ -185,6 +240,8 @@ export function useAssistantWeeklyPlanExperience() {
   }, [busy, proposal, stage]);
 
   return { proposal, draft, stage, modalOpen, busy, error, celebrating,
+    referenceGap, referenceMessage, openReferenceLibrary, collectReferencesNow,
+    retryReferenceCheck: () => { if (draft) void confirmPlan(); else void prepare().catch(cause => setReferenceMessage(cause instanceof Error ? cause.message : '参考核验暂不可用')); },
     guidanceActive: Boolean(guidance && guidance.index < guidance.questions.length), weeklyPlanOperating: operating(overview),
     objectiveChoices: guidance?.questions[guidance.index]?.key === 'weeklyObjective'
       ? suggestedWeeklyObjectives(applyGuidance(guidance.config, guidance.answers)).map((label, index) => ({

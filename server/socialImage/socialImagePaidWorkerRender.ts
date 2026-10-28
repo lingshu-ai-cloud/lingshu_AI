@@ -3,7 +3,7 @@ import sharp from 'sharp';
 import type { DataStore } from '../storage/datastore.js';
 import { buildEnterpriseContext, readTenantEnterpriseProfile } from '../routes/enterprise.js';
 import { auditCommercialClaims, hasConfirmedEnterpriseFacts, userFacingPosterText } from '../lib/studioGenerationTruthfulness.js';
-import { ImageProviderRejectedError, normalizeImageGenerationQuality, type ReferenceImage } from '../lib/imageGen.js';
+import { assertOpenAiImageConfigured, ImageProviderConfigurationError, ImageProviderRejectedError, normalizeImageGenerationQuality, type ReferenceImage } from '../lib/imageGen.js';
 import { readMaterialLibrary } from '../lib/materialLibrary.js';
 import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
 import { buildSocialImagePosterPlatePrompt } from './socialImagePosterPlatePrompt.js';
@@ -20,7 +20,10 @@ import { isSocialImageBuyerPoster } from './socialImageBuyerOverlay.js';
 import { buyerPosterTone } from './fixedOverlayComposer.js';
 import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
 import type { SocialImageAspectRatio } from './referenceCanvas.js';
+import type { ImageReferenceStyleElement } from '../../shared/contracts/imageReferenceProductionLabel.js';
 import { imageLanguageSchema, normalizeImageLanguage } from '../../shared/contracts/imageLanguages.js';
+import { resolveSocialImageProductCutout, type SocialImageProductCutout } from './socialImageProductCutout.js';
+import { isVerifiedTransparentProductCutout } from '../lib/productIdentityPreparation.js';
 
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 /** The durable worker uses the same paid provider/material writer as the Studio route. */
@@ -32,6 +35,7 @@ export async function renderSocialImagePaidWorker(input: {
     enterpriseContext?: (tenantId: string) => Promise<string>;
     enterpriseProfile?: typeof readTenantEnterpriseProfile;
     referenceBytes?: typeof readSocialImageReferenceBytes;
+    productCutout?: (tenantId: string, productId: string) => Promise<SocialImageProductCutout>;
     submit?: (request: Parameters<typeof submitClaimedSocialImageSingleRender>[0]) => Promise<{ task: SocialImageCreationTask }>;
   };
 }): Promise<SocialImageCreationTask> {
@@ -47,6 +51,11 @@ export async function renderSocialImagePaidWorker(input: {
   const productId = task.contentBrief.productRefs[0]!;
   const product = await input.enterpriseProductAsset(tenantId, productId);
   if (!product) throw new Error('social_image_product_asset_unavailable');
+  // Validate before a paid job is appended or the provider is contacted.
+  const cutout = await (input.ports?.productCutout || ((tenant: string, id: string) =>
+    resolveSocialImageProductCutout({ tenantId: tenant, productId: id })))(tenantId, productId);
+  if (!await isVerifiedTransparentProductCutout(cutout.bytes)
+    || hash(cutout.bytes) !== cutout.contentSha256) throw new Error('social_image_product_cutout_invalid');
   const library = await readMaterialLibrary(tenantId);
   const materialHashes: Record<string, string> = {};
   for (const id of task.materialIds) {
@@ -101,14 +110,23 @@ export async function renderSocialImagePaidWorker(input: {
   const commercialIssue = socialImageFrozenCommercialIssue({ ...audit,
     headline: frozen.poster.headline, imagePrompt: frozen.imagePrompt });
   if (commercialIssue) throw new Error(commercialIssue);
-  const prompt = buildSocialImagePosterPlatePrompt({ ratio: frozen.ratio, recipe: task.replicationRecipe,
+  // Check local provider configuration before creating or claiming a paid job.
+  // Test-injected submitters supply their own provider boundary.
+  if (!input.ports?.submit) assertOpenAiImageConfigured();
+  const renderSpecNode = task.productionRuntime?.nodes.find(node => node.nodeId === 'render_spec' && node.status === 'completed');
+  const renderConstraints = task.productionRuntime?.nodeOutputs.find(node => node.id === renderSpecNode?.outputRef?.id && node.nodeId === 'render_spec' && node.status === 'completed')?.value as {layoutConstraints?:Record<string,unknown>} | undefined;
+  const frozenStyle = renderConstraints?.layoutConstraints?.referenceStyleStrategy;
+  const styleElements = renderConstraints?.layoutConstraints?.referenceStyleStrategy === 'reference_emulation.v1'
+    && Array.isArray(renderConstraints.layoutConstraints.referenceStyleElements) ? renderConstraints.layoutConstraints.referenceStyleElements as ImageReferenceStyleElement[] : [];
+  const prompt = buildSocialImagePosterPlatePrompt({ ratio: frozen.ratio, recipe: frozenStyle ? undefined : task.replicationRecipe,
     buyerPoster: isSocialImageBuyerPoster(frozen.poster) ? frozen.poster : undefined,
-    tone: await buyerPosterTone(product.bytes) });
+    tone: await buyerPosterTone(product.bytes), transferableStyle: styleElements });
   const ratio = frozen.ratio as SocialImageAspectRatio;
   const quality = normalizeImageGenerationQuality(frozen.imageQuality);
   const inputHash = createHash('sha256').update(JSON.stringify({ prompt, ratio, quality,
     references: references.map(ref => hash(Buffer.from(ref.base64, 'base64'))),
-    productSourceSha256: hash(product.bytes), benchmarkSha256: referenceHash,
+    productSourceSha256: hash(product.bytes), productCutoutId: cutout.materialId,
+    productCutoutSha256: cutout.contentSha256, benchmarkSha256: referenceHash,
     requestedProductIds: [productId], materialIds: task.materialIds,
     imageTaskId: task.id, imageJobId: job.id, plannedInputHash: null,
     renderSpecInputHash: socialImageV3RenderSpecInputHash(task) })).digest('hex');
@@ -129,11 +147,12 @@ export async function renderSocialImagePaidWorker(input: {
     return (await (input.ports?.submit || submitClaimedSocialImageSingleRender)({ store, tenantId, task, jobId: job.id, inputHash,
       prompt, ratio, quality, references, idempotencyKey, productId,
       materialIds: task.materialIds, benchmarkReferenceCount: reference?.bytes.length ? 1 : 0,
-      composition: { productBytes: product.bytes, poster: frozen.poster, recipe: task.replicationRecipe,
+      composition: { productBytes: cutout.bytes, productCutoutId: cutout.materialId,
+        poster: frozen.poster, recipe: frozenStyle ? undefined : task.replicationRecipe,
         referenceTextRegion: task.hookFactorSpec?.factors.some(factor => factor.factorId === 'reference-text-hierarchy'
           && factor.validator.observableTarget === 'top_left') ? 'top_left' : undefined } })).task;
   } catch (error) {
-    if (providerMayHaveStarted) {
+    if (providerMayHaveStarted && !(error instanceof ImageProviderConfigurationError)) {
       await recordSocialImagePaidJobFailure({ store, tenantId, taskId: task.id, jobId: job.id,
         inputHash, error: error instanceof Error ? error.message : String(error),
         definitiveRejection: error instanceof ImageProviderRejectedError });

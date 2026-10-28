@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 export type InitialPreparationSource={key:string;platform:'youtube'|'tiktok'|'instagram'|'facebook'|'linkedin';mode:'keyword'|'account';value:string;origin:'external'|'owned';jobId?:string};
-export type InitialPreparation={requestId:string;goalId:string;revision:number;confirmedBy:string;confirmedAt:string;status:'collecting'|'analyzing'|'preparing'|'running'|'blocked';sources:InitialPreparationSource[];candidateIds:string[];reason:string;runId?:string};
+export type InitialPreparation={requestId:string;goalId:string;revision:number;confirmedBy:string;confirmedAt:string;status:'collecting'|'analyzing'|'preparing'|'running'|'blocked';sources:InitialPreparationSource[];candidateIds:string[];reason:string;runId?:string;referenceSourcePolicy?:'existing_library_only';failureCode?:'preparation_outcome_unknown'};
 type PersistedInitialPreparationScope={goalPlatforms:unknown;businessPackage:unknown;config:unknown;profile:unknown};
 
 function record(value:unknown):Record<string,unknown>{return value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:{};}
@@ -29,6 +29,7 @@ export function initialPreparationSourcesFromPersisted(
  request:unknown,
 ):InitialPreparationSource[]{
  const pack=record(persisted.businessPackage);const config=record(persisted.config);const profile=record(persisted.profile);
+ if(pack.referenceSourcePolicy==='existing_library_only')return [];
  const tasks=list(pack.tasks).map(record);const videoPlans=tasks.filter(task=>task.templateId==='production').flatMap(task=>list(task.videoPlans).map(record));
  const packagePlatforms=platforms([...list(pack.matrixPlan).map(item=>record(item).platform),...videoPlans.map(item=>item.platform),...list(record(pack.operatingContext).accounts).map(item=>record(item).platform)]);
  const configPlatforms=platforms(list(config.publishingTargets).map(item=>record(item).platform));
@@ -87,20 +88,33 @@ export async function replaceInitialPreparationPlan(input:{
   throw Error(input.conflictMessage||'计划版本已修改，请重新确认');
 }
 
-export async function advanceInitialPreparation(state:InitialPreparation,ports:{save:(state:InitialPreparation)=>Promise<void>;enqueue:(source:InitialPreparationSource)=>Promise<string>;observe:(id:string)=>Promise<{status:string;candidateIds:string[];error?:string}>;analyzed:(ids:string[])=>Promise<boolean>;prepare:(ids:string[])=>Promise<{ready:boolean;reason?:string;revision:number}>;activate:(revision:number)=>Promise<string>}):Promise<InitialPreparation>{
+export async function advanceInitialPreparation(state:InitialPreparation,ports:{save:(state:InitialPreparation)=>Promise<void>;enqueue:(source:InitialPreparationSource)=>Promise<string>;observe:(id:string)=>Promise<{status:string;candidateIds:string[];error?:string}>;libraryCandidates?:()=>Promise<string[]>;analyzed:(ids:string[])=>Promise<boolean>;prepare:(ids:string[])=>Promise<{ready:boolean;reason?:string;revision:number}>;activate:(revision:number)=>Promise<string>}):Promise<InitialPreparation>{
  if(state.status==='running')return state;
- const current=structuredClone(state);current.reason='';
+ // A previous process may have died after starting paid preparation. Neither a
+ // worker restart nor a manual resume proves the provider did not accept it.
+ if(state.status==='preparing'||state.failureCode==='preparation_outcome_unknown'){
+  const uncertain={...state,status:'blocked' as const,failureCode:'preparation_outcome_unknown' as const,reason:'上次制作准备结果待核对，系统不会重复提交。'};
+  await ports.save(uncertain);return uncertain;
+ }
+ const current=structuredClone(state);current.reason='';let preparationKnownBlocked=false;
  try{
-  for(const source of current.sources)if(!source.jobId){source.jobId=await ports.enqueue(source);await ports.save(current);}
-  const observations=await Promise.all(current.sources.map(source=>ports.observe(source.jobId!)));
-  const failed=observations.find(o=>o.status==='failed');if(failed)throw Error(failed.error||'真实采集失败');
-  if(observations.some(o=>!['done','completed'].includes(o.status))){current.status='collecting';await ports.save(current);return current;}
-  if(observations.some(o=>!o.candidateIds.length))throw Error('采集未取得真实候选，请调整账号或关键词后重新确认计划');
-  current.candidateIds=[...new Set(observations.flatMap(o=>o.candidateIds))];
+  if(current.referenceSourcePolicy==='existing_library_only'){
+   if(current.sources.length)throw Error('现有爆款库模式不允许创建采集任务');
+   if(!ports.libraryCandidates)throw Error('爆款库暂时不可读取');
+   current.candidateIds=[...new Set(await ports.libraryCandidates())];
+   if(!current.candidateIds.length)throw Error('现有爆款库没有可用的已分析参考，未发起新的采集。');
+  }else{
+   for(const source of current.sources)if(!source.jobId){source.jobId=await ports.enqueue(source);await ports.save(current);}
+   const observations=await Promise.all(current.sources.map(source=>ports.observe(source.jobId!)));
+   const failed=observations.find(o=>o.status==='failed');if(failed)throw Error(failed.error||'真实采集失败');
+   if(observations.some(o=>!['done','completed'].includes(o.status))){current.status='collecting';await ports.save(current);return current;}
+   if(observations.some(o=>!o.candidateIds.length))throw Error('采集未取得真实候选，请调整账号或关键词后重新确认计划');
+   current.candidateIds=[...new Set(observations.flatMap(o=>o.candidateIds))];
+  }
   if(!await ports.analyzed(current.candidateIds)){current.status='analyzing';await ports.save(current);return current;}
   current.status='preparing';await ports.save(current);
-  const prepared=await ports.prepare(current.candidateIds);if(!prepared.ready)throw Error(prepared.reason||'制作输入尚未就绪');
+  const prepared=await ports.prepare(current.candidateIds);if(!prepared.ready){preparationKnownBlocked=true;throw Error(prepared.reason||'制作输入尚未就绪');}
   current.revision=prepared.revision;await ports.save(current);
   current.runId=await ports.activate(prepared.revision);current.status='running';await ports.save(current);return current;
- }catch(error){current.status='blocked';current.reason=error instanceof Error?error.message:'初始化准备失败';await ports.save(current);return current;}
+ }catch(error){if(current.status==='preparing'&&!preparationKnownBlocked)current.failureCode='preparation_outcome_unknown';current.status='blocked';current.reason=error instanceof Error?error.message:'初始化准备失败';await ports.save(current);return current;}
 }

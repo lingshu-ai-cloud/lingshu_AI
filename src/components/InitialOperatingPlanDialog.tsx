@@ -5,8 +5,10 @@ import { initialPlanVideoPlans, validateInitialPlan, type InitialOperatingPlan }
 import { authHeader } from '../lib/auth';
 import { socialProgramApi } from '../lib/socialProgramApi';
 import { LsBrandAction, LsFlowDialog } from './ui/LsExperiencePrimitives';
+import { CONTENT_PRODUCTION_PLATFORMS, isContentProductionPlatform } from '../../shared/contracts/contentProductionPlatforms';
 
-const platforms: PublishingTarget['platform'][] = ['youtube', 'tiktok', 'instagram', 'facebook'];
+const discoveryPlatforms: PublishingTarget['platform'][] = ['youtube', 'tiktok', 'instagram', 'facebook', 'linkedin'];
+const platforms: PublishingTarget['platform'][] = [...CONTENT_PRODUCTION_PLATFORMS];
 
 export function initialHistoryAccountDefinitions(
   raw: string,
@@ -19,9 +21,9 @@ export function initialHistoryAccountDefinitions(
     } catch {
       throw new Error(`历史账号链接无效：${url}`);
     }
-    const platform = platforms.find(item => parsed.hostname === `${item}.com` || parsed.hostname.endsWith(`.${item}.com`));
+    const platform = discoveryPlatforms.find(item => parsed.hostname === `${item}.com` || parsed.hostname.endsWith(`.${item}.com`));
     if (!platform || parsed.protocol !== 'https:') throw new Error(`请使用支持平台的 HTTPS 账号链接：${url}`);
-    if (!allowedPlatforms.includes(platform)) throw new Error(`历史账号平台必须包含在本周已选平台中：${url}`);
+    if (!allowedPlatforms.includes(platform)) throw new Error(`历史账号平台不在允许的采集范围内：${url}`);
     return { url: parsed.href, platform };
   });
   return [...new Map(definitions.map(item => [item.url, item])).values()];
@@ -42,7 +44,7 @@ export default function InitialOperatingPlanDialog({
   onConfirm: (plan: InitialOperatingPlan) => void;
   onBack: () => void;
 }) {
-  const [plan, setPlan] = useState(initial);
+  const [plan, setPlan] = useState(() => ({ ...initial, platforms: initial.platforms.filter(isContentProductionPlatform).length ? initial.platforms.filter(isContentProductionPlatform) : [...platforms] }));
   const [editing, setEditing] = useState(false);
   const [history, setHistory] = useState('');
   const [historyBusy, setHistoryBusy] = useState(false);
@@ -54,7 +56,7 @@ export default function InitialOperatingPlanDialog({
   const historyValidation = useMemo(() => {
     if (plan.stage !== 'b2b_growth' || !history.trim()) return { items: [] as ReturnType<typeof initialHistoryAccountDefinitions>, error: '' };
     try {
-      return { items: initialHistoryAccountDefinitions(history, plan.platforms), error: '' };
+      return { items: initialHistoryAccountDefinitions(history, discoveryPlatforms), error: '' };
     } catch (historyError) {
       return { items: [] as ReturnType<typeof initialHistoryAccountDefinitions>, error: historyError instanceof Error ? historyError.message : '历史账号链接无效' };
     }
@@ -69,14 +71,14 @@ export default function InitialOperatingPlanDialog({
     setHistoryBusy(true);
     setHistoryMessage('');
     try {
-      const definitions = initialHistoryAccountDefinitions(history, plan.platforms);
+      const definitions = initialHistoryAccountDefinitions(history, discoveryPlatforms);
       if (!definitions.length) throw new Error('请填写历史账号链接，一行一个。');
       const existing = await socialProgramApi.list();
       const program = existing[0] || await socialProgramApi.create({
         brandName: config.companyName,
         market: plan.market,
         targetAudience: '企业目标买家',
-        candidatePlatforms: plan.platforms,
+        candidatePlatforms: [...new Set(definitions.map(item => item.platform))],
         route: 'account_repair',
       });
       const accounts = await socialProgramApi.listAccounts(program.programId);

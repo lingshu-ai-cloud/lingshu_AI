@@ -43,7 +43,7 @@ test('HTTP preflight uses authenticated scope, revalidates evidence before write
   };
   try {
     const options = await request('options'); assert.equal(options.status, 200); assert.equal(options.body.products[0].id, 'p1');
-    const selection = { productId: 'p1', objective: '介绍产品', dueAt: '2026-10-25T10:00:00Z', usePresenter: false, preferences: DEFAULT_CONTENT_PREFERENCES };
+    const selection = { productId: 'p1', objective: '介绍产品', dueAt: '2026-10-25T10:00:00Z', usePresenter: false, preferences: { ...DEFAULT_CONTENT_PREFERENCES, platform: 'facebook' } };
     const prepared = await request('prepare', selection);
     assert.equal(prepared.status, 200); assert.equal(prepared.body.canCreate, true); assert.equal(prepared.body.executionAvailable, false);
     const forgedScope = await request('prepare', { ...selection, tenantId: 'another-tenant' }); assert.equal(forgedScope.status, 400);

@@ -34,7 +34,7 @@ test('standalone content creation does not require a weekly package and preserve
   assert.equal(detail.page, 'smartAssets');
   assert.equal(detail.contentCreationRequest.creationPath, 'material_processing');
   assert.equal(detail.contentCreationRequest.prefill.productId, 'product-1');
-  assert.deepEqual(detail.contentCreationRequest.prefill.platforms, ['tiktok']);
+  assert.deepEqual(detail.contentCreationRequest.prefill.platforms, ['facebook']);
   assert.equal(detail.contentCreationRequest.specialRequirements, '突出舒缓与保湿');
   const source = fs.readFileSync(new URL('./AssistantWeeklyActions.tsx', import.meta.url), 'utf8');
   assert.match(source, /不加入周任务包（自由任务）/);

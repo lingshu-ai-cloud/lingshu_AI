@@ -20,7 +20,7 @@ import { AssistantAnalysisWork, AssistantReportExport } from './AssistantAnalysi
 import AssistantBusinessSceneChoice from './AssistantBusinessSceneChoice';
 import AssistantNavigationPortalCard from './AssistantNavigationPortalCard';
 import { navigationPortalForAnswer } from '../../lib/assistantNavigationPortal';
-import { AssistantWeeklyObjectiveChoices, AssistantWeeklyPlanCard } from './AssistantWeeklyPlanExperience';
+import { AssistantWeeklyObjectiveChoices, AssistantWeeklyPlanCard, AssistantWeeklyReferenceChoices } from './AssistantWeeklyPlanExperience';
 import type { AssistantWeeklyPlanExperience } from './useAssistantWeeklyPlanExperience';
 
 interface Props {
@@ -106,12 +106,12 @@ export default function AssistantConversationBubbles(props: Props) {
             <div className={inlineHome ? 'ls-assistant-flow__prompt whitespace-pre-line' : 'ls-messenger-bubble ls-messenger-bubble--outbound whitespace-pre-line'}>{msg.content}</div>
           </div> : <div className={inlineHome ? 'ls-assistant-flow__answer' : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
             {msg.analysisWork?.length ? <AssistantAnalysisWork events={msg.analysisWork} complete={msg.analysisComplete}/> : null}
-            {msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction}
+            {msg.content ? <div data-assistant-image-status-text={msg.creationPortal?.imageReplication?.intake?.imageTaskId ? 'true' : undefined}><AgentReply content={msg.content} sources={msg.sources} onAction={onAction}
               compact={inlineHome && isAssistantHomeQuickTaskText(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
               presentation={inlineHome ? assistantReplyPresentationForText(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')
                 || (msg.businessScene ? assistantReplyPresentationForPromptId(msg.businessScene.sceneId) : undefined) : undefined}
               detailExpanded={assistantWantsDetailedReply(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
-              onSuggest={onSuggest} /> : <span className="opacity-40">...</span>}
+              onSuggest={onSuggest} /></div> : <span className="opacity-40">...</span>}
             {msg.creationPortal && <AssistantCreationPortalCard key={msg.creationPortal.id} portal={msg.creationPortal} />}
             {msg.taskPortal && <AssistantTaskPortalCard key={`${msg.taskPortal.taskId}:${msg.taskPortal.phase}`} portal={msg.taskPortal} />}
             {msg.sourcePortal && <AssistantSourcePortalCard portal={msg.sourcePortal} />}
@@ -126,6 +126,8 @@ export default function AssistantConversationBubbles(props: Props) {
       <AssistantWeeklyObjectiveChoices experience={weeklyPlanExperience} busy={loading}
         onSelect={onWeeklyPlanObjective}
         onCustom={() => onSuggest('我的本周经营目标是：')}/>
+
+      <AssistantWeeklyReferenceChoices experience={weeklyPlanExperience}/>
 
       {contentIntakeNode}
 

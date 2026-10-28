@@ -44,6 +44,7 @@ export interface ProductionOnboardingEvidence {
 
 export type ProductionOnboardingBlockerCode =
   | 'production_preferences_missing'
+  | 'enterprise_facts_mismatch'
   | 'company_profile_missing'
   | 'brand_profile_missing'
   | 'product_facts_missing'

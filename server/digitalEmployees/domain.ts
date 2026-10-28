@@ -304,10 +304,9 @@ export function normalizeWeeklyGoal(input: Partial<WeeklyGoalInput>, config: Dig
     ? input.businessLine as WeeklyGoalInput['businessLine']
     : 'full_funnel';
   const allowedPlatforms = new Set<WeeklyGoalInput['contentPlatforms'][number]>(['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin']);
-  const configuredPlatforms = [...new Set(config.publishingTargets.map(target => target.platform))];
-  const defaultPlatforms = config.enabledWorkflows.includes('content_publish') && configuredPlatforms.length
-    ? configuredPlatforms
-    : ['facebook', 'instagram', 'tiktok', 'youtube'] as WeeklyGoalInput['contentPlatforms'];
+  // Discovery remains cross-platform. New production plans target Facebook and
+  // LinkedIn only; a historical or explicitly selected goal keeps its scope.
+  const defaultPlatforms: WeeklyGoalInput['contentPlatforms'] = ['facebook', 'linkedin'];
   const contentPlatforms: WeeklyGoalInput['contentPlatforms'] = Array.isArray(input.contentPlatforms)
     ? [...new Set(input.contentPlatforms.filter((item): item is WeeklyGoalInput['contentPlatforms'][number] => allowedPlatforms.has(item as WeeklyGoalInput['contentPlatforms'][number])))]
     : defaultPlatforms;

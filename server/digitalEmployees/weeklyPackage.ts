@@ -6,6 +6,8 @@ import { LEGACY_TASK_TEMPLATE_IDS, TASK_TEMPLATES, packageIssues, type WeeklyPac
 import { defaultDirectorPlan, normalizeDirectorPlan } from '../../src/lib/contentDirector.js';
 import { connectedAccountIssues } from '../../shared/contracts/socialOperatingProfile.js';
 import { MASTER_VIDEO_COST_MAX_CNY, MASTER_VIDEO_COST_MIN_CNY, MASTER_VIDEO_COST_POINT_CNY } from '../../shared/contracts/contentCostModel.js';
+import { estimateWeeklyMixedProduction, type WeeklyMixedContentSlot } from '../../shared/contracts/weeklyMixedContentPlan.js';
+import { mixedWeeklyRecommendation } from './weeklyMixedContentPackage.js';
 import { buildWeeklyPlan, type DigitalEmployeeConfig, type WeeklyGoalInput, type WeeklyPlanDraft } from './domain.js';
 import { scheduleWeeklyVideos } from '../../src/lib/weeklyGoalSchedule.js';
 
@@ -17,16 +19,24 @@ export function buildWeeklyOperatingContext(
   config: DigitalEmployeeConfig,
 ): WeeklyOperatingContext {
   const videos = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+  const mixed = pack.mixedContentSlots;
   const masters = videos.filter(video => video.productionRole !== 'platform_adaptation');
   const rows = pack.matrixPlan || [];
-  const plannedPoint = masters.reduce((sum, video) => sum + Math.max(0, Number(video.estimatedCost) || 0), 0);
-  const plannedMin = masters.reduce((sum, video) => sum + Math.max(0, Number(video.estimatedCostRange?.minCny) || 0), 0);
-  const plannedMax = masters.reduce((sum, video) => sum + Math.max(0, Number(video.estimatedCostRange?.maxCny) || 0), 0);
+  const imageQuote = mixed ? estimateWeeklyMixedProduction(mixed) : null;
+  const imageMin = imageQuote ? imageQuote.minCny - imageQuote.videoOriginals * imageQuote.unitVideoMinCny : 0;
+  const imageMax = imageQuote ? imageQuote.maxCny - imageQuote.videoOriginals * imageQuote.unitVideoMaxCny : 0;
+  const plannedPoint = masters.reduce((sum, video) => sum + Math.max(0, Number(video.estimatedCost) || 0), 0) + imageMax;
+  const plannedMin = Math.max(masters.reduce((sum, video) => sum + Math.max(0, Number(video.estimatedCostRange?.minCny) || 0), 0),
+    mixed ? masters.length * (imageQuote?.unitVideoMinCny || 0) : 0) + imageMin;
+  const plannedMax = Math.max(masters.reduce((sum, video) => sum + Math.max(0, Number(video.estimatedCostRange?.maxCny) || 0), 0),
+    mixed ? masters.length * (imageQuote?.unitVideoMaxCny || 0) : 0) + imageMax;
   const productionCny = Number(pack.directorPlan?.productionBudget || 0) || plannedPoint;
   const productionMinCny = plannedMin || Number(pack.directorPlan?.productionBudgetMin || 0);
   const productionMaxCny = plannedMax || Number(pack.directorPlan?.productionBudgetMax || pack.directorPlan?.productionBudget || 0);
   const paidMediaCny = Number(pack.directorPlan?.paidMediaBudget || 0);
-  const accountWeights = rows.map(row => ({ accountId: row.accountId, platform: row.platform, weight: Math.max(1, row.weeklyCount) }));
+  const accountWeights = rows.map(row => ({ accountId: row.accountId, platform: row.platform,
+    weight: mixed ? mixed.filter(slot => slot.accountId === row.accountId && slot.productionRole === 'original').length
+      : Math.max(1, row.weeklyCount) }));
   const totalWeight = Math.max(1, accountWeights.reduce((sum, item) => sum + item.weight, 0));
   const accounts = rows.map(row => {
     const connected = config.publishingTargets.find(target => target.accountId === row.accountId && target.platform === row.platform);
@@ -41,11 +51,7 @@ export function buildWeeklyOperatingContext(
       allocationBasis: 'content_load' as const,
     };
   });
-  // Smart Operations currently delivers video only. Matrix strategy formats
-  // may still contain legacy carousel/article labels, but those must not leak
-  // into the weekly output promise. Title, caption and tags are publication
-  // metadata attached to each video rather than independent content outputs.
-  const formats = [...new Set(videos.map(video => video.route === 'clone' ? '爆款复刻短视频' : video.route === 'material' ? '素材加工短视频' : '产品短视频'))];
+  const formats = mixed ? ['短视频', '产品单图'] : [...new Set(videos.map(video => video.route === 'clone' ? '爆款复刻短视频' : video.route === 'material' ? '素材加工短视频' : '产品短视频'))];
   return {
     objective: goal.objective,
     metric: `${goal.metric}：${goal.baseline} → ${goal.target} ${goal.unit}`,
@@ -64,8 +70,8 @@ export function buildWeeklyOperatingContext(
     },
     promotionPlans: goal.promotionPlans || [],
     cadence: {
-      contentCount: videos.length || rows.reduce((sum, row) => sum + row.weeklyCount, 0),
-      description: config.socialCadence || `${videos.length} 条 / 周`,
+      contentCount: mixed?.length || videos.length || rows.reduce((sum, row) => sum + row.weeklyCount, 0),
+      description: mixed ? '15 条发布内容 / 周，10 条独立制作（6 视频、4 单图）' : config.socialCadence || `${videos.length} 条 / 周`,
       reviewSchedule: config.reviewSchedule,
     },
     authorization: {
@@ -77,9 +83,9 @@ export function buildWeeklyOperatingContext(
       maxCustomerMessages: pack.authorization.maxCustomerMessages,
     },
     outputs: {
-      count: videos.length || rows.reduce((sum, row) => sum + row.weeklyCount, 0),
-      originalCount: masters.length,
-      platformVersionCount: videos.length,
+      count: mixed?.length || videos.length || rows.reduce((sum, row) => sum + row.weeklyCount, 0),
+      originalCount: mixed ? mixed.filter(slot => slot.productionRole === 'original').length : masters.length,
+      platformVersionCount: mixed?.length || videos.length,
       publishCount: rows.reduce((sum, row) => sum + row.weeklyCount, 0) || videos.length,
       formats: formats.length ? formats : ['短视频'],
       totalDurationSeconds: masters.reduce((sum, video) => sum + Math.max(0, Number(video.duration) || 0), 0),
@@ -98,21 +104,26 @@ export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeC
     ownerName: participation === 'team' && ownerId ? ownerName : '', dueAt: goal.endsAt, notes: taskGuidance(maturity, template.id, config.operatingAssessment), sourceProjectIds: [],
     ...(template.id === 'production' ? { videoPlans: goal.videoPlans?.length ? goal.videoPlans : [normalizeVideoPlan({ ...config.videoDefaults, productName: config.focusProducts.split(/[、，,；;]/)[0], theme: '介绍产品的用途与特点', platform: goal.contentPlatforms[0] })] } : {}),
   }));
-  const matrixPlan = goal.businessLine === 'customer_conversion' ? [] : defaultMatrixPlan(config, goal.contentPlatforms, goal.objective);
+  const mixedRecommendation = mixedWeeklyRecommendation({ goal, config });
+  const matrixPlan = goal.businessLine === 'customer_conversion' ? [] : mixedRecommendation?.rows || defaultMatrixPlan(config, goal.contentPlatforms, goal.objective);
   const baseContentCount = tasks.find(t => t.templateId === 'production')?.videoPlans?.length || 0;
-  const platformVersionTarget = matrixPlan.reduce((sum, row) => sum + row.weeklyCount, 0) || baseContentCount;
+  const platformVersionTarget = mixedRecommendation?.slots.filter(slot => slot.kind === 'video' && slot.productionRole === 'original').length
+    || matrixPlan.reduce((sum, row) => sum + row.weeklyCount, 0) || baseContentCount;
   // One planned video is one independently generated and charged deliverable.
   // Cross-platform reuse must never reduce the actual production quantity.
   const originalTarget = platformVersionTarget;
   const initialDirectorPlan = defaultDirectorPlan(originalTarget, platformVersionTarget, platformVersionTarget);
-  initialDirectorPlan.productionBudgetMin = originalTarget * MASTER_VIDEO_COST_MIN_CNY;
-  // New plans start in protected mode.  The amount the user approves must be
-  // the safe ceiling that lets production run through without a second budget
-  // stop; economy mode is applied only when the user explicitly chooses it.
-  initialDirectorPlan.productionBudget = originalTarget * MASTER_VIDEO_COST_MAX_CNY;
-  initialDirectorPlan.productionBudgetMax = originalTarget * MASTER_VIDEO_COST_MAX_CNY;
+  const imageQuote = mixedRecommendation ? estimateWeeklyMixedProduction(mixedRecommendation.slots) : null;
+  const imageMin = imageQuote ? imageQuote.minCny - originalTarget * imageQuote.unitVideoMinCny : 0;
+  const imageMax = imageQuote ? imageQuote.maxCny - originalTarget * imageQuote.unitVideoMaxCny : 0;
+  initialDirectorPlan.productionBudgetMin = imageQuote ? imageQuote.minCny : originalTarget * MASTER_VIDEO_COST_MIN_CNY + imageMin;
+  // This is a public-price planning estimate, not user paid-call authority.
+  initialDirectorPlan.productionBudget = imageQuote ? imageQuote.maxCny : originalTarget * MASTER_VIDEO_COST_MAX_CNY + imageMax;
+  initialDirectorPlan.productionBudgetMax = initialDirectorPlan.productionBudget;
   initialDirectorPlan.paidMediaBudget = Math.round((goal.promotionPlans || []).reduce((sum, item) => sum + item.budgetCny, 0) * 100) / 100;
-  let recommended: WeeklyPackage = { revision: 1, maturity, operatingAssessment: normalizeAssessment(config.operatingAssessment), participation, tasks,
+  let recommended: WeeklyPackage = { revision: 1, referenceSourcePolicy: 'existing_library_only',
+    ...(mixedRecommendation ? { mixedContentSlots: mixedRecommendation.slots } : {}),
+    maturity, operatingAssessment: normalizeAssessment(config.operatingAssessment), participation, tasks,
     ...(matrixPlan.length ? { matrixPlan } : {}),
     directorPlan: initialDirectorPlan,
     // Approving the weekly package is the single human authorization event.
@@ -158,6 +169,15 @@ export function normalizePackage(raw: WeeklyPackage): WeeklyPackage {
   const a = raw.authorization;
   const detail = raw.detailGeneration;
   const normalized: WeeklyPackage = {
+    ...(raw.referenceSourcePolicy === 'existing_library_only' ? { referenceSourcePolicy: 'existing_library_only' as const } : {}),
+    ...(Array.isArray(raw.mixedContentSlots) ? { mixedContentSlots: raw.mixedContentSlots.slice(0, 30).map(slot => ({
+      slotId: clean(slot.slotId, 120), accountId: clean(slot.accountId, 160),
+      platform: slot.platform === 'linkedin' ? 'linkedin' as const : 'facebook' as const,
+      kind: slot.kind === 'image' ? 'image' as const : 'video' as const,
+      presentation: slot.presentation === 'image' ? 'image' as const : 'video' as const,
+      productionRole: slot.productionRole === 'adaptation' ? 'adaptation' as const : 'original' as const,
+      originalSlotId: clean(slot.originalSlotId, 120),
+    } satisfies WeeklyMixedContentSlot)) } : {}),
     ...(raw.directorPlan !== undefined ? { directorPlan: normalizeDirectorPlan(raw.directorPlan) } : {}),
     ...(raw.matrixPlan !== undefined ? { matrixPlan: normalizeMatrixPlan(raw.matrixPlan) } : {}),
     ...(Array.isArray(raw.reviewTodos) ? { reviewTodos: raw.reviewTodos.slice(0, 50).map(t => normalizeTodo(t)) } : {}),
@@ -210,6 +230,9 @@ export function repairCollapsedWeeklyVideoProduction(pack: WeeklyPackage): Weekl
     }
   }
   const independentCount = plans.filter(plan => plan.productionRole !== 'platform_adaptation').length;
+  // A mixed package has 15 publication slots but only six video plans. The
+  // legacy video-only repair must never rewrite its output count or quote.
+  if (pack.mixedContentSlots?.length) return pack;
   // Repair only the known historic slot-linking defect: the saved director
   // explicitly requested one independent production per planned video, but
   // plans from different platforms were accidentally collapsed into one
@@ -317,7 +340,7 @@ export function validatePackage(pack: WeeklyPackage, goal: WeeklyGoalInput, conf
 
 /**
  * Admission validation for starting an operating run. It keeps the package,
- * budget and tenant-owned strategy boundaries, while deferring per-video
+ * tenant-owned strategy boundaries, while deferring per-video
  * inputs and real publishing-account authorization to the affected runtime
  * task. `validatePackage` remains the strict editor/review validator.
  */
@@ -338,7 +361,7 @@ export function validatePackageForStart(pack: WeeklyPackage, goal: WeeklyGoalInp
     return !deferredPublishingIssues.has(issue);
   });
   const validPlatforms = new Set(goal.contentPlatforms);
-  if (pack.matrixPlan?.some(row => !['facebook', 'instagram', 'tiktok', 'youtube'].includes(row.platform) || !validPlatforms.has(row.platform))) {
+  if (pack.matrixPlan?.some(row => !['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin'].includes(row.platform) || !validPlatforms.has(row.platform))) {
     strictIssues.push('矩阵制作平台必须属于本周目标范围');
   }
   return [...new Set(strictIssues)];

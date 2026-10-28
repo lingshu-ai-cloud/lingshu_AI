@@ -5,18 +5,19 @@ import KnowledgeIntakePanel from '../enterprise/KnowledgeIntakePanel';
 import { agentRuleFields } from '../../lib/agentRuleFields';
 import { Field, inputClass } from './DigitalEmployeeFormField';
 import { completeConfig, configErrors, platformCountsFromCadence, primaryEnterpriseLanguage, publishingPlatforms, safeProductionOnboarding } from './digitalEmployeeConfigRules';
+import { isContentProductionPlatform } from '../../../shared/contracts/contentProductionPlatforms';
 import { importOnboardingProducts } from './onboardingProductImport';
-import { OnboardingConfirmationStep, OnboardingEnterpriseStep, OnboardingMarketStep, OnboardingProductsStep, PresenterSetupDialog } from './DigitalEmployeeOnboardingSteps';
+import { OnboardingEnterpriseStep, OnboardingMarketStep, OnboardingProductsStep, PresenterSetupDialog } from './DigitalEmployeeOnboardingSteps';
 import { contentPlatformLabel } from './WeeklyGoalPanel';
 import { socialContentStageProfile, type SocialContentStageId } from '../../lib/socialContentStage';
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, BarChart3, Check, ExternalLink, Loader2, MessageSquare, Search, Settings2, Sparkles, X } from 'lucide-react';
+import { ArrowRight, BarChart3, ExternalLink, Loader2, MessageSquare, Search, Settings2, Sparkles, X } from 'lucide-react';
 import { authHeader } from '../../lib/auth';
 import { socialDiscoveryApi } from '../../lib/socialDiscoveryApi';
 import type { SocialCrawlStrategy } from '../../../shared/contracts/socialContentWorkflow';
 import type { ProductionPresenterPolicy } from '../../../shared/contracts/productionOnboarding';
 import { digitalEmployeeApi, type BusinessDestination, type BusinessReadinessItem, type DigitalEmployeeConfig, type DigitalEmployeeWorkflow, type PublishingTarget } from '../../lib/digitalEmployees';
-import { agentRoleGroups, contentCreationWorkflows, synchronizeThemeContentWorkflows, workflowLabel } from '../../lib/digitalEmployeePresentationPolicy';
+import { contentCreationWorkflows, synchronizeThemeContentWorkflows, workflowLabel } from '../../lib/digitalEmployeePresentationPolicy';
 import {
   ENTERPRISE_ONBOARDING_SCHEMA_VERSION,
   normalizeEnterpriseOnboardingProduct,
@@ -78,7 +79,8 @@ export function OnboardingPanel({
   const [publishCount, setPublishCount] = useState(restoredRules.publishCount);
   const [selectedPublishPlatforms, setSelectedPublishPlatforms] = useState<Array<PublishingTarget["platform"]>>(() => {
     const savedPlatforms = weeklyPublishingPlatforms(initial.publishingTargets, initial.socialCadence);
-    return savedPlatforms.length ? savedPlatforms : publishingPlatforms.slice();
+    const productionPlatforms = savedPlatforms.filter(isContentProductionPlatform);
+    return productionPlatforms.length ? productionPlatforms : publishingPlatforms.slice();
   });
   const [platformPublishCounts, setPlatformPublishCounts] = useState(() => platformCountsFromCadence(initial.socialCadence, restoredRules.publishCount, initial.publishingTargets));
   const [connectedPublishingAccounts, setConnectedPublishingAccounts] = useState<PublishingTarget[]>([]);
@@ -266,7 +268,7 @@ export function OnboardingPanel({
         // business fields are never applied to the current fact version.
         setDraftRevision(persistedDraft?.revision || draftResult.revision);
         setConfirmationId(draft?.confirmationId || newOnboardingConfirmationId());
-        setGuideStep(draft?.currentStep || 1);
+        setGuideStep(draft?.currentStep === 4 ? 3 : draft?.currentStep || 1);
         setCompanyIntro(draft?.companyIntro || profileValues.companyIntro);
         setBrandTone(draft?.brandTone || profileValues.brandTone);
         setKnowledgeProducts(draft?.products || profileValues.products);
@@ -492,7 +494,7 @@ export function OnboardingPanel({
     } finally { setProfileSaving(false); }
   };
   const saveDraftAndClose = async () => {
-    const saved = await persistOnboardingDraft(guideStep);
+    const saved = await persistOnboardingDraft(guideStep === 4 ? 3 : guideStep);
     if (saved) onClose?.();
   };
   const confirmEnterpriseDraft = async () => {
@@ -535,9 +537,9 @@ export function OnboardingPanel({
     setProposalLoading(true); setStageError('');
     try {
       const proposal = await generateEnterpriseOnboardingProposals(buildOnboardingDraft(3));
-      setProposalSet(proposal); setTargetBuyer(proposal.market.targetBuyer); setPrimaryPlatform(proposal.market.primaryPlatform);
+      setProposalSet(proposal); setTargetBuyer(proposal.market.targetBuyer);
       setCollectionLanguage(proposal.market.language);
-      setDraftSources(current => ({ ...current, targetBuyer: 'ai_suggested', primaryPlatform: 'ai_suggested', language: 'ai_suggested' }));
+      setDraftSources(current => ({ ...current, targetBuyer: 'ai_suggested', language: 'ai_suggested' }));
     } catch (error) { setStageError(error instanceof Error ? error.message : '市场建议暂时无法生成'); }
     finally { setProposalLoading(false); }
   };
@@ -546,7 +548,7 @@ export function OnboardingPanel({
     setStageSaving(true);
     setStageError("");
     try {
-      const savedDraft = await saveEnterpriseOnboardingDraft(buildOnboardingDraft(4), draftRevision);
+      const savedDraft = await saveEnterpriseOnboardingDraft(buildOnboardingDraft(3), draftRevision);
       setDraftRevision(savedDraft.revision);
       const parsed = validateEnterpriseOnboardingConfirmation({ ...savedDraft, draftRevision: savedDraft.revision });
       if (!parsed.confirmation) throw new Error(`还需确认：${parsed.missing.join('、')}`);
@@ -588,7 +590,7 @@ export function OnboardingPanel({
     } catch (error) { setStageError(error instanceof Error ? error.message : '出镜设置暂未保存，请稍后重试'); }
     finally { setStageSaving(false); }
   };
-  const submit = () => {
+  const submit = async () => {
     setSubmitted(true);
     if (Object.keys(errors).length) return;
     const contentWorkflows = synchronizeThemeContentWorkflows(
@@ -610,16 +612,8 @@ export function OnboardingPanel({
       followupCadence: [followupGenerateAt, followupApproveBy, followupWindow, followupFrequency].every((value, index) => value === [restoredRules.followupGenerateAt, restoredRules.followupApproveBy, restoredRules.followupWindow, restoredRules.followupFrequency][index]) ? initial.followupCadence : `${followupGenerateAt}生成分层跟进草稿；${followupApproveBy}审批；${followupWindow}发送；${followupFrequency}`,
       reviewSchedule: reviewTimezone === restoredRules.reviewTimezone && reviewCutoff === restoredRules.reviewCutoff ? initial.reviewSchedule : `周五 17:30（${reviewTimezone}）；数据截止 ${reviewCutoff}；通知审批负责人；仅生成复盘和下周任务草稿`,
     };
-    setSettingsEditorOpen(false);
-    onSave(completed);
-  };
-  const confirmRecommendedSettings = () => {
-    if (Object.keys(errors).length) {
-      setSubmitted(true);
-      setSettingsEditorOpen(true);
-      return;
-    }
-    submit();
+    const saved = await onSave(completed);
+    if (saved !== false) setSettingsEditorOpen(false);
   };
   if (mode === 'first' && initialStep === 'presenter') return <PresenterSetupDialog
     open busy={stageSaving || busy} presenterPolicy={presenterPolicy} presenterConfigured={presenterConfigured}
@@ -657,58 +651,30 @@ export function OnboardingPanel({
     }}
     importMessage={productImportMessage} error={productError}
   />;
-  if (mode === 'first' && guideStep === 3) return <OnboardingMarketStep
-    busy={busy || profileSaving || proposalLoading} aiBusy={proposalLoading} dismissible={dismissible} onClose={() => void saveDraftAndClose()}
-    onBack={() => setGuideStep(2)} onConfirm={() => void persistOnboardingDraft(4)}
+  if (mode === 'first' && guideStep >= 3) return <OnboardingMarketStep
+    busy={busy || profileSaving || proposalLoading || stageSaving} aiBusy={proposalLoading} dismissible={dismissible} onClose={() => void saveDraftAndClose()}
+    onBack={() => setGuideStep(2)} onConfirm={() => void completeMinimalOnboarding()}
     onGenerateProposal={() => void generateMarketProposal()}
     contentStage={contentStage} targetMarket={form.targetMarkets} targetBuyer={targetBuyer}
-    primaryPlatform={primaryPlatform} language={collectionLanguage} primaryCta={primaryCta}
+    language={collectionLanguage} primaryCta={primaryCta}
     error={stageError || profileError}
     onChange={(field, value) => {
       if (field === 'targetMarket') set('targetMarkets', value);
       else if (field === 'targetBuyer') { setTargetBuyer(value); set('customerProfile', value); }
-      else if (field === 'primaryPlatform') setPrimaryPlatform(value);
       else if (field === 'language') setCollectionLanguage(value);
       else if (field === 'primaryCta') setPrimaryCta(value);
       else {
         const stage = value as SocialContentStageId;
         setContentStage(stage);
         if (!targetBuyer.trim()) { const buyer = stage === 'd2c_brand' ? '终端消费者' : '进口商、经销商与采购负责人'; setTargetBuyer(buyer); set('customerProfile', buyer); setDraftSource('targetBuyer', 'system_detected'); }
-        if (!primaryPlatform.trim()) { setPrimaryPlatform(stage === 'd2c_brand' ? 'instagram' : 'linkedin'); setDraftSource('primaryPlatform', 'system_detected'); }
         if (!primaryCta.trim()) { setPrimaryCta(stage === 'd2c_brand' ? '了解产品详情' : '发送采购需求，获取产品资料与适配建议'); setDraftSource('primaryCta', 'system_detected'); }
       }
       setDraftSource(field, 'user_provided');
     }}
   />;
-  if (mode === 'first') return <OnboardingConfirmationStep
-    busy={busy || stageSaving || profileSaving} dismissible={dismissible}
-    onClose={() => void saveDraftAndClose()} onBack={() => setGuideStep(3)}
-    onConfirm={() => void completeMinimalOnboarding()} draft={buildOnboardingDraft(4)} error={stageError || profileError}
-    onProposalChange={(field, value) => { if (field === 'companyIntro') setCompanyIntro(value); else setBrandTone(value); setDraftSource(field, 'user_provided'); }}
-  />;
   return (
     <>
-      <section className="rounded-lg border border-slate-200 bg-white p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="rounded-lg bg-emerald-50 p-3 text-emerald-700"><Settings2 size={22} /></div>
-            <div><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Agent 设置</p><h2 className="mt-1 text-xl font-bold text-slate-950">系统已准备一套安全默认方案</h2><p className="mt-1 text-sm text-slate-500">无需逐项填写。确认后即可使用；以后随时可以打开修改。</p></div>
-          </div>
-          <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-semibold text-emerald-700">推荐设置已就绪</span>
-        </div>
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {agentRoleGroups.map(agent => {
-            const Icon = agent.id === "business" ? BarChart3 : agent.id === "director" ? Search : agent.id === "content" ? Sparkles : MessageSquare;
-            const detail = agent.id === "business" ? "统筹发布、数据与复盘" : agent.id === "director" ? "采集灵感并完成编导方案" : agent.id === "content" ? "按方案制作并检查成片" : "整理客户并生成跟进草稿";
-            return <div key={agent.id} className="rounded-lg border border-slate-200 bg-slate-50/70 p-4"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-emerald-700"><Icon size={17} /></span><p className="mt-3 text-sm font-semibold text-slate-900">{agent.label}</p><p className="mt-1 text-[11px] leading-5 text-slate-500">{detail}</p></div>;
-          })}
-        </div>
-        {activeRun && <p className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-xs text-amber-800">当前运行继续沿用已批准计划；本次保存从下一轮生效。</p>}
-        <div className="mt-5 flex flex-wrap justify-end gap-2">
-          <Button htmlType="button" onClick={() => setSettingsEditorOpen(true)} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">查看并修改设置</Button>
-          <Button type="primary" htmlType="button" disabled={busy} onClick={confirmRecommendedSettings} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}确认并保存设置</Button>
-        </div>
-      </section>
+      {!settingsEditorOpen && <Button htmlType="button" onClick={() => setSettingsEditorOpen(true)}>打开 Agent 设置</Button>}
       {settingsEditorOpen && <section aria-label="Agent 设置" className="rounded-lg border border-border bg-white p-5">
       <Button htmlType="button" aria-label="关闭 Agent 设置" disabled={busy} onClick={() => setSettingsEditorOpen(false)} className="!h-auto min-h-9 !whitespace-normal sticky top-0 z-10 float-right rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"><X size={18} /></Button>
       <div className="flex items-start gap-3">
@@ -766,7 +732,6 @@ export function OnboardingPanel({
           {!selectedPublishPlatforms.length && <div className="mt-4"><Field label="仅生成内容时的每周草稿数"><input className={inputClass} type="number" min={0} max={MAX_WEEKLY_PUBLISHING_ITEMS} value={publishCount} onChange={event=>setPublishCount(Math.min(MAX_WEEKLY_PUBLISHING_ITEMS, Math.max(0, Math.floor(Number(event.target.value) || 0))))} /><p className="mt-1 text-xs text-slate-500">未选择发布平台时，只按这里生成内容草稿。</p></Field></div>}
           <div className="mt-4 space-y-3">{publishingPlatforms.map(platform => { const selected=selectedPublishPlatforms.includes(platform); const accounts=connectedPublishingAccounts.filter(account=>account.platform===platform); return <div key={platform} className={`rounded-lg border p-3 ${selected?'border-violet-200 bg-violet-50/35':'border-slate-200 bg-slate-50'}`}><div className="flex flex-wrap items-center gap-3"><label className="flex min-w-36 items-center gap-2 text-xs font-semibold text-slate-900"><input type="checkbox" checked={selected} onChange={event=>setSelectedPublishPlatforms(current=>event.target.checked?[...new Set([...current,platform])]:current.filter(item=>item!==platform))}/>{contentPlatformLabel[platform]}</label><label className="ml-auto flex items-center gap-2 text-xs font-semibold text-slate-600">每周发布<input type="number" min={1} max={MAX_WEEKLY_PUBLISHING_ITEMS} disabled={!selected} value={platformPublishCounts[platform]} onChange={event=>setPlatformPublishCounts(current=>({...current,[platform]:Math.min(MAX_WEEKLY_PUBLISHING_ITEMS,Math.max(0,Math.floor(Number(event.target.value)||0)))}))} className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm" />条</label></div><div className="mt-2 flex flex-wrap gap-2">{publishingAccountsLoading?<span className="text-xs text-slate-500">正在读取账号…</span>:accounts.length?accounts.map(account=>{const checked=form.publishingTargets.some(target=>target.accountId===account.accountId);return <label key={account.accountId} className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${checked&&selected?'border-violet-200 bg-white text-violet-800':'border-slate-200 bg-white text-slate-500'}`}><input type="checkbox" disabled={!selected} checked={checked&&selected} onChange={()=>set('publishingTargets',checked?form.publishingTargets.filter(target=>target.accountId!==account.accountId):[...form.publishingTargets,account])}/>{account.accountLabel}</label>}):<span className="text-xs text-amber-700">尚未连接该平台账号</span>}</div></div>; })}</div>
           {publishingAccountsError&&<p className="mt-3 text-[10px] text-red-600">{publishingAccountsError}</p>}
-          <label className="mt-4 flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowRealPublishing} onChange={event=>set("allowRealPublishing",event.target.checked)}/><span><span className="block text-xs font-semibold text-slate-900">审批通过后允许真实发布</span><span className="mt-0.5 block text-[10px] leading-5 text-slate-500">关闭时只生成发布草稿和排期，不会发送到社媒平台。</span></span></label>
           <p className={`mt-4 rounded-lg p-3 text-xs leading-5 ${invalidWeeklyPublishingQuota?'bg-red-50 text-red-700':'bg-slate-50 text-slate-600'}`}>{selectedPublishPlatforms.length ? `本周总计 ${weeklyPublishingTotal} 条；按各平台条数和所选账号进入同一份视频矩阵排期。` : '本周不安排发布，只生成内容草稿。'}{invalidWeeklyPublishingQuota ? ` 每个平台至少 1 条，合计不超过 ${MAX_WEEKLY_PUBLISHING_ITEMS} 条。` : ''}</p>
         </section>}
         {activeRuleAgent === "customer" && <details className="rounded-lg border border-emerald-100 bg-emerald-50/45 p-4">
@@ -774,7 +739,7 @@ export function OnboardingPanel({
           <p className="mt-2 text-xs text-emerald-800">企业和产品资料全系统共用；这里只补充客服专用的接待规则和通知方式。</p>
           <div className="mt-4"><KnowledgeIntakePanel /></div>
         </details>}
-        {activeRuleAgent === "customer" && <div className="md:col-span-2 rounded-lg border border-slate-200 p-4"><p className="text-sm font-bold text-slate-900">客户跟进规则</p><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="草稿生成时间"><input className={inputClass} value={followupGenerateAt} onChange={e=>setFollowupGenerateAt(e.target.value)} /></Field><Field label="审批截止"><input className={inputClass} value={followupApproveBy} onChange={e=>setFollowupApproveBy(e.target.value)} /></Field><Field label="允许发送时段"><input className={inputClass} value={followupWindow} onChange={e=>setFollowupWindow(e.target.value)} /></Field><Field label="客户触达频控"><input className={inputClass} value={followupFrequency} onChange={e=>setFollowupFrequency(e.target.value)} /></Field></div><label className="mt-3 flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowRealCustomerMessages} onChange={e=>set("allowRealCustomerMessages",e.target.checked)}/><span><span className="block text-xs font-semibold text-slate-900">审批通过后允许真实发送客服消息</span><span className="mt-0.5 block text-[10px] text-slate-500">未开启时只生成和审批草稿，不调用真实消息渠道；商业承诺仍需逐条人工审批。</span></span></label><p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">先生成逐客草稿并等待审批，仅在客户当地工作时间发送。</p></div>}
+        {activeRuleAgent === "customer" && <div className="md:col-span-2 rounded-lg border border-slate-200 p-4"><p className="text-sm font-bold text-slate-900">客户跟进规则</p><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="草稿生成时间"><input className={inputClass} value={followupGenerateAt} onChange={e=>setFollowupGenerateAt(e.target.value)} /></Field><Field label="审批截止"><input className={inputClass} value={followupApproveBy} onChange={e=>setFollowupApproveBy(e.target.value)} /></Field><Field label="允许发送时段"><input className={inputClass} value={followupWindow} onChange={e=>setFollowupWindow(e.target.value)} /></Field><Field label="客户触达频控"><input className={inputClass} value={followupFrequency} onChange={e=>setFollowupFrequency(e.target.value)} /></Field></div></div>}
       </div>
       <div className="mt-4 flex flex-col items-end gap-2">
         {submitted && Object.keys(errors).length > 0 && (

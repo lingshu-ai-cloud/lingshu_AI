@@ -8,7 +8,7 @@ const draft: ImageReplicationDraft = {
   reference: { url: '/api/overseas/videos/ref-1/image/0', title: '参考图', caption: '参考配文',
     sourceRecordId: 'ref-1', sourceUrl: 'https://www.instagram.com/p/ABC/', collectedAt: '2026-10-25T00:00:00Z' },
   product: { id: 'product-1', name: '企业产品' }, objective: '突出已确认的产品卖点', audience: '品牌采购',
-  platform: 'instagram', aspectRatio: '4:5', language: 'en', callToAction: '申请样品',
+  platform: 'facebook', aspectRatio: '4:5', language: 'en', callToAction: '申请样品',
 };
 
 test('replication creates one canonical content task and one image run without treating the reference as an owned product', async () => {

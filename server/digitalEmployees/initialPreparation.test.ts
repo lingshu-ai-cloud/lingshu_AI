@@ -6,8 +6,35 @@ import { readFileSync } from 'node:fs';
 import { advanceInitialPreparation, initialPreparationSources, initialPreparationSourcesFromPersisted, initialPreparationJobKey, persistInitialPreparationState, replaceInitialPreparationPlan, type InitialPreparation } from './initialPreparation';
 function fixture(stage='b2b_launch'){let state:InitialPreparation={requestId:'confirmed-request',goalId:'same-goal',revision:2,confirmedBy:'owner',confirmedAt:'2026-10-10T00:00:00Z',status:'collecting',sources:initialPreparationSources({platforms:['youtube','tiktok'],products:['产品'],stage,historyAccounts:['https://www.tiktok.com/@own'],historyCollectionRequestId:'same-history'}),candidateIds:[],reason:''};let ready=false,done=false,started=0,enqueued=0;const jobs=new Map<string,{status:string;candidateIds:string[]}>();const ports={save:async(s:InitialPreparation)=>{state=structuredClone(s);},enqueue:async(source:InitialPreparation['sources'][number])=>{const id=initialPreparationJobKey('tenant',state,source);if(!jobs.has(id)){jobs.set(id,{status:'queued',candidateIds:[]});enqueued++;}return id;},observe:async(id:string)=>{const job=jobs.get(id)!;return done?{status:'done',candidateIds:[`real-${id}`]}:job;},analyzed:async()=>ready,prepare:async()=>({ready:true,revision:2}),activate:async()=>{started++;return 'same-real-run';}};return {ports,get state(){return state;},get enqueued(){return enqueued;},get started(){return started;},done:()=>done=true,ready:()=>ready=true,jobs};}
 test('zero foundation persists real external collection and resumes same plan after analysis without duplicate jobs',async()=>{const f=fixture();await advanceInitialPreparation(f.state,f.ports);assert.equal(f.enqueued,2);assert(f.state.sources.every(s=>s.origin==='external'));await advanceInitialPreparation(f.state,f.ports);assert.equal(f.enqueued,2);f.done();await advanceInitialPreparation(f.state,f.ports);assert.equal(f.state.status,'analyzing');assert.equal(f.started,0);f.ready();await advanceInitialPreparation(f.state,f.ports);assert.equal(f.state.status,'running');assert.equal(f.state.goalId,'same-goal');await advanceInitialPreparation(f.state,f.ports);assert.equal(f.started,1);});
+test('library-only initial preparation never enqueues collection, including when the library is empty',async()=>{
+ let enqueued=0,observed=0,prepared:string[]=[];
+ const state:InitialPreparation={requestId:'request-1',goalId:'goal',revision:1,confirmedBy:'owner',confirmedAt:'2026-10-10',status:'collecting',sources:[],candidateIds:[],reason:'',referenceSourcePolicy:'existing_library_only'};
+ const ports={save:async()=>{},enqueue:async()=>{enqueued++;return 'crawl';},observe:async()=>{observed++;return {status:'done',candidateIds:[]};},libraryCandidates:async()=>['existing-a','existing-b'],analyzed:async()=>true,prepare:async(ids:string[])=>{prepared=ids;return {ready:true,revision:1};},activate:async()=> 'run'};
+ assert.equal((await advanceInitialPreparation(state,ports)).status,'running');assert.deepEqual(prepared,['existing-a','existing-b']);assert.equal(enqueued,0);assert.equal(observed,0);
+ const empty=await advanceInitialPreparation(state,{...ports,libraryCandidates:async()=>[]});assert.equal(empty.status,'blocked');assert.match(empty.reason,/未发起新的采集/);assert.equal(enqueued,0);
+ const tampered=await advanceInitialPreparation({...state,sources:[{key:'bad',platform:'facebook',mode:'keyword',value:'x',origin:'external'}]},ports);assert.equal(tampered.status,'blocked');assert.equal(enqueued,0);
+});
+test('persisted library-only policy discards any collection scope supplied by the client',()=>{
+ assert.deepEqual(initialPreparationSourcesFromPersisted({goalPlatforms:['facebook'],businessPackage:{referenceSourcePolicy:'existing_library_only'},config:{focusProducts:'Product'},profile:{}},{historyAccounts:['https://facebook.com/account']}),[]);
+});
 test('established accounts add actual account jobs separately from external collection and reuse precollection key',async()=>{const f=fixture('b2b_growth');await advanceInitialPreparation(f.state,f.ports);assert.equal(f.enqueued,3);const own=f.state.sources.find(s=>s.origin==='owned')!;assert.equal(own.mode,'account');assert.equal(own.value,'https://www.tiktok.com/@own');assert.equal(initialPreparationJobKey('tenant',f.state,own),initialPreparationJobKey('tenant',{...f.state,goalId:'history',requestId:'other'},own));});
 test('provider failure records explicit blocked state and never invents analysis or activates',async()=>{const f=fixture();await advanceInitialPreparation(f.state,f.ports);f.jobs.set(f.state.sources[0]!.jobId!,{status:'failed',candidateIds:[]});await advanceInitialPreparation(f.state,f.ports);assert.equal(f.state.status,'blocked');assert.match(f.state.reason,/失败/);assert.equal(f.started,0);});
+test('interrupted preparation is never replayed by worker restart or manual resume',async()=>{
+ const f=fixture();let calls=0;const ports={...f.ports,prepare:async()=>{calls++;return {ready:true,revision:2};}};
+ const interrupted={...f.state,status:'preparing' as const};await advanceInitialPreparation(interrupted,ports);
+ assert.equal(f.state.status,'blocked');assert.equal(f.state.failureCode,'preparation_outcome_unknown');assert.equal(calls,0);assert.equal(f.started,0);
+ await advanceInitialPreparation(f.state,ports);assert.equal(calls,0);assert.equal(f.started,0);
+});
+test('a failed paid preparation cannot be blindly resumed',async()=>{
+ const f=fixture();f.done();f.ready();let calls=0;
+ const ports={...f.ports,prepare:async()=>{calls++;throw Error('provider outcome unavailable');}};
+ await advanceInitialPreparation(f.state,ports);assert.equal(f.state.failureCode,'preparation_outcome_unknown');assert.equal(calls,1);
+ await advanceInitialPreparation(f.state,ports);assert.equal(calls,1);assert.equal(f.started,0);
+});
+test('a definitive preparation blocker remains distinguishable from an unknown outcome',async()=>{
+ const f=fixture();f.done();f.ready();const ports={...f.ports,prepare:async()=>({ready:false,revision:2,reason:'缺少参考'})};
+ await advanceInitialPreparation(f.state,ports);assert.equal(f.state.status,'blocked');assert.equal(f.state.failureCode,undefined);assert.match(f.state.reason,/缺少参考/);
+});
 test('foreign platform and local network history URLs are refused before collection',()=>{for(const url of ['http://127.0.0.1/admin','https://evil.example/account'])assert.throws(()=>initialPreparationSources({platforms:['tiktok'],products:['产品'],stage:'b2b_growth',historyAccounts:[url]}));});
 
 test('persisted scope ignores client supplied platforms, products, and stage',()=>{

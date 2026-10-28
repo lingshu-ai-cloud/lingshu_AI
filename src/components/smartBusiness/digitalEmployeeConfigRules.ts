@@ -60,14 +60,14 @@ export function safeProductionOnboarding(config: DigitalEmployeeConfig, language
   };
 }
 
-export const publishingPlatforms = ["youtube", "tiktok", "instagram", "facebook", "linkedin"] as const;
+export const publishingPlatforms = ["facebook", "linkedin"] as const;
 
 export function primaryEnterpriseLanguage(value: unknown): string {
   const first = String(value || "").split(/[,，、;/]/).map((item) => item.trim()).find(Boolean);
   return first || "英语";
 }
 
-export function platformCountsFromCadence(cadence: string, fallback: number, targets: PublishingTarget[] = []): Record<(typeof publishingPlatforms)[number], number> {
+export function platformCountsFromCadence(cadence: string, fallback: number, targets: PublishingTarget[] = []): Record<PublishingTarget['platform'], number> {
   const perPlatform = Math.max(0, Math.ceil(fallback / publishingPlatforms.length));
   const legacyCounts = platformWeeklyCountsFromCadence(cadence);
   return Object.fromEntries(publishingPlatforms.map((platform) => {
@@ -76,7 +76,7 @@ export function platformCountsFromCadence(cadence: string, fallback: number, tar
       ? platformTargets.reduce((sum, target) => sum + Math.max(0, Number(target.weeklyCount) || 0), 0)
       : undefined;
     return [platform, structured ?? legacyCounts[platform] ?? perPlatform];
-  })) as Record<(typeof publishingPlatforms)[number], number>;
+  })) as Record<PublishingTarget['platform'], number>;
 }
 
 

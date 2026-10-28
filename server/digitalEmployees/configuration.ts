@@ -126,6 +126,11 @@ function frozenEnterpriseProfile(profile: EnterpriseFactsProfile): EnterpriseFac
     .map(key => [key, source[key]])) as unknown as EnterpriseFactsProfile);
 }
 
+/** Compare the exact frozen business projection with a verified canonical profile. */
+export function frozenEnterpriseProfileMatchesCanonical(frozen: EnterpriseFactsProfile, canonical: EnterpriseFactsProfile): boolean {
+  return fingerprint(frozen) === fingerprint(frozenEnterpriseProfile(canonical));
+}
+
 function objectValue(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;

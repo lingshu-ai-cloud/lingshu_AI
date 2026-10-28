@@ -1,6 +1,6 @@
 export interface EnterpriseFactVerification {
   verified: boolean;
-  mode: 'exact' | 'legacy_json_omitted_focus_products' | 'mismatch';
+  mode: 'exact' | 'legacy_json_omitted_focus_products' | 'legacy_onboarding_defaults' | 'mismatch';
   persistedHash: string;
   confirmedHash: string;
   omittedPaths: string[];

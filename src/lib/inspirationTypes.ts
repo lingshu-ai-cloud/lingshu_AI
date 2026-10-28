@@ -125,6 +125,7 @@ export interface VideoAnalysisPayload {
     carouselFlow: Array<{ imageIndex: number; role: 'attention' | 'product' | 'detail' | 'proof' | 'process' | 'cta' | 'unknown'; evidence: string; confidence: number }>;
     copyEvidence: { hooks: Array<{ text: string; source: 'caption' | 'ocr'; evidence: string }>; sellingPoints: Array<{ text: string; source: 'caption' | 'ocr'; evidence: string }>; cta: string[] };
     reusableModules: Array<{ module: string; evidence: string; preserve: string; replace: string; confidence: number }>;
+    productionLabels?: import('../../shared/contracts/imageReferenceProductionLabel').ImageReferenceProductionLabel[];
     layerBlueprints?: import('../../shared/contracts/socialImageCreation').SocialImageReferenceLayerBlueprint[];
     uncertainties: string[];
   };

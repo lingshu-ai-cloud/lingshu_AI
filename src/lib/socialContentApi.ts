@@ -89,6 +89,7 @@ function idempotencyKey(): string {
 }
 
 function friendlyFailure(status: number, code = ''): string {
+  if (code === 'local_store_reconciliation_required') return '本地任务存储需要安全恢复。原请求可能已保存，请先查看已有任务；维护完成后使用原任务恢复，不要新建或重复付费。';
   if (code === 'social_content_product_not_found') return '所选企业产品不存在或已更新，请重新选择产品后生成配音';
   if (code.includes('source_option_version_conflict')) return '资料已更新，请重新选择';
   if (code.includes('not_startable') || code.includes('not_editable')) return '当前阶段无法进行这项操作，请刷新任务状态';

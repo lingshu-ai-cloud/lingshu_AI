@@ -327,7 +327,26 @@ export function enterpriseFactContentHash(profile: EnterpriseProfile): string {
  * match. A changed product, company field, or other missing property still fails.
  */
 export function verifyEnterpriseFactContent(profile: EnterpriseProfile) {
-  return verifyEnterpriseFactContentWithHash(profile, enterpriseFactContentHash);
+  const result = verifyEnterpriseFactContentWithHash(profile, enterpriseFactContentHash);
+  if (result.verified || !result.confirmedHash) return result;
+  const normalized = normalizeProfile(profile);
+  const onboarding = normalized.digitalEmployeeOnboarding;
+  const social = normalized.socialStrategy;
+  if (!onboarding || !social || onboarding.confirmationId || onboarding.confirmationDigest || onboarding.completedAt
+    || (social.primaryPlatforms?.length || 0) > 0) return result;
+  // These four fields were added with empty defaults after older confirmations.
+  // Recreate precisely that old normalized shape and require the full digest.
+  const legacy = structuredClone(normalized);
+  const legacyOnboarding = legacy.digitalEmployeeOnboarding as Record<string, unknown>;
+  delete legacyOnboarding.confirmationId;
+  delete legacyOnboarding.confirmationDigest;
+  delete legacyOnboarding.completedAt;
+  delete (legacy.socialStrategy as Record<string, unknown>).primaryPlatforms;
+  const legacyHash = createHash('sha256').update(stableFactJson(legacy)).digest('hex');
+  return legacyHash === result.confirmedHash
+    ? { ...result, verified: true, mode: 'legacy_onboarding_defaults' as const,
+      omittedPaths: ['digitalEmployeeOnboarding.confirmationId', 'digitalEmployeeOnboarding.confirmationDigest', 'digitalEmployeeOnboarding.completedAt', 'socialStrategy.primaryPlatforms'] }
+    : result;
 }
 
 function confirmedFactVersion(

@@ -11,7 +11,7 @@ import { startSocialContentTask } from './socialContentTasks.js';
 import {
   SocialContentWorkflowError,
   parseArtifactDecision,
-  parseCreateSocialTask,
+  productionTaskInput,
   parseSocialSource,
   requireIdempotencyKey,
   requireSocialId,
@@ -155,7 +155,7 @@ export function createSocialContentAssistantActionsRouter(input: {
     const body = socialObject(req.body);
     const { initialSource: sourceValue, ...taskValue } = body ?? {};
     const initialSource = sourceValue === undefined ? undefined : parseSocialSource(sourceValue);
-    const parsed = parseCreateSocialTask(taskValue);
+    const parsed = productionTaskInput(taskValue);
     const { task: current, blockedReason } = await createAndStartSocialAssistantTask({
       repository: input.repository, orchestratorQueue: input.orchestratorQueue, ...identity,
       idempotencyKey, value: parsed, initialSource, now: input.now(),

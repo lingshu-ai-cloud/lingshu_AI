@@ -13,7 +13,7 @@ export type ImageReplicationDraft = {
   product: { id: string; name: string };
   objective: string;
   audience: string;
-  platform: 'facebook' | 'instagram' | 'linkedin';
+  platform: 'facebook' | 'linkedin';
   aspectRatio: '1:1' | '4:5' | '9:16' | '16:9';
   language: ImageLanguage;
   callToAction: string;
@@ -25,7 +25,7 @@ export function imageReplicationDraftIssue(draft: ImageReplicationDraft): string
   if (!draft.product.id.trim() || !draft.product.name.trim()) return '请选择一个企业产品。';
   if (!draft.objective.trim() || draft.objective.length > 1000) return '请填写1～1000字的核心卖点或创作目标。';
   if (!draft.audience.trim() || draft.audience.length > 500) return '请填写目标受众（不超过500字）。';
-  if (!['facebook', 'instagram', 'linkedin'].includes(draft.platform)
+  if (!['facebook', 'linkedin'].includes(draft.platform)
     || !['1:1', '4:5', '9:16', '16:9'].includes(draft.aspectRatio)
     || !imageLanguageSchema.safeParse(draft.language).success) return '请选择支持的平台、画幅和配文语言。';
   if (!draft.callToAction.trim() || draft.callToAction.length > 500) return '请填写希望客户采取的行动（不超过500字）。';

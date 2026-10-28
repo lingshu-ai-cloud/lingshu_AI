@@ -275,6 +275,8 @@ export interface SocialImageCreationTask {
   materialIds: string[];
   referenceUrls: string[];
   referenceSnapshot?: SocialImageReferenceSnapshot;
+  /** Explicit human conclusion tied to the reference bytes, not a model-inferred fact. */
+  referenceProductCheck?: { sourceSha256: string; decision: 'present' | 'absent'; confirmedBy: string; confirmedAt: string };
   replicationRecipe?: SocialImageReplicationRecipe;
   layerGraph?: SocialImageLayerGraph;
   enterpriseAssets: SocialImageEnterpriseAssetBinding[];

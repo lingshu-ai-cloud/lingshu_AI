@@ -44,7 +44,7 @@ test('portal card is a navigation draft with the existing creation handoff, neve
   const navigation = creationPortalNavigation(portal, 17);
   assert.equal(navigation.page, 'smartAssets'); assert.equal(navigation.directStudio, false);
   assert.equal(navigation.contentCreationRequest.assistantEntry?.requestedOutputCount, 3);
-  assert.deepEqual(navigation.contentCreationRequest.prefill?.platforms, ['tiktok']);
+  assert.deepEqual(navigation.contentCreationRequest.prefill?.platforms, ['facebook']);
   assert.equal(navigation.contentCreationRequest.continueTaskId, undefined);
   const html = renderToStaticMarkup(createElement(AssistantCreationPortalCard, { portal }));
   assert.match(html, /打开内容创作/); assert.match(html, /3条视频/);

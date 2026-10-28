@@ -16,6 +16,7 @@ import LsDataChart from '../ui/LsDataChart';
 import LsIllustratedEmpty from '../ui/LsIllustratedEmpty';
 import { businessOverviewSample, isBusinessOverviewSampleEnabled } from '../../dev/businessOverviewSample';
 import BusinessOverviewDetailDrawer, { type BusinessOverviewDetail } from './BusinessOverviewDetailDrawer';
+import { SocialPlatformIcon } from '../SocialPlatformIcon';
 
 const number = (value: number | null | undefined) => value == null || !Number.isFinite(value) ? '—' : value.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
 const stamp = (value?: string | null) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('zh-CN') : '等待回传';
@@ -121,7 +122,7 @@ function OverviewContent({ data, onRefresh, onNavigate, onOpenAccountHealth, wee
           <div className="flex items-center justify-between gap-2"><div><h2 id="business-topics-title" className="text-base font-semibold text-text-primary">热门话题</h2><p className="mt-1 text-xs text-text-secondary">{sample ? '三个平台的最新热议方向' : `已发现 ${topics.length} 个平台的最新话题`}</p></div><Tag>{sample ? '界面预览' : '可追溯来源'}</Tag></div>
           {topics.length ? <ul className="mt-3 divide-y divide-border">{topics.map(topic => <li key={topic.id}>
             <button type="button" aria-haspopup="dialog" aria-label={`查看${topic.platform}话题：${topic.title}`} onClick={() => setDetail({ title: topic.title, summary: topic.summary, rows: [['平台', topic.platform], ['发现时间', stamp(topic.observedAt)], ['讨论标签', topic.tags.join(' · ') || '—']], preview: Boolean(sample), image: topic.thumbnailUrl, sourceUrl: sourceLink(topic.sourceUrl), sourceLabel: sample ? '查看参考内容' : '查看原始来源' })} className="group flex w-full min-w-0 gap-3 rounded-lg py-3 text-left outline-none first:pt-0 hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent">
-              <div className="min-w-0 flex-1"><span className="text-xs font-semibold text-accent">{topic.platform}</span><p className="mt-1 text-sm font-medium text-text-primary group-hover:text-accent">{topic.title}</p>
+              <div className="min-w-0 flex-1"><SocialPlatformIcon platform={topic.platform} size={15}/><p className="mt-1 text-sm font-medium text-text-primary group-hover:text-accent">{topic.title}</p>
               <p className="mt-1 line-clamp-2 text-xs leading-5 text-text-secondary">{topic.summary}</p><p className="mt-1 text-xs text-text-muted">{sample ? '预览时间' : '观察于'} {topic.observedAt ? stamp(topic.observedAt) : '待核验'}</p></div>
               {topic.thumbnailUrl ? <img className="h-16 w-12 shrink-0 rounded-lg object-cover" src={topic.thumbnailUrl} alt="" loading="lazy"/> : <span className="flex h-16 w-12 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-accent"><Hash size={22} aria-hidden="true"/></span>}
             </button>

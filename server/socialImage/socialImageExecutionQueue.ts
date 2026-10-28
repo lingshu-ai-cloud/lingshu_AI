@@ -7,15 +7,19 @@ import { assertSocialImageCurrentContentTask, SocialImageProductionRunError } fr
 import { socialImageProductionHash } from './socialImageProductionHash.js';
 import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
 import type { SocialImageExecutionReceipt } from '../../shared/contracts/socialImageExecution.js';
+import { referenceProductCheckIssue } from './socialImageReferenceProductPolicy.js';
+import { readSocialImageReferenceBytes } from './socialImageReferenceBytes.js';
 export const IMAGE_EXECUTION_TYPE = 'social_image_replication';
 export function imageExecutionInputHash(task: SocialImageCreationTask): string {
     return socialImageProductionHash({ binding: task.productionRuntime?.binding, creationPath: task.creationPath,
         imageType: task.imageType, contentBrief: task.contentBrief, deliverySpec: task.deliverySpec,
         enterpriseAssets: task.enterpriseAssets, materialIds: task.materialIds,
-        referenceUrls: task.referenceUrls, referenceSnapshot: task.referenceSnapshot });
+        referenceUrls: task.referenceUrls, referenceSnapshot: task.referenceSnapshot, referenceProductCheck: task.referenceProductCheck });
 }
 export const imageExecutionReceipt = (job: ContentExecutionJob): SocialImageExecutionReceipt => {
-    const storedCode = job.lastError?.match(/social_image_[a-z0-9_]+|demo_[a-z0-9_]+/)?.[0] || null;
+    const storedCode = job.lastError?.includes('OPENAI_API_KEY is not configured')
+        ? 'social_image_provider_credentials_missing'
+        : job.lastError?.match(/social_image_[a-z0-9_]+|demo_[a-z0-9_]+/)?.[0] || null;
     const planning = job.checkpoints['image.planning']?.payload as { state?: string; code?: string } | undefined;
     const lastError = storedCode === 'social_image_planner_result_requires_review' && planning?.state === 'started'
         ? 'social_image_planning_outcome_requires_review'
@@ -42,6 +46,7 @@ export async function enqueueImageExecution(input: {
     userId: string;
     taskId: string;
     expectedVersion: number;
+    readReference?: typeof readSocialImageReferenceBytes;
 }) {
     const lease = await acquireDurableOperationLease({ dataStore: input.store, tenantId: input.tenantId,
         scope: 'social_image_dispatch', subjectId: input.taskId, ownerId: randomUUID(), leaseDurationMs: 30000 });
@@ -67,6 +72,10 @@ export async function enqueueImageExecution(input: {
         });
         if (content.totalItems !== 1 || ['cancelled', 'cancelling'].includes(String(content.items[0]?.status)))
             throw new SocialImageProductionRunError('social_image_content_task_not_executable', 409);
+        const referenceUrl = task.referenceSnapshot?.imageUrls[0] || task.referenceUrls[0] || '';
+        const reference = referenceUrl ? await (input.readReference || readSocialImageReferenceBytes)(input.tenantId, referenceUrl) : null;
+        const referenceIssue = referenceProductCheckIssue(task, reference?.bytes || null);
+        if (referenceIssue) throw new SocialImageProductionRunError(referenceIssue, 422);
         if (!input.store.compareAndSwap || await input.store.supportsAtomicCompareAndSwapFor?.('content_execution_jobs') !== true)
             throw new SocialImageProductionRunError('social_image_atomic_store_required', 503);
         const inputHash = imageExecutionInputHash(task);

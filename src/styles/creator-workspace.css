@@ -154,7 +154,7 @@ html[data-lingshu-appearance='dark'] body .ant-segmented:not(.creator-mode-switc
 html[data-lingshu-appearance='dark'] .ls-design-system .app-shell .bg-slate-950 {
   background-color: #374250;
 }
-html[data-lingshu-appearance='dark'] .ls-design-system .app-shell :where(input, textarea, select) {
+html[data-lingshu-appearance='dark'] .ls-design-system .app-shell :where(input:not(.ant-select-input), textarea, select) {
   background-color: var(--color-surface);
   color: var(--color-text-primary);
 }
@@ -364,6 +364,10 @@ html[data-lingshu-appearance='light'] .ls-assistant-home-root .ls-assistant-comp
 .ls-assistant-home-root .ls-assistant-flow__user-content > article { max-width: 340px; }
 .ls-assistant-home-root .ls-assistant-flow__prompt { max-width: 100%; min-width: 0; overflow-wrap: anywhere; border-right: 2px solid #7e6bf2; padding: 4px 14px 4px 0; color: #c9cbd0; font-family: var(--font-sans); font-size: var(--ls-type-body-large-size); line-height: var(--ls-type-body-large-line); text-align: left; }
 .ls-assistant-home-root .ls-assistant-flow__answer { width: min(100%,900px); color: #f4f5f7; font-family: var(--font-sans); font-size: var(--ls-type-body-large-size); line-height: var(--ls-type-body-large-line); animation: ls-assistant-flow-reveal 300ms cubic-bezier(0,0,0,1) both; }
+.ls-assistant-flow__answer:has([aria-label='图文交付操作']) > [data-assistant-image-status-text='true'],
+.ls-messenger-bubble--inbound:has([aria-label='图文交付操作']) > [data-assistant-image-status-text='true'],
+.ls-assistant-flow__answer:has([aria-label='图文复刻任务进度']) > [data-assistant-image-status-text='true'],
+.ls-messenger-bubble--inbound:has([aria-label='图文复刻任务进度']) > [data-assistant-image-status-text='true'] { display: none; }
 .ls-assistant-home-root .ls-assistant-flow__answer [data-agent-reply='true'],
 .ls-assistant-home-root .ls-assistant-flow__answer .text-sm { font-family: var(--font-sans); font-size: var(--ls-type-body-large-size); line-height: var(--ls-type-body-large-line); }
 .ls-assistant-home-root .ls-assistant-flow__thinking { display: inline-flex; align-items: center; gap: 5px; color: #b9bbc1; font-size: 14px; line-height: 24px; }

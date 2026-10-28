@@ -4,9 +4,35 @@ import assert from 'node:assert/strict';
 import './contentPlanRecommendation.test.js';
 import { recommendPackage, compilePackage, normalizePackage, repairCollapsedWeeklyVideoProduction, validatePackage, validatePackageForStart, grantCovers, packageConfig, criticalBusinessConfigChanges } from './weeklyPackage.js';
 import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
+import { estimateWeeklyMixedProduction } from '../../shared/contracts/weeklyMixedContentPlan.js';
 const config = normalizeDigitalEmployeeConfig({ companyName: 'Test', industry: 'Tools', focusProducts: 'A', operatingMaturity: 'starting', publishingTargets: [{ platform: 'youtube', accountId: 'account-a', accountLabel: 'A' }] });
 const goal = normalizeWeeklyGoal({ objective: '跑通首条发布', startsAt: '2026-09-06', endsAt: '2026-09-12', contentPlatforms: ['youtube'] }, config);
 const pack = recommendPackage(goal, config);
+const mixedConfig = normalizeDigitalEmployeeConfig({
+  companyName: 'Aurelia', industry: 'Beauty', focusProducts: '产品 A',
+  publishingTargets: [],
+});
+const mixedGoal = normalizeWeeklyGoal({ objective: '验证产品内容方向', startsAt: '2026-10-28', endsAt: '2026-11-03' }, mixedConfig);
+const mixedPack = recommendPackage(mixedGoal, mixedConfig);
+const mixedSlots = mixedPack.mixedContentSlots || [];
+assert.equal(mixedSlots.length, 15, 'weekly package freezes all publication positions');
+assert.equal(mixedSlots.filter(slot => slot.productionRole === 'original').length, 10, 'only ten productions are charged');
+assert.equal(mixedSlots.filter(slot => slot.kind === 'image' && slot.productionRole === 'original').length, 4);
+assert.equal(mixedPack.tasks.find(task => task.templateId === 'production')?.videoPlans?.length, 6);
+assert.equal(mixedPack.directorPlan?.productionBudgetMin, estimateWeeklyMixedProduction(mixedSlots).minCny,
+  'new mixed plans keep the public-model estimate instead of a legacy per-video floor');
+assert.equal(mixedPack.operatingContext?.outputs.count, 15);
+assert.equal(mixedPack.operatingContext?.outputs.originalCount, 10);
+assert.deepEqual(mixedPack.matrixPlan?.map(row => [row.platform, row.weeklyCount]), [['facebook', 5], ['facebook', 5], ['linkedin', 5]]);
+assert.ok((mixedPack.operatingContext?.budget.productionMinCny || 0) >= 25, 'public price estimate includes the six video originals');
+assert.ok((mixedPack.operatingContext?.budget.productionMaxCny || 0) > (mixedPack.operatingContext?.budget.productionMinCny || 0));
+assert.deepEqual(normalizePackage(mixedPack).mixedContentSlots, mixedSlots, 'persisted package retains the mixed slots');
+assert.equal(repairCollapsedWeeklyVideoProduction(mixedPack).operatingContext?.outputs.count, 15, 'legacy video repair must not collapse mixed publication slots');
+assert.equal(normalizePackage(mixedPack).directorPlan?.productionBudgetMin,
+  mixedPack.directorPlan?.productionBudgetMin, 'legacy video repair must preserve the public mixed-cost quote');
+assert.deepEqual(validatePackageForStart(mixedPack, mixedGoal, mixedConfig), [], 'missing social connections only defer publication');
+assert.equal(pack.referenceSourcePolicy, 'existing_library_only', 'new plans prefer the existing viral library and must not create a collector');
+assert.equal(normalizePackage(pack).referenceSourcePolicy, 'existing_library_only', 'the frozen plan retains its reference policy');
 assert.equal(pack.matrixPlan?.length, 1, 'recommended packages create the deterministic account matrix immediately');
 assert.equal(pack.matrixPlan?.[0].accountId, 'account-a');
 assert.equal(pack.matrixPlan?.[0].platform, 'youtube');
@@ -134,9 +160,9 @@ assert.deepEqual(scoped.directorPlan, pack.directorPlan, 'director budgets and t
 const unknownDetailCost = normalizePackage({ ...pack, detailGeneration: { status: 'ready', startedAt: '2026-10-05T00:00:00Z', generatedAt: '2026-10-05T00:01:00Z', estimatedMinutes: 2, usageCostCny: null, readyCount: 1, blockedCount: 0, blockers: [] } });
 assert.equal(unknownDetailCost.detailGeneration?.usageCostCny, null, 'unknown Agent usage must not normalize into a fabricated zero cost');
 const overBudget = normalizePackage({ ...pack, directorPlan: { ...pack.directorPlan!, productionBudget: 100, productionBudgetMax: 100, productionSpent: 70, productionReserved: 40 } });
-assert.ok(validatePackage(overBudget, goal).some(issue => issue.includes('超过生产预算')));
+assert.ok(!validatePackage(overBudget, goal).some(issue => issue.includes('超过生产预算')), 'spent and reserved figures are reporting data, not a production gate');
 const costly = structuredClone(pack); costly.directorPlan!.productionBudget = 10; costly.directorPlan!.productionBudgetMax = 10; costly.tasks.find(t => t.templateId === 'production')!.videoPlans![0].estimatedCost = 20;
-assert.ok(validatePackage(costly, goal).some(issue => issue.includes('预计费用')));
+assert.ok(!validatePackage(costly, goal).some(issue => issue.includes('预计费用')), 'a displayed estimate does not stop a weekly package');
 const optimizedContext = compilePackage(costly, goal, config).businessPackage.operatingContext!;
 assert.equal(optimizedContext.accounts.reduce((sum, account) => sum + (account.budgetCny || 0), 0), 10, 'account budgets exhaust the confirmed production budget');
 assert.equal(optimizedContext.accounts[0]?.allocationBasis, 'content_load', 'shared master cost is allocated by each account publication load, not by whichever platform owns the master record');
@@ -194,7 +220,7 @@ assert.ok(!validatePackageForStart(readinessDeferred, goal, config).some(issue =
 const accountDeferredConfig = { ...config, publishingTargets: [] };
 assert.ok(validatePackage(pack, goal, accountDeferredConfig).some(issue => issue.includes('矩阵账号')), 'strict review still reports disconnected publishing scope');
 assert.ok(!validatePackageForStart(pack, goal, accountDeferredConfig).some(issue => issue.includes('矩阵账号')), 'publishing connectivity must not block production admission');
-assert.ok(validatePackageForStart(overBudget, goal, config).some(issue => issue.includes('超过生产预算')), 'production budget remains a hard start boundary');
+assert.ok(!validatePackageForStart(overBudget, goal, config).some(issue => issue.includes('超过生产预算')), 'production admission must not use the display estimate as a ceiling');
 const full = recommendPackage(goal, { ...config, operatingMaturity: 'established' });
 const independent = compilePackage(full, goal, config);
 const deps = (key: string): string[] => { const direct = independent.tasks.find(t => t.key === key)?.dependsOn || []; return [...direct, ...direct.flatMap(deps)]; };

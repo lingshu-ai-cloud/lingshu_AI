@@ -8,7 +8,7 @@ export const contentPreferencesSchema = z.preprocess(value => {
   return { ...rest, ...(!('languages' in rest) && language ? { languages: [language] } : {}) };
 }, z.object({
   languages: z.array(languageSchema).min(1).max(11).transform(values => [...new Set(values)]).default(['en']),
-  platform: z.enum(['tiktok', 'instagram', 'facebook', 'youtube', 'linkedin']).default('tiktok'),
+  platform: z.enum(['tiktok', 'instagram', 'facebook', 'youtube', 'linkedin']).default('facebook'),
   aspectRatio: z.enum(['9:16', '16:9', '1:1']).default('9:16'),
   audience: z.string().trim().max(500).default('海外 B2B 品牌商与采购商'),
   market: z.string().trim().max(80).default('全球'),

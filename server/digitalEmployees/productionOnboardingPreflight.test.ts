@@ -6,6 +6,8 @@ import { buildLocalMaterialSegmentProfile } from '../../shared/contracts/localMa
 import { buildMaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
 import type { EnterpriseProfile } from '../routes/enterprise.js';
 import { enterpriseFactContentHash } from '../routes/enterprise.js';
+import { normalizeProfile } from '../routes/enterpriseProfileStore.js';
+import { resolveKnowledgeBinding } from './configuration.js';
 import type { AssetCandidate } from './contentProductionContracts.js';
 import {
   enterpriseOnboardingEvidence,
@@ -13,6 +15,7 @@ import {
   evaluateServerProductionOnboardingReadiness,
   fixedYieldArchetypeForBenchmarkShot,
   inventoryFixedYieldArchetypes,
+  readServerProductionOnboardingReadiness,
   referenceCoveredByProductionEvidence,
   requiredFixedYieldArchetypes,
   requiredFixedYieldLocalMaterials,
@@ -268,4 +271,35 @@ test('confirmed legacy enterprise facts receive only safe local-video production
     confirmedAt: profile.factVersion!.confirmedAt,
   });
   assert.equal(compatibleProductionOnboardingPreferences({ ...profile, factVersion: undefined }, evidence), undefined);
+});
+
+test('a changed confirmed enterprise profile reports a fact mismatch instead of missing onboarding', async () => {
+  const profile = confirmedProfile();
+  profile.company.name = 'Changed after confirmation';
+  const store = { list: async () => ({ items: [], totalItems: 0, totalPages: 0, page: 1, perPage: 2 }) };
+  const result = await readServerProductionOnboardingReadiness({
+    store: store as never, tenantId: 'tenant-a', profile, plans: [], budgetConfirmed: true, assets: [],
+  });
+  assert.equal(result.ready, false);
+  assert.deepEqual(result.blockers.map(item => item.code), ['enterprise_facts_mismatch']);
+  assert.match(result.blockers[0]!.message, /无法核验企业资料的已确认版本/);
+});
+
+test('a frozen business snapshot is accepted only when the verified full canonical profile matches', async () => {
+  const profile = normalizeProfile(confirmedProfile());
+  profile.factVersion!.contentHash = enterpriseFactContentHash(profile);
+  const binding = resolveKnowledgeBinding(profile, {} as never, '2026-10-01T00:00:00Z');
+  const frozen = binding.enterpriseSnapshot.profile as EnterpriseProfile;
+  const store = { list: async (collection: string) => collection === 'tenant_profiles'
+    ? { items: [{ tenant_id: 'tenant-a', profile }], totalItems: 1, totalPages: 1, page: 1, perPage: 2 }
+    : { items: [], totalItems: 0, totalPages: 0, page: 1, perPage: 2 } };
+  const ready = await readServerProductionOnboardingReadiness({ store: store as never, tenantId: 'tenant-a',
+    profile: frozen, plans: [], budgetConfirmed: true, assets: [] });
+  assert.equal(ready.ready, true);
+  const changed = structuredClone(frozen);
+  changed.company.name = 'Unconfirmed change';
+  const rejected = await readServerProductionOnboardingReadiness({ store: store as never, tenantId: 'tenant-a',
+    profile: changed, plans: [], budgetConfirmed: true, assets: [] });
+  assert.equal(rejected.ready, false);
+  assert.equal(rejected.blockers[0]?.code, 'enterprise_facts_mismatch');
 });

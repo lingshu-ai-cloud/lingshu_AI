@@ -35,6 +35,7 @@ export interface ImagePostEvidenceAnalysis {
   reusableModules: Array<{ module: string; evidence: string; preserve: string; replace: string; confidence: number }>;
   layerBlueprints?: SocialImageReferenceLayerBlueprint[];
   uncertainties: string[];
+  productionLabels?: import('../../shared/contracts/imageReferenceProductionLabel.js').ImageReferenceProductionLabel[];
   routing?: { primaryProvider: 'qwen'; finalProvider: 'qwen' | 'openai'; primaryModel: string; reviewModel?: string; reviewReasons: string[]; reviewed: boolean };
 }
 

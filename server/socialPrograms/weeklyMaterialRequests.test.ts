@@ -37,6 +37,7 @@ test('one shared task is reused, real submission awaits verification, partial re
  assert.equal(materialRequestNotice(submitted,'2026-10-09T09:00:00+08:00').verificationDelayed,true);
  const reviewed=await f.service.review({tenantId:'tenant',programId:'program',requestId:request.requestId,actorUserId:'reviewer',submissionVersion:1,consumerDecisions:[{taskId:'one',accepted:true,factCheck:'与本产品一致',rightsCheck:'企业已授权',visualCheck:'正面清晰'},{taskId:'two',accepted:false,factCheck:'产品一致',rightsCheck:'企业已授权',visualCheck:'标签不可辨，需要补拍'}]});
  assert.equal(reviewed.status,'rejected');assert.deepEqual(materialRequestAcceptedConsumers(reviewed),['one']);
+ await assert.rejects(f.service.declineShooting({tenantId:'tenant',programId:'program',requestId:request.requestId,actorUserId:'uploader',expectedSubmissionVersion:1,expectedConsumers:reviewed.consumers.map(({taskId,packageId,packageVersion})=>({taskId,packageId,packageVersion}))}),{code:'weekly_material_decline_requires_review'});
  assert.equal(materialRequestNotice(reviewed,'2026-10-09T09:00:00+08:00').uploadOverdue,true);
  assert.equal(f.fetched.length,2,'submit and review both verify actual canonical bytes');
  assert.equal((await f.service.acceptedForConsumer({tenantId:'tenant',programId:'program',requestId:request.requestId,consumerTaskId:'one'}))!.submissionVersion,1);
@@ -115,6 +116,26 @@ test('production admission uses persisted manual checks and revalidates actual m
  f.raw.sha256='a'.repeat(64);const changed=await admit(scope);assert.equal(changed.status,'blocked');assert.deepEqual(changed.materials,[]);
  f.raw.sha256=f.hash;await f.service.cancel({tenantId:'tenant',programId:'program',requestId:request.requestId,actorUserId:'reviewer',reason:'明确取消，但不豁免生产必要输入'});
  assert.equal((await admit(scope)).status,'blocked');
+});
+
+test('declining a shooting request records the actor and keeps production blocked without erasing evidence',async()=> {
+ const f=fixture();await f.seed('one');const request=await f.service.create(f.input);
+ const scope={tenantId:'tenant',programId:'program',requestId:request.requestId,actorUserId:'uploader',expectedSubmissionVersion:0,expectedConsumers:request.consumers.map(({taskId,packageId,packageVersion})=>({taskId,packageId,packageVersion}))};
+ await assert.rejects(f.service.declineShooting({...scope,actorUserId:'third'}),{code:'weekly_material_decline_forbidden'});
+ await assert.rejects(f.service.declineShooting({...scope,tenantId:'other'}),{code:'weekly_material_not_found'});
+ await assert.rejects(f.service.declineShooting({...scope,expectedConsumers:[]}),{code:'weekly_material_decline_scope_changed'});
+ const declined=await f.service.declineShooting(scope);
+ assert.equal(declined.status,'cancelled');assert.equal(declined.history.at(-1)?.action,'shooting_declined');assert.equal(declined.history.at(-1)?.actor,'uploader');
+ assert.equal((await f.service.declineShooting(scope)).history.length,declined.history.length);
+ assert.equal((await createWeeklyRequiredMaterialAdmission(f.store,f.ports)({tenantId:'tenant',programId:'program',consumerTaskId:'one',requirement:{required:true,requestIds:[request.requestId]}})).status,'blocked');
+ const g=fixture();await g.seed('one');const submitted=await g.service.create(g.input);
+ await g.service.submit({tenantId:'tenant',programId:'program',requestId:submitted.requestId,actorUserId:'uploader',materialRecordIds:['material0000001'],expectedSubmissionVersion:0});
+ await assert.rejects(g.service.declineShooting({...scope,requestId:submitted.requestId}),{code:'weekly_material_decline_scope_changed'});
+ await assert.rejects(g.service.declineShooting({...scope,requestId:submitted.requestId,expectedSubmissionVersion:1}),{code:'weekly_material_decline_requires_review'});
+ assert.equal((await g.service.get('tenant','program',submitted.requestId,'reviewer')).status,'pending_verification');
+ await g.service.review({tenantId:'tenant',programId:'program',requestId:submitted.requestId,actorUserId:'reviewer',submissionVersion:1,consumerDecisions:[{taskId:'one',accepted:false,factCheck:'不一致',rightsCheck:'自有素材',visualCheck:'需补拍'}]});
+ const afterRejection=await g.service.declineShooting({...scope,requestId:submitted.requestId,expectedSubmissionVersion:1});
+ assert.equal(afterRejection.status,'cancelled');assert.equal(afterRejection.submissions.length,1);
 });
 
 test('human evidence deadlines follow the real first script admission, not the later material review consumer',async()=>{

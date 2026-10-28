@@ -264,6 +264,23 @@ export function createWeeklyMaterialRequestService(store:DataStore,ports:WeeklyM
     async cancel(input:{tenantId:string;programId:string;requestId:string;actorUserId:string;reason:string}){
       return locked(input.tenantId,input.requestId,async(guard)=>{const request=await read(input.tenantId,input.programId,input.requestId);await assertUser(input.tenantId,input.actorUserId);if(request.reviewerUserId!==input.actorUserId)fail('weekly_material_cancel_forbidden','仅指定核验人可以取消素材任务。',403);if(request.status==='cancelled')return request;request.status='cancelled';request.history.push({at:now(),actor:input.actorUserId,action:'cancelled',reason:text(input.reason,'取消原因')});return save(request,guard);});
     },
+    async declineShooting(input:{tenantId:string;programId:string;requestId:string;actorUserId:string;expectedSubmissionVersion:number;expectedConsumers:Array<{taskId:string;packageId:string;packageVersion:number}>}){
+      return locked(input.tenantId,input.requestId,async(guard)=>{
+        const request=await read(input.tenantId,input.programId,input.requestId);
+        await assertUser(input.tenantId,input.actorUserId);
+        const issuer=request.history.find(item=>item.action==='created')?.actor;
+        if(![request.assigneeUserId,request.reviewerUserId,issuer].includes(input.actorUserId))fail('weekly_material_decline_forbidden','仅任务相关成员可以拒绝拍摄。',403);
+        const identity=(items:Array<{taskId:string;packageId:string;packageVersion:number}>)=>JSON.stringify(items.map(item=>[item.taskId,item.packageId,item.packageVersion]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))));
+        if(!Array.isArray(input.expectedConsumers)||identity(request.consumers)!==identity(input.expectedConsumers))fail('weekly_material_decline_scope_changed','关联任务已变化，请刷新后重新确认。');
+        if(input.expectedSubmissionVersion!==(request.submissions.at(-1)?.version??0))fail('weekly_material_decline_scope_changed','素材提交版本已变化，请刷新后重新确认。');
+        if(request.status==='cancelled'&&request.history.at(-1)?.action==='shooting_declined')return request;
+        // A shared or already reviewed submission must not lose another consumer's evidence.
+        if(!['missing','rejected'].includes(request.status)||materialRequestAcceptedConsumers(request).length)fail('weekly_material_decline_requires_review','待核验或部分通过的素材任务不能直接拒拍，请先核对相关任务。');
+        request.status='cancelled';
+        request.history.push({at:now(),actor:input.actorUserId,action:'shooting_declined',reason:'用户拒绝拍摄；关联内容需调整计划或参考，原素材要求不自动豁免。'});
+        return save(request,guard);
+      });
+    },
     async revise(input:{tenantId:string;programId:string;requestId:string;actorUserId:string;reason:string;dueAt?:string;verificationDueAt?:string;timeZone?:string;addConsumers?:MaterialConsumer[]}) {
       return locked(input.tenantId,input.requestId,async(guard)=> {
         const request=await read(input.tenantId,input.programId,input.requestId);

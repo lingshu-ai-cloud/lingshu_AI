@@ -18,8 +18,9 @@ test('today workspace keeps the requested information hierarchy', () => {
   for (const heading of ['今日实时数据', '热门话题', '爆款与曝光', '投流', '询盘与人群']) {
     assert.ok((source + analytics).includes(heading), `missing overview section: ${heading}`);
   }
-  assert.match(analytics, /整体曝光 = 付费流曝光 \+ 自然流曝光/);
-  assert.match(analytics, /Meta 广告归因回传/);
+  assert.match(analytics, /<Value label="整体曝光"/);
+  assert.doesNotMatch(analytics, /<p>整体曝光 = 付费流曝光/);
+  assert.doesNotMatch(analytics, /<p>Meta 广告归因回传/);
   assert.match(source, /今日数据经营解读.*interpretation\}/, 'interpretation belongs beneath today charts');
   assert.match(analytics, /<BusinessCustomerFunnel stages=\{funnelStages\}/);
 });

@@ -591,12 +591,15 @@ Schema:
     "cta": ["原文或OCR中明确出现的行动指令"]
   },
   "reusableModules": [{"module":"布局或信息模块","evidence":"可见证据","preserve":"可复用的通用结构","replace":"必须替换的竞品内容","confidence":0.0}],
+  "productionLabels": [{"imageIndex":1,"kind":"product_only|shoot_required|unknown","productPresence":"present|absent|unknown","evidence":"真实可见依据","confidence":0.0,"style":{"kind":"advertising|imitable|unknown","confidence":0.0,"evidence":"真实可见依据","elements":["soft_light|hard_light|high_key|low_key|centered|asymmetric|close_up|minimal|layered"]}}],
   "layerBlueprints": [{"imageIndex":1,"layers":[{"id":"background","role":"background|mask|product|text|logo|decoration","zIndex":0,"bounds":{"x":0,"y":0,"width":1,"height":1},"confidence":0.0}],"masks":[{"id":"mask-1","shape":"rectangle|rounded_rectangle|ellipse|polygon|linear_gradient","bounds":{"x":0,"y":0,"width":1,"height":1},"opacity":0.0,"color":"#000000","cornerRadius":0.0,"feather":0.0,"angle":0,"points":[],"zIndex":1,"confidence":0.0}]}],
   "uncertainties": []
 }
 
 硬规则：
 - observedFacts 按每张图分别输出，imageIndex 从 1 开始。
+- productionLabels 按每张图分别输出。productPresence 只判断画面里是否实际可见产品，与是否需要实拍分开；看不清就标 unknown。仅画面仅有产品及非事实性的普通背景时标 product_only；人物、真实工厂、实拍过程、实际场景或其他非产品事实画面标 shoot_required；无法确认标 unknown。必须写可见依据，禁止根据标题推断。此标签仅供后续复核，不代表授权。
+- style 独立判断广告产品图、可辨认的非广告风格或未知。产品置于设计过的背景、台面、光影或色块中，就是 advertising；没有前缀文字、标题、CTA 或品牌文案也仍可判为 advertising。不得把“没有广告文字”当成风格未知。elements 只选实际可见的光线、明暗、构图与层次，不确定标 unknown。
 - visibleText 只能写实际能读清的 OCR 文字。
 - reusableModules 只能复用构图、信息层级、色彩关系、轮播功能；竞品品牌、Logo、产品、包装、联系方式必须写入 replace。
 - layerBlueprints 只提取后续生产所需的遮罩轮廓/透明度和图层前后关系。坐标是 0..1 归一化数值；zIndex 越大越靠前。layers 覆盖实际可见的背景、遮罩、产品、文字、Logo 和装饰层，不确定时降低 confidence，不得猜测。masks 按像素观察记录形状、范围、透明度、颜色、边缘柔化及层级；polygon points 是画布绝对归一化坐标；看不清时不输出。
@@ -637,6 +640,7 @@ Schema:
       cta: Array.isArray(parsed.copyEvidence?.cta) ? parsed.copyEvidence!.cta.slice(0, 6) : [],
     },
     reusableModules: Array.isArray(parsed.reusableModules) ? parsed.reusableModules.slice(0, 12) : [],
+    productionLabels: Array.isArray(parsed.productionLabels) ? parsed.productionLabels.slice(0, opts.images.length) : [],
     layerBlueprints: normalizeImageLayerBlueprints(parsed.layerBlueprints, opts.images.length),
     uncertainties: Array.isArray(parsed.uncertainties) ? parsed.uncertainties.map(String).slice(0, 12) : [],
   };

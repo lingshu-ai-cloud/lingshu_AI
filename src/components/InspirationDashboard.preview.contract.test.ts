@@ -4,6 +4,7 @@ import fs from 'node:fs';
 const source = fs.readFileSync(new URL('./InspirationDashboard.tsx', import.meta.url), 'utf8')
   + fs.readFileSync(new URL('./inspiration/InspirationMaterialGallery.tsx', import.meta.url), 'utf8');
 const watchModal = fs.readFileSync(new URL('./inspiration/InspirationWatchDialog.tsx', import.meta.url), 'utf8');
+const imagePreview = fs.readFileSync(new URL('./inspiration/InspirationImagePreview.tsx', import.meta.url), 'utf8');
 const materialMediaSource = fs.readFileSync(new URL('./inspiration/MaterialLibraryCardMedia.tsx', import.meta.url), 'utf8');
 const cardsSource = fs.readFileSync(new URL('./InspirationVideoCards.tsx', import.meta.url), 'utf8');
 const mediaSource = fs.readFileSync(new URL('./inspiration/InspirationMedia.tsx', import.meta.url), 'utf8');
@@ -12,9 +13,15 @@ assert.match(source, /import InspirationWatchDialog from '.\/inspiration\/Inspir
 assert.match(watchModal, /zIndex=\{2200\}/, 'the original-content preview must render above the Ant detail drawer');
 assert.match(watchModal, /current\.videoUrl && !useEmbed/);
 assert.match(watchModal, /embedUrl \?/);
+assert.match(watchModal, /const isImage = current\.contentFormat === 'image'[\s\S]*?isImage \? <InspirationImagePreview/, 'image posts use the image viewer instead of the video fallback');
+assert.match(imagePreview, /imageUrls[\s\S]*?video\.thumbnail/, 'show collected images with the thumbnail as a fallback');
+assert.match(imagePreview, /上一张[\s\S]*?下一张/, 'multi-image posts must allow browsing each image');
+assert.match(imagePreview, /图片暂时无法加载[\s\S]*?重新加载/, 'unavailable images provide a truthful retry state');
 assert.match(watchModal, />原站打开</);
 assert.match(watchModal, /<AnimatePresence[^>]*mode="popLayout">[\s\S]*?key=\{current\.id\}[\s\S]*?filter: 'blur\(5px\)'/, '上下换片须使用方向感、淡入和轻微模糊过渡');
-assert.match(watchModal, /drag=\{!reduceMotion && ordered\.length > 1 \? 'y' : false\}[\s\S]*?onDragEnd=\{\(_, info\) => completeDrag\(info\.offset\.y, info\.velocity\.y\)\}/, '视频预览须跟随纵向拖拽并在松手后判定换片');
+assert.match(watchModal, /drag=\{!isImage && !reduceMotion && ordered\.length > 1 \? 'y' : false\}[\s\S]*?onDragEnd=\{\(_, info\) => completeDrag\(info\.offset\.y, info\.velocity\.y\)\}/, '视频预览须跟随纵向拖拽并在松手后判定换片');
+assert.match(imagePreview, /onPointerDown=\{onPointerDown\}[\s\S]*?onPointerUp=\{onPointerUp\}/, '图片组支持左右滑动');
+assert.match(imagePreview, /group-hover:opacity-100[\s\S]*?focus-visible:opacity-100|focus-visible:opacity-100[\s\S]*?group-hover:opacity-100/, '箭头在悬停或键盘聚焦时显示');
 assert.match(watchModal, /AdjacentVideoPreview[\s\S]*?position=\{-1\}[\s\S]*?AdjacentVideoPreview[\s\S]*?position=\{1\}/, '拖拽中须同时露出相邻视频预览');
 assert.match(watchModal, /SWIPE_HINT_STORAGE_KEY[\s\S]*?data-swipe-hint[\s\S]*?向上滑动切换视频/, '首次进入须展示一次向上滑动引导');
 assert.match(watchModal, /usePrefersReducedMotion\(\)/, '换片动效必须尊重减少动效偏好');

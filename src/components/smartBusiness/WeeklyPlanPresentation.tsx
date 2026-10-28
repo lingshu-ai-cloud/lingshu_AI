@@ -6,6 +6,7 @@ import { VIDEO_PRESENTATIONS, type VideoCreationPlan } from '../../lib/videoCrea
 import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS } from '../../../shared/benchmarkAnalysis';
 import { isSmartBusinessShowcaseEnabled, isSmartBusinessWeeklyPlanPreviewEnabled, smartBusinessShowcaseAds, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS } from '../../dev/smartBusinessShowcaseData';
 import { SocialPlatformIcon } from '../SocialPlatformIcon';
+import { AuthenticatedVideo } from '../inspiration/InspirationMedia';
 import { buildSmartBusinessDisplayModel, inspirationReferenceNavigationDetail, platformLabels, platformOptions, referencePlanForPublication, weeklyVideoBudget, type Platform, type UnifiedPlanContent } from './smartBusinessDisplayModel';
 
 function WeeklyRangeVisual({ startsAt, endsAt }: { startsAt: string; endsAt: string }) {
@@ -72,6 +73,7 @@ export function WeeklyCommandCenter({
 }) {
   const [previewMetric, setPreviewMetric] = useState<WeeklyCommandMetricId | null>(null);
   const display = buildSmartBusinessDisplayModel(data);
+  const mixedPlan = Boolean(data.plan?.businessPackage?.mixedContentSlots?.length);
   const hasWeeklyPlan = Boolean(data.goal || previewTotals);
   const contentQueue = data.contentQueue?.items || [];
   const operatingContext = data.plan?.businessPackage?.operatingContext;
@@ -127,7 +129,6 @@ export function WeeklyCommandCenter({
             <WeeklyRangeVisual startsAt={(previewTotals || data.goal)!.startsAt} endsAt={(previewTotals || data.goal)!.endsAt} />
           )}
         </div>
-        {!hasWeeklyPlan && <p className="mt-2 text-sm text-text-secondary">通过灵小枢先确认本周经营目标、平台、内容数量、预算与工作排期。</p>}
       </div>
       {actions && <div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{actions}</div>}
     </div>
@@ -135,7 +136,7 @@ export function WeeklyCommandCenter({
     <div className="weekly-command-metrics grid auto-rows-[112px] gap-x-6 gap-y-6 bg-white px-6 pb-6 pt-3 sm:grid-cols-3">
       {[
         { id: "waiting_review", label: "待验收成片", value: `${previewTotals?.waitingReview ?? display.totals.waitingReviewCount} 条` },
-        { id: "planned_videos", label: "本周计划视频", value: `${previewTotals?.plannedVideos ?? plannedOutputCount} 条` },
+        { id: "planned_videos", label: mixedPlan ? "本周计划内容" : "本周计划视频", value: `${previewTotals?.plannedVideos ?? plannedOutputCount} 条` },
         { id: "planned_duration", label: "本周视频总时长", value: previewTotals ? `${previewTotals.durationSeconds} 秒` : plannedDurationSeconds > 0 ? `${plannedDurationSeconds} 秒` : hasWeeklyPlan ? "待确认" : "0 秒" },
         { id: "budget_range", label: "本周成本范围", value: previewTotals ? `¥${previewTotals.budgetMin.toFixed(0)}–${previewTotals.budgetMax.toFixed(0)}` : budgetMax > 0 ? `¥${budgetMin.toFixed(0)}–${budgetMax.toFixed(0)}` : hasWeeklyPlan ? "待核算" : "¥0–0" },
         { id: "estimated_cost", label: "预计制作成本", value: previewTotals ? `¥${previewTotals.estimatedCost.toFixed(2)}` : estimatedContentCost > 0 ? `¥${estimatedContentCost.toFixed(2)}` : hasWeeklyPlan ? "待核算" : "¥0.00" },
@@ -159,10 +160,13 @@ export function WeeklyPlanDetailsDrawer({
   onClose: () => void;
 }) {
   const [selectedPlanId, setSelectedPlanId] = useState("");
+  const [referencePlaybackError, setReferencePlaybackError] = useState('');
   useEffect(() => {
+    setReferencePlaybackError('');
     if (!open) setSelectedPlanId("");
-  }, [open]);
+  }, [open, selectedPlanId]);
   const display = buildSmartBusinessDisplayModel(data);
+  const isMixedPlan = Boolean(data.plan?.businessPackage?.mixedContentSlots?.length);
   const director = data.plan?.businessPackage?.directorPlan;
   const productionPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans
     || data.goal?.videoPlans
@@ -192,13 +196,14 @@ export function WeeklyPlanDetailsDrawer({
   const formatCost = (plan: VideoCreationPlan | undefined, item: UnifiedPlanContent) => {
     const min = Number(item.estimatedCostRange?.minCny ?? plan?.estimatedCostRange?.minCny ?? 0);
     const max = Number(item.estimatedCostRange?.maxCny ?? plan?.estimatedCostRange?.maxCny ?? 0);
+    if (item.productionRole === 'platform_adaptation') return '已计入原内容';
     if (min > 0 || max > 0) return min === max ? `¥${max.toFixed(2)}` : `¥${min.toFixed(2)}–${max.toFixed(2)}`;
     const point = Math.max(Number(item.estimatedCostCny || 0), Number(plan?.estimatedCost || 0), Number(item.queueItem?.estimatedCostCny || 0));
     if (point > 0) return `¥${point.toFixed(2)}`;
     return plan?.productionRole === 'platform_adaptation' ? '已计入主片' : '待核算';
   };
   const planRows = display.contents.map((item, index) => {
-    const exactPlan = planByContentId.get(item.contentId)
+    const exactPlan = item.kind === 'image' ? undefined : planByContentId.get(item.contentId)
       || productionPlans[index]
       || (useShowcasePlanRows && productionPlans.length ? productionPlans[index % productionPlans.length] : undefined);
     const structurePlan = exactPlan ? referencePlanForPublication(productionPlans, exactPlan) : undefined;
@@ -305,15 +310,15 @@ export function WeeklyPlanDetailsDrawer({
             {data.goal && <WeeklyRangeVisual startsAt={data.goal.startsAt} endsAt={data.goal.endsAt}/>}
           </div>
           <dl className="mt-5 grid gap-3 border-y border-border py-4 sm:grid-cols-4">
-            <div><dt className="text-xs text-text-muted">计划视频</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.totals.versionCount} 条</dd></div>
+            <div><dt className="text-xs text-text-muted">{isMixedPlan ? '计划内容' : '计划视频'}</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.totals.versionCount} 条</dd>{display.totals.originalCount < display.totals.versionCount && <p className="mt-1 text-xs text-text-secondary">{display.totals.originalCount} 条原创制作 · {display.totals.versionCount - display.totals.originalCount} 条平台适配</p>}</div>
             <div><dt className="text-xs text-text-muted">视频总时长</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.totals.durationSeconds > 0 ? `${display.totals.durationSeconds} 秒` : '待确认'}</dd></div>
-            <div><dt className="text-xs text-text-muted">预计制作成本</dt><dd className="mt-1 text-base font-semibold tabular-nums text-text-primary">{productionBudget.max > 0 ? `¥${productionBudget.min.toFixed(0)}–${productionBudget.max.toFixed(0)}` : '待核算'}</dd></div>
+            <div><dt className="text-xs text-text-muted">预计制作成本</dt><dd className="mt-1 text-base font-semibold tabular-nums text-text-primary">{productionBudget.max > 0 ? `¥${productionBudget.min.toFixed(0)}–${productionBudget.max.toFixed(0)}` : '待核算'}</dd><p className="mt-1 text-xs text-text-secondary">仅供参考，不限制生产</p></div>
             <div><dt className="text-xs text-text-muted">目标平台</dt><dd className="mt-1 text-base font-semibold text-text-primary">{targetPlatforms.map(platform => platformLabels[platform]).join('、') || '待确认'}</dd></div>
           </dl>
         </section>
 
-        <section aria-label="计划视频清单">
-          <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-base font-semibold text-text-primary">计划视频</h3><Tag>{planRows.length} 条</Tag></div>
+        <section aria-label={isMixedPlan ? '计划内容清单' : '计划视频清单'}>
+          <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-base font-semibold text-text-primary">{isMixedPlan ? '计划内容' : '计划视频'}</h3><Tag>{planRows.length} 条</Tag></div>
           {planRows.length ? <div className="mt-3 divide-y divide-border border-y border-border">
             {planRows.map(({ item, reference, costLabel }, index) => {
               const status = statusCopy[item.status];
@@ -321,23 +326,23 @@ export function WeeklyPlanDetailsDrawer({
                 <div className="relative h-[112px] w-[63px] overflow-hidden rounded-md border border-border bg-surface-2">
                   {item.thumbnailUrl ? <img
                     src={item.thumbnailUrl}
-                    alt={`${reference?.title || item.title} 爆款视频缩略图`}
+                    alt={`${reference?.title || item.title} 参考缩略图`}
                     className="h-full w-full object-cover"
-                  /> : <span className="flex h-full items-center justify-center text-text-muted" aria-label="爆款参考缩略图待绑定"><Clapperboard size={22}/></span>}
+                  /> : <span className="flex h-full items-center justify-center text-text-muted" aria-label="参考素材待绑定"><Clapperboard size={22}/></span>}
                   <span className="absolute left-1 top-1 flex h-6 w-6 items-center justify-center rounded bg-white/90" aria-hidden="true"><SocialPlatformIcon platform={reference?.platform || item.platform} size={14}/></span>
                 </div>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2"><span className="text-xs font-medium text-text-muted">{String(index + 1).padStart(2, '0')}</span><h4 className="line-clamp-2 text-sm font-semibold text-text-primary">{item.title}</h4><Tag color={status.color}>{status.label}</Tag></div>
-                  <p className="mt-1 truncate text-xs text-text-secondary">{item.productName} · {platformLabels[item.platform]}</p>
+                  <p className="mt-1 truncate text-xs text-text-secondary">{item.productName} · {platformLabels[item.platform]} · {item.kind === 'image' ? '图片' : '视频'}{item.productionRole === 'platform_adaptation' ? ' · 平台适配' : ''}</p>
                   <p className="mt-2 flex items-center gap-1 text-xs text-text-muted"><CalendarRange size={13}/>{formatPublishTime(item)}</p>
                 </div>
                 <div className="flex min-w-[136px] flex-col items-start gap-3 sm:items-end">
-                  <div><p className="flex items-center gap-1 text-xs text-text-muted"><CircleDollarSign size={13}/>单条预算</p><p className="mt-1 text-sm font-semibold tabular-nums text-text-primary">{costLabel}</p></div>
+                  <div><p className="flex items-center gap-1 text-xs text-text-muted"><CircleDollarSign size={13}/>成本参考</p><p className="mt-1 text-sm font-semibold tabular-nums text-text-primary">{costLabel}</p></div>
                   <Button className="min-h-11 min-w-[104px]" onClick={() => setSelectedPlanId(item.id)} aria-label={`查看 ${item.title} 详情`}>查看详情</Button>
                 </div>
               </article>;
             })}
-          </div> : <Empty className="py-8" image={Empty.PRESENTED_IMAGE_SIMPLE} description="计划视频正在生成"/>}
+          </div> : <Empty className="py-8" image={Empty.PRESENTED_IMAGE_SIMPLE} description="计划内容正在生成"/>}
         </section>
 
         <section className="grid gap-4 lg:grid-cols-2" aria-label="发布与投流计划">
@@ -368,7 +373,7 @@ export function WeeklyPlanDetailsDrawer({
 
     <Modal
       open={Boolean(selectedPlan)}
-      title="计划视频详情"
+      title={selectedPlan?.item.kind === 'image' ? '计划图片详情' : '计划视频详情'}
       width={760}
       footer={<Button type="primary" className="min-h-11" onClick={() => setSelectedPlanId("")}>关闭</Button>}
       onCancel={() => setSelectedPlanId("")}
@@ -382,7 +387,7 @@ export function WeeklyPlanDetailsDrawer({
           <div className="min-w-0"><h3 className="text-base font-semibold text-text-primary">{selectedPlan.item.title}</h3><p className="mt-2 text-sm text-text-secondary">{selectedPlan.item.productName} · {platformLabels[selectedPlan.item.platform]} · {formatPublishTime(selectedPlan.item)}</p></div>
           <div className="sm:text-right"><p className="text-xs text-text-muted">预计制作成本</p><p className="mt-1 text-base font-semibold tabular-nums text-text-primary">{selectedPlan.costLabel}</p></div>
         </header>
-        <section aria-label={`${selectedPlan.item.title} 内容结构`}>
+        {selectedPlan.item.kind === 'image' ? <p className="text-sm leading-6 text-text-secondary">这条产品图片尚在计划阶段。编导需先从现有爆款库确认可用参考及产品素材；非产品图片改走代拍，不会自动生成。</p> : <><section aria-label={`${selectedPlan.item.title} 内容结构`}>
           <h4 className="text-sm font-semibold text-text-primary">内容结构</h4>
           {selectedPlan.segments.length ? <ol className="mt-3 flex min-w-0 gap-2 overflow-x-auto pb-2">
             {selectedPlan.segments.map((segment, segmentIndex) => <li key={segment.key} className="relative min-w-[132px] flex-1 rounded-md border border-border bg-white px-3 py-3 before:absolute before:left-0 before:top-0 before:h-full before:w-1 before:rounded-l-md before:bg-accent/70">
@@ -398,8 +403,15 @@ export function WeeklyPlanDetailsDrawer({
             <div><dt className="text-text-muted">选用形象</dt><dd className="mt-1 break-words font-medium text-text-primary">{selectedPlan.presenterLabel}</dd></div>
             <div><dt className="text-text-muted">参考视频</dt><dd className="mt-1 font-medium text-text-primary">{selectedPlan.reference?.title || '待绑定'}</dd></div>
           </dl>
+          {selectedPlan.reference?.referenceId ? <div className="mt-4 space-y-2" aria-label="已选爆款参考视频预览">
+            <AuthenticatedVideo key={selectedPlan.reference.referenceId}
+              apiUrl={`/api/overseas/videos/${encodeURIComponent(selectedPlan.reference.referenceId)}/media-url`}
+              controls loadOnMount className="max-h-80 w-full rounded-lg bg-black"
+              onError={() => setReferencePlaybackError('参考视频暂时无法播放，请打开原片查看来源。')}/>
+            {referencePlaybackError && <p role="status" className="text-sm text-text-secondary">{referencePlaybackError}</p>}
+          </div> : <p className="mt-4 text-sm text-text-secondary">尚未选定可播放的爆款参考视频。</p>}
           {selectedPlan.reference && <Button className="mt-4 min-h-11" icon={<Eye size={15}/>} onClick={() => window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: inspirationReferenceNavigationDetail(selectedPlan.reference!, selectedPlan.item.contentId) }))}>查看爆款原片</Button>}
-        </section>
+        </section></>}
       </div>}
     </Modal>
   </>;

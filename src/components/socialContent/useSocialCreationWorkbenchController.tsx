@@ -85,8 +85,8 @@ export function useSocialCreationWorkbenchController({
   const draggedFreeLineIndex = useRef<number | null>(null);
   const [contentGoal, setContentGoal] = useState('种草');
   const [targetAudience, setTargetAudience] = useState('海外目标客户');
-  const platformLabel: Record<string, string> = { tiktok: 'TikTok', instagram: 'Instagram', youtube: 'YouTube', facebook: 'Facebook' };
-  const [platform, setPlatform] = useState(platformLabel[seed?.assistantEntry?.platforms[0] || ''] || 'TikTok');
+  const platformLabel: Record<string, string> = { linkedin: 'LinkedIn', facebook: 'Facebook' };
+  const [platform, setPlatform] = useState(platformLabel[seed?.assistantEntry?.platforms[0] || ''] || 'Facebook');
   const [contentLanguage, setContentLanguage] = useState('zh');
   const [sellingPoints, setSellingPoints] = useState('');
   const [desiredDuration, setDesiredDuration] = useState(seed?.assistantEntry?.targetDurationSeconds ?? 20);
@@ -222,7 +222,7 @@ export function useSocialCreationWorkbenchController({
           const restored = normalizeFreeCreationState(existing.spec.freeCreation);
           productMaterials.restore(existing.spec);
           setSelectedProductIds(restored.brief.productIds); setContentGoal(['种草', '询盘', '品牌认知', '活动推广'].includes(restored.brief.goal) ? restored.brief.goal : '种草'); setTargetAudience(restored.brief.audience || '海外目标客户');
-          setPlatform(platformLabel[restored.brief.platform] || restored.brief.platform || 'TikTok'); setContentLanguage(restored.brief.language || 'zh'); setSellingPoints(restored.brief.sellingPoints);
+          setPlatform(platformLabel[restored.brief.platform] || 'Facebook'); setContentLanguage(restored.brief.language || 'zh'); setSellingPoints(restored.brief.sellingPoints);
           setDesiredDuration(restored.brief.durationSeconds); setTone(restored.brief.tone || '专业、自然'); setCallToAction(restored.brief.cta);
           setProhibitedClaims(restored.brief.prohibitedClaims); setBriefNotes(restored.brief.notes || seed?.assistantEntry?.objective || ''); setHookMode(restored.hookSource);
           const restoredLines: FreeCreationLine[] = restored.script.lines.map(line => ({ id: line.id, time: `${line.start}–${line.end}s`, speech: line.narration, visual: line.visualIntent, shotType: line.shotType === 'presenter' ? '真人口播' : line.shotType === 'factory' ? '工厂' : line.shotType === 'consumer_demo' ? 'D to C' : '产品', silent: line.silent, hook: line.primaryHook }));

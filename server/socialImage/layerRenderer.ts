@@ -1,6 +1,7 @@
 import sharp from 'sharp';
 import type { SocialImageLayer, SocialImageLayerGraph } from '../../shared/contracts/socialImageLayerGraph.js';
 import { assertSocialImageLayerGraph } from './layerGraphValidation.js';
+import { isVerifiedTransparentProductCutout } from '../lib/productIdentityPreparation.js';
 
 const CJK_TEXT = /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/;
 const escapeXml = (value: string) => value.replace(/[<>&"']/g, character => ({
@@ -146,7 +147,8 @@ export async function renderSocialImageLayerGraph(input: {
     } else if (layer.kind === 'product' || layer.kind === 'logo') {
       const source = layer.sourceAssetId ? input.assets.get(layer.sourceAssetId) : undefined;
       if (!source) throw new Error(`缺少图层企业资产：${layer.id}`);
-      const transparent = layer.kind === 'product' ? await connectedBorderToAlpha(source) : source;
+      const transparent = layer.kind === 'product' && !await isVerifiedTransparentProductCutout(source)
+        ? await connectedBorderToAlpha(source) : source;
       const fitted = await sharp(transparent).resize(rect.width, rect.height, { fit: layer.fit || 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
       composites.push({ input: fitted, left: rect.left, top: rect.top });
     }

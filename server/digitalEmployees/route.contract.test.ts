@@ -89,6 +89,7 @@ const weeklyOperatingGoal = { id: 'weekly-operating', metric: 'qualified_leads',
 assert.equal(isDigitalEmployeeOperatingGoal(socialContentBridgeGoal), false, 'a social-content execution bridge is not a Digital Employee weekly goal');
 assert.deepEqual(digitalEmployeeOperatingGoals([socialContentBridgeGoal, weeklyOperatingGoal]).map(item => item.id), ['weekly-operating']);
 const createGoal = routeBlock("digitalEmployeesRouter.post('/goals'");
+assert.match(createGoal, /content_production_platform_unsupported/, 'new production goals must refuse unsupported publishing platforms');
 assert.match(createGoal, /business_line:\s*goal\.businessLine/, 'weekly goals must persist their business line');
 assert.match(createGoal, /content_platforms:\s*goal\.contentPlatforms/, 'content goals must persist their platform scope');
 assert.match(createGoal, /smartOperationsEnabled === false/, 'the global Smart Operations switch must stop future outlines without cancelling historical work');

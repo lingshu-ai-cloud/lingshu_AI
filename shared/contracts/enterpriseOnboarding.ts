@@ -263,7 +263,7 @@ function normalizeSources(value: unknown): EnterpriseOnboardingDraft['sources'] 
 
 function normalizeStep(value: unknown): EnterpriseOnboardingStep {
   const step = Math.floor(Number(value));
-  return step >= 1 && step <= 4 ? step as EnterpriseOnboardingStep : 1;
+  return step === 4 ? 3 : step >= 1 && step <= 3 ? step as EnterpriseOnboardingStep : 1;
 }
 
 export function normalizeEnterpriseOnboardingDraft(value: unknown): EnterpriseOnboardingDraft | null {
@@ -309,7 +309,7 @@ export function validateEnterpriseOnboardingConfirmation(value: unknown): {
   const draft = normalizeEnterpriseOnboardingDraft(input ? {
     ...input,
     revision: input.draftRevision,
-    currentStep: 4,
+    currentStep: 3,
     updatedAt: '',
   } : null);
   if (!draft) return { confirmation: null, missing: ['确认资料格式'] };
@@ -325,7 +325,7 @@ export function validateEnterpriseOnboardingConfirmation(value: unknown): {
     !draft.productsDeferred && focusProducts.some(product => !text(product.category)) ? '主推产品类目' : '',
     !draft.productsDeferred && focusProducts.some(product => !text(product.highlights || product.description)) ? '主推产品卖点' : '',
     !draft.targetMarket ? '目标市场' : '', !draft.targetBuyer ? '主推买家' : '',
-    !draft.primaryPlatform ? '主平台' : '', !draft.language ? '主要语言' : '',
+    !draft.language ? '主要语言' : '',
     !draft.contentStage ? '社媒阶段' : '', !draft.primaryCta ? '唯一 CTA' : '',
   ].filter(Boolean);
   return {

@@ -147,9 +147,22 @@ export const digitalEmployeeApi = {
       method: "POST",
       body: JSON.stringify(goal),
     }),
+  weeklyReferenceReadiness: (goalId: string) => request<{
+    ready: boolean; requiredCount: number; boundCount: number; missingCount: number;
+  }>(`/goals/${encodeURIComponent(goalId)}/reference-readiness`),
   rebuildGoalFromLatestFacts,
   recommendPackage: (goalId: string) => request<WeeklyPackage>(`/goals/${encodeURIComponent(goalId)}/package/recommend`, { method: "POST" }),
-  generatePackageDetails: (goalId: string) => request<DigitalEmployeeOverview>(`/goals/${encodeURIComponent(goalId)}/package/details`, { method: "POST" }),
+  generatePackageDetails: (goalId: string) => request<DigitalEmployeeOverview>(
+    `/goals/${encodeURIComponent(goalId)}/package/details`,
+    {
+      method: "POST",
+      // Detail generation can continue on the server after the browser loses
+      // the response. Bound the visible wait, then let the shared launch flow
+      // reconcile once by reading the persisted package instead of replaying
+      // the mutation.
+      signal: AbortSignal.timeout(20_000),
+    },
+  ),
   planningOptions: () => request<{
     products: Array<{ id: string; name: string; materialIds: string[] }>;
     exactAnalysisIds: string[];

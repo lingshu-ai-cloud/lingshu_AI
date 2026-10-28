@@ -13,6 +13,7 @@ import { SocialImageProductionRunError, recordSocialImageHookStrategy, recordSoc
 import { readSocialImageTask, updateSocialImageTask } from './socialImageTask.js';
 import { assertSocialImageLayerGraph } from './layerGraphValidation.js';
 import { socialImageV3RenderSpecInputHash } from './socialImagePaidPrerequisites.js';
+import { referenceProductCheckHashIssue } from './socialImageReferenceProductPolicy.js';
 
 type InventoryEnvelope = SocialImageNodeEnvelope<SocialImageElementInventory>;
 const sha = (value: unknown) => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
@@ -221,6 +222,9 @@ export async function compileSocialImageReferencePlan(input: {
     || !task.hookFactorSpec || !task.adaptationSpec) {
     throw new SocialImageProductionRunError('social_image_reference_plan_evidence_incomplete', 422);
   }
+  const reference = latest(task, 'reference_snapshot')?.value as SocialImageNodeValueMap['reference_snapshot'] | undefined;
+  const referenceIssue = referenceProductCheckHashIssue(task, reference?.imageAssetRef?.contentHash || '');
+  if (referenceIssue) throw new SocialImageProductionRunError(referenceIssue, 422);
   const productId = task.contentBrief.productRefs[0];
   if (!productId || !task.enterpriseAssets.some(asset => asset.assetId === productId && asset.required)) {
     throw new SocialImageProductionRunError('social_image_required_product_missing', 422);

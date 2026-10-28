@@ -16,7 +16,7 @@ import SocialContentPlanningPage from '/src/components/socialContent/SocialConte
 const chat=new URLSearchParams(location.search).has('chat');
 const request={requestId:1,themeId:'product_value',mode:'instant',creationPath:'viral_replication',prefill:{platforms:['instagram']},sourceContext:{originLabel:chat?'来自灵小枢对话':'来自灵感中心',referenceContentType:'image',referenceTitle:'参考图文',...(chat?{referenceSourceRecordId:'reference-1'}:{referenceMediaUrl:'/api/overseas/videos/ref-1/image/0',referenceCaption:'原始参考配文'})}};
 function Fixture(){const[epoch,setEpoch]=useState(0);const messages=useAssistantStore(state=>state.threads.business.messages);const query=new URLSearchParams(location.search);const[selected,setSelected]=useState(query.has('imageTaskId')?null:query.has('home')?null:request);const[target,setTarget]=useState(query.has('imageTaskId')?'content-1':null);useEffect(()=>{const handler=e=>{if(e.detail.imageTaskId){setTarget(e.detail.socialContentTaskId);setSelected(null)}else if(e.detail.contentCreationRequest){setSelected(e.detail.contentCreationRequest);setTarget(null)}};window.addEventListener('lingshu:navigate',handler);return()=>window.removeEventListener('lingshu:navigate',handler)},[]);return target?<ImageCreationTaskExecution contentTaskId={target}/>:selected?<SocialContentPlanningPage initialCreateRequest={selected} onNavigate={()=>{}} onNavigateWithTask={()=>{}} onLaunchStudio={()=>{}}/>:<><ContentCreationHome sessionScope="image-ui-test"/><button onClick={()=>setEpoch(value=>value+1)}>重新打开当前对话</button>{messages.map((msg,index)=>msg.creationPortal?<AssistantCreationPortalCard key={msg.creationPortal.id+epoch} portal={msg.creationPortal}/>:null)}</>;}
-createRoot(document.getElementById('root')).render(<StrictMode><LingshuProvider><div style={{height:'100dvh'}}><Fixture/></div></LingshuProvider></StrictMode>);`;
+createRoot(document.getElementById('root')).render(<StrictMode><LingshuProvider><div className="app-shell" style={{height:'100dvh'}}><Fixture/></div></LingshuProvider></StrictMode>);`;
 const evidenceDir = process.env.IMAGE_REPLICATION_EVIDENCE_DIR;
 let vite, browser;
 const cacheDir = await mkdtemp(path.join(tmpdir(), 'lingshu-image-replication-vite-'));
@@ -35,7 +35,8 @@ try {
   browser = await chromium.launch({ executablePath: process.env.IMAGE_REPLICATION_TEST_CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
   const origin = `http://127.0.0.1:${vite.httpServer.address().port}`;
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==', 'base64');
-  for (const mode of ['inspiration', 'chat', 'home', 'blocked', 'missing_facts', 'empty_sources']) {
+  const modes = process.env.IMAGE_REPLICATION_TEST_MODES?.split(',').filter(Boolean) || ['inspiration', 'chat', 'home', 'blocked', 'missing_facts', 'empty_sources'];
+  for (const mode of modes) {
     const mobile = mode === 'chat';
     const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, serviceWorkers: 'block' });
     await context.addInitScript(dark => {
@@ -45,6 +46,15 @@ try {
     const page = await context.newPage(); page.setDefaultTimeout(20000);
     const errors = [], unexpected = [], writes = [];
     let execution; let content, run, failedOnce = false, brokenImageReads = 0, materialReads = 0;
+    if (mode === 'review' || mode === 'review-layered') {
+      const candidate = { id: 'candidate-1', role: 'single', label: '图片首版', state: 'quality_checking', version: 1,
+        mediaUrl: '/api/overseas/studio/private-assets/materials/reference.png', contentHash: 'a'.repeat(64),
+        qualityChecks: ['file_decode', 'pixel_dimensions'].map(key => ({ key, verdict: 'pass', checker: 'deterministic', severity: 'hard', note: '' })) };
+      run = { ...defaultSocialImageTask({ creationPath: 'viral_replication', productRefs: ['product-1'], productNames: ['企业测试产品'], coreClaim: '已核验的特点' }),
+        id: 'image-1', version: 4, schemaVersion: 'social-image-creation.v3', status: 'review_required', outputs: [candidate],
+        fieldsToConfirm: [], ...(mode === 'review-layered' ? { layerGraph: { layers: [] } } : {}), productionRuntime: { binding: { contentTaskId: 'content-1', contentTaskVersion: 'v1' }, nodes: [], events: [], nodeOutputs: [] } };
+      execution = { jobId: 'queue-image-1', status: 'blocked', attempt: 1, lastError: 'social_image_quality_requires_review', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    }
     page.on('pageerror', error => errors.push(error.message));
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
@@ -76,13 +86,33 @@ try {
         execution ||= {jobId:'queue-image-1',status:mode==='blocked'?'blocked':'queued',attempt:mode==='blocked'?1:0,lastError:mode==='blocked'?'social_image_required_asset_rights_unverified':null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
         return route.fulfill({status:202,json:{ok:true,task:run,execution}});
       }
+      if(path==='/api/overseas/social-images/tasks/image-1/reference-product-check') {
+        const body=request.postDataJSON();assert.equal(body.expectedVersion,run.version);
+        run={...run,version:run.version+1,referenceProductCheck:{decision:body.decision,sourceSha256:'a'.repeat(64),confirmedBy:'fixture-user',confirmedAt:'2026-10-28T00:00:00Z'},status:body.decision==='absent'?'blocked':'draft'};
+        return route.fulfill({json:{ok:true,task:run}});
+      }
       if(path==='/api/overseas/social-images/content-tasks/content-1/execution')return route.fulfill({json:{ok:true,task:run,execution}});
+      if(mode==='review-layered' && path==='/api/overseas/social-images/tasks/image-1/repair-layered') {
+        assert.equal(request.postDataJSON().instruction,'把产品往左移');run={...run,version:5};return route.fulfill({json:{ok:true,task:run,targetLayer:'product',layerGraph:run.layerGraph}});
+      }
+      if(mode==='review-layered' && path==='/api/overseas/social-images/tasks/image-1/render-layered') {
+        run={...run,version:6,outputs:[{...run.outputs[0],id:'candidate-2',version:2}]};return route.fulfill({json:{ok:true,task:run,url:run.outputs[0].mediaUrl}});
+      }
+      if(mode==='review-layered' && path==='/api/overseas/social-images/tasks/image-1/quality/preflight') {
+        run={...run,version:7};return route.fulfill({json:{ok:true,task:run}});
+      }
+      if(path==='/api/overseas/social-images/tasks/image-1/quality/human-accept' && mode==='review') {
+        const body=request.postDataJSON();assert.equal(body.expectedVersion,4);assert.equal(body.candidateId,'candidate-1');assert.equal(body.expectedContentHash,'a'.repeat(64));
+        run={...run,version:5,status:'approved',approvedArtifact:{candidateId:'candidate-1',contentHash:'a'.repeat(64),mediaUrl:run.outputs[0].mediaUrl}};
+        execution={...execution,status:'succeeded'};return route.fulfill({json:{ok:true,task:run}});
+      }
       if (path === '/api/overseas/social-images/tasks/image-1' && request.method() === 'GET') return route.fulfill({ json: { ok: true, task: run } });
       if (path === '/api/overseas/social-images/tasks/image-1') {
         const { expectedVersion, patch } = request.postDataJSON();
         assert.equal(expectedVersion, run.version);
         run = { ...run, ...patch, version: run.version + 1 };
-        if (!failedOnce) { failedOnce = true; return route.fulfill({ status: 503, json: { error: '连接中断，请恢复本次复刻任务' } }); }
+        if (patch.referenceSnapshot) run.referenceProductCheck = undefined;
+        if (!failedOnce && mode !== 'shooting') { failedOnce = true; return route.fulfill({ status: 503, json: { error: '连接中断，请恢复本次复刻任务' } }); }
         return route.fulfill({ json: { ok: true, task: run } });
       }
       if (request.method() === 'GET' && path.endsWith('/social-content/tasks/content-1')) return route.fulfill({ json: { task: content } });
@@ -110,7 +140,40 @@ try {
       }
       unexpected.push(`${request.method()} ${path}`); return route.fulfill({ status: 500, json: { error: 'unexpected test request' } });
     });
-    await page.goto(`${origin}/image-replication-test${(mode === 'home' || mode === 'empty_sources') ? '?home=1' : mobile ? '?chat=1' : ''}`);
+    await page.goto(`${origin}/image-replication-test${mode === 'review' || mode === 'review-layered' ? '?imageTaskId=image-1' : (mode === 'home' || mode === 'empty_sources') ? '?home=1' : mobile ? '?chat=1' : ''}`);
+    if (mode === 'review' || mode === 'review-layered') {
+      await page.getByText('图文首版待审阅', { exact: true }).waitFor();
+      assert.equal(await page.getByText('图片内容制作工作台', { exact: true }).count(), 0);
+      await page.getByText('需要调整？可以在下方输入框描述图片修改意见。', { exact: true }).waitFor();
+      const claimed=await page.evaluate(()=>{const event=new CustomEvent('lingshu:assistant-image-revision',{cancelable:true,detail:{taskId:'image-1',instruction:'把产品往左移'}});window.dispatchEvent(event);return event.defaultPrevented;});
+      assert.equal(claimed,true,'an edit instruction must target the bound image task');
+      if (mode === 'review-layered') {
+        await page.getByText('系统会按意见调整图层并重新检查，检查可能调用付费服务。原版本会保留。',{exact:true}).waitFor();
+        assert.equal(writes.length,0,'opening the confirmation never starts work');
+        const finished=page.waitForResponse(response=>response.url().endsWith('/quality/preflight')&&response.ok());
+        await page.getByRole('button',{name:'确认修改',exact:true}).click();
+        await finished;
+        await page.waitForFunction(()=>document.querySelector('[aria-label="图文复刻任务进度"]')?.textContent?.includes('图文首版待审阅'));
+        assert.deepEqual(writes.map(item=>item.path.split('/').slice(-1)[0]),['repair-layered','render-layered','preflight']);
+        assert.deepEqual(unexpected, []);assert.deepEqual(errors, []);
+        console.log('review-layered: explicit edit confirmation keeps the original task and follows the existing guarded pipeline');
+        await context.close();continue;
+      }
+      await page.getByText('当前版本暂不支持在对话中直接生成修改版；原图与修改意见仍保留在会话中。', {exact:true}).waitFor();
+      await page.getByRole('dialog').getByRole('button').last().click();
+      assert.equal(writes.length,0,'unsupported revisions never silently issue a paid request');
+      await page.getByRole('button', { name: '确认并采用', exact: true }).click();
+      await page.getByRole('button', { name: '确认采用', exact: true }).click();
+      const actions=page.getByRole('region',{name:'图文交付操作'});await actions.waitFor();
+      assert.equal(await actions.getByRole('button').count(),1);
+      assert.equal(await actions.getByRole('link', {name:'下载成片'}).count(),1);
+      assert.equal(await actions.getByRole('button',{name:'去发布'}).count(),1);
+      assert.equal(await page.getByText('图文首版待审阅',{exact:true}).count(),0);
+      assert.equal(writes.filter(item=>item.path.endsWith('/quality/human-accept')).length,1);
+      assert.deepEqual(unexpected, []);assert.deepEqual(errors, []);
+      console.log('review: compact candidate, explicit approval, and delivery-only actions passed with isolated APIs');
+      await context.close();continue;
+    }
     if (mode === 'home' || mode === 'empty_sources') {
       await page.locator('.creator-home__suggestions').getByRole('button', { name: '内容创作', exact: true }).click();
       const cards = page.locator('#creator-home-prompt-cards > button');
@@ -155,10 +218,24 @@ try {
     await page.getByRole('button', { name: '选择该参考图', exact: true }).click();
     await page.getByRole('combobox', { name: '企业产品', exact: true }).click();
     await page.getByText('企业测试产品', { exact: true }).click();
+    await page.getByRole('combobox', { name: '发布平台', exact: true }).click();
+    await page.getByText('Facebook', { exact: true }).last().click();
     const selectedLanguage = mode === 'home' ? ['西班牙语', 'es'] : mode === 'chat' ? ['阿拉伯语', 'ar'] : ['日语', 'ja'];
     await page.getByRole('combobox', { name: '图文语言', exact: true }).click();
     await page.getByRole('combobox', { name: '图文语言', exact: true }).fill(selectedLanguage[0]);
     await page.getByText(selectedLanguage[0], { exact: true }).click();
+    for (const [label, expected] of [['企业产品', '企业测试产品'], ['发布平台', 'Facebook'], ['图文语言', selectedLanguage[0]]]) {
+      const select = page.getByRole('combobox', { name: label, exact: true }).locator('xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " ant-select ")][1]');
+      const value = select.locator('.ant-select-content').first();
+      assert.equal((await value.textContent())?.trim(), expected, `${label} must render its selected label`);
+      const colors = await select.evaluate(element => {
+        const input = element.querySelector('input');
+        const text = element.querySelector('.ant-select-content');
+        return { inputBackground: input && getComputedStyle(input).backgroundColor, textColor: text && getComputedStyle(text).color };
+      });
+      assert.equal(colors.inputBackground, 'rgba(0, 0, 0, 0)', `${label} search input must not cover the selected label`);
+      assert.notEqual(colors.textColor, 'rgba(0, 0, 0, 0)', `${label} selected label must be visible`);
+    }
     if (mode === 'missing_facts') {
       await page.getByRole('button', { name: '确认并继续', exact: true }).click();
       await page.getByText('请填写1～1000字的核心卖点或创作目标。', { exact: true }).waitFor();
@@ -179,7 +256,23 @@ try {
     assert.equal(writes.length, 0, 'answers do not create a task or call any supplier');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'no horizontal overflow');
     if (evidenceDir) { await mkdir(evidenceDir, { recursive: true }); await page.screenshot({ path: `${evidenceDir}/${mobile ? 'mobile' : 'desktop'}-confirmation.png`, fullPage: true }); }
-    await page.getByRole('button', { name: '确认并生成首版', exact: true }).click();
+    await page.getByRole('spinbutton', { name: '本次制作费用上限（元）' }).fill('5');
+    if (mode === 'shooting') {
+      await page.getByText('没有产品', { exact: true }).click();
+      await page.getByRole('button', { name: '保存待拍任务', exact: true }).click();
+      await page.getByText('原任务已保留，请拍摄并上传包含产品的新图片，或更换参考图。', { exact: true }).waitFor();
+      assert.equal(run.referenceProductCheck.decision, 'absent');assert.equal(writes.filter(item=>item.path.endsWith('/execution')).length,0);
+      const replacement=page.getByRole('button',{name:'选择参考图片：备选参考图 2',exact:true});
+      await replacement.waitFor();await replacement.click();await page.getByRole('button',{name:'选择该参考图',exact:true}).click();
+      await page.getByText('有产品',{exact:true}).click();await page.getByRole('button',{name:'保存并等待费用核验',exact:true}).click();
+      await page.getByText('已入队，等待调度领取',{exact:true}).first().waitFor();
+      assert.equal(writes.filter(item=>item.path.endsWith('/social-content/tasks')).length,1,'replacement retains the original content task');
+      assert.equal(writes.filter(item=>item.path.endsWith('/reference-product-check')).length,2);
+      assert.equal(writes.filter(item=>item.path.endsWith('/execution')).length,1);
+      assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);console.log('shooting: same task waits, replaces its reference, and confirms again');await context.close();continue;
+    }
+    await page.getByText('有产品', { exact: true }).click();
+    await page.getByRole('button', { name: '保存并等待费用核验', exact: true }).click();
     await page.getByText('连接中断，请恢复本次复刻任务', { exact: true }).waitFor();
     await page.getByRole('button', { name: /恢复本次复刻任务/ }).click();
     if (mode === 'blocked') {

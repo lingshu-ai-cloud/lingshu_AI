@@ -4,6 +4,7 @@ import type { VideoCreationPlan } from '../../lib/videoCreationPlan';
 import { thumbnailUrlWithSourceFallback } from '../../lib/calendarModel';
 import { isSmartBusinessShowcaseEnabled, isSmartBusinessWeeklyPlanPreviewEnabled, smartBusinessShowcaseWeeklyVideos, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS } from '../../dev/smartBusinessShowcaseData';
 import { MASTER_VIDEO_COST_MAX_CNY, MASTER_VIDEO_COST_MIN_CNY, MASTER_VIDEO_COST_POINT_CNY } from '../../../shared/contracts/contentCostModel';
+import { estimateWeeklyMixedProduction } from '../../../shared/contracts/weeklyMixedContentPlan';
 
 export const platformOptions = ["youtube", "tiktok", "instagram", "facebook", "linkedin"] as const;
 export type Platform = (typeof platformOptions)[number];
@@ -104,6 +105,8 @@ export function inspirationReferenceNavigationDetail(reference: WeeklyInspiratio
 export type DisplayMetricSource = "real" | "demo";
 
 export type UnifiedPlanContent = {
+  kind?: 'video' | 'image';
+  originalSlotId?: string;
   id: string;
   contentId: string;
   familyId: string;
@@ -412,7 +415,48 @@ export function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, se
       metrics: demoMetrics(video.platform, video.id),
     };
   }) || [];
-  const allContents = showcaseContents.length ? showcaseContents : mappedContents;
+  const mixedSlots = data.plan?.businessPackage?.mixedContentSlots;
+  const mixedContents: UnifiedPlanContent[] = mixedSlots?.map((slot, index) => {
+    const account = accountById.get(slot.accountId);
+    const target = targetById.get(slot.accountId);
+    const originalVideoIndex = mixedSlots.filter(candidate => candidate.kind === 'video' && candidate.productionRole === 'original')
+      .findIndex(candidate => candidate.slotId === slot.originalSlotId);
+    const video = originalVideoIndex >= 0 ? plannedContents[originalVideoIndex] : undefined;
+    const imageQuote = estimateWeeklyMixedProduction([slot]);
+    const isOriginal = slot.productionRole === 'original';
+    const isImage = slot.kind === 'image';
+    const date = operatingContext?.cycle?.startsAt || data.goal?.startsAt || '';
+    const title = isImage
+      ? `${slot.platform === 'linkedin' ? '领英适配 · ' : ''}产品图片 ${index + 1}`
+      : video?.title || `本周视频 ${index + 1}`;
+    return {
+      ...video,
+      id: slot.slotId,
+      contentId: isImage ? slot.slotId : video?.contentId || slot.slotId,
+      familyId: slot.originalSlotId,
+      kind: slot.kind,
+      originalSlotId: slot.originalSlotId,
+      title,
+      caption: isImage ? '' : video?.caption || '',
+      tags: isImage ? [] : video?.tags || [],
+      productName: video?.productName || displayText(data.config?.focusProducts) || '待绑定产品',
+      thumbnailUrl: isImage ? '' : video?.thumbnailUrl || '',
+      platform: slot.platform,
+      accountId: slot.accountId,
+      accountLabel: account?.accountLabel || target?.accountLabel || `${data.config?.companyName || '企业'} · ${platformLabels[slot.platform]}`,
+      plannedPublishDate: video?.plannedPublishDate || date,
+      plannedPublishAt: video?.plannedPublishAt || '',
+      duration: isImage ? 0 : Number(video?.duration || 0),
+      inspirationReference: isImage ? null : video?.inspirationReference || null,
+      productionRole: isOriginal ? 'master' : 'platform_adaptation',
+      status: isImage ? 'planned' : video?.status || 'planned',
+      queueItem: isImage ? null : video?.queueItem || null,
+      estimatedCostCny: isImage ? (isOriginal ? imageQuote.maxCny : 0) : isOriginal ? video?.estimatedCostCny ?? null : 0,
+      estimatedCostRange: isImage ? { minCny: imageQuote.minCny, maxCny: imageQuote.maxCny } : isOriginal ? video?.estimatedCostRange || null : { minCny: 0, maxCny: 0 },
+      metrics: video?.metrics || demoMetrics(slot.platform, slot.slotId),
+    } satisfies UnifiedPlanContent;
+  }) || [];
+  const allContents = showcaseContents.length ? showcaseContents : mixedContents.length ? mixedContents : mappedContents;
   const contents = allContents.filter(item => !selectedAccountId || item.accountId === selectedAccountId);
   const masters = contents.filter(item => item.productionRole === "master");
   const groupedAccounts = new Map<string, UnifiedAccountRow>();

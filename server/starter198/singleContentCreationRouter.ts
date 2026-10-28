@@ -8,7 +8,7 @@ import type { Starter198OrchestratorQueuePort } from './runtimePorts.js';
 import { addSocialTaskSource, createSocialContentTask, startSocialContentTask } from './socialContentTasks.js';
 import { readSocialTaskDetail } from './socialContentRecords.js';
 import { socialContentAssistantReceipt } from './socialContentAssistantActions.js';
-import { parseCreateSocialTask, parseSocialSource, requireIdempotencyKey, SocialContentWorkflowError, socialJson, socialObject, socialText, socialRequestHash } from './socialContentValidation.js';
+import { productionTaskInput, parseSocialSource, requireIdempotencyKey, SocialContentWorkflowError, socialJson, socialObject, socialText, socialRequestHash } from './socialContentValidation.js';
 import { prepareSingleContent, readSingleContentContext, referenceDurationSeconds, singleContentReferenceSourceRef } from './singleContentPreparation.js';
 import type { SocialContentSourceOptionsPort } from './socialContentSourceOptions.js';
 import { saveContentPreferences } from './singleContentPreferences.js';
@@ -126,7 +126,7 @@ export function createSingleContentCreationRouter(input: { repository: Starter19
     for (const [index, language] of languages.entries()) {
       const taskId = taskIds[index]!;
       const operationKey = languages.length === 1 ? key : `${key}:language:${language}`;
-      const value = parseCreateSocialTask({ title: `${product.name} · ${selection.objective}${languages.length > 1 ? ` · ${language}` : ''}`.slice(0, 120),
+      const value = productionTaskInput({ title: `${product.name} · ${selection.objective}${languages.length > 1 ? ` · ${language}` : ''}`.slice(0, 120),
         objective: selection.objective, productId: product.id, productRef: product.name,
         audience: preferences.audience, markets: [preferences.market], languages: [language],
         platforms: [preferences.platform], formats: ['短视频'], aspectRatio: preferences.aspectRatio,

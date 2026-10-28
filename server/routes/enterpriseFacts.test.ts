@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { normalizeProfile, verifyEnterpriseFactContent } from './enterpriseProfileStore.js';
 import {
   buildEnterpriseContext,
   enterpriseFactContentHash,
@@ -51,6 +53,26 @@ assert.notEqual(
   firstHash,
   'a confirmed business fact change must produce a different content hash',
 );
+
+const historical = normalizeProfile(profile);
+const historicalOnboarding = historical.digitalEmployeeOnboarding as Record<string, unknown>;
+delete historicalOnboarding.confirmationId;
+delete historicalOnboarding.confirmationDigest;
+delete historicalOnboarding.completedAt;
+delete (historical.socialStrategy as Record<string, unknown>).primaryPlatforms;
+function oldStable(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(oldStable).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.entries(value as Record<string, unknown>)
+    .filter(([key]) => !['factVersion', 'lastSavedAt', 'lastSavedSource', 'lastSavedBy', 'productScenePreparation'].includes(key))
+    .sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => `${JSON.stringify(key)}:${oldStable(child)}`).join(',')}}`;
+  return JSON.stringify(value ?? null);
+}
+const oldHash = createHash('sha256').update(oldStable(historical)).digest('hex');
+const oldConfirmed = { ...profile, factVersion: { id: 'legacy', revision: 1, contentHash: oldHash,
+  confirmedAt: '2026-10-01T00:00:00Z', confirmedBy: 'user-1' } };
+assert.equal(verifyEnterpriseFactContent(oldConfirmed).mode, 'legacy_onboarding_defaults');
+assert.equal(verifyEnterpriseFactContent({ ...oldConfirmed, company: { ...oldConfirmed.company, name: 'Changed' } }).verified, false);
+assert.equal(verifyEnterpriseFactContent({ ...oldConfirmed, socialStrategy: { ...normalizeProfile(profile).socialStrategy!, primaryPlatforms: ['facebook'] } }).verified, false);
 
 const completion = knowledgeCompletion(profile);
 assert.equal(completion.profileCompleteness.percentage, 25);

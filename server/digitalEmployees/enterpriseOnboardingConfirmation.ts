@@ -104,7 +104,6 @@ export async function applyEnterpriseOnboardingConfirmation(input: {
           [route]: { targetBuyerRoles: [input.confirmation.targetBuyer], primaryCta: input.confirmation.primaryCta },
         },
         contentStage: input.confirmation.contentStage,
-        primaryPlatforms: [input.confirmation.primaryPlatform],
       },
       digitalEmployeeOnboarding: {
         ...current.digitalEmployeeOnboarding,

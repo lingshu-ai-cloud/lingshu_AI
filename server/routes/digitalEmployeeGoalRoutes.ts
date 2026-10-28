@@ -8,6 +8,9 @@ import { buildWeeklyPlan, normalizeWeeklyGoal, validateWeeklyGoal } from '../dig
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, type GoalRecord, type PlanRecord, type StoredRecord } from '../digitalEmployees/records.js';
 import type { DigitalEmployeeApplicationPorts } from '../digitalEmployees/applicationPorts.js';
 import { contentGenerationAuthorization } from '../../shared/contracts/contentGenerationAuthorization.js';
+import { isContentProductionPlatform } from '../../shared/contracts/contentProductionPlatforms.js';
+import { store } from '../storage/index.js';
+import { weeklyReferenceCreationGate } from '../digitalEmployees/weeklyReferenceCreationGate.js';
 
 export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplicationPorts, 'digitalEmployeesRouter' | 'configForTenant' | 'resolveCurrentConfiguration' | 'requiredCreate' | 'recommendPackageWithTenantEvidence' | 'appendAudit' | 'buildOverview' | 'approveGoalForReview'>) {
   const digitalEmployeesRouter = deps.digitalEmployeesRouter;
@@ -29,6 +32,16 @@ export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplic
   const approveGoalForReview: DigitalEmployeeApplicationPorts['approveGoalForReview'] = (...args) => deps.approveGoalForReview(...args);
 
   function registerPostGoals() {
+    digitalEmployeesRouter.get('/goals/:goalId/reference-readiness', async (req, res) => {
+      const { tenantId } = res.locals as AuthLocals;
+      const overview = await buildOverview(tenantId, req.params.goalId);
+      if (overview.goal?.id !== req.params.goalId || !overview.plan?.businessPackage) {
+        res.status(404).json({ error: 'weekly_goal_not_found' });
+        return;
+      }
+      const library = await store.list<StoredRecord>('trend_videos', { where: { tenantId }, perPage: 500 });
+      res.json(weeklyReferenceCreationGate(overview.plan.businessPackage, library.items));
+    });
     digitalEmployeesRouter.post('/goals', async (req, res) => {
       const { tenantId, userId } = res.locals as AuthLocals;
       const configRecord = await configForTenant(tenantId);
@@ -41,9 +54,28 @@ export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplic
         res.status(409).json({ error: 'smart_operations_disabled', message: '智能经营已关闭；历史任务仍可查看，开启后才能制定新的周目标。' });
         return;
       }
+      const requestedPlatforms = Array.isArray(req.body?.contentPlatforms) ? req.body.contentPlatforms : [];
+      const requestedVideoPlans = Array.isArray(req.body?.videoPlans) ? req.body.videoPlans : [];
+      if (requestedPlatforms.some((platform: unknown) => !isContentProductionPlatform(platform))
+        || requestedVideoPlans.some((plan: { platform?: unknown }) => !isContentProductionPlatform(plan?.platform))) {
+        res.status(400).json({ error: 'content_production_platform_unsupported', message: '内容制作仅支持 LinkedIn 和 Facebook；资讯和爆款采集仍支持全平台。' });
+        return;
+      }
       const goal = normalizeWeeklyGoal(req.body || {}, config);
       const missing = validateWeeklyGoal(goal);
       if (missing.length) { res.status(400).json({ error: 'goal_invalid', missing }); return; }
+      const planDraft = buildWeeklyPlan(goal, config);
+      const recommendedPackage = await recommendPackageWithTenantEvidence(tenantId, goal, config, userId, '', enterpriseProfile);
+      const referenceLibrary = await store.list<StoredRecord>('trend_videos', { where: { tenantId }, perPage: 500 });
+      const referenceGate = weeklyReferenceCreationGate(recommendedPackage, referenceLibrary.items);
+      if (!referenceGate.ready) {
+        res.status(409).json({
+          error: 'weekly_reference_shortage',
+          message: `本周还缺 ${referenceGate.missingCount} 条可用于制作的爆款视频。请手动录入并完成逐镜分析，或立即采集后再确认周任务。`,
+          ...referenceGate,
+        });
+        return;
+      }
       const now = new Date().toISOString();
       const created = await requiredCreate<GoalRecord>(COLLECTION.goals, {
         tenant_id: tenantId,
@@ -65,8 +97,6 @@ export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplic
         created_at: now,
         updated_at: now,
       });
-      const planDraft = buildWeeklyPlan(goal, config);
-      const recommendedPackage = await recommendPackageWithTenantEvidence(tenantId, goal, config, userId, '', enterpriseProfile);
       const plan = await requiredCreate<PlanRecord>(COLLECTION.plans, {
         tenant_id: tenantId,
         goal_id: created.id,

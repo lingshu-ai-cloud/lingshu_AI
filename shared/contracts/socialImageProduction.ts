@@ -349,6 +349,7 @@ export interface SocialImageReferenceEvidenceSnapshot {
   relativePerformance: number | null;
   referencePurpose: Array<'structure' | 'visual_hook' | 'proof' | 'cta'>;
   fingerprint: string;
+  styleObservation?: { kind: 'advertising' | 'imitable'; elements: import('./imageReferenceProductionLabel.js').ImageReferenceStyleElement[]; sourceSha256: string; analysisVersion: 'image-post-evidence.v2' } | null;
 }
 
 export interface SocialImageElementInventory {
