@@ -6,6 +6,7 @@ import { recommendPackage, compilePackage, normalizePackage, repairCollapsedWeek
 import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
 import { estimateWeeklyMixedProduction } from '../../shared/contracts/weeklyMixedContentPlan.js';
 import { fillMatrixVideos } from '../../src/lib/weeklyMatrix.js';
+import { bindWeeklyImageProducts, bindWeeklyImageReferences } from './weeklyImageReferences.js';
 const config = normalizeDigitalEmployeeConfig({ companyName: 'Test', industry: 'Tools', focusProducts: 'A', operatingMaturity: 'starting', publishingTargets: [{ platform: 'youtube', accountId: 'account-a', accountLabel: 'A' }] });
 const goal = normalizeWeeklyGoal({ objective: '跑通首条发布', startsAt: '2026-09-06', endsAt: '2026-09-12', contentPlatforms: ['youtube'] }, config);
 const pack = recommendPackage(goal, config);
@@ -39,6 +40,14 @@ const imageBoundSlots = mixedSlots.map(slot => slot.kind === 'image' && slot.pro
   : slot);
 assert.deepEqual(normalizePackage({ ...mixedPack, mixedContentSlots: imageBoundSlots }).mixedContentSlots, imageBoundSlots,
   'persisted package must retain validated image reference bindings');
+const imagePlan = bindWeeklyImageReferences(bindWeeklyImageProducts(mixedPack, [
+  { id: 'p1', name: '主推一' }, { id: 'p2', name: '主推二' }, { id: 'p3', name: '主推三' },
+]), [1, 2, 3, 4].map(index => ({ id: `image-${index}`, contentFormat: 'image', status: 'analyzed',
+  title: `参考 ${index}`, sourceUrl: `https://example.com/${index}`,
+  aiAnalysis: { contentFormat: 'image', imageAnalysisStatus: 'analyzed', imageUrls: [`/image/${index}.png`],
+    imageEvidence: { status: 'analyzed', observedFacts: ['产品'] } } })));
+assert.deepEqual(normalizePackage(imagePlan).mixedContentSlots, imagePlan.mixedContentSlots,
+  'persisted package retains each image product, reference and content theme');
 assert.equal(repairCollapsedWeeklyVideoProduction(mixedPack).operatingContext?.outputs.count, 15, 'legacy video repair must not collapse mixed publication slots');
 assert.equal(normalizePackage(mixedPack).directorPlan?.productionBudgetMin,
   mixedPack.directorPlan?.productionBudgetMin, 'legacy video repair must preserve the public mixed-cost quote');

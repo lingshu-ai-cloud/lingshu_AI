@@ -13,6 +13,15 @@ const BASE = "/api/overseas/digital-employees";
 
 export type DigitalEmployeeApiErrorDetails = Readonly<Record<string, unknown>>;
 
+export type WeeklyProductionReadiness = {
+  ready: boolean;
+  blockers: Array<{ code: string; message: string; action: string }>;
+  materialGaps?: Array<{ requirementId: string; video: string; product: string; shot: number; footage: string; minimumSeconds: number; productId: string | null;
+    materialType: 'product' | 'factory' | 'consumer_demo' | 'general' | 'talking_head'; referenceThumbnailUrl: string | null;
+    referenceVideoUrl: string | null; shotFirstFrameRef: string | null; shotStartSeconds: number }>;
+  recovery?: Readonly<Record<string, unknown>>;
+};
+
 export class DigitalEmployeeApiError extends Error {
   constructor(
     readonly status: number,
@@ -151,6 +160,7 @@ export const digitalEmployeeApi = {
     ready: boolean; requiredCount: number; boundCount: number; missingCount: number;
     videoMissingCount: number; imageMissingCount: number;
   }>(`/goals/${encodeURIComponent(goalId)}/reference-readiness`),
+  weeklyProductionReadiness: (goalId: string) => request<WeeklyProductionReadiness>(`/goals/${encodeURIComponent(goalId)}/production-readiness`),
   rebindWeeklyImageReferences: (goalId: string) => request<DigitalEmployeeOverview>(`/goals/${encodeURIComponent(goalId)}/rebind-image-references`, { method: 'POST' }),
   rebuildGoalFromLatestFacts,
   recommendPackage: (goalId: string) => request<WeeklyPackage>(`/goals/${encodeURIComponent(goalId)}/package/recommend`, { method: "POST" }),

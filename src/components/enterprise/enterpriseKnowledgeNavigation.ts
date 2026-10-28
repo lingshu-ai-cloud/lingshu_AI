@@ -2,6 +2,7 @@ export type KnowledgeView = 'company' | 'brand' | 'credentials' | 'products' | '
 export type EnterpriseArea = 'facts' | 'products' | 'service' | 'market' | 'experience' | 'appearance' | 'settings';
 export const KNOWLEDGE_AREAS = [
   { key: 'facts', label: '企业与品牌', description: '确认企业身份、品牌表达和能力依据。' },
+  { key: 'appearance', label: '数字人', description: '录入和管理数字人物、声音及出镜设置。' },
   { key: 'products', label: '产品目录', description: '一款产品一份档案，事实、合作条件与素材统一关联。' },
   { key: 'service', label: '合作与服务', description: '维护公司通用政策，产品特殊条件在产品档案中补充。' },
   { key: 'market', label: '市场与客户', description: '维护长期服务市场和买家画像，本期经营目标留在任务中。' },

@@ -31,6 +31,13 @@ export function productCutoutProcessingState(tenantId: string, productId: string
   return states.get(keyOf(tenantId, productId)) || null;
 }
 
+/** A verified cutout is sufficient for one-off image work; optional analysis is a separate gate. */
+export function verifiedProductCutoutDecision(waitForAnalysis: boolean, analysisStatus: string):
+  'ready' | 'await_analysis' | 'analysis_failed' {
+  if (!waitForAnalysis) return 'ready';
+  return analysisStatus === 'failed' ? 'analysis_failed' : 'await_analysis';
+}
+
 export function runLocalProductCutout(source: Buffer): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const privatePython = path.resolve(process.cwd(), '.venv-product-cutout/bin/python');
@@ -115,15 +122,24 @@ export async function ensureProductCutout(tenantId: string, productId: string, o
       sourceUrl: productImageUrl, productId, productName: product.name,
       sourceEntry: 'enterprise_knowledge', provenance: sourceProvenance, materialV2: sourceMetadata,
       media: { name: `${sourceSha256}.png`, buf: loaded.bytes, contentType: loaded.mimeType } });
-  const analysis = requestMaterialAnalysis(tenantId, String(bound.id || '')).catch(error =>
+  // A failed analysis is a recorded failure, not a reason to reissue an
+  // external analysis request on every image-production retry.
+  const analysis = source.segmentAnalysisStatus === 'failed'
+    ? Promise.resolve()
+    : requestMaterialAnalysis(tenantId, String(bound.id || '')).then(() => undefined);
+  void analysis.catch(error =>
     console.warn('[product-cutout] analysis start failed', tenantId, productId, error instanceof Error ? error.message : error));
   const waitForAnalysis = async () => {
-    if (options.waitForAnalysis) { await analysis; await waitForMaterialAnalysis(tenantId, String(bound.id || '')); }
-  };
-  const analysisComplete = async () => {
-    await analysis;
-    const current = await readMaterialLibrary(tenantId);
-    return current.items.some(item => item.id === bound.id && item.segmentAnalysisStatus === 'completed');
+    if (!options.waitForAnalysis) return;
+    if (source.segmentAnalysisStatus === 'failed') throw new Error('social_image_product_analysis_failed');
+    try {
+      await analysis;
+      await waitForMaterialAnalysis(tenantId, String(bound.id || ''), { requestIfMissing: false });
+    } catch (error) {
+      console.warn('[product-cutout] product analysis incomplete', tenantId, productId,
+        error instanceof Error ? error.message : error);
+      throw new Error('social_image_product_analysis_failed');
+    }
   };
   const matchingCutout = inventory.items.find(item => String(item.productId || '') === productId
     && item.type === 'image' && !item.libraryRemovedAt
@@ -133,8 +149,11 @@ export async function ensureProductCutout(tenantId: string, productId: string, o
     const cutout = await readTenantMaterialBytes(matchingCutout, tenantId).catch(() => null);
     if (cutout && digest(cutout.bytes) === matchingCutout.contentSha256
       && await isVerifiedTransparentProductCutout(cutout.bytes)) {
+      const decision = verifiedProductCutoutDecision(options.waitForAnalysis === true,
+        String(source.segmentAnalysisStatus || ''));
+      if (decision === 'analysis_failed') throw new Error('social_image_product_analysis_failed');
       await waitForAnalysis();
-      return options.waitForAnalysis || await analysisComplete() ? 'ready' : 'processing';
+      return 'ready';
     }
   }
   const stateKey = keyOf(tenantId, productId);

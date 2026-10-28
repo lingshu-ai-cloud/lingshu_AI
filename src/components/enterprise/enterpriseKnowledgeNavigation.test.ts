@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { enterpriseAreaForView, normalizeKnowledgeView } from './enterpriseKnowledgeNavigation';
+import { enterpriseAreaForView, KNOWLEDGE_AREAS, normalizeKnowledgeView } from './enterpriseKnowledgeNavigation';
 import { knowledgeReviewItems } from './EnterpriseKnowledgeSummary';
 import { DEFAULT } from './enterpriseProfileState';
 import { normalizeProfile } from '../../../server/routes/enterpriseProfileStore';
 import type { EnterpriseProfile } from '../../../server/routes/enterpriseProfileContracts';
 
 test('legacy task, language, FAQ and presenter deep links reach the correct area', () => {
+  assert.ok(KNOWLEDGE_AREAS.some(area => area.key === 'appearance' && area.label === '数字人'));
   for (const [legacy, view, area] of [
     ['materials', 'products', 'products'], ['socialStrategy', 'market', 'market'],
     ['language-settings', 'market', 'market'], ['faq', 'faq', 'experience'],

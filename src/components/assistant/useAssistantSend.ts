@@ -213,7 +213,9 @@ export function useAssistantSend(input: AssistantSendInput) {
       openAgent(routeAgent, 'chat');
       try {
         const overview = await digitalEmployeeApi.overview();
-        if (currentScope()) setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: weeklyTaskReply(overview) }]);
+        const readiness = overview.goal
+          ? await digitalEmployeeApi.weeklyProductionReadiness(overview.goal.id).catch(() => null) : null;
+        if (currentScope()) setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: weeklyTaskReply(overview, readiness) }]);
       } catch {
         if (currentScope()) setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: '当前周计划暂时读取不到，生产状态不能确认。请稍后重试，我不会因此启动或修改任务。' }]);
       } finally {

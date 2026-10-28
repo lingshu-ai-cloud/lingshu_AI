@@ -185,6 +185,9 @@ export function normalizePackage(raw: WeeklyPackage): WeeklyPackage {
           referenceSourceUrl: clean(slot.referenceSourceUrl, 2_000),
           ...(clean(slot.referenceThumbnailUrl, 2_000)
             ? { referenceThumbnailUrl: clean(slot.referenceThumbnailUrl, 2_000) } : {}) } : {}),
+      ...(slot.kind === 'image' && slot.productionRole === 'original' && clean(slot.productId, 160)
+        ? { productId: clean(slot.productId, 160), productName: clean(slot.productName, 160),
+          contentTheme: clean(slot.contentTheme, 300) } : {}),
     } satisfies WeeklyMixedContentSlot)) } : {}),
     ...(raw.directorPlan !== undefined ? { directorPlan: normalizeDirectorPlan(raw.directorPlan) } : {}),
     ...(raw.matrixPlan !== undefined ? { matrixPlan: normalizeMatrixPlan(raw.matrixPlan) } : {}),

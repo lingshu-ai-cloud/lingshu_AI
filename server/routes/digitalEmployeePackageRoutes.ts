@@ -10,6 +10,7 @@ import { type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { readTenantEnterpriseProfile, type EnterpriseProfile } from './enterprise.js';
 import { readServerProductionOnboardingReadiness } from '../digitalEmployees/productionOnboardingPreflight.js';
+import { weeklyMaterialGaps } from '../digitalEmployees/weeklyMaterialGaps.js';
 import { enterpriseAssetStableId, type ContentOrder } from '../digitalEmployees/contentBatchPlan.js';
 import { publicationCopyForPlan } from '../digitalEmployees/contentPlanRecommendation.js';
 import { configurationSnapshot, enterpriseProfileFromKnowledgeBinding } from '../digitalEmployees/configuration.js';
@@ -54,6 +55,48 @@ export function createDigitalEmployeePackageRoutes(deps: Pick<DigitalEmployeeApp
   const generateWeeklyTaskPreviews: DigitalEmployeeApplicationPorts['generateWeeklyTaskPreviews'] = (...args) => deps.generateWeeklyTaskPreviews(...args);
 
   const appendAudit: DigitalEmployeeApplicationPorts['appendAudit'] = (...args) => deps.appendAudit(...args);
+
+  function registerGetGoalsGoalIdProductionReadiness() {
+    digitalEmployeesRouter.get('/goals/:goalId/production-readiness', async (req, res) => {
+      const { tenantId } = res.locals as AuthLocals;
+      try {
+        const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, req.params.goalId, tenantId);
+        if (!goal) { res.status(404).json({ error: 'goal_not_found' }); return; }
+        const plan = await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id });
+        if (!plan) { res.status(404).json({ error: 'plan_not_found' }); return; }
+        const body = jsonObject<Record<string, unknown>>(plan.plan, {});
+        const pack = body.businessPackage as WeeklyPackage | undefined;
+        if (!pack) { res.status(409).json({ error: 'weekly_package_missing' }); return; }
+        const configRecord = await configForTenant(tenantId);
+        const config = publicConfig(configRecord);
+        if (!config) { res.status(409).json({ error: 'onboarding_required' }); return; }
+        const resolved = await resolveCurrentConfiguration(tenantId, configRecord);
+        const savedFactsVersion = String(jsonObject<Record<string, unknown>>(body.knowledgeBinding, {}).factsVersion || '').trim();
+        const currentFactsVersion = resolved?.knowledgeBinding.factsVersion || '';
+        if (plan.status === 'draft' && savedFactsVersion && currentFactsVersion && savedFactsVersion !== currentFactsVersion) {
+          res.json({ ready: false, blockers: [{ code: 'enterprise_facts_mismatch', message: '企业资料已更新，当前周计划需要同步', action: 'rebuild_weekly_goal' }],
+            recovery: weeklyGoalFactRebuildRecovery(goal, plan, savedFactsVersion, currentFactsVersion) });
+          return;
+        }
+        const profile = frozenEnterpriseProfileForPlan(plan, false)
+          || (resolved ? enterpriseProfileFromKnowledgeBinding(resolved.knowledgeBinding) as EnterpriseProfile | null : null);
+        if (!profile) {
+          res.json({ ready: false, blockers: [{ code: 'enterprise_facts_mismatch', message: '企业与产品资料需要重新确认', action: 'complete_enterprise_profile' }] });
+          return;
+        }
+        const plans = (pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [])
+          .filter(item => item.productionRole !== 'platform_adaptation');
+        const readiness = await readServerProductionOnboardingReadiness({
+          store, tenantId, profile, preferences: configSnapshotForPlan(plan, config).productionOnboarding,
+          plans, budgetConfirmed: true,
+        });
+        res.json({ ready: readiness.ready, blockers: readiness.blockers.map(({ code, message, action }) => ({ code, message, action })),
+          materialGaps: weeklyMaterialGaps(plans, readiness.materialRequirementGaps || []) });
+      } catch {
+        res.status(503).json({ error: 'production_onboarding_preflight_unavailable', message: '制作资料暂时无法核验' });
+      }
+    });
+  }
 
   function registerGetPlanningOptions() {
     digitalEmployeesRouter.get('/planning-options', async (_req, res) => {
@@ -120,7 +163,7 @@ export function createDigitalEmployeePackageRoutes(deps: Pick<DigitalEmployeeApp
       const planBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
       const savedFactsVersion = String(jsonObject<Record<string, unknown>>(planBody.knowledgeBinding, {}).factsVersion || '').trim();
       if (savedFactsVersion && resolved && savedFactsVersion !== resolved.knowledgeBinding.factsVersion) {
-        res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', ...weeklyGoalFactRebuildRecovery(goal, plan!, savedFactsVersion, resolved.knowledgeBinding.factsVersion) });
+        res.status(409).json({ error: 'enterprise_facts_changed', message: '企业资料已更新，请同步并重新确认周计划。', ...weeklyGoalFactRebuildRecovery(goal, plan!, savedFactsVersion, resolved.knowledgeBinding.factsVersion) });
         return;
       }
       const enterpriseProfile = frozenEnterpriseProfileForPlan(plan, false)
@@ -168,7 +211,7 @@ export function createDigitalEmployeePackageRoutes(deps: Pick<DigitalEmployeeApp
         const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
         const savedFactsVersion = String(jsonObject<Record<string, unknown>>(planBody.knowledgeBinding, {}).factsVersion || '').trim();
         if (savedFactsVersion && resolvedConfiguration && savedFactsVersion !== resolvedConfiguration.knowledgeBinding.factsVersion) {
-          res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', ...weeklyGoalFactRebuildRecovery(goal, plan, savedFactsVersion, resolvedConfiguration.knowledgeBinding.factsVersion) });
+          res.status(409).json({ error: 'enterprise_facts_changed', message: '企业资料已更新，请同步并重新确认周计划。', ...weeklyGoalFactRebuildRecovery(goal, plan, savedFactsVersion, resolvedConfiguration.knowledgeBinding.factsVersion) });
           return;
         }
         if (resolvedConfiguration && !frozenEnterpriseProfileForPlan(plan, false)) {
@@ -333,7 +376,7 @@ export function createDigitalEmployeePackageRoutes(deps: Pick<DigitalEmployeeApp
         const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
         const savedFactsVersion = String(jsonObject<Record<string, unknown>>(body.knowledgeBinding, {}).factsVersion || '').trim();
         if (savedFactsVersion && resolvedConfiguration && savedFactsVersion !== resolvedConfiguration.knowledgeBinding.factsVersion) {
-          res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', ...weeklyGoalFactRebuildRecovery(goal, plan, savedFactsVersion, resolvedConfiguration.knowledgeBinding.factsVersion) });
+          res.status(409).json({ error: 'enterprise_facts_changed', message: '企业资料已更新，请同步并重新确认周计划。', ...weeklyGoalFactRebuildRecovery(goal, plan, savedFactsVersion, resolvedConfiguration.knowledgeBinding.factsVersion) });
           return;
         }
         const config = localPublishingAccountMocksEnabled() && resolvedConfiguration
@@ -515,5 +558,5 @@ export function createDigitalEmployeePackageRoutes(deps: Pick<DigitalEmployeeApp
     });
   }
 
-  return { registerGetPlanningOptions, registerGetPackageOptions, registerPostGoalsGoalIdPackageRecommend, registerPostGoalsGoalIdPackageDetails, registerPutGoalsGoalIdPackage, registerPatchGoalsGoalIdProductionBudgetMode, registerPatchGoalsGoalIdPublicationScheduleContentId };
+  return { registerGetPlanningOptions, registerGetPackageOptions, registerGetGoalsGoalIdProductionReadiness, registerPostGoalsGoalIdPackageRecommend, registerPostGoalsGoalIdPackageDetails, registerPutGoalsGoalIdPackage, registerPatchGoalsGoalIdProductionBudgetMode, registerPatchGoalsGoalIdPublicationScheduleContentId };
 }

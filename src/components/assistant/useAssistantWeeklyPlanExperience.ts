@@ -2,13 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { defaultWeeklyGoal, type GoalDraft } from '../../lib/defaultWeeklyGoal';
 import { DigitalEmployeeApiError, digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
 import { socialDiscoveryApi } from '../../lib/socialDiscoveryApi';
-import type { DigitalEmployeeConfig, DigitalEmployeeOverview } from '../../lib/digitalEmployees';
+import { ENTERPRISE_FACTS_CHANGED_ERROR_CODE, type DigitalEmployeeConfig, type DigitalEmployeeOverview } from '../../lib/digitalEmployees';
 import { confirmedWeeklyExecution, weeklyStartConflictFromError, weeklyStartResultNeedsReconciliation } from '../../lib/weeklyStartValidation';
 import { notifyWeeklyWorkUpdated, WEEKLY_WORK_UPDATED_EVENT } from '../../lib/weeklyWorkEvents';
 import { ASSISTANT_WEEKLY_PLAN_OPEN_EVENT } from '../../lib/assistantWeeklyPlanEvents';
 import { prepareWeeklyPlanForLaunch } from '../../lib/weeklyPlanLaunchPreparation';
 import { finishedFilmBudgetDecision, finishedFilmBudgetQuoteKey } from '../../../shared/contracts/finishedFilmBudget';
 import { showWeeklyReadinessGuidance } from '../../lib/weeklyReadinessGuidance';
+import { synchronizeWeeklyPlanFacts } from '../../lib/weeklyFactsSync';
 
 type GuidanceKey = 'companyName' | 'focusProducts' | 'targetMarkets' | 'customerProfile' | 'weeklyObjective';
 type GuidanceQuestion = { key: GuidanceKey; prompt: string };
@@ -83,6 +84,8 @@ export function useAssistantWeeklyPlanExperience() {
   const [modalOpen, setModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [factsRecovery, setFactsRecovery] = useState<Readonly<Record<string, unknown>> | null>(null);
   const [celebrating, setCelebrating] = useState(false);
   const [referenceGap, setReferenceGap] = useState<{ missingCount: number; requiredCount: number; videoMissingCount: number; imageMissingCount: number } | null>(null);
   const [referenceMessage, setReferenceMessage] = useState('');
@@ -105,6 +108,8 @@ export function useAssistantWeeklyPlanExperience() {
 
   const prepare = useCallback(async () => {
     setError('');
+    setNotice('');
+    setFactsRecovery(null);
     setOverBudgetApprovalRevision(null);
     setOverBudgetApprovalQuoteKey('');
     setOverBudgetConfirmationOpen(false);
@@ -115,6 +120,15 @@ export function useAssistantWeeklyPlanExperience() {
     setOverview(next); setGuidance(null); setDraft(null);
     if (next.goal && next.plan) {
       const goalId = next.goal.id;
+      const productionReadiness = !next.run
+        ? await digitalEmployeeApi.weeklyProductionReadiness(goalId).catch(() => null) : null;
+      if (productionReadiness?.blockers.some(item => item.code === 'enterprise_facts_mismatch')
+        && productionReadiness.recovery) {
+        setFactsRecovery(productionReadiness.recovery);
+        setReferenceGap(null); setProposal(next); setModalOpen(true);
+        setNotice('企业资料已更新。请先同步这份周计划，再核对新版内容；生产尚未开始。');
+        return '企业资料已更新，这份周计划需要同步。请在当前窗口更新后重新确认。';
+      }
       let readiness = await digitalEmployeeApi.weeklyReferenceReadiness(goalId);
       if (!readiness.ready && readiness.videoMissingCount === 0 && readiness.imageMissingCount > 0
         && next.plan.status === 'draft') {
@@ -230,6 +244,7 @@ export function useAssistantWeeklyPlanExperience() {
     const current = proposal;
     if (!current?.goal || !current.plan?.businessPackage || busy) return;
     setBusy(true); setError('');
+    if (!factsRecovery) setNotice('');
     let requestSent = false;
     let reconciliationRead = false;
     const finish = (next: DigitalEmployeeOverview) => {
@@ -242,6 +257,13 @@ export function useAssistantWeeklyPlanExperience() {
       return true;
     };
     try {
+      if (factsRecovery) {
+        const rebuilt = await synchronizeWeeklyPlanFacts(current.goal, factsRecovery);
+        setOverview(rebuilt); setProposal(rebuilt); setFactsRecovery(null); setModalOpen(true);
+        setNotice('已按最新企业资料更新周计划。请重新核对并确认；生产尚未开始。');
+        notifyWeeklyWorkUpdated({ source: 'assistant', goalId: rebuilt.goal!.id });
+        return;
+      }
       const prepared = await prepareWeeklyPlanForLaunch(current, {
         onObserved: next => { setOverview(next); setProposal(next); },
       });
@@ -280,6 +302,20 @@ export function useAssistantWeeklyPlanExperience() {
       if (!finished) throw new Error('启动请求已经发出，但暂未取得可确认的运行回执。系统不会自动重复启动，请稍后刷新查看。');
     } catch (cause) {
       setOverBudgetConfirmationOpen(false);
+      if (factsRecovery) setNotice('');
+      if (!factsRecovery && cause instanceof DigitalEmployeeApiError && cause.code === ENTERPRISE_FACTS_CHANGED_ERROR_CODE) {
+        try {
+          const rebuilt = await synchronizeWeeklyPlanFacts(current.goal, cause.details);
+          setOverview(rebuilt); setProposal(rebuilt); setModalOpen(true);
+          setFactsRecovery(null);
+          setOverBudgetApprovalRevision(null); setOverBudgetApprovalQuoteKey(''); setOverBudgetConfirmationCount(0);
+          setNotice('企业资料更新后，已重新整理这份周计划。请核对新版内容，再决定是否开始生产。');
+          notifyWeeklyWorkUpdated({ source: 'assistant', goalId: rebuilt.goal.id });
+        } catch (rebuildError) {
+          setError(rebuildError instanceof Error ? `周计划暂时无法更新：${rebuildError.message}` : '周计划暂时无法更新，请刷新后重试。');
+        }
+        return;
+      }
       if (showWeeklyReadinessGuidance(cause)) {
         setModalOpen(false);
         setError('');
@@ -293,9 +329,9 @@ export function useAssistantWeeklyPlanExperience() {
         setError('启动结果暂时无法确认。系统已完成一次只读核对，不会自动重复提交，请稍后刷新查看。');
       } else setError(cause instanceof Error ? cause.message : '周计划启动失败');
     } finally { setBusy(false); }
-  }, [busy, proposal, overBudgetApprovalRevision, overBudgetApprovalQuoteKey, overBudgetConfirmationOpen]);
+  }, [busy, proposal, factsRecovery, overBudgetApprovalRevision, overBudgetApprovalQuoteKey, overBudgetConfirmationOpen]);
 
-  return { proposal, draft, modalOpen, busy, error, celebrating, overBudgetApprovalRevision,
+  return { proposal, draft, modalOpen, busy, error, notice, factsSyncRequired: Boolean(factsRecovery), celebrating, overBudgetApprovalRevision,
     overBudgetConfirmationOpen, overBudgetConfirmationCount,
     cancelOverBudgetConfirmation: () => { if (busy) return; setOverBudgetConfirmationOpen(false);
       setOverBudgetApprovalRevision(null); setOverBudgetApprovalQuoteKey(''); setOverBudgetConfirmationCount(0); },

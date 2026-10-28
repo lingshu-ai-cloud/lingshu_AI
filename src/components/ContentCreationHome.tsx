@@ -17,6 +17,8 @@ import {
   CheckCircle2,
   Compass,
   UserRound,
+  AlertCircle,
+  LoaderCircle,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Page } from '../pageRegistry';
@@ -47,6 +49,9 @@ import {
   type AssistantHomeSubmitOptions,
 } from './assistant/useAssistantHomeAnchor';
 import { openContentGenerationQueue } from '../lib/contentGenerationQueue';
+import { WEEKLY_WORK_UPDATED_EVENT } from '../lib/weeklyWorkEvents';
+import { weeklyHomeIndicator } from '../lib/weeklyHomeIndicator';
+import { weeklyTaskReply } from './contentCreationHomeReplies';
 
 type PendingHomePrompt = { entry: AssistantHomePrompt; submitOptions?: AssistantHomeSubmitOptions };
 
@@ -88,9 +93,16 @@ export default function ContentCreationHome({ onNavigate, inspirationWorkspace, 
     [activeLauncherId],
   );
   const hasWeeklyPlan = Boolean(overview?.goal && overview.plan);
+  const weeklyIndicator = weeklyHomeIndicator(overview);
   const activePrompts = useMemo(() => {
     const prompts = resolveLauncherPrompts(activeLauncher);
-    if (activeLauncher?.id !== 'weekly-plan' || !firstRunLoaded || hasWeeklyPlan) return prompts;
+    if (activeLauncher?.id !== 'weekly-plan' || !firstRunLoaded) return prompts;
+    if (weeklyIndicator === 'attention') return prompts.map(entry => entry.id === 'OP-CALENDAR' ? {
+      ...entry,
+      label: '解决当前问题',
+      summary: '让灵小枢说明当前缺什么，并在对话中补齐',
+    } : entry);
+    if (hasWeeklyPlan) return prompts;
     return prompts.map(entry => entry.id === 'OP-CALENDAR' ? {
       ...entry,
       label: '创建周计划',
@@ -98,7 +110,7 @@ export default function ContentCreationHome({ onNavigate, inspirationWorkspace, 
       prompt: '请帮我创建本周计划。',
       level: 'plan' as const,
     } : entry);
-  }, [activeLauncher, firstRunLoaded, hasWeeklyPlan]);
+  }, [activeLauncher, firstRunLoaded, hasWeeklyPlan, weeklyIndicator]);
   const canvasCollapsed = activeLauncher === null;
   const showFirstRun = firstRunLoaded && !firstRunError && firstRunProgress.entered && (!overview?.config || !firstRunProgress.growthCompleted);
 
@@ -113,8 +125,15 @@ export default function ContentCreationHome({ onNavigate, inspirationWorkspace, 
   useEffect(() => {
     const refresh = () => setOverviewRevision(value => value + 1);
     window.addEventListener(AUTH_TOKEN_CHANGED_EVENT, refresh);
-    return () => window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT, refresh);
+    window.addEventListener(WEEKLY_WORK_UPDATED_EVENT, refresh);
+    return () => { window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT, refresh); window.removeEventListener(WEEKLY_WORK_UPDATED_EVENT, refresh); };
   }, []);
+
+  useEffect(() => {
+    if (!overview?.run || ['succeeded', 'cancelled'].includes(overview.run.status)) return;
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') setOverviewRevision(value => value + 1); }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [overview?.run?.id, overview?.run?.status]);
 
   useEffect(() => {
     let active = true;
@@ -181,6 +200,10 @@ export default function ContentCreationHome({ onNavigate, inspirationWorkspace, 
 
   const choosePrompt = (entry: AssistantHomePrompt) => {
     if (entry.id === 'OP-CALENDAR') {
+      if (weeklyIndicator === 'attention') {
+        void showWeeklyIssueInConversation();
+        return;
+      }
       preparePrompt(entry);
       return;
     }
@@ -209,6 +232,29 @@ export default function ContentCreationHome({ onNavigate, inspirationWorkspace, 
     preparePrompt(entry);
   };
 
+  const showWeeklyIssueInConversation = async () => {
+    if (assistantBusy) return;
+    setAssistantBusy(true);
+    try {
+      const latest = await digitalEmployeeApi.overview();
+      setOverview(latest);
+      const readiness = latest.goal && !latest.run
+        ? await digitalEmployeeApi.weeklyProductionReadiness(latest.goal.id).catch(() => null) : null;
+      const store = useAssistantStore.getState();
+      const thread = store.threads[PRIMARY_ASSISTANT_THREAD];
+      const prompt = assistantHomePromptById('OP-CALENDAR')!.prompt;
+      store.setMessages(PRIMARY_ASSISTANT_THREAD, [...thread.messages,
+        { role: 'user', content: prompt }, { role: 'assistant', content: weeklyTaskReply(latest, readiness) }]);
+      store.setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true);
+      window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_ACTIVITY_EVENT, { detail: { active: true } }));
+    } catch {
+      const store = useAssistantStore.getState();
+      store.setMessages(PRIMARY_ASSISTANT_THREAD, [...store.threads[PRIMARY_ASSISTANT_THREAD].messages,
+        { role: 'assistant', content: '周计划最新状态暂时读取不到。资料和原任务都没有改动，请稍后再试。' }]);
+      window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_ACTIVITY_EVENT, { detail: { active: true } }));
+    } finally { setAssistantBusy(false); }
+  };
+
   const toggleLauncher = (launcherId: AssistantHomeQuickLauncherId) => {
     setCompanyReportOpen(false);
     setActiveLauncherId(current => current === launcherId ? null : launcherId);
@@ -229,10 +275,10 @@ export default function ContentCreationHome({ onNavigate, inspirationWorkspace, 
                 key={entry.id}
                 aria-expanded={entry.id === 'OP-LEADER' ? companyReportOpen : undefined}
                 aria-controls={entry.id === 'OP-LEADER' ? 'company-report-selection' : undefined}
-                className={`creator-home__prompt-card${index === 0 ? ' creator-home__prompt-card--primary' : ''}`}
+                className={`creator-home__prompt-card${index === 0 ? ' creator-home__prompt-card--primary' : ''}${entry.id === 'OP-CALENDAR' && weeklyIndicator === 'attention' ? ' creator-home__prompt-card--attention' : ''}`}
                 onClick={() => choosePrompt(entry)}
               >
-                <span className="creator-home__prompt-card-icon">{entry.id === 'CO-13' ? <Images size={19} aria-hidden="true"/> : launcherIcon(activeLauncher.id, 19)}</span>
+                <span className="creator-home__prompt-card-icon">{entry.id === 'OP-CALENDAR' && weeklyIndicator === 'attention' ? <AlertCircle size={19} aria-hidden="true"/> : entry.id === 'CO-13' ? <Images size={19} aria-hidden="true"/> : launcherIcon(activeLauncher.id, 19)}</span>
                 <span className="creator-home__prompt-card-copy"><strong>{entry.label}</strong><span>{entry.summary}</span></span>
                 <span className={`creator-home__prompt-card-level is-${entry.level}`}>{ASSISTANT_HOME_LEVEL_LABELS[entry.level]}</span>
                 <ArrowRight size={15} aria-hidden="true"/>
@@ -287,12 +333,13 @@ export default function ContentCreationHome({ onNavigate, inspirationWorkspace, 
           return <button
             type="button"
             key={launcher.id}
-            className={active ? 'is-active' : undefined}
+            className={[active ? 'is-active' : '', launcher.id === 'weekly-plan' && weeklyIndicator !== 'idle' ? `creator-home__suggestion--${weeklyIndicator}` : ''].filter(Boolean).join(' ') || undefined}
             aria-controls="creator-home-operations"
             aria-expanded={active}
+            aria-label={launcher.id === 'weekly-plan' && weeklyIndicator === 'attention' ? '查看当前周计划：有问题需要处理' : launcher.id === 'weekly-plan' && weeklyIndicator === 'producing' ? '查看当前周计划：正在生产' : undefined}
             onClick={() => toggleLauncher(launcher.id)}
           >
-            {launcherIcon(launcher.id, 15)}
+            {launcher.id === 'weekly-plan' && weeklyIndicator === 'attention' ? <AlertCircle size={15} aria-hidden="true"/> : launcher.id === 'weekly-plan' && weeklyIndicator === 'producing' ? <LoaderCircle size={15} aria-hidden="true"/> : launcherIcon(launcher.id, 15)}
             <span>{launcher.label}</span>
             {active ? <ChevronUp size={14} aria-hidden="true"/> : <ChevronDown size={14} aria-hidden="true"/>}
           </button>;

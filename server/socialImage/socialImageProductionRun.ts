@@ -29,6 +29,7 @@ import { initializeSocialImageProductionRuntime, projectSocialImageProductionSna
 import { resolveSocialImageReviewSet, socialImageDirectorReviewMatchesSet, socialImageReviewRefsMatch } from './socialImageReviewSet.js';
 import { createSocialImageTaskContextSnapshot, taskContextSnapshotIssue } from './taskContextSnapshot.js';
 import { socialImageProductionHash as hash, socialImageRunId } from './socialImageProductionHash.js';
+import { assertWeeklyImageAuthority } from '../digitalEmployees/weeklyImageAuthority.js';
 
 export class SocialImageProductionRunError extends Error {
   constructor(readonly code: string, readonly status = 409) {
@@ -36,13 +37,11 @@ export class SocialImageProductionRunError extends Error {
     this.name = 'SocialImageProductionRunError';
   }
 }
-
 function boundedIdentity(value: unknown, code: string, maximum = 120): string {
   const text = String(value || '').trim();
   if (!text || text.length > maximum || !/^[a-zA-Z0-9._:@-]+$/.test(text)) throw new SocialImageProductionRunError(code, 400);
   return text;
 }
-
 function platform(value: string | undefined): SocialImageCreationTask['deliverySpec']['platform'] {
   const normalized = String(value || '').toLowerCase();
   return ['facebook', 'instagram', 'tiktok', 'youtube', 'linkedin'].includes(normalized)
@@ -94,6 +93,7 @@ export async function assertSocialImageCurrentContentTask(
   });
   if (snapshotIssue) throw new SocialImageProductionRunError(snapshotIssue, 409);
   const current = await canonicalContentTask(store, tenantId, binding.contentTaskId);
+  if (purpose !== 'review_original_output') await assertWeeklyImageAuthority(store, tenantId, task);
   if(purpose==='dispatch') { if(current.version!==binding.contentTaskVersion)throw new SocialImageProductionRunError('social_image_content_task_binding_stale',409); return; }
   const business = task.productionRuntime?.nodeOutputs.filter(output => output.nodeId === 'business_context').at(-1);
   const source = business?.inputRefs.find(ref => ref.objectType === 'social_content_task' && ref.id === binding.contentTaskId);

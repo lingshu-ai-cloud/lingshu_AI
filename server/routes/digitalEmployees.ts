@@ -398,6 +398,8 @@ packagePlanningApplication.registerGetPlanningOptions();
 
 packagePlanningApplication.registerGetPackageOptions();
 
+packagePlanningApplication.registerGetGoalsGoalIdProductionReadiness();
+
 packagePlanningApplication.registerPostGoalsGoalIdPackageRecommend();
 
 packagePlanningApplication.registerPostGoalsGoalIdPackageDetails();

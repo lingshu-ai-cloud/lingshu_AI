@@ -1,4 +1,5 @@
 import { isSyntheticMaterial } from './materialTruthfulness.js';
+import { officialIndustryMaterialVisible } from './industryMaterialAccess.js';
 
 export interface ReplicationMaterialMatch {
   materialId: string; trimStart: number; trimEnd: number; evidence: string; contentSha256?: string;
@@ -6,6 +7,7 @@ export interface ReplicationMaterialMatch {
 export interface ReplicationMaterialMatchingInput {
   tenantId: string; shotDescription: string; duration: number;
   materials: Array<Record<string, unknown>>; requiredProductId?: string;
+  scope?: 'own' | 'shared'; excludeMaterialIds?: string[];
 }
 // Closed semantic vocabulary: generic words such as 产品/展示/工厂 never establish a match.
 const actions: Record<string, RegExp> = {
@@ -30,6 +32,18 @@ const texts = (value: unknown) => Array.isArray(value) ? value.filter(item => ty
 const visibleEvidence = (row: Record<string, unknown>) => [texts(row.action), texts(row.subject), texts(row.visual), texts(row.observedFacts), texts(row.visualObservations)].filter(Boolean).join('；');
 const affirmative = (value: string) => value.split(/[；;。\n]/).filter(clause => !/(?:没有|并未|未见|未进行|未发生|无新增|不包含|without|not\s)/i.test(clause)).join('；');
 
+function eligibleMaterial(material: Record<string, unknown>, input: ReplicationMaterialMatchingInput): boolean {
+  if (input.excludeMaterialIds?.includes(String(material.id || ''))) return false;
+  const shared = material.scope === 'shared';
+  if (input.scope === 'shared' ? !shared : shared) return false;
+  if (shared ? !officialIndustryMaterialVisible(material, '')
+    : String(material.tenantId || material.tenant_id || '') !== input.tenantId) return false;
+  return material.type === 'video' && !isSyntheticMaterial(material)
+    && material.usage !== 'analysis' && material.usage !== 'reference_only'
+    && material.mayUseInProduction !== false && Boolean(material.id && (material.file || material.objectKey))
+    && !/reference|benchmark|tiktok|youtube|third_party/i.test(String(material.sourceType || material.source || ''));
+}
+
 /** Conservative visual matching only. The caller must still validate the returned actual video bytes. */
 export function matchReplicationMaterial(input: ReplicationMaterialMatchingInput): ReplicationMaterialMatch | null {
   if (!input.tenantId || !(input.duration > 0) || !Number.isFinite(input.duration)) return null;
@@ -39,10 +53,7 @@ export function matchReplicationMaterial(input: ReplicationMaterialMatchingInput
   if (!requiredActions.length || !requiredSubjects.length) return null;
   const candidates: Array<ReplicationMaterialMatch & { score: number }> = [];
   for (const material of input.materials) {
-    if (String(material.tenantId || material.tenant_id || '') !== input.tenantId || material.scope !== 'own' || material.type !== 'video'
-      || isSyntheticMaterial(material) || material.usage === 'analysis' || material.usage === 'reference_only' || material.mayUseInProduction === false
-      || /reference|benchmark|tiktok|youtube|third_party|stock/i.test(String(material.sourceType || material.source || ''))
-      || !material.id || !(material.file || material.objectKey || material.url)) continue;
+    if (!eligibleMaterial(material, input)) continue;
     if (input.requiredProductId && String(material.productId || '') !== input.requiredProductId) continue;
     const duration = Number(material.duration);
     if (!Number.isFinite(duration) || duration < input.duration) continue;
@@ -72,4 +83,36 @@ export function matchReplicationMaterial(input: ReplicationMaterialMatchingInput
   if (!match) return null;
   const { score: _, ...result } = match;
   return result;
+}
+
+export interface ReplicationMaterialFallback extends ReplicationMaterialMatch {
+  tier: 'product' | 'public' | 'generic';
+  /** Only observed footage may be described in a downgraded shot. */
+  visualDescription: string;
+}
+
+/** Product evidence first, then semantically related public footage, finally
+ * ordinary non-product B-roll. The last two tiers are illustrative footage,
+ * never evidence of a particular product or enterprise capability. */
+export function matchReplicationMaterialFallback(input: ReplicationMaterialMatchingInput): ReplicationMaterialFallback | null {
+  const own = matchReplicationMaterial({ ...input, scope: 'own' });
+  if (own) return { ...own, tier: input.requiredProductId ? 'product' : 'generic',
+    visualDescription: input.requiredProductId ? input.shotDescription : '企业素材示意画面，不证明特定产品的外观或效果' };
+  const publicMatch = matchReplicationMaterial({ ...input, requiredProductId: undefined, scope: 'shared' });
+  if (publicMatch) return { ...publicMatch, tier: 'public', visualDescription: '公共素材示意画面，不展示或证明本产品及本企业能力' };
+  const ordinary = input.materials.filter(material => !material.productId && eligibleMaterial(material, { ...input, scope: material.scope === 'shared' ? 'shared' : 'own' }))
+    .sort((left, right) => Number(left.scope === 'shared') - Number(right.scope === 'shared')
+      || String(left.id).localeCompare(String(right.id)));
+  for (const material of ordinary) {
+    const segments = Array.isArray(material.segments) ? material.segments as Array<Record<string, unknown>> : [];
+    const observations = segments.length ? segments : [{ start: 0, end: Number(material.duration), visualObservations: material.visualObservations }];
+    for (const observation of observations) {
+      const observed = affirmative(visibleEvidence(observation));
+      if (!concepts(observed, actions).length || !concepts(observed, subjects).length) continue;
+      const match = matchReplicationMaterial({ ...input, shotDescription: observed, materials: [material], requiredProductId: undefined,
+        scope: material.scope === 'shared' ? 'shared' : 'own' });
+      if (match) return { ...match, tier: 'generic', visualDescription: `通用素材示意画面：${observed.slice(0, 180)}。不展示或证明本产品及本企业能力` };
+    }
+  }
+  return null;
 }

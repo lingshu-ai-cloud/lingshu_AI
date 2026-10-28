@@ -10,7 +10,7 @@ import { goalInput } from './overviewProjection.js';
 import { type DigitalEmployeeConfig } from './domain.js';
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, type GoalRecord, type PlanRecord, type RunRecord, type StoredRecord } from './records.js';
 import type { DigitalEmployeeApplicationPorts } from './applicationPorts.js';
-import { bindWeeklyImageReferences } from './weeklyImageReferences.js';
+import { bindWeeklyImageProducts, bindWeeklyImageReferences } from './weeklyImageReferences.js';
 
 export function createWeeklyPackagePreparation(deps: Pick<DigitalEmployeeApplicationPorts, 'frozenEnterpriseProfileForPlan' | 'appendAudit'>) {
   const appendAudit: DigitalEmployeeApplicationPorts['appendAudit'] = (...args) => deps.appendAudit(...args);
@@ -49,7 +49,7 @@ export function createWeeklyPackagePreparation(deps: Pick<DigitalEmployeeApplica
     // Keeping the full analyzed library lets a later week reuse a proven content
     // logic after real performance review, while package enrichment still
     // prevents the same source from occupying two slots in the current week.
-    return bindWeeklyImageReferences(enrichPackageWithContentSignals({ pack: productBound, goal, config,
+    return bindWeeklyImageReferences(enrichPackageWithContentSignals({ pack: bindWeeklyImageProducts(productBound, routingEvidence.products), goal, config,
       videos: producibleReferences, benchmarks: benchmarks.items }), videos.items);
   }
 

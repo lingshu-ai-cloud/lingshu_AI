@@ -74,6 +74,53 @@ test('operations scene removes internal product and provider diagnostics before 
   assert.match(html, /查看当前周计划/);
 });
 
+test('weekly production gaps offer a direct intake action instead of a generic plan button', () => {
+  const html = renderToStaticMarkup(createElement(AgentReply, {
+    content: '本周计划还没有开始，因为制作资料还缺：可用的数字人物与声音。\n\n先录入数字人物与声音。点击下方入口即可开始录入；补齐后我会继续核验，再由你确认是否启动。',
+    presentation: 'operations',
+  }));
+  assert.match(html, /可用的数字人物与声音/);
+  assert.match(html, /录入数字人/);
+  assert.doesNotMatch(html, /立即补齐第一项资料/);
+  assert.doesNotMatch(html, /确认并开始本周计划/);
+  assert.doesNotMatch(html, /查看内容任务/);
+});
+
+test('weekly footage supplement never offers a page jump or unrelated content-task link', () => {
+  const html = renderToStaticMarkup(createElement(AgentReply, {
+    content: '本周计划还没有开始。\n\n以下视频镜头还缺可用实拍：\n1. 「视频 1：新品展会」，镜头 2：需要展会实拍。\n\n先补充视频素材。',
+    presentation: 'operations',
+  }));
+  assert.match(html, /补充视频素材/);
+  assert.doesNotMatch(html, /打开素材库|查看内容任务|查看当前周计划|逐项任务与判断依据|展会实拍/);
+});
+
+test('a saved-plan preflight reply offers digital-person intake even without a prompt presentation', () => {
+  const html = renderToStaticMarkup(createElement(AgentReply, {
+    content: '本周计划还没有开始。\n\n当前需要处理：可用的数字人物与声音。\n\n先录入数字人物与声音。',
+  }));
+  assert.match(html, /录入数字人/);
+  assert.doesNotMatch(html, /查看内容任务|也可以调整为不需要人物口播/);
+});
+
+test('an older saved preflight message is displayed concisely with the same intake action', () => {
+  const html = renderToStaticMarkup(createElement(AgentReply, {
+    content: '本周计划已保存，但还没有进入生产。当前需要补齐 11 项条件。第一步，参考视频需要人物口播。请先授权可用的数字人物，并配置声音；也可以调整为不需要人物口播的内容方案。完成后告诉我“重新核验周计划”，我会继续检查下一项，不会自动重复启动。',
+  }));
+  assert.match(html, /录入数字人/);
+  assert.doesNotMatch(html, /11 项|也可以调整为不需要人物口播|完成后告诉我/);
+});
+
+test('an enterprise fact gap hides content tasks while keeping its focused action', () => {
+  const html = renderToStaticMarkup(createElement(AgentReply, {
+    content: '本周计划还没有开始。当前需要处理：本周计划引用的企业资料与当前已确认资料不一致。\n\n先核对企业与品牌资料。',
+    presentation: 'operations',
+  }));
+  assert.match(html, /同步周计划/);
+  assert.doesNotMatch(html, /核对企业与品牌资料|新建周目标/);
+  assert.doesNotMatch(html, /查看内容任务|查看当前周计划/);
+});
+
 test('empty operations replies keep explanatory text and modal actions', () => {
   const html = renderToStaticMarkup(createElement(AgentReply, { content: '', compact: true, presentation: 'operations' }));
   assert.match(html, /已读取当前周计划和内容任务/);

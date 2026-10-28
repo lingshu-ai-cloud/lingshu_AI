@@ -141,6 +141,10 @@ assert.match(approveGoal, /validatePackageForStart/, 'activation must retain str
 assert.match(approveGoal, /preproduction\?\.readiness\.canStart[\s\S]{0,600}package_details_blocked/, 'every independently produced video must pass persisted preparation before the run exists');
 assert.match(approveGoal, /readServerProductionOnboardingReadiness/, 'activation must recompute readiness from authoritative server records');
 assert.match(approveGoal, /production_onboarding_preflight_blocked/, 'activation must return exact remediation without creating a run');
+assert.match(approveGoal, /preflightWeeklyImageQueue/, 'image references and products must be checked before approval writes');
+assert.ok(approveGoal.indexOf('preflightWeeklyImageQueue') < approveGoal.indexOf('compareAndSwap?.(COLLECTION.plans'), 'image preflight must precede approval writes');
+assert.match(approveGoal, /ensureWeeklyImageQueue/, 'approval must admit the frozen image slots to the durable image queue');
+assert.ok(approveGoal.indexOf('ensureWeeklyImageQueue') < approveGoal.indexOf("status: 'planning'"), 'the weekly run must remain initializing until all image receipts exist');
 assert.ok(approveGoal.indexOf('readServerProductionOnboardingReadiness') < approveGoal.indexOf('compareAndSwap?.(COLLECTION.plans'), 'zero-cost readiness must run before plan, goal or run mutations');
 assert.match(source, /const activeProjects = projectAutomationStates\.filter/, 'content observation must distinguish runnable siblings from item-local blockers');
 assert.match(source, /const blocker = activeProjects\.length \? ''/, 'one blocked content item must not pause other runnable content');

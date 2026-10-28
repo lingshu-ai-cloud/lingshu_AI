@@ -13,7 +13,8 @@ import { shotFingerprint } from '../../src/lib/shotProduction.js';
 import { digitalHumanQualityState } from '../../src/lib/digitalHumanQuality.js';
 import { isTenantPrivateObjectKey } from '../storage/materialAssets.js';
 import { tenantAssetDir } from './assetAccess.js';
-import { matchReplicationMaterial } from './replicationMaterialMatching.js';
+import { matchReplicationMaterialFallback } from './replicationMaterialMatching.js';
+import { officialIndustryMaterialVisible } from './industryMaterialAccess.js';
 import { referenceCues } from '../../src/lib/digitalHumanPlan.js';
 import { assertReferencePresenterComposition, type ReferencePresenterComposition } from '../digitalEmployees/referencePresenterComposite.js';
 import { automaticManagedFallbackFrameAdmission, automaticManagedFallbackVideoAdmission } from './storyboardAigcQuality.js';
@@ -58,13 +59,18 @@ export async function invokeReplicationRoute(router: Router, tenantId: string, m
 
 const run = promisify(execFile);
 export async function validateReplicationVideo(material: MaterialRecord, tenantId: string): Promise<string> {
-  if (material.scope !== 'own' || String(material.tenantId || material.tenant_id || '') !== tenantId || material.type !== 'video'
+  const shared = material.scope === 'shared' && officialIndustryMaterialVisible(material, '');
+  const owned = material.scope === 'own' && String(material.tenantId || material.tenant_id || '') === tenantId;
+  if ((!owned && !shared) || material.type !== 'video'
     || /reference|tiktok|benchmark/i.test(String(material.sourceType || ''))) throw new Error('逐镜采用只允许本企业可编辑真实视频，禁止原片与目录图片');
-  if (material.objectKey && !isTenantPrivateObjectKey(String(material.objectKey), tenantId)) throw new Error('逐镜视频对象存储路径不属于当前企业');
+  if (material.objectKey && !(shared
+    ? /^[a-z0-9._-]+\/shared\/[a-z0-9._-]+$/i.test(String(material.objectKey))
+    : isTenantPrivateObjectKey(String(material.objectKey), tenantId))) throw new Error('逐镜视频对象存储路径不属于可用素材范围');
   if (material.file) {
-    const root = tenantAssetDir(path.resolve('data/media'), tenantId);
+    const mediaRoot = path.resolve('data/media');
+    const root = shared ? path.join(mediaRoot, 'shared') : tenantAssetDir(mediaRoot, tenantId);
     const file = path.resolve('data/media', String(material.file));
-    if (fs.existsSync(file) ? (!fs.existsSync(root) || !fs.realpathSync(file).startsWith(`${fs.realpathSync(root)}${path.sep}`)) : !material.objectKey) throw new Error('逐镜视频本地路径不属于当前企业');
+    if (fs.existsSync(file) ? (!fs.existsSync(root) || !fs.realpathSync(file).startsWith(`${fs.realpathSync(root)}${path.sep}`)) : !material.objectKey) throw new Error('逐镜视频本地路径不属于可用素材范围');
   }
   const loaded = await readTenantMaterialBytes(material, tenantId);
   if (material.contentSha256 && createHash('sha256').update(loaded.bytes).digest('hex') !== material.contentSha256) throw new Error('逐镜视频内容哈希已变化');
@@ -90,6 +96,10 @@ async function defaultDependencies(input: { tenantId: string; store: DataStore }
     call: (surface, method, route, body) => invokeReplicationRoute(surface === 'production' ? production! : studioRouter, input.tenantId, method, route, body) };
 }
 const locks = new Set<string>();
+// An illustrative clip cannot carry a frozen line that explicitly identifies
+// what the viewer is seeing. Leave that shot on the product generation route
+// instead of silently changing an approved script or subtitle contract.
+const narrationPointsAtProductVisual = (value: unknown) => /(?:画面中|画面里|如图|如你所见|看这(?:款|个|瓶)|展示(?:这款|该产品)|as you can see|shown here|look at this (?:product|bottle|package))/i.test(String(value || ''));
 // These native responses are explicit pre-admission rejections. Other errors
 // may follow a paid submission: preserve that request and stop this tick.
 const unpaidRejections = new Set([
@@ -127,7 +137,8 @@ export async function advanceAutomatedReplication(input: { tenantId: string; pro
       });
       if (!saved.ok) throw new Error('逐镜草稿已并发更新，未覆盖最新内容；请刷新后重试');
     };
-    const materialFor = async (id: string) => (await (deps.materials || readLocalMaterials)()).find(item => item.id === id && String(item.tenantId || item.tenant_id || '') === input.tenantId);
+    const materialFor = async (id: string) => (await (deps.materials || readLocalMaterials)()).find(item => item.id === id
+      && (String(item.tenantId || item.tenant_id || '') === input.tenantId || officialIndustryMaterialVisible(item, '')));
     const validate = deps.validateVideo || validateReplicationVideo;
     const readyIds: string[] = [];
     const blockedShots: AutomatedReplicationShot[] = [];
@@ -229,17 +240,29 @@ export async function advanceAutomatedReplication(input: { tenantId: string; pro
         await save(entry.shotId, { adopted: true, materialId: result.materialId }); return { state: 'pending', changed: true, shotId: entry.shotId };
       }
       if (!state.firstFrameMaterialId && !state.matchingChecked) {
-        const match = matchReplicationMaterial({ tenantId: input.tenantId,
+        const match = matchReplicationMaterialFallback({ tenantId: input.tenantId,
           shotDescription: String(entry.firstFrameRequest?.shotDescription || ''), duration: entry.end - entry.start,
           materials: await (deps.materials || readLocalMaterials)(),
+          excludeMaterialIds: Object.entries(spec.storyboardAssignments || {}).filter(([slotId]) => slotId !== entry.slotId).map(([, materialId]) => String(materialId)),
           requiredProductId: entry.firstFrameRequest?.sceneType === 'product' ? String((entry.firstFrameRequest.productIds as string[] | undefined)?.[0] || shot.productId || '') || undefined : undefined });
-        if (match) {
+        if (match && (match.tier === 'product' || !narrationPointsAtProductVisual(shot.narration))) {
           const material = await materialFor(match.materialId); if (!material) throw new Error('匹配视频已不属于当前企业');
           const matchedHash = await validate(material, input.tenantId);
           if (match.contentSha256 && matchedHash !== match.contentSha256) throw new Error('匹配视频内容版本与证据不一致');
           const candidateId = `${requestId}:matched`;
+          const downgraded = match.tier !== 'product';
+          const nextEntry = downgraded ? { ...entry, firstFrameRequest: { ...entry.firstFrameRequest,
+            shotDescription: match.visualDescription } } : entry;
+          const nextShots = downgraded ? shots.map(item => item.shotId === entry.shotId ? nextEntry : item) : shots;
+          const nextSlots = downgraded && Array.isArray(spec.shootingSlots)
+            ? spec.shootingSlots.map((item: Record<string, unknown>) => item.slotId === entry.slotId || item.id === entry.slotId
+              ? { ...item, detail: match.visualDescription } : item) : spec.shootingSlots;
           await save(entry.shotId, { fingerprint, matchingChecked: true, matching: match, ...(matchedHash ? { videoContentSha256: matchedHash } : {}), trimStart: match.trimStart, trimEnd: match.trimEnd, adopted: true, materialId: match.materialId }, {
             storyboardAssignments: { ...spec.storyboardAssignments, [entry.slotId]: match.materialId },
+            ...(downgraded ? { automatedReplicationShots: nextShots, shootingSlots: nextSlots,
+              storyboardSourcePlans: { ...spec.storyboardSourcePlans, [entry.slotId]: {
+                ...spec.storyboardSourcePlans?.[entry.slotId], materialFallbackTier: match.tier,
+                visualDescription: match.visualDescription } } } : {}),
             clipEdits: { ...spec.clipEdits, [entry.slotId]: { ...spec.clipEdits?.[entry.slotId], trimStart: match.trimStart, trimEnd: match.trimEnd } },
             shotProductions: { ...spec.shotProductions, [shotKey]: { ...shot, adoptedId: candidateId, candidates: [...(shot.candidates || []), { id: candidateId, materialId: match.materialId, fingerprint, source: 'material', createdAt: new Date().toISOString() }] } },
           });

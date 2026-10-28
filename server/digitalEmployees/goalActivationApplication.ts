@@ -15,6 +15,7 @@ import { buildWeeklyPlan } from './domain.js';
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, withLocalQueue, type GoalRecord, type PlanRecord, type RunRecord, type StoredRecord, type TaskRecord } from './records.js';
 import type { DigitalEmployeeApplicationPorts } from './applicationPorts.js';
 import { finishedFilmBudgetDecision, finishedFilmBudgetQuoteKey } from '../../shared/contracts/finishedFilmBudget.js';
+import { ensureWeeklyImageQueue, preflightWeeklyImageQueue, weeklyImageQueueFailure } from './weeklyImageQueueBridge.js';
 
 export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplicationPorts, 'requiredCreate' | 'goalApprovalQueues' | 'tenantRecord' | 'weeklyGoalFactRebuildTargetCommitted' | 'first' | 'advanceRun' | 'buildOverview' | 'configForTenant' | 'resolveCurrentConfiguration' | 'weeklyGoalFactRebuildRecovery' | 'frozenEnterpriseProfileForPlan' | 'executionConfigForPlan' | 'appendEvent' | 'appendAudit'>) {
   function requiredCreate<T extends StoredRecord>(collection: string, payload: Record<string, unknown>): Promise<T> {
@@ -111,7 +112,12 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
           const saved = jsonObject<ReturnType<typeof compilePackage>>(savedPlan.plan, {} as ReturnType<typeof compilePackage>);
           if (!saved.tasks?.length) throw Error('初始化任务清单不可用');
           await ensureReviewRunTasks(tenantId, goal, savedPlan, existingRun, saved.tasks, saved.businessPackage);
+          let imageReceipts: Awaited<ReturnType<typeof ensureWeeklyImageQueue>>;
+          try { imageReceipts = await ensureWeeklyImageQueue({ store, tenantId, userId, plan: savedPlan, run: existingRun }); }
+          catch (error) { return weeklyImageQueueFailure(error); }
           if (!await store.update(COLLECTION.runs, existingRun.id, { status: 'planning' })) throw Error('任务初始化状态保存失败');
+          if (imageReceipts.length) await appendEvent({ tenantId, runId: existingRun.id, type: 'weekly.images.queued', level: 'success',
+            summary: `${imageReceipts.length} 条本周图片已进入制作队列`, payload: { imageReceipts } });
           await advanceRun(tenantId, existingRun.id);
         }
         return { status: 200, body: await buildOverview(tenantId, goal.id) };
@@ -178,7 +184,7 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
       if (savedFactsVersion && savedFactsVersion !== canonicalFactsVersion) {
         return { status: 409, body: {
             error: 'enterprise_facts_changed',
-            message: '企业事实已更新；当前草稿仍引用旧事实，请基于最新事实新建周目标后再启动。',
+            message: '企业资料已更新；当前周计划需按最新资料同步并重新确认，生产尚未开始。',
             ...weeklyGoalFactRebuildRecovery(goal, existingPlan!, savedFactsVersion, canonicalFactsVersion),
           } };
       }
@@ -253,6 +259,8 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
         }
         const issues = validatePackageForStart(pack, goalInput(goal), configSnapshotForPlan(existingPlan, currentConfig));
         if (issues.length) { return { status: 400, body: { error: 'package_invalid', message: issues.join('；') } }; }
+        try { await preflightWeeklyImageQueue(store, tenantId, pack); }
+        catch (error) { return weeklyImageQueueFailure(error); }
       }
       const planDraft = pack ? compilePackage(pack, goalInput(goal), config) : buildWeeklyPlan(goalInput(goal), config);
       const now = new Date().toISOString();
@@ -306,9 +314,14 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
         completed_at: '',
       });
       await ensureReviewRunTasks(tenantId, goal, plan, run, planDraft.tasks, pack);
+      let imageReceipts: Awaited<ReturnType<typeof ensureWeeklyImageQueue>>;
+      try { imageReceipts = await ensureWeeklyImageQueue({ store, tenantId, userId, plan, run }); }
+      catch (error) { return weeklyImageQueueFailure(error); }
       if (!await store.update(COLLECTION.runs, run.id, { status: 'planning' })) throw Error('任务初始化状态保存失败');
+      if (imageReceipts.length) await appendEvent({ tenantId, runId: run.id, type: 'weekly.images.queued', level: 'success',
+        summary: `${imageReceipts.length} 条本周图片已进入制作队列`, payload: { imageReceipts } });
       await appendEvent({ tenantId, runId: run.id, type: 'plan.generated', level: 'success', summary: `计划 Agent 已生成 ${planDraft.tasks.length} 个任务`, payload: { strategy: planDraft.strategy } });
-      const contentCount = pack?.tasks.find(task => task.templateId === 'production')?.videoPlans?.length || 0;
+      const contentCount = (pack?.tasks.find(task => task.templateId === 'production')?.videoPlans?.length || 0) + imageReceipts.length;
       await appendEvent({
         tenantId,
         runId: run.id,

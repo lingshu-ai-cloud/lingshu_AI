@@ -213,6 +213,16 @@ html[data-lingshu-appearance='dark'] .ls-design-system .ls-messenger-bubble--inb
 .creator-home__suggestions svg { color: #66b9ff; }
 .creator-home__suggestions button.is-active { border-color: #5575ff; background: linear-gradient(135deg,rgba(38,111,255,.2),rgba(105,66,255,.16)); color: #f2f5ff; font-weight: 600; }
 .creator-home__suggestions button:focus-visible { outline: 2px solid #65baff; outline-offset: 2px; }
+.creator-home__suggestions button.creator-home__suggestion--producing { position: relative; isolation: isolate; border-color: var(--color-primary, #3166f5); }
+.creator-home__suggestions button.creator-home__suggestion--producing::before { position: absolute; z-index: 1; inset: -3px; border: 2px solid transparent; border-radius: inherit; background: conic-gradient(from var(--weekly-orbit-angle), transparent 0 80%, var(--color-primary, #3166f5) 92%, transparent 100%) border-box; filter: drop-shadow(0 0 3px var(--color-primary, #3166f5)); mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0); mask-composite: exclude; content: ''; animation: weekly-production-orbit 2.6s linear infinite; pointer-events: none; }
+.creator-home__suggestions button.creator-home__suggestion--attention { border-color: var(--color-error, #dc2626); color: var(--color-error, #dc2626); }
+.creator-home__suggestions button.creator-home__suggestion--attention svg { color: currentColor; }
+.creator-home__prompt-card.creator-home__prompt-card--attention { border-color: var(--color-error, #dc2626); background: var(--color-surface, #fff); }
+.creator-home__prompt-card--attention .creator-home__prompt-card-icon,
+.creator-home__prompt-card--attention .creator-home__prompt-card-copy strong { color: var(--color-error, #dc2626); }
+@property --weekly-orbit-angle { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@keyframes weekly-production-orbit { to { --weekly-orbit-angle: 360deg; } }
+@media (prefers-reduced-motion: reduce) { .creator-home__suggestions button.creator-home__suggestion--producing::before { animation: none; background: var(--color-primary, #3166f5) border-box; } }
 .creator-home__library { margin-top: 68px; scroll-margin-top: 18px; }
 .creator-home__library-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
 .creator-home__library-heading h2 { margin: 0; color: #f5f5f7; font-size: 19px; line-height: 28px; font-weight: 600; }
@@ -336,6 +346,10 @@ html[data-lingshu-appearance='light'] .creator-home__prompt-card { border-color:
 html[data-lingshu-appearance='light'] .creator-home__prompt-card:hover { border-color: #aeb4bf; background: #f7f8fa; }
 html[data-lingshu-appearance='light'] .creator-home__prompt-card--primary { border-color: #89a7ff; background: linear-gradient(145deg,#f1f6ff,#f7f3ff); }
 html[data-lingshu-appearance='light'] .creator-home__prompt-card-level { background: #f0f1f3; color: #656971; }
+html[data-lingshu-appearance='light'] .creator-home__suggestions button.creator-home__suggestion--producing { border-color: var(--color-primary, #3166f5); }
+html[data-lingshu-appearance='light'] .creator-home__suggestions button.creator-home__suggestion--attention { border-color: var(--color-error, #dc2626); color: var(--color-error, #dc2626); }
+html[data-lingshu-appearance='light'] .creator-home__prompt-card.creator-home__prompt-card--attention { border-color: var(--color-error, #dc2626); background: var(--color-surface, #fff); }
+html[data-lingshu-appearance='light'] .creator-home__prompt-card--attention .creator-home__prompt-card-copy strong { color: var(--color-error, #dc2626); }
 html[data-lingshu-appearance='light'] .creator-home__canvas-card { background: #fff; border-color: #e2e4e8; color: #25262a; }
 html[data-lingshu-appearance='light'] .creator-home__canvas-card-content > span { color: #696b72; }
 html[data-lingshu-appearance='light'] .creator-home__canvas-card-content > .creator-home__canvas-card-action { color: var(--color-accent); }

@@ -11,7 +11,7 @@ import { contentGenerationAuthorization } from '../../shared/contracts/contentGe
 import { isContentProductionPlatform } from '../../shared/contracts/contentProductionPlatforms.js';
 import { store } from '../storage/index.js';
 import { weeklyReferenceCreationGate } from '../digitalEmployees/weeklyReferenceCreationGate.js';
-import { bindWeeklyImageReferences } from '../digitalEmployees/weeklyImageReferences.js';
+import { bindWeeklyImageReferences, weeklyImageProductShortage } from '../digitalEmployees/weeklyImageReferences.js';
 import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 
 export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplicationPorts, 'digitalEmployeesRouter' | 'configForTenant' | 'resolveCurrentConfiguration' | 'requiredCreate' | 'recommendPackageWithTenantEvidence' | 'appendAudit' | 'buildOverview' | 'approveGoalForReview'>) {
@@ -98,6 +98,12 @@ export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplic
       if (missing.length) { res.status(400).json({ error: 'goal_invalid', missing }); return; }
       const planDraft = buildWeeklyPlan(goal, config);
       const recommendedPackage = await recommendPackageWithTenantEvidence(tenantId, goal, config, userId, '', enterpriseProfile);
+      const missingProducts = weeklyImageProductShortage(recommendedPackage);
+      if (missingProducts) {
+        res.status(409).json({ error: 'weekly_focus_products_missing',
+          message: `本周单图计划需要 3 个主推产品，还缺 ${missingProducts} 个。请先在企业资料中补齐主推产品。`, missingProducts });
+        return;
+      }
       const referenceLibrary = await store.list<StoredRecord>('trend_videos', { where: { tenantId }, perPage: 500 });
       const referenceGate = weeklyReferenceCreationGate(recommendedPackage, referenceLibrary.items);
       if (!referenceGate.ready) {

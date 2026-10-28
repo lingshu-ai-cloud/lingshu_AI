@@ -55,7 +55,7 @@ export function OnboardingPanel({
   mode?: "first" | "rules";
   activeRun?: boolean;
   restartFromBeginning?: boolean;
-  initialStep?: "start" | "presenter";
+  initialStep?: "start" | "products" | "presenter";
   dismissible?: boolean; initialSettingsOpen?: boolean;
   onClose?: () => void;
   onSave: (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string; onboardingConfirmation?: NonNullable<ReturnType<typeof validateEnterpriseOnboardingConfirmation>['confirmation']> }) => void | boolean | Promise<void | boolean>;
@@ -96,7 +96,7 @@ export function OnboardingPanel({
   const [profileLoading, setProfileLoading] = useState(mode === "first");
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState("");
-  const [guideStep, setGuideStep] = useState<EnterpriseOnboardingStep>(1);
+  const [guideStep, setGuideStep] = useState<EnterpriseOnboardingStep>(initialStep === 'products' ? 2 : 1);
   const [brandName, setBrandName] = useState("");
   const [baseFactVersion, setBaseFactVersion] = useState("");
   const [draftRevision, setDraftRevision] = useState(0);
@@ -268,7 +268,7 @@ export function OnboardingPanel({
         // business fields are never applied to the current fact version.
         setDraftRevision(persistedDraft?.revision || draftResult.revision);
         setConfirmationId(draft?.confirmationId || newOnboardingConfirmationId());
-        setGuideStep(draft?.currentStep === 4 ? 3 : draft?.currentStep || 1);
+        setGuideStep(initialStep === 'products' ? 2 : draft?.currentStep === 4 ? 3 : draft?.currentStep || 1);
         setCompanyIntro(draft?.companyIntro || profileValues.companyIntro);
         setBrandTone(draft?.brandTone || profileValues.brandTone);
         setKnowledgeProducts(draft?.products || profileValues.products);

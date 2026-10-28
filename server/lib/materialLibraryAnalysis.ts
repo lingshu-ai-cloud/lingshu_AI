@@ -235,8 +235,8 @@ export async function saveMaterialSegmentsWithScriptAnalysis(
   });
   return scriptAnalysis;
 }
-export async function waitForMaterialAnalysis(tenantId: string, id: string) {
-  await requestMaterialAnalysis(tenantId, id);
+export async function waitForMaterialAnalysis(tenantId: string, id: string, options: { requestIfMissing?: boolean } = {}) {
+  if (options.requestIfMissing !== false) await requestMaterialAnalysis(tenantId, id);
   await jobs.get(`${tenantId}:${id}`);
   const record = await ownedMaterial(tenantId, id);
   if (record.segmentAnalysisStatus !== 'completed') throw Error(String(record.segmentAnalysisError || '素材分析未完成'));

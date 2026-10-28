@@ -15,6 +15,11 @@ export interface WeeklyMixedContentSlot {
   referenceSourceUrl?: string;
   /** First analyzed image for the planning preview, not the post page URL. */
   referenceThumbnailUrl?: string;
+  /** Draft product choice for an independently produced image; approval must freeze it. */
+  productId?: string;
+  productName?: string;
+  /** Original creative intent; the reference caption is never copied as product copy. */
+  contentTheme?: string;
 }
 
 /** Read-only quote inputs. The amount is an estimate, never paid-call authority. */

@@ -15,6 +15,8 @@ import type { ReplySource } from '../lib/assistantSourceLinks';
 import { assistantDraftSuggestion } from '../../shared/assistantDraftSuggestion';
 import { openContentGenerationQueue } from '../lib/contentGenerationQueue';
 import { openAssistantWeeklyPlan } from '../lib/assistantWeeklyPlanEvents';
+import WeeklyMissingInputAction, { weeklyMissingInputKind } from './assistant/WeeklyMissingInputAction';
+import { displayWeeklyReadinessText } from '../lib/weeklyReadinessGuidance';
 import {
   ASSISTANT_REPLY_PRESENTATIONS,
   type AssistantReplyPresentationKind,
@@ -211,16 +213,23 @@ const REPLY_NAVIGATION: Partial<Record<AssistantReplyPresentationKind, ReplyNavi
   ],
 };
 
-function ReplyNavigationLinks({ kind }: { kind: AssistantReplyPresentationKind }) {
+function ReplyNavigationLinks({ kind, content }: { kind: AssistantReplyPresentationKind; content: string }) {
   const links = REPLY_NAVIGATION[kind] ?? [];
   if (!links.length) return null;
+  const planNotStarted = kind === 'operations' && content.startsWith('本周计划还没有开始。');
+  const missingInputKind = kind === 'operations' ? weeklyMissingInputKind(content) : null;
+  const weeklyNeedsInput = kind === 'operations' && (content.startsWith('本周生产需要处理：')
+    || (planNotStarted && (content.includes('当前需要处理：') || content.includes('以下视频镜头还缺'))));
   return <nav className="my-2 flex flex-wrap gap-2" aria-label="相关工作区">
-    {links.map(link => <button key={'action' in link ? link.action : `${link.page}:${link.view || ''}`} type="button"
+    {missingInputKind ? <WeeklyMissingInputAction kind={missingInputKind} /> : null}
+    {links.filter(link => !weeklyNeedsInput && !missingInputKind).map(link => <button key={'action' in link ? link.action : `${link.page}:${link.view || ''}`} type="button"
       onClick={() => 'action' in link
         ? link.action === 'weekly-plan' ? openAssistantWeeklyPlan() : openContentGenerationQueue({ view: 'tasks' })
         : window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: link }))}
       className="inline-flex min-h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-accent/40 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
-      {link.label}<ArrowRight size={12} aria-hidden="true"/>
+      {planNotStarted && 'action' in link && link.action === 'weekly-plan'
+        ? '确认并开始本周计划'
+        : link.label}<ArrowRight size={12} aria-hidden="true"/>
     </button>)}
   </nav>;
 }
@@ -236,8 +245,9 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
   compact?: boolean;
   presentation?: AssistantReplyPresentationKind;
 }) {
+  const displayContent = displayWeeklyReadinessText(content);
   const inline = (text: string, key: string) => renderInline(text, key, sources);
-  const files = extractAssistantFiles(content);
+  const files = extractAssistantFiles(displayContent);
   const sourcePresentation = allowSources ? splitReplySourceFooter(files.text) : { body: files.text, footer: '' };
   const readableBody = readableAssistantReply(sourcePresentation.body);
   const replyParts = allowDetails ? splitAssistantReply(readableBody, { compact: compact && !presentation, presentation }) : { summary: readableBody, details: [] };
@@ -409,6 +419,7 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
   flush();
 
   const presentationMeta = presentation ? ASSISTANT_REPLY_PRESENTATIONS[presentation] : undefined;
+  const standaloneMissingInputKind = presentation ? null : weeklyMissingInputKind(displayContent);
   if (!blocks.length && presentation === 'operations') {
     blocks.push(<p key="operations-summary" className="leading-relaxed my-1 whitespace-pre-wrap">已读取当前周计划和内容任务。你可以在当前页面分别查看计划详情与任务进度；查看不会自动启动、修改或创建任务。</p>);
   }
@@ -426,7 +437,8 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
         </div> : <AgentReply content={sourcePresentation.footer} sources={sources} allowDetails={false} allowSources={false}/>}
         {remainingSources.length ? <Collapse ghost size="small" items={[{ key: 'more-sources', label: `其余 ${remainingSources.length} 个来源`, children: <div className="flex flex-col gap-1">{remainingSources.map((source, index) => <AssistantSourceLink key={source.uri} url={source.uri} label={`${index + 4}. ${source.title}`} sources={sources}/>)}</div> }]} /> : null}
       </aside> : null}
-      {presentation ? <ReplyNavigationLinks kind={presentation}/> : null}
+      {presentation ? <ReplyNavigationLinks kind={presentation} content={displayContent}/>
+        : standaloneMissingInputKind ? <nav className="my-2 flex flex-wrap gap-2" aria-label="补齐周计划资料"><WeeklyMissingInputAction kind={standaloneMissingInputKind}/></nav> : null}
       {replyParts.details.some(value => value.trim()) && <Collapse ghost size="small" className="mt-1" defaultActiveKey={detailExpanded || !replyParts.summary.trim() ? ['analysis'] : []} items={[{
         key: 'analysis', label: presentationMeta?.detailLabel || '补充依据与更多方案', children: <AgentReply content={replyParts.details.join('\n\n')} sources={sources} allowDetails={false} allowSources={false} />,
       }]} />}

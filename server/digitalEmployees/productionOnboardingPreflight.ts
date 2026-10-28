@@ -76,17 +76,25 @@ export function fixedYieldArchetypeForBenchmarkShot(shot: BenchmarkShot): FixedY
 }
 
 export function requiredFixedYieldArchetypes(
-  plans: Array<Pick<VideoCreationPlan, 'productionRole' | 'benchmarkAnalysis'>>,
+  plans: Array<Pick<VideoCreationPlan, 'productionRole' | 'benchmarkAnalysis'> & Partial<Pick<VideoCreationPlan, 'route'>>>,
 ): FixedYieldArchetypeId[] {
   return [...new Set(plans
     .filter(plan => plan.productionRole !== 'platform_adaptation')
-    .flatMap(plan => plan.benchmarkAnalysis?.shots ?? [])
-    .map(fixedYieldArchetypeForBenchmarkShot)
+    .flatMap(plan => (plan.benchmarkAnalysis?.shots ?? []).map(shot => ({ shot, route: plan.route })))
+    .map(({ shot, route }) => {
+      const archetype = fixedYieldArchetypeForBenchmarkShot(shot);
+      // Managed clone executes non-person shots through its own material
+      // matcher/generator. The fixed-yield local-video catalogue is not its
+      // production executor and must not veto a usable weekly plan.
+      return route === 'clone' && archetype && !archetype.startsWith('P1') ? null : archetype;
+    })
     .filter((item): item is FixedYieldArchetypeId => Boolean(item)))];
 }
 
 export interface FixedYieldLocalMaterialRequirement {
   requirementId: string;
+  planIndex: number;
+  shotIndex: number;
   archetypeId: FixedYieldArchetypeId;
   materialType: Exclude<BenchmarkMaterialType, 'unknown'>;
   requiredDurationSeconds: number;
@@ -94,14 +102,16 @@ export interface FixedYieldLocalMaterialRequirement {
 }
 
 export function requiredFixedYieldLocalMaterials(
-  plans: Array<Pick<VideoCreationPlan, 'productionRole' | 'benchmarkAnalysis' | 'productId'>>,
+  plans: Array<Pick<VideoCreationPlan, 'productionRole' | 'benchmarkAnalysis' | 'productId'> & Partial<Pick<VideoCreationPlan, 'route'>>>,
 ): FixedYieldLocalMaterialRequirement[] {
-  return plans.flatMap((plan, planIndex) => plan.productionRole === 'platform_adaptation' ? [] : (plan.benchmarkAnalysis?.shots ?? []).flatMap(shot => {
+  return plans.flatMap((plan, planIndex) => plan.productionRole === 'platform_adaptation' || plan.route === 'clone' ? [] : (plan.benchmarkAnalysis?.shots ?? []).flatMap((shot, shotIndex) => {
     const archetypeId = fixedYieldArchetypeForBenchmarkShot(shot);
     if (!archetypeId || archetypeId.startsWith('P1') || shot.materialType === 'unknown'
       || shot.start === null || shot.end === null || shot.end <= shot.start) return [];
     return [{
-      requirementId: `${plan.benchmarkAnalysis?.source.videoId || `plan-${planIndex + 1}`}:${shot.shotId}`,
+      requirementId: `${planIndex + 1}:${plan.benchmarkAnalysis?.source.videoId || 'reference'}:${shot.shotId}`,
+      planIndex,
+      shotIndex,
       archetypeId,
       materialType: shot.materialType,
       requiredDurationSeconds: shot.end - shot.start,
@@ -234,15 +244,28 @@ export function inventoryFixedYieldArchetypes(
   assets: AssetCandidate[],
   input: { tenantId: string; requirements?: FixedYieldLocalMaterialRequirement[] },
 ): FixedYieldArchetypeId[] {
+  const requirements = input.requirements ?? [];
+  if (requirements.length) {
+    const missing = new Set(missingFixedYieldLocalMaterials(assets, { tenantId: input.tenantId, requirements }).map(item => item.archetypeId));
+    return [...new Set(requirements.map(item => item.archetypeId).filter(item => !missing.has(item)))];
+  }
   const profiles = assets.flatMap(asset => candidateProfiles(asset, input.tenantId))
     .filter(item => structurallyCurrentProfile(item, input.tenantId));
-  const requirements = input.requirements ?? [];
-  if (!requirements.length) {
-    return [...new Set(profiles.flatMap(item => item.profile.archetypeCandidates).filter(item => archetypeIds.has(item)))];
-  }
+  return [...new Set(profiles.flatMap(item => item.profile.archetypeCandidates).filter(item => archetypeIds.has(item)))];
+}
+
+/** Exact unmatched shot requirements, using the same one-segment-per-shot
+ * matching as the production preflight. An upload is not ready until analysis
+ * produces a current, eligible segment profile. */
+export function missingFixedYieldLocalMaterials(
+  assets: AssetCandidate[],
+  input: { tenantId: string; requirements: FixedYieldLocalMaterialRequirement[] },
+): FixedYieldLocalMaterialRequirement[] {
+  const profiles = assets.flatMap(asset => candidateProfiles(asset, input.tenantId))
+    .filter(item => structurallyCurrentProfile(item, input.tenantId));
   const used = new Set<string>();
-  const failed = new Set<FixedYieldArchetypeId>();
-  for (const requirement of requirements) {
+  const missing: FixedYieldLocalMaterialRequirement[] = [];
+  for (const requirement of input.requirements) {
     const match = profiles.find(item => {
       const identity = `${item.profile.assetId}:${item.profile.segmentId}:${item.profile.sourceRevision}`;
       if (used.has(identity)) return false;
@@ -260,12 +283,12 @@ export function inventoryFixedYieldArchetypes(
       return reasons.length === 0;
     });
     if (!match) {
-      failed.add(requirement.archetypeId);
+      missing.push(requirement);
       continue;
     }
     used.add(`${match.profile.assetId}:${match.profile.segmentId}:${match.profile.sourceRevision}`);
   }
-  return [...new Set(requirements.map(item => item.archetypeId).filter(item => !failed.has(item)))];
+  return missing;
 }
 
 function confirmedEnterpriseFacts(profile: EnterpriseProfile): boolean {
@@ -314,6 +337,7 @@ export function enterpriseOnboardingEvidence(
 export type ServerProductionOnboardingReadiness = ProductionOnboardingReadiness & {
   requiredArchetypes: FixedYieldArchetypeId[];
   evidence: ProductionOnboardingEvidence;
+  materialRequirementGaps?: FixedYieldLocalMaterialRequirement[];
 };
 
 export function compatibleProductionOnboardingPreferences(
@@ -337,7 +361,7 @@ export function compatibleProductionOnboardingPreferences(
 export function evaluateServerProductionOnboardingReadiness(input: {
   preferences?: ProductionOnboardingPreferences;
   evidence: ProductionOnboardingEvidence;
-  plans: Array<Pick<VideoCreationPlan, 'productionRole' | 'benchmarkAnalysis' | 'productId'>>;
+  plans: Array<Pick<VideoCreationPlan, 'productionRole' | 'benchmarkAnalysis' | 'productId'> & Partial<Pick<VideoCreationPlan, 'route'>>>;
 }): ServerProductionOnboardingReadiness {
   const requiredArchetypes = requiredFixedYieldArchetypes(input.plans);
   if (!input.preferences) {
@@ -368,7 +392,7 @@ export async function readServerProductionOnboardingReadiness(input: {
   tenantId: string;
   profile: EnterpriseProfile;
   preferences?: ProductionOnboardingPreferences;
-  plans: Array<Pick<VideoCreationPlan, 'productionRole' | 'benchmarkAnalysis' | 'productId'>>;
+  plans: Array<Pick<VideoCreationPlan, 'productionRole' | 'benchmarkAnalysis' | 'productId'> & Partial<Pick<VideoCreationPlan, 'route'>>>;
   budgetConfirmed: boolean;
   assets?: AssetCandidate[];
 }): Promise<ServerProductionOnboardingReadiness> {
@@ -412,11 +436,13 @@ export async function readServerProductionOnboardingReadiness(input: {
       evidence,
     };
   }
-  return evaluateServerProductionOnboardingReadiness({
+  const result = evaluateServerProductionOnboardingReadiness({
     preferences: compatibleProductionOnboardingPreferences(input.profile, evidence, input.preferences),
     evidence,
     plans: input.plans,
   });
+  return { ...result, materialRequirementGaps: result.blockers.some(item => item.code === 'local_material_missing')
+    ? missingFixedYieldLocalMaterials(assets, { tenantId: input.tenantId, requirements: requiredFixedYieldLocalMaterials(input.plans) }) : [] };
 }
 
 export function referenceCoveredByProductionEvidence(input: {
