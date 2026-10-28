@@ -1,5 +1,5 @@
 import {
-  BadgeDollarSign,
+  Gem,
   BarChart3,
   Building2,
   CalendarClock,
@@ -30,7 +30,7 @@ const GLYPHS: Record<DuotoneGlyphKind, LucideIcon> = {
   create: SquarePen,
   publish: Send,
   monitor: BarChart3,
-  ads: BadgeDollarSign,
+  ads: Gem,
   campaign: Megaphone,
   agent: Workflow,
   customers: Users,

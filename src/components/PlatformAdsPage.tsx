@@ -316,7 +316,8 @@ function PlatformAdsWorkspace({
               <div className="ads-task-title">
                 <div>
                   <span className="ads-pill neutral">{adTaskStatusLabels[selectedDraft.status] || '状态待核对'} · 平台状态见执行回执</span>
-                  <h2>{selectedDraft.name}</h2>
+                  <h2>{selectedDraft.name}{isForeignTradeMockId(selectedDraft.id) && <span className="ads-pill neutral">本地示例</span>}</h2>
+                  {isForeignTradeMockId(selectedDraft.id) && <p>示例不计入经营报告</p>}
                   <p>
                     {selectedDraft.video} · {selectedDraft.goal} ·{" "}
                     {selectedDraft.market}

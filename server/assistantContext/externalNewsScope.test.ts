@@ -27,3 +27,18 @@ test('news defaults derive from agent settings and content plan without leaking 
  const result=await prepareExternalNewsScope([{role:'user',content:'社交媒体资讯'}],'tenant',{read:async()=>({company:{},products:{},strategy:{focusMarkets:'美国'}} as EnterpriseProfile),readDefaults:async()=>({industry:'美妆',market:'欧洲',platforms:['Facebook','Instagram']})});
  assert.equal(result?.clarification,undefined);assert.match(result!.question,/Facebook/);assert.match(result!.question,/美国/);assert.doesNotMatch(result!.question,/欧洲/);
 });
+test('industry news does not inherit unrelated social-platform filters', async () => {
+ const result=await prepareExternalNewsScope([{role:'user',content:'行业资讯：欧洲美妆原料最近30天'}],'tenant',{
+  read:async()=>({company:{industry:'美妆原料'},products:{},socialStrategy:{primaryPlatforms:['TikTok']}} as EnterpriseProfile),
+  readDefaults:async()=>({platforms:['YouTube','Instagram']}),
+ });
+ assert.ok(result);assert.doesNotMatch(result.question,/TikTok|YouTube|Instagram/);
+});
+
+test('daily news uses open discovery and distinguishes compilation day from the actual observation period', async () => {
+ const prompt=ASSISTANT_HOME_PROMPTS.find(item=>item.id==='OP-02')!.prompt;
+ const result=await prepareExternalNewsScope([{role:'user',content:prompt}],'fixture',{read:async()=>({company:{industry:'美妆原料',mainMarkets:'欧洲'},products:{categories:'护肤原料'}} as EnterpriseProfile)});
+ assert.match(result!.question,/不限定指定站点/);assert.match(result!.question,/可信行业媒体、协会或合作伙伴/);
+ assert.match(result!.question,/最近30天/);assert.match(result!.question,/今日指本次整理日期/);
+ assert.match(result!.question,/事件沿用原文发布日期/);assert.match(result!.question,/报告标清实际观察期/);
+});

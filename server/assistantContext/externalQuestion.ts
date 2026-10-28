@@ -31,7 +31,7 @@ export function planExternalQuestion(question: string): ExternalQuestionPlan {
     : /TikTok|抖音国际版/iu.test(question) ? ['tiktok.com', 'tiktokglobalshop.com']
     : /Facebook|Instagram|Meta/iu.test(question) ? ['facebook.com', 'instagram.com', 'meta.com', 'about.fb.com']
     : /YouTube/iu.test(question) ? ['youtube.com', 'google.com', 'blog.youtube', 'blog.google']
-    : /(?:行业资讯|今日资讯)/u.test(question) && /美妆|化妆品|护肤|防晒|cosmetic|skincare/iu.test(question) ? ['basf.com', 'croda.com', 'dsm-firmenich.com', 'loreal.com', 'loreal-finance.com', 'bloomagebio.com', 'proya.com', 'seppic.com', 'fda.gov', 'europa.eu', 'mofcom.gov.cn']
+    : /(?:行业资讯|今日资讯)/u.test(question) && /美妆|化妆品|护肤|防晒|cosmetic|skincare/iu.test(question) ? ['basf.com', 'croda.com', 'dsm-firmenich.com', 'loreal.com', 'loreal-finance.com', 'bloomagebio.com', 'proya.com', 'seppic.com', 'fda.gov', 'europa.eu', 'cosmeticseurope.eu', 'oecd.org', 'who.int', 'mofcom.gov.cn']
     : /越南/u.test(question) ? ['dav.gov.vn', 'moh.gov.vn', 'moit.gov.vn']
     : /美国|FDA|CBP/iu.test(question) ? ['fda.gov', 'cbp.gov', 'trade.gov', 'commerce.gov', 'ftc.gov']
     : /欧盟|欧洲/u.test(question) ? ['europa.eu', 'wto.org']

@@ -13,17 +13,18 @@ import type { AssistantProductionContext } from '../../lib/assistantProductionDe
 import { useAssistantStore, type AgentThreadState, type OrbitAgentId } from '../../stores/assistantStore';
 import KnowledgeIntakePanel, { type AppliedProfile } from '../enterprise/KnowledgeIntakePanel';
 import AssistantComposer from './AssistantComposer';
+import { useAssistantPromptQueue } from './useAssistantPromptQueue';
 import AssistantMascot from './AssistantMascot';
 import { assistantFollowUpSuggestion } from '../../lib/assistantFollowUp';
 import AssistantConversationBubbles from './AssistantConversationBubbles';
 import AssistantCustomerTodoView from './AssistantCustomerTodoView';
-import AssistantQuickEntries from './AssistantQuickEntries';
+import AssistantHomeScenes from './AssistantHomeScenes';
 import AssistantWeeklyActions from './AssistantWeeklyActions';
 import { contextForOrbit, type AssistantContext } from './globalAssistantRuntime';
 import type { useAssistantDecisionDialog } from './useAssistantDecisionDialog';
 import type { useAssistantQuickExecution } from './useAssistantQuickExecution';
 import type { useAssistantSend } from './useAssistantSend';
-import type { AssistantHomeBounds } from './useAssistantHomeAnchor';
+import { mergeAssistantHomePrompt, type AssistantHomeBounds, type AssistantHomePendingSubmission } from './useAssistantHomeAnchor';
 import type { useContentTaskIntake } from './useContentTaskIntake';
 import type { AssistantWeeklyPlanExperience } from './useAssistantWeeklyPlanExperience';
 
@@ -78,6 +79,7 @@ type Props = {
   focusTaskCard: StoreActions['focusTaskCard'];
   setMessages: StoreActions['setMessages'];
   setDraftInput: StoreActions['setDraftInput'];
+  setPendingHomeSubmission: (submission: AssistantHomePendingSubmission | null) => void;
   setDecisionFeedRevision: Dispatch<SetStateAction<number>>;
   setMode: Dispatch<SetStateAction<'breathing' | 'chat'>>;
   setWeeklyActionBusy: Dispatch<SetStateAction<boolean>>;
@@ -92,13 +94,15 @@ export default function AssistantConversationPanel(props: Props) {
     assistantTool, viewport, reduceMotion, productionDecisionContext, decisionFeedRevision,
     persistenceScopeKey, welcomeBubbleVisible, loading, fileGenerating, replyStreaming,
     attachmentUploading, attachmentError, pendingAttachments, weeklyActionBusy,
-    weeklyPlanKickoffAvailable, weeklyPlanExperience, pipelineEntries, pendingCount, contentIntake,
+    weeklyPlanKickoffAvailable, weeklyPlanExperience, pendingCount, contentIntake,
     messageScrollRef, assistantInputRef, onAction, onSessionRefresh, closeAssistant,
     returnToConversation, openDecisionDialog, handleDecisionFeedChange,
-    openWeeklyPlanFromAssistant, send, sendComposerMessage, runQuickExecution,
+    openWeeklyPlanFromAssistant, send, sendComposerMessage,
     setAssistantTool, setScrollPosition, setFollowingLatest, focusTaskCard, setMessages,
-    setDraftInput, setDecisionFeedRevision, setMode, setWeeklyActionBusy,
+    setDraftInput, setPendingHomeSubmission, setDecisionFeedRevision, setMode, setWeeklyActionBusy,
     setPendingAttachments, setAttachmentError, persistThread } = props;
+  const generationBusy = loading || replyStreaming || fileGenerating;
+  const queue = useAssistantPromptQueue({ scope: `${persistenceScopeKey}:${activeThread.conversationKey || activeAgent}:${activeThread.conversationResetVersion || 0}`, busy: generationBusy, blocked: Boolean(props.conversationLocked || activeThread.deletedAt || attachmentUploading || contentIntake.busy || weeklyActionBusy), agent: currentPageAgent, send });
   const creationMode = useCreationMode();
   const compactHome = Boolean(inlineHome && (activeThread.creationDraft || activeThread.messages.length || loading));
   const creationReply = [...activeThread.messages].reverse().find(message => message.creation)?.creation;
@@ -215,7 +219,7 @@ export default function AssistantConversationPanel(props: Props) {
                     assistantInputRef.current?.setSelectionRange(suggestion.length, suggestion.length);
                   });
                 }}
-                contentIntakeNode={contentIntake.node} loading={loading} focusedTaskCard={focusedTaskCard}
+                contentIntakeNode={contentIntake.node} loading={loading} replyStreaming={replyStreaming} focusedTaskCard={focusedTaskCard}
                 onOpenTaskDetail={(trigger, taskId) => {
                   focusTaskCard(activeAgent, taskId);
                   openDecisionDialog({ kind: 'task', taskId }, trigger);
@@ -242,19 +246,21 @@ export default function AssistantConversationPanel(props: Props) {
               </div>
             )}
 
-            {!inlineHome && !contentIntake.active && <AssistantQuickEntries
-              page={page}
-              emptyConversation={!activeThread.messages.length && !loading && !activeThread.creationDraft}
-              executions={[
-                ...(page === 'digitalEmployees' ? [{ id: 'business-create-week-plan', kind: 'execute' as const,
-                  label: weeklyPlanKickoffAvailable ? '制定本周计划' : '查看当前周计划', prompt: '打开当前周计划', confirmation: 'none' as const }] : []),
-                ...(['smartAssets', 'socialInspiration'].includes(page) ? [{ id: 'content-create-single', kind: 'execute' as const,
-                  label: '新建单条内容任务', prompt: '填写产品和内容目标', confirmation: 'preview' as const, operation: 'create' as const }] : []),
-                ...pipelineEntries,
-              ]}
+            {!inlineHome && !contentIntake.active && <AssistantHomeScenes
+              key={persistenceScopeKey} variant="sidebar" sessionScope={persistenceScopeKey} agent={activeAgent}
               disabled={loading || fileGenerating || attachmentUploading}
-              onQuestion={entry => void send(entry.prompt, currentPageAgent)}
-              onExecute={entry => void runQuickExecution(entry)}
+              onNavigate={target => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: target } }))}
+              onPrompt={detail => {
+                if (loading || fileGenerating || attachmentUploading) return;
+                if (detail.submit && detail.submitOptions?.companyReport) {
+                  void send(detail.prompt, currentPageAgent, undefined, [], undefined, { ...detail.submitOptions, preserveDraft: true });
+                  return;
+                }
+                const draft = mergeAssistantHomePrompt(useAssistantStore.getState().threads[activeAgent].draftInput, detail.prompt, detail.mode);
+                setDraftInput(activeAgent, draft);
+                setPendingHomeSubmission(detail.submitOptions ? { agent: activeAgent, draft, submitOptions: detail.submitOptions } : null);
+                assistantInputRef.current?.focus();
+              }}
             />}
 
             {!inlineHome && <AssistantWeeklyActions page={page} scopeKey={persistenceScopeKey}
@@ -276,13 +282,25 @@ export default function AssistantConversationPanel(props: Props) {
                 }
               }}
             />}
+            {queue.entries.length > 0 && <div aria-label="排队中的提示词" className="flex max-h-28 shrink-0 flex-col gap-1 overflow-y-auto px-4 pb-2" role="status">
+              {queue.paused && <div className="text-xs text-text-secondary">已暂停，核对上一条回复后 <button type="button" onClick={queue.resume} className="text-accent underline">继续发送</button></div>}
+              {queue.entries.map((entry, index) => <div key={entry.id} className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-1.5 text-xs text-text-secondary">
+                <span className="shrink-0 text-accent">排队 {index + 1}</span><span className="min-w-0 flex-1 truncate" title={entry.text}>{entry.text}</span>
+                <button type="button" aria-label={`移除排队提示词：${entry.text}`} onClick={() => queue.remove(entry.id)} className="rounded p-1 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"><X size={12}/></button>
+              </div>)}
+            </div>}
             <AssistantComposer variant={inlineHome ? 'home' : 'default'} compact={compactHome} ref={assistantInputRef} draft={activeThread.draftInput} files={pendingAttachments}
               suggestion={!loading && !replyStreaming && !fileGenerating && !activeThread.creationDraft && !contentIntake.active ? assistantFollowUpSuggestion(activeThread.messages) : ''}
-              disabled={props.conversationLocked || Boolean(activeThread.deletedAt) || loading || replyStreaming || fileGenerating || contentIntake.busy || weeklyActionBusy}
+              disabled={props.conversationLocked || Boolean(activeThread.deletedAt) || contentIntake.busy || weeklyActionBusy}
               uploading={attachmentUploading} error={attachmentError}
               onDraftChange={value => setDraftInput(activeAgent, value)}
               onFilesChange={files => { setPendingAttachments(files); if (!files.length) setAttachmentError(''); }}
-              onValidationError={setAttachmentError} onSubmit={() => { void sendComposerMessage(); }}
+              onValidationError={setAttachmentError} onSubmit={() => {
+                if (!queue.shouldQueue(generationBusy)) { void sendComposerMessage(); return; }
+                if (pendingAttachments.length) { setAttachmentError('请等待当前回复及排队提示词处理完成后再发送附件，草稿和附件已保留。'); return; }
+                const text = activeThread.draftInput.trim();
+                if (text && queue.enqueue(text)) { setDraftInput(activeAgent, ''); setPendingHomeSubmission(null); setAttachmentError(''); } else if (text) setAttachmentError('暂时无法保存排队提示词，请稍后重试；草稿已保留。');
+              }}
             />
           </>
         )}

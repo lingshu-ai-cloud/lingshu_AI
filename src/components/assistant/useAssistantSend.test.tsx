@@ -85,7 +85,9 @@ test('ordinary chat sends one scoped strategy request and stores its completed r
     assert.equal(requests, 2, 'confirmed report uses the existing chat stream exactly once');
     assert.equal(useAssistantStore.getState().threads.business.draftInput, '保留这份尚未发送的草稿');
 
-    await send('我想借鉴一条爆款视频，为自己的产品策划内容，并安排进周任务包。');
+    store.setDraftInput('business', '排队发送期间的新草稿');
+    await send('我想借鉴一条爆款视频，为自己的产品策划内容，并安排进周任务包。', 'business', undefined, [], undefined, { preserveDraft: true });
+    assert.equal(useAssistantStore.getState().threads.business.draftInput, '排队发送期间的新草稿');
     assert.equal(requests, 2, 'the scene prepares the original task without invoking a model or production');
     assert.equal(useAssistantStore.getState().threads.business.messages.at(-1)?.creationPortal?.scenario, 'viral_replication');
     const taskPortal = { kind: 'content_task' as const, taskId: 'socialtask_verified', title: '待确认的视频方案', action: 'review_plan' as const, phase: 'offered' as const };

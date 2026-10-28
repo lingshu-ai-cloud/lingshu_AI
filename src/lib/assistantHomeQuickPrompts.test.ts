@@ -53,7 +53,7 @@ test('external news opens the overview and four distinct news types', () => {
   assert.ok(launcher);
   assert.deepEqual(
     launcher.promptIds.map(id => assistantHomePromptById(id)?.label),
-    ['今日资讯', '重点企业解读', '行业资讯', '社交媒体资讯', '政策与平台资讯', '查询参考汇率', '查询国家贸易数据'],
+    ['今日资讯', '企业经营洞察', '行业资讯', '社交媒体资讯', '政策与平台资讯', '查询参考汇率', '查询国家贸易数据'],
   );
 });
 
@@ -76,6 +76,10 @@ test('home prompt events remain fill-only and support explicit append or replace
   assert.deepEqual(normalizeAssistantHomePromptDetail('  测试提示词  '), { prompt: '测试提示词', mode: 'replace' });
   assert.deepEqual(normalizeAssistantHomePromptDetail({ prompt: ' 新提示词 ', mode: 'append' }), { prompt: '新提示词', mode: 'append' });
   assert.equal(normalizeAssistantHomePromptDetail({ prompt: '  ' }), null);
+  assert.deepEqual(normalizeAssistantHomePromptDetail({ prompt: '生成企业报告', submit: true, submitOptions: { companyReport: true } }), {
+    prompt: '生成企业报告', mode: 'replace', submit: true, submitOptions: { companyReport: true },
+  });
+  assert.deepEqual(normalizeAssistantHomePromptDetail({ prompt: '普通快捷任务', submit: true }), { prompt: '普通快捷任务', mode: 'replace' });
   assert.equal(mergeAssistantHomePrompt('原有内容', '新提示词', 'append'), '原有内容\n\n新提示词');
   assert.equal(mergeAssistantHomePrompt('原有内容', '新提示词', 'replace'), '新提示词');
   assert.deepEqual(normalizeAssistantHomePromptDetail({ prompt: '本周任务', submitOptions: {

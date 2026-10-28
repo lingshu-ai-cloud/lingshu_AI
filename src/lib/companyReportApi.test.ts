@@ -11,6 +11,17 @@ const options = companyReportOptionsSchema.parse({ checkedAt: '2026-10-26T05:00:
       { year: 2025, period: '2025年半年度', publishedAt: '2025-08-20', status: 'needs_review' }] },
 ] });
 
+test('a company with no local report requests official discovery for an explicit current half-year', () => {
+  const empty = { ...options, companies: [{ ...options.companies[1], reports: [] }] };
+  const request = companyReportSceneRequest(empty, 'cosmos');
+  const year = Number(new Intl.DateTimeFormat('en', { year: 'numeric', timeZone: 'Asia/Shanghai' }).format(new Date()));
+  assert.equal(request.companyId, 'cosmos');
+  assert.equal(request.year, year);
+  assert.match(request.text, new RegExp(`科思股份${year}年半年度报告`));
+  assert.match(request.text, /核验官方财报原文/u);
+  assert.throws(() => companyReportSceneRequest(options, 'cosmos'), /请选择/u);
+});
+
 test('report confirmation binds the selected company and explicit report period, not the first default company', () => {
   const request = companyReportSceneRequest(options, 'cosmos', 2026);
   assert.equal(request.companyId, 'cosmos'); assert.equal(request.year, 2026);

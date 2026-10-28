@@ -5,10 +5,11 @@ import type { AssistantWork } from '../../../shared/contracts/assistantWork';
 import { createAssistantFile, downloadAssistantFile } from '../../lib/assistantFilesApi';
 import { productionNavigationIdentity } from '../../lib/productionNavigation';
 
-export function AssistantAnalysisWork({ events, complete }: { events: AssistantWork[]; complete?: boolean }) {
+export function AssistantAnalysisWork({ events, complete, active = false }: { events: AssistantWork[]; complete?: boolean; active?: boolean }) {
+  const visible = active && !complete ? events : events.filter(e => e.status !== 'running');
   return <details className="mb-4" open={complete ? undefined : true}>
-    <summary className="cursor-pointer text-sm text-text-secondary">{complete ? '分析已完成 · 查看过程与依据' : events.some(e => e.status === 'failed') ? '分析未完成 · 查看过程' : '正在分析业务资料'}</summary>
-    <ol className="mt-3 space-y-2" aria-label="实际分析过程" aria-live="polite">{events.map(e => <li key={e.id} className="flex items-start gap-2 rounded-xl bg-surface-2 px-4 py-3 text-sm">
+    <summary className="cursor-pointer text-sm text-text-secondary">{complete ? '分析已完成' : !active || events.some(e => e.status === 'failed') ? '分析未完成' : '正在分析业务资料'}</summary>
+    <ol className="mt-3 space-y-2" aria-label="实际分析过程" aria-live="polite">{visible.map(e => <li key={e.id} className="flex items-start gap-2 rounded-xl bg-surface-2 px-4 py-3 text-sm">
       {e.status === 'running' ? <Loader2 size={16} className="mt-0.5 shrink-0 motion-safe:animate-spin"/> : e.status === 'failed' ? <CircleAlert size={16} className="mt-0.5 shrink-0 text-danger"/> : <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-success"/>}
       <strong className="shrink-0">{e.label}</strong><span className="text-text-secondary">{e.detail}</span>
     </li>)}</ol>

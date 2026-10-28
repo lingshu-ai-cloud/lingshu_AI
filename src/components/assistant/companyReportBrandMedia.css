@@ -1,0 +1,10 @@
+.company-report-brand-media{margin:18px 0 22px}
+.company-report-brand-media__grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.company-report-brand-media__item{min-width:0;margin:0;border:1px solid var(--color-border);border-radius:8px;overflow:hidden;background:var(--color-surface)}
+.company-report-brand-media__item>a{display:block;width:100%}
+.company-report-brand-media__image{min-height:210px;background:var(--color-surface)}
+.company-report-brand-media figcaption{display:flex;flex-direction:column;gap:4px;padding:12px;font-size:12px;line-height:18px;color:var(--color-text-muted)}
+.company-report-brand-media figcaption strong{font-size:14px;line-height:20px;color:var(--color-text-primary);font-weight:600}
+.company-report-brand-media figcaption a{width:fit-content;min-height:28px}
+.company-report .company-report-brand-media__note{font-size:11px;line-height:18px;color:var(--color-text-muted);margin:8px 0 0}
+@media(max-width:480px){.company-report-brand-media__grid{grid-template-columns:repeat(2,minmax(0,1fr))}.company-report-brand-media__image{min-height:170px}.company-report-brand-media__image img{height:170px!important}}

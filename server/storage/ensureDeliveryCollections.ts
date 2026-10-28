@@ -424,6 +424,10 @@ export async function ensureWeeklyCandidateSemanticBudgetCollections(): Promise<
 }
 
 export async function ensureDeliveryCollections(): Promise<void> {
+  await ensureCollection('social_insight_reports', [
+    ...['tenant_id','request_id','keyword','phase','requestHash','runId','datasetId'].map(name=>({name,type:'text' as const})),
+    {name:'job',type:'json'}, {name:'receipts',type:'json'}, {name:'usageTotalUsd',type:'number'},
+  ], ['CREATE UNIQUE INDEX idx_social_insight_request ON social_insight_reports (tenant_id, request_id)'], true);
   // Jobs are provisioned by the execution migration; never create a truncated queue schema.
   const executionJobs = await adminFetch('/api/collections/content_execution_jobs');
   if (!executionJobs.ok) throw new Error('content_execution_jobs_schema_missing');

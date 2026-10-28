@@ -1,9 +1,11 @@
+import { assistantOrdinaryReplyPolicy, assistantRequestsDetailedReply } from '../assistantContext/ordinaryReplyPolicy.js';
+import { assistantAccountConnectionIntent, accountConnectionReply } from '../../shared/assistantAccountConnection.js';
+import { registerSocialInsightReports } from './socialInsightReports.js';
 import { BusinessSceneError } from '../assistantContext/businessScenes/readScope.js';
 import { registerAssistantBusinessScenes } from './assistantBusinessScenes.js';
 import { sceneSelectionSchema } from '../../shared/contracts/assistantBusinessScene.js';
 import { businessSceneGrounding } from '../assistantContext/businessScenes/service.js';
 import { prepareExternalNewsScope } from '../assistantContext/externalNewsScope.js';
-import { authoritativeNewsAnswer } from '../externalInformation/authoritativeNews.js';
 import { CreationDialogueError } from '../assistantContext/contentCreationDialogue.js';
 import { registerContentCreationDialogue, readCreationChatGrounding } from './contentCreationDialogue.js';
 import {readAuthorizedWhatsAppCustomers} from '../whatsapp/authorizedCustomerRead.js';
@@ -56,7 +58,7 @@ ${ASSISTANT_DETAILS_POLICY}
 - 涉及市场趋势、平台打法、行业规模、竞品变化时，若不是来自企业中心或用户提供的数据，必须标注公开来源或说明“需要联网核验后才能下结论”。
 - 【上下文使用要求 · 必须遵守】用户消息里会带有【当前页面上下文】【当前模块】【企业中心摘要】。回答必须优先结合当前页面正在做的事；涉及主推品、市场、MOQ、交期、品牌语气、禁忌和客户画像时，优先引用企业中心信息；涉及外贸行业趋势、目标市场变化、平台打法、竞品/品类机会时，必须使用联网检索到的公开来源或明确说明需要联网核验；连续对话时承接前文目标、已生成内容和上轮限制，不要每轮重新自我介绍。
 - 【客户地域中立 · 必须遵守】不要默认客户来自义乌、珠三角或任何固定地区。只有用户消息或企业中心明确写出地区时才可引用；引用时必须说“当前企业资料显示……”，禁止把单个演示租户泛化成所有客户。
-- 【渠道闭环认知 · 必须遵守】集成中心不是“WhatsApp+TikTok”双通道链路。默认应理解为四大公域社媒平台 YouTube、TikTok、Instagram、Facebook 与 WhatsApp 私域共同构成“公域获客/内容分发 → 互动线索沉淀 → WhatsApp 私域承接 → 跟进转化/复购 → 反馈内容策略”的闭环；除非用户明确只问单个平台，不要把闭环窄化为两个平台的单向链接。没有真实账号数据或用户明确选择时，不得擅自说“以某两个平台为主阵地/优先平台”，只能说“先完成五个平台接入，再按账号数据决定优先级”。
+- 【渠道闭环认知 · 必须遵守】集成中心不是“WhatsApp+TikTok”双通道链路。默认应理解为四大公域社媒平台 YouTube、TikTok、Instagram、Facebook 与 WhatsApp 私域共同构成“公域获客/内容分发 → 互动线索沉淀 → WhatsApp 私域承接 → 跟进转化/复购 → 反馈内容策略”的闭环；除非用户明确只问单个平台，不要把闭环窄化为两个平台的单向链接。没有真实账号数据或用户明确选择时，不得擅自说“以某两个平台为主阵地/优先平台”，应按用户本轮目标选择需要接入的平台，不要求先连接全部平台。
 - 模型文本不得生成执行按钮或派发指令；真实执行入口由后台签名任务与产品组件提供。
 
 【输出格式要求 · 必须遵守】
@@ -98,6 +100,7 @@ ${ASSISTANT_DETAILS_POLICY}
 export const strategyRouter = Router();
 strategyRouter.use(requireAuth);
 registerContentCreationDialogue(strategyRouter);
+registerSocialInsightReports(strategyRouter);
 registerAssistantBusinessScenes(strategyRouter);
 
 strategyRouter.get('/company-report-options', async (_req, res) => {
@@ -418,6 +421,13 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
   const quickTaskReply = req.body?.responseMode === 'quick_task';
   const replyPresentation = parseAssistantReplyPresentation(req.body?.replyPresentation);
   const deepThinking = req.body?.deepThinking === true;
+  const accountConnection = !businessScene && !creationGrounding ? assistantAccountConnectionIntent(latestAssistantQuestion(messages), messages.at(-2)) : null;
+  if (accountConnection) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.write(`data: ${JSON.stringify({ text: accountConnectionReply(accountConnection.platform) })}\n\n`);
+    res.end('data: [DONE]\n\n'); return;
+  }
   if (!await consumeDemoQuota(req, res, 'aiChat')) return;
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -446,9 +456,12 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
     }
     if (newsScope) {
       work('sources', '检索并核验公开来源', '按当前问题查找相关原文与可引用依据');
-      const result = await authoritativeNewsAnswer(question, cancellation.signal);
-      work('sources', '检索并核验公开来源', `本轮已返回 ${result.sources.length} 条来源，结论与数据缺口见正文`, 'completed');
-      res.write(`data: ${JSON.stringify({ sources: result.sources, text: result.text })}\n\n`);
+      for await (const event of callLLMChatStream([{ role: 'user', content: question }], {
+        webSearch: true, requireSources: true, searchEvidenceFirst: true,
+        searchDomains: externalPlan.domains, searchFreshnessDays: externalPlan.freshnessDays,
+        timeoutMs: 120_000, signal: cancellation.signal,
+      })) res.write(`data: ${JSON.stringify(event)}\n\n`);
+      work('sources', '检索并核验公开来源', '原文核验与分析已完成，来源及数据缺口见报告', 'completed');
       finishAnalysis();
       return;
     }
@@ -474,10 +487,11 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
         work('company-report', '读取企业报告原文', '确认企业、期间与公开原文');
         const target = await resolveHalfYearReport(companyId, year, { signal: cancellation.signal });
         const report = await generateCompanyReport(target, tenantId, {
+          mode: /仅财报|纯财报|只(?:读取|解读|分析)财报/u.test(question) ? 'financial' : 'insights',
           signal: cancellation.signal,
           progress: phase => { if (!res.destroyed) res.write(`data: ${JSON.stringify({ companyReportProgress: phase, analysisWork: { id: 'company-report', label: '整理企业报告', detail: phase, status: 'running' } })}\n\n`); },
         });
-        work('company-report', '整理企业报告', '已完成报告原文核对与结果整理', 'completed');
+        work('company-report', '整理企业经营洞察', report.businessInsights?.status === 'ready' ? '财报与近期公开动态已核对，经营洞察已整理' : '财报已核对；近期公开动态未形成可交付分析，本次保留财报解读', 'completed');
         res.write(`data: ${JSON.stringify({ companyReport: report, text: companyReportSummary(report) })}\n\n`);
       }
       finishAnalysis();
@@ -511,11 +525,12 @@ strategyRouter.post('/chat', previewInformationScope, async (req, res) => {
     const systemPrompt = generalMethod ? `${GENERAL_METHOD_PROMPT}\n${grounding.text}${replyPolicy}`
       : `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${sourceRule}\n\n${grounding.text}\n${creationGrounding}\n${EXTERNAL_SOURCE_RULES}\n${externalEvidence}\n${ASSISTANT_CONTEXT_RULES}${replyPolicy}`;
     const adReportRule = businessScene?.sceneId === 'AD-01' ? '\n【本轮投放分析报告格式】输出适合对话阅读的小报告，包含统计范围、数据更新时间、币种与归因口径、核心结论、关键指标对比表、异常与数据缺口、关联当前真实计划的建议动作。仅引用已取得的数值，缺失项显示未知；不编造行业基准，不展示内部推理。' : '';
-    work('report', '整理分析报告', '根据已取得的资料整理结论、依据与数据缺口');
-    for await (const ev of callLLMChatStream(messages, { systemPrompt: systemPrompt + adReportRule, deepThinking, requireConclusion: requireSources, validateAnswer: generalMethod ? assertGeneralMethodAnswer : undefined, requireSources, webSearch: requireSources, searchDomains: requireSources ? externalPlan.domains : undefined, searchFreshnessDays: externalPlan.freshnessDays, signal: cancellation.signal })) {
+    const reportReply = !!businessScene || assistantRequestsDetailedReply(question);
+    work('report', reportReply ? '整理分析报告' : '整理回复', reportReply ? '根据已取得的资料整理结论与依据' : '结合当前资料回答问题');
+    for await (const ev of callLLMChatStream(messages, { systemPrompt: systemPrompt + adReportRule + assistantOrdinaryReplyPolicy(question) + '\n【真实账号连接入口】用户可在本对话发送“连接 TikTok 账号”（也支持 YouTube、Instagram、Facebook、LinkedIn），系统会呈现平台选择与官方授权按钮。是否可授权由现有服务端平台应用配置决定，授权完成后由服务端核验并补录真实账号；不能代用户授权。', deepThinking, requireConclusion: requireSources, validateAnswer: generalMethod ? assertGeneralMethodAnswer : undefined, requireSources, webSearch: requireSources, searchDomains: requireSources ? externalPlan.domains : undefined, searchFreshnessDays: externalPlan.freshnessDays, signal: cancellation.signal })) {
       res.write(`data: ${JSON.stringify(ev)}\n\n`);
     }
-    work('report', '整理分析报告', '本轮输出已完成，统计口径和缺口见正文', 'completed');
+    work('report', reportReply ? '整理分析报告' : '整理回复', '本轮回复已完成', 'completed');
     if (externalAnswer?.sources.length) res.write(`data: ${JSON.stringify({ text: appendInformationSources('', externalAnswer.sources) })}\n\n`);
     finishAnalysis();
   } catch (err: any) {

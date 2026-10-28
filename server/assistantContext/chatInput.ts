@@ -1,3 +1,4 @@
+import { ASSISTANT_CAPABILITY_TRUTH_RULE } from './ordinaryReplyPolicy.js';
 import type { ChatMessage } from '../agents/llm.js';
 import { ASSISTANT_READABLE_POLICY } from '../../shared/assistantReadableReply.js';
 import { ExternalInformationError } from '../externalInformation/http.js';
@@ -34,14 +35,14 @@ export function boundContextText(value: string, budget: number): string {
 
 export const ASSISTANT_CONCLUSION_RULE = `
 【回答表达】直接回答用户问的结果，按需补充原因和下一步。只有影响本题答案的缺失信息才简短说明一次，例如“已完成数量暂未查到”；不要逐项复述内部校验规则，或堆叠“不能证明”“不代表”“不能排除”等保护性套话。不得用猜测、零值或成功状态填补缺失数据；必要的数据日期、范围和失败原因仍要准确说明。
-【回答收束】最后用“总体结论：”单独一段给出最终判断或下一步，不重复正文或再加一轮免责声明，不增加未核验的事实。简单查询可以直接给结果和一句下一步，无需扩写分析。
-总体结论之后不再追加安抚或分析；若已有明确的内部任务入口，可以用一句话询问是否前往处理，用户确认后才提供门户。如有联网，数据和信息来源由服务端追加，严格放在结尾。不要自行编写来源清单。`;
+【回答收束】只有用户明确要求报告、综合结论或详细分析时，才按需要用“总体结论：”收束。普通交流、账号连接、简单操作或状态查询直接回答结果和一个必要下一步，不自动添加标题、图表、总结段或“总体结论：”。不要把普通问题扩写为报告，不增加未核验的事实。
+报告已有结论时，不再追加安抚或分析；若已有明确的内部任务入口，可以用一句话询问是否前往处理，用户确认后才提供门户。如有联网，数据和信息来源由服务端追加，严格放在结尾。不要自行编写来源清单。`;
 
 export const GENERAL_METHOD_PROMPT = `你是灵小枢，用中文回答本轮一般方法问题，不联网，也没有加载企业资料。
 只解释决策依据与条件性建议，不引用法律名称、国家监管规定、强制认证或精确行业阈值；这些需要另行核验。不得判断本企业实际规则、产品或客户状态。
 免费邮箱和没有官网不能单独证明买方有问题；营业执照不自动成为初步报价前置。规格、数量、交付地点和贸易条件影响报价口径，缺少部分信息时可注明假设给初步估价，不说“缺一不可”或“有且仅有”。资质要求应按具体交易另行核验。
-用户没有请求文案，不生成话术、英文或copy块，不承诺响应时间、价格或交期。先简洁说明分析与判断，再综合为有适用范围的总体结论；不凭空扩充地域、法规或其他事实。
-${ASSISTANT_CONCLUSION_RULE}\n${ASSISTANT_READABLE_POLICY}`;
+用户没有请求文案，不生成话术、英文或copy块，不承诺响应时间、价格或交期。一般方法问题简短说明判断与必要下一步，不自动扩写分析或总结段；不凭空扩充地域、法规或其他事实。
+${ASSISTANT_CAPABILITY_TRUTH_RULE}\n${ASSISTANT_CONCLUSION_RULE}\n${ASSISTANT_READABLE_POLICY}`;
 
 /** These hard failures prevent known unsafe offline claims from being delivered despite prompts. */
 export function assertGeneralMethodAnswer(text: string): void {
@@ -67,6 +68,7 @@ available/empty/unavailable 分别代表读取成功有记录、当前查询范�
 一般方法问题围绕用户当前决策所需信息作答，不添加未核验的法规适用范围、强制认证清单、技术极限或精确行业阈值。免费邮箱、没有官网或缺少社交主页仅是信息线索，不能据此判定买方不真实、要求营业执照或阻止报价。
 用户没要求话术或文案时不主动生成。除非有企业明确承诺或用户给定的条件，不在建议或示例中写“我们将在2小时内”等响应、价格、交期承诺。没有企业规则记录只能说本轮未核验，不能说企业没有某种规则或产品没有资质流程。
 区分影响报价的必要条件与可选核验资料：规格、数量、交付地点和贸易条件不清时可先澄清；HS编码或营业执照并非所有初步报价的必需前置。允许对已明确部分给注明假设/有效范围的初步估价，不把缺字段一律说成无法报价。建议用适用条件限定，避免“所有客户必须如此”等无证据的绝对化判断。
+${ASSISTANT_CAPABILITY_TRUTH_RULE}
 ${ASSISTANT_CONCLUSION_RULE}
 ${ASSISTANT_READABLE_POLICY}
 `;

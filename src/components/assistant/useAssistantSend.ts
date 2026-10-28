@@ -146,7 +146,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       setLoading(true); openAgent(routeAgent, 'chat');
       try {
         const applied = await requestCreationReply({ turn: { action: creationAction || 'start', selection, instruction: userText }, controller, isCurrent: current, persist: () => persistThread(PRIMARY_ASSISTANT_THREAD) });
-        if (applied && !controller.signal.aborted && sameAssistantRequestIdentity(token, getToken(), stablePersistenceScope)) setDraftInput(PRIMARY_ASSISTANT_THREAD, '');
+        if (applied && !options.preserveDraft && !controller.signal.aborted && sameAssistantRequestIdentity(token, getToken(), stablePersistenceScope) && useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].draftInput.trim() === userText) setDraftInput(PRIMARY_ASSISTANT_THREAD, '');
       } catch (error) {
         if (current() && !controller.signal.aborted) {
           const thread = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
@@ -161,7 +161,7 @@ export function useAssistantSend(input: AssistantSendInput) {
     if (contentIntake.active && !options.companyReport && !options.businessScene) {
       if (uploadedAttachments.length) { void uiMessage.warning('请先完成或取消当前任务问答，再发送附件。'); return; }
       contentIntake.answer(userText);
-      setDraftInput(PRIMARY_ASSISTANT_THREAD, '');
+      if (!options.preserveDraft) setDraftInput(PRIMARY_ASSISTANT_THREAD, '');
       return;
     }
     const requestToken = getToken();
@@ -208,7 +208,7 @@ export function useAssistantSend(input: AssistantSendInput) {
     const scene = !options.businessScene && !imagePortal && ['strategy','socialInspiration'].includes(page) && !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? assistantScenarioIntake(visibleText) : null;
     if (scene) {
       setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: scene.scenario === 'weekly_calendar' ? '发布日历在内容创作中，点击下方卡片即可打开。' : scene.scenario === 'hook_first' ? '先选一个开场片段，再确认产品和内容方向。' : scene.scenario === 'content_task' ? '先确认产品、内容方向和预计发布时间。' : '先确定活动信息，再安排要准备的内容。', creationPortal: scene }]);
-      setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
+      if (!options.preserveDraft) setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;
     }
@@ -219,21 +219,21 @@ export function useAssistantSend(input: AssistantSendInput) {
         creationPortal: { kind: 'content_creation', id: `replication-${requestId()}`, scenario: 'viral_replication',
           title: '爆款复刻', objective: visibleText.slice(0, 1000), requestedOutputCount: 1,
           outputType: 'video', platforms: [], aspectRatio: null, targetDurationSeconds: null } }]);
-      setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
+      if (!options.preserveDraft) setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;
     }
     const navigation = !options.businessScene && !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? confirmedAssistantNavigation(visibleText, lastMessage) : null;
     if (navigation) {
       setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: `点击下方入口前往${navigation.title}。` }]);
-      setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
+      if (!options.preserveDraft) setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;
     }
     const sourceReply = !options.businessScene && !creationDraft && !uploadedAttachments.length && !fileIntent && !creationAction ? assistantSourceFollowUp(visibleText, lastMessage) : null;
     if (sourceReply) {
       setMessages(threadAgent, [...nextVisible, sourceReply]);
-      setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
+      if (!options.preserveDraft) setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;
     }
@@ -241,7 +241,7 @@ export function useAssistantSend(input: AssistantSendInput) {
       && lastMessage?.role === 'assistant' ? confirmedTaskPortal(lastMessage.taskPortal, visibleText) : null;
     if (taskPortal) {
       setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: '点击下方入口继续处理这条任务。', taskPortal }]);
-      setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
+      if (!options.preserveDraft) setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;
     }
@@ -250,7 +250,7 @@ export function useAssistantSend(input: AssistantSendInput) {
     if (portal) {
       setMessages(threadAgent, [...nextVisible, { role: 'assistant',
         content: imagePortal ? '先确认参考图和企业产品，其他要求可以补充；确认后我来完成图片和配文。' : '创作需求已带入下方入口。\n\n总体结论：点击「内容创作」，确认产品和数量后继续制作。', creationPortal: portal }]);
-      setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
+      if (!options.preserveDraft) setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true);
       openAgent(routeAgent, 'chat'); persistThread(threadAgent);
       return;
     }
@@ -271,7 +271,7 @@ export function useAssistantSend(input: AssistantSendInput) {
         assistantAtomicMutationRef.current = false;
       }
       if (currentScope()) {
-        setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true); persistThread(threadAgent);
+        if (!options.preserveDraft && useAssistantStore.getState().threads[threadAgent].draftInput.trim() === userText) setDraftInput(threadAgent, ''); setFollowingLatest(threadAgent, true); persistThread(threadAgent);
       }
       return;
     }
@@ -409,7 +409,7 @@ export function useAssistantSend(input: AssistantSendInput) {
         onText: text => patchAssistant(msg => ({ ...msg, content: msg.content + text })),
         onSources: sources => patchAssistant(msg => ({ ...msg, sources })),
         onCompanyReport: (report, text) => patchAssistant(msg => ({ ...msg, content: text, companyReport: report })),
-        onCompanyReportProgress: phase => patchAssistant(msg => ({ ...msg, content: `正在${phase}…` })),
+        onCompanyReportProgress: phase => patchAssistant(msg => ({ ...msg, analysisWork: upsertAssistantWork(msg.analysisWork || [], { id: 'company-report', label: '整理企业报告', detail: phase, status: 'running' }) })),
         onAnalysisWork: work => patchAssistant(msg => ({ ...msg, analysisWork: upsertAssistantWork(msg.analysisWork || [], work) })),
         onAnalysisComplete: () => patchAssistant(msg => ({ ...msg, analysisComplete: true })),
         onTaskPortal: taskPortal => patchAssistant(msg => ({ ...msg, taskPortal })),

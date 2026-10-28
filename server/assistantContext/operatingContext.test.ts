@@ -23,7 +23,7 @@ test('tenant queries are bounded, records whitelisted and sources preserve empty
     return { items: [], totalItems: 0 };
   }) });
   assert.equal(context.generatedAt, '2026-10-10T01:00:00.000Z');
-  assert.equal(seen.length, 14);
+  assert.equal(seen.length, 19);
   const goal = context.sources.find(source => source.collection === 'weekly_goals')!;
   assert.equal(goal.state, 'available');
   assert.equal(goal.truncated, true);
@@ -88,4 +88,34 @@ test('sales and platform evidence preserve truthfulness states without contacts 
   assert.ok(prompt.includes('"status":"unknown"') && prompt.includes('"status":"failed"'));
   assert.ok(prompt.includes('"refundAmount":100') && prompt.includes('"test_record":true'));
   assert.ok(prompt.includes('询盘不是成交') && prompt.includes('不能说成功'));
+});
+
+test('ad and inquiry questions read canonical local ad evidence and keep budgets separate from provider spend', async () => {
+ const collections: string[] = [];
+ const context = await buildOperatingContext('tenant-a', { question: '检查投流消耗和询盘', dataStore: fake(async (collection, query) => {
+  collections.push(collection); assert.deepEqual(query?.where, { tenant_id: 'tenant-a' });
+  if (collection === 'platform_ad_tasks') return { totalItems: 1, items: [{ id: 'plan', tenant_id: 'tenant-a', name: '计划', budget: 100, currency: 'USD', status: 'draft', accessToken: 'PRIVATE' }] };
+  if (collection === 'platform_ad_metric_snapshots') return { totalItems: 1, items: [{ id: 'snapshot', tenant_id: 'tenant-a', date: '2026-10-20', currency: 'USD', metricDefinition: 'messages', reportTimezone: 'Asia/Shanghai', values: { spend: 20, impressions: 100, clicks: 3, results: null, secret: 'PRIVATE' } }] };
+  return { totalItems: 0, items: [] };
+ }) });
+ assert.ok(collections.includes('platform_ad_tasks') && collections.includes('platform_ad_metric_snapshots') && collections.includes('starter_quote_inquiries') && collections.includes('whatsapp_customers'));
+ const formatted = formatOperatingContext(context);
+ assert.match(formatted, /预算而非已花费/); assert.match(formatted, /不证明Meta账户没有历史投放/);
+ assert.ok(formatted.includes('"spend":20') && formatted.includes('"results":null')); assert.ok(!formatted.includes('PRIVATE'));
+});
+
+test('customer workspace coverage includes local and historical data without misclassifying them as real inquiries', async () => {
+ const context = await buildOperatingContext('tenant-a', { question: '检查整体经营和询盘', dataStore: fake(async () => ({ items: [], totalItems: 0 })), customerReader: async () => [
+  { id: 'live', tenantId: 'tenant-a', isReal: true, timeline: [{ body: 'PRIVATE_CONTACT' }] },
+  { id: 'history', tenantId: 'tenant-a', isHistorical: true, readOnly: true, timeline: [{ body: 'PRIVATE_CONTACT' }] },
+  { id: 'local', tenantId: 'tenant-a', isLocal: true, isMock: true, name: 'PRIVATE_NAME', timeline: [] },
+ ] });
+ assert.equal(context.customerCoverage?.state, 'available');
+ if (context.customerCoverage?.state === 'available') {
+  assert.equal(context.customerCoverage.returnedProfiles, 3); assert.equal(context.customerCoverage.verifiedLiveProfiles, 1);
+  assert.equal(context.customerCoverage.historicalProfiles, 1); assert.equal(context.customerCoverage.testProfiles, 1);
+ }
+ assert.doesNotMatch(formatOperatingContext(context), /PRIVATE/);
+ const foreign = await buildOperatingContext('tenant-a', { question: '询盘情况', dataStore: fake(async () => ({ items: [], totalItems: 0 })), customerReader: async () => [{ id: 'foreign', tenantId: 'tenant-b', name: 'PRIVATE' }] });
+ assert.equal(foreign.customerCoverage?.state, 'unavailable'); assert.doesNotMatch(formatOperatingContext(foreign), /PRIVATE/);
 });

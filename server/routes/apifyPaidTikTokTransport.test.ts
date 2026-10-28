@@ -209,3 +209,11 @@ test('recovery of a completed run cannot silently repeat a billable dataset GET'
     assert.equal(datasetPermits, 2);
   } finally { globalThis.fetch = oldFetch; }
 });
+
+
+test('successful Actor with zero completed search queries is a collection failure, not an empty dataset', async () => {
+  const oldFetch = globalThis.fetch; let reads = 0;
+  globalThis.fetch = async request => { const url = new URL(String(request)); if (url.pathname.includes('/actor-runs/')) return response({data:{...run,statusMessage:'Scraped 0/1 search queries'}}); if (url.pathname.includes('/datasets/')) { reads++; return response([]); } throw Error('unexpected'); };
+  try { const f = fixture({status:'submitted_known',runId:'run1',datasetId:'dataset1'}); await assert.rejects(runPaidApifyTikTokDataset({actorId:f.permit.actorId,actorInput:{searchQueries:['sunscreen']},permit:f.permit,token:'secret-test',maxItems:5,settlementDelayMs:0}), /apify_paid_search_uncompleted/); assert.equal(reads,0); }
+  finally { globalThis.fetch = oldFetch; }
+});

@@ -1,3 +1,4 @@
+import { chatWorkflowDeadlines } from './chatWorkflowDeadline.js';
 import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 import {qwenCompatibleBaseUrl} from '../lib/qwenCompatibleEndpoint.js';
@@ -32,6 +33,8 @@ export interface LLMCallOptions {
   signal?: AbortSignal;
   /** Hard per-provider deadline. Defaults to LLM_REQUEST_TIMEOUT_MS or 90s. */
   timeoutMs?: number;
+  /** A paid workflow may forbid SDK retries even when the provider default enables them. */
+  maxRetries?: 0;
 }
 
 function resolveBackend(opts: LLMCallOptions): LLMBackend {
@@ -350,6 +353,7 @@ async function completeQwenMessages(
   const client = createQwenClient();
   const request = {
     model: opts.model ?? process.env.QWEN_TEXT_MODEL ?? 'qwen-plus',
+    ...(opts.deepThinking === false && /^qwen3[.-]/u.test(opts.model ?? process.env.QWEN_TEXT_MODEL ?? '') ? { enable_thinking: false } : {}),
     messages,
     max_tokens: opts.deepThinking ? 8192 : 4096,
     ...(opts.requireSources ? {
@@ -360,6 +364,7 @@ async function completeQwenMessages(
   const completion = await client.chat.completions.create(request as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming, {
     ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
+    ...(opts.maxRetries === 0 ? { maxRetries: 0 } : {}),
   });
   if (completion.choices[0]?.finish_reason !== 'stop') throw new Error('模型续写未完整结束，请重试。');
   const text = completion.choices[0]?.message?.content;
@@ -369,13 +374,13 @@ async function completeQwenMessages(
 
 export async function* callLLMChatStream(messages: ChatMessage[], opts: LLMCallOptions = {}): AsyncGenerator<StreamEvent> {
   const backend = resolveBackend(opts);
-  const configured = Number(opts.timeoutMs ?? process.env.LLM_REQUEST_TIMEOUT_MS ?? 90_000);
-  const deadline = createLinkedAbort({ parentSignal: opts.signal, timeoutMs: Number.isFinite(configured) ? Math.max(1000, Math.min(configured, 120_000)) : 90_000 });
+  const timing = chatWorkflowDeadlines({ ...opts, backend, configuredTimeout: process.env.LLM_REQUEST_TIMEOUT_MS });
+  const deadline = createLinkedAbort({ parentSignal: opts.signal, timeoutMs: timing.workflowMs });
   let release: (() => void) | undefined;
   try {
     release = await llmSemaphore.acquire(deadline.signal);
     const needsSources = opts.requireSources === true || opts.webSearch === true;
-    const options = { ...opts, requireSources: needsSources, signal: deadline.signal,
+    const options = { ...opts, timeoutMs: timing.requestMs, requireSources: needsSources, signal: deadline.signal,
       ...(needsSources ? { systemPrompt: `${opts.systemPrompt ?? ''}\n${SEARCH_ORIGINAL_RULES}` } : {}) };
     if (backend === 'qwen' && needsSources) {
       const answer = await qwenSearchAnswer(messages, options);

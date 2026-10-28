@@ -1,6 +1,9 @@
+import { AssistantSearchFailure, assistantSearchFailure } from './AssistantSearchFailure';
+import AssistantAccountConnection from './AssistantAccountConnection';
+import { accountConnectionReplyPlatform } from '../../../shared/assistantAccountConnection';
 import type { ReactNode } from 'react';
 import { Button } from 'antd';
-import { ArrowRight, CalendarRange, ExternalLink, Loader2, Play } from 'lucide-react';
+import { ArrowRight, CalendarRange, ExternalLink, Play } from 'lucide-react';
 import type { AgentAction, Message, Page } from '../../App';
 import type { AssistantProductionContext } from '../../lib/assistantProductionDecision';
 import { useAssistantStore, type AssistantTaskCard } from '../../stores/assistantStore';
@@ -17,6 +20,7 @@ import AssistantMascot from './AssistantMascot';
 import CompanyReportCard from './CompanyReportCard';
 import { assistantReplyPresentationForPromptId, assistantReplyPresentationForText, isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
 import { AssistantAnalysisWork, AssistantReportExport } from './AssistantAnalysisWork';
+import { AssistantWaitingProgress } from './AssistantWaitingProgress';
 import AssistantBusinessSceneChoice from './AssistantBusinessSceneChoice';
 import AssistantNavigationPortalCard from './AssistantNavigationPortalCard';
 import { navigationPortalForAnswer } from '../../lib/assistantNavigationPortal';
@@ -42,6 +46,7 @@ interface Props {
   onSuggest: (suggestion: string) => void;
   contentIntakeNode: ReactNode;
   loading: boolean;
+  replyStreaming: boolean;
   focusedTaskCard: AssistantTaskCard | null;
   onOpenTaskDetail: (trigger: HTMLButtonElement, taskId: string) => void;
   weeklyPlanKickoffAvailable: boolean;
@@ -55,7 +60,7 @@ export default function AssistantConversationBubbles(props: Props) {
     decisionFeedActive, onOpenChat, onOpenFeedDetail, onFeedChange,
     welcomeBubbleVisible, activeAgentLabel, messages, onAction, onSuggest,
     reduceMotion,
-    contentIntakeNode, loading, focusedTaskCard, onOpenTaskDetail,
+    contentIntakeNode, loading, replyStreaming, focusedTaskCard, onOpenTaskDetail,
     weeklyPlanKickoffAvailable, onOpenWeeklyPlan, weeklyPlanExperience } = props;
   return (
     <div className={inlineHome ? 'ls-assistant-flow' : 'space-y-4'}>
@@ -83,7 +88,10 @@ export default function AssistantConversationBubbles(props: Props) {
         </div>
       )}
 
-      {messages.map((msg, index) => (
+      {messages.map((msg, index) => {
+        const active = index === messages.length - 1 && (loading || replyStreaming);
+        const searchFailure = msg.role === 'assistant' && !msg.companyReport ? assistantSearchFailure({ content: msg.content, sources: msg.sources, events: msg.analysisWork, active }) : null;
+        return (
         <div key={`${msg.role}-${index}`} data-assistant-bubble={msg.role}
           className={`ls-assistant-bubble-enter flex gap-2 ${inlineHome ? `ls-assistant-flow__turn ls-assistant-flow__turn--${msg.role}` : msg.role === 'user' ? 'justify-end' : ''}`}
           style={assistantBubbleStyle(index + (welcomeBubbleVisible ? 1 : 0))}>
@@ -104,13 +112,15 @@ export default function AssistantConversationBubbles(props: Props) {
             </article>}
             <div className={inlineHome ? 'ls-assistant-flow__prompt whitespace-pre-line' : 'ls-messenger-bubble ls-messenger-bubble--outbound whitespace-pre-line'}>{msg.content}</div>
           </div> : <div className={inlineHome ? 'ls-assistant-flow__answer' : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
-            {msg.analysisWork?.length ? <AssistantAnalysisWork events={msg.analysisWork} complete={msg.analysisComplete}/> : null}
-            {msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction}
+            {index === messages.length - 1 && (loading || replyStreaming) && <AssistantWaitingProgress events={msg.analysisWork}/>}
+            {!searchFailure && msg.analysisWork?.length && !active ? <AssistantAnalysisWork events={msg.analysisWork} complete={msg.analysisComplete}/> : null}
+            {searchFailure ? <AssistantSearchFailure failure={searchFailure}/> : msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction}
               compact={inlineHome && isAssistantHomeQuickTaskText(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
               presentation={inlineHome ? assistantReplyPresentationForText(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')
                 || (msg.businessScene ? assistantReplyPresentationForPromptId(msg.businessScene.sceneId) : undefined) : undefined}
               detailExpanded={assistantWantsDetailedReply(messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')}
-              onSuggest={onSuggest} /> : <span className="opacity-40">...</span>}
+              onSuggest={onSuggest} /> : index === messages.length - 1 && (loading || replyStreaming) ? null : <span className="opacity-40">...</span>}
+            {accountConnectionReplyPlatform(msg.content) && <AssistantAccountConnection platform={accountConnectionReplyPlatform(msg.content)?.platform}/>}
             {msg.creationPortal && <AssistantCreationPortalCard key={msg.creationPortal.id} portal={msg.creationPortal} />}
             {msg.taskPortal && <AssistantTaskPortalCard key={`${msg.taskPortal.taskId}:${msg.taskPortal.phase}`} portal={msg.taskPortal} />}
             {msg.sourcePortal && <AssistantSourcePortalCard portal={msg.sourcePortal} />}
@@ -120,17 +130,16 @@ export default function AssistantConversationBubbles(props: Props) {
             {msg.businessScenePrompt && <AssistantBusinessSceneChoice key={`${useAssistantStore.getState().threads.business.conversationKey || ''}:${index}`} request={msg.businessScenePrompt}/>}
           </div>}
         </div>
-      ))}
+      ); })}
 
       {contentIntakeNode}
 
       <AssistantWeeklyPlanCard experience={weeklyPlanExperience}/>
 
-      {loading && (
-        <div role="status" aria-live="polite" data-assistant-bubble="loading" className={`ls-assistant-bubble-enter flex gap-2 ${inlineHome ? 'ls-assistant-flow__turn ls-assistant-flow__turn--assistant' : ''}`}
+      {(loading || replyStreaming) && messages.at(-1)?.role !== 'assistant' && (
+        <div data-assistant-bubble="loading" className={`ls-assistant-bubble-enter flex gap-2 ${inlineHome ? 'ls-assistant-flow__turn ls-assistant-flow__turn--assistant' : ''}`}
           style={assistantBubbleStyle(messages.length + (welcomeBubbleVisible ? 1 : 0))}>
-          {!inlineHome && <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Loader2 size={13} className="motion-safe:animate-spin" /></div>}
-          <div className={inlineHome ? 'ls-assistant-flow__thinking' : 'ls-messenger-bubble ls-messenger-bubble--inbound text-text-muted'}>{inlineHome ? <><span>正在组织内容</span><i/><i/><i/></> : '思考中...'}</div>
+          <AssistantWaitingProgress events={messages.at(-1)?.role === 'assistant' ? messages.at(-1)?.analysisWork : undefined} />
         </div>
       )}
 

@@ -36,9 +36,9 @@ export default function BusinessOverviewAnalytics({ data, identity, sampleEnable
   const audienceLabel = (label: string) => dimension === 'gender' ? ({ male: '男性', female: '女性', unknown: '未知' }[label] || label) : label;
   const funnelKeys: MetaMetricKey[] = ['impressions', 'linkClicks', 'messagingConversations', 'leads'];
   const funnelStages = funnelKeys.map(key => ({ label: META_PERFORMANCE_FIELDS[key].label, value: totals?.[key] ?? null }));
-  return <div className="business-overview-analytics space-y-5">
-    <section className="overview-analytics-section" aria-label="爆款与流量">
-      <header className="overview-analytics-heading"><div><h2>爆款与曝光</h2><p>整体曝光 = 付费流曝光 + 自然流曝光 · 以同账户、同周期、同口径的展示次数统计</p></div></header>
+  return <div className="business-overview-analytics">
+    <section className="overview-analytics-section" aria-label="流量与曝光">
+      <header className="overview-analytics-heading"><div><h2>流量与曝光</h2><p>整体曝光 = 付费流曝光 + 自然流曝光 · 以同账户、同周期、同口径的展示次数统计</p></div></header>
       <div className="overview-exposure-layout">
         <div className="overview-exposure-formula" aria-label="流量曝光公式卡片">
           <div className="overview-formula-values">
@@ -57,8 +57,8 @@ export default function BusinessOverviewAnalytics({ data, identity, sampleEnable
         </div>
       </div>
     </section>
-    <section className="overview-analytics-section" aria-label="投流数据">
-      <header className="overview-analytics-heading"><div><h2>投流</h2><p>Meta 标准投放数据 · {scope}</p></div><Button type="link" onClick={() => onNavigate?.('adsPlans')}>查看业务详情<ArrowRight size={13}/></Button></header>
+    <section className="overview-analytics-section" aria-label="投流与转化">
+      <header className="overview-analytics-heading"><div><h2>投流与转化</h2><p>Meta 标准投放数据 · {scope}</p></div><Button type="link" onClick={() => onNavigate?.('adsPlans')}>查看业务详情<ArrowRight size={13}/></Button></header>
       <div className="overview-meta-controls">
         <Select aria-label="经营总览 Meta 账户" value={meta.account?.key} placeholder="选择 Meta 广告账户" onChange={meta.select} options={meta.accounts.map(account => ({ value: account.key, label: `${account.name} · ${account.currency}` }))}/>
         <Select aria-label="Meta 统计周期" value={meta.days} onChange={meta.setDays} options={[{ value: 7, label: '最近 7 天' }, { value: 30, label: '最近 30 天' }]}/>

@@ -22,7 +22,13 @@ export async function externalText(url: URL, options: {
   try {
     const response = await (options.fetcher ?? fetch)(url, { ...options.init, redirect: 'error', signal: deadline.signal });
     if (!response.ok) {
-      await response.body?.cancel();
+      if (response.status === 403 && url.hostname === 'maas.qianwenaiapi.com') {
+        const rejection = await response.json().catch(() => null) as { code?: unknown } | null;
+        if (rejection?.code === 'AccessDenied.Unpurchased') {
+          throw new ExternalInformationError('qwen_model_access_denied', '千问暂未授予模型调用权限，请检查千问账户余额及模型开通状态后重试。');
+        }
+      }
+      if (!response.bodyUsed) await response.body?.cancel();
       throw new ExternalInformationError(response.status === 429 ? 'external_rate_limited' : 'external_http_error',
         response.status === 429 ? '数据源暂时限流，请稍后再查。' : '外部数据源暂时不可用，请稍后再查。');
     }

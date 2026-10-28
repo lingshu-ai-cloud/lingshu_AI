@@ -4,9 +4,34 @@ import type { CompanyReportOptions } from '../../../shared/contracts/companyFili
 import { companyReportSceneRequest, fetchCompanyReportOptions } from '../../lib/companyReportApi';
 import './companyReportScene.css';
 
-export default function CompanyReportScene({ busy, onCancel, onPrompt, onConfirm }: {
-  busy: boolean; onCancel: () => void;
-  onPrompt: (text: string) => void;
+// Visible artwork bounds (including a small safety margin), not image canvas bounds.
+// CSS compensates for the different source padding without modifying the supplied logos.
+const COMPANY_LOGOS: Record<string, { file?: string; size: [number, number]; bounds: [number, number, number, number] }> = {
+  bloomage: { size: [356, 154], bounds: [39, 36, 293, 140] },
+  proya: { size: [322, 128], bounds: [41, 19, 260, 110] },
+  botanee: { size: [390, 68], bounds: [36, 23, 308, 68] },
+  freda: { file: 'freda-transparent.png', size: [1840, 855], bounds: [224, 197, 1633, 714] },
+  cosmos: { size: [452, 306], bounds: [52, 33, 253, 208] },
+  jahen: { size: [480, 144], bounds: [10, 2, 422, 137] },
+  jahwa: { size: [444, 98], bounds: [42, 20, 410, 93] },
+  marubi: { size: [454, 132], bounds: [44, 35, 370, 89] },
+};
+
+function CompanyLogo({ id }: { id: string }) {
+  const logo = COMPANY_LOGOS[id];
+  if (!logo) return null;
+  const [left, top, right, bottom] = logo.bounds;
+  const width = right - left, height = bottom - top;
+  const scale = Math.min(152 / width, 64 / height);
+  return <span className="company-report-scene__logo-art" style={{ width: width * scale, height: height * scale }}>
+    <img src={`/company-logos/${logo.file ?? `${id}.png`}`} alt="" aria-hidden="true" draggable={false}
+      style={{ width: `${logo.size[0] / width * 100}%`, height: `${logo.size[1] / height * 100}%`,
+        left: `${-left / width * 100}%`, top: `${-top / height * 100}%` }}/>
+  </span>;
+}
+
+export default function CompanyReportScene({ busy, onConfirm }: {
+  busy: boolean;
   onConfirm: (request: ReturnType<typeof companyReportSceneRequest>) => void;
 }) {
   const [options, setOptions] = useState<CompanyReportOptions | null>(null);
@@ -29,39 +54,26 @@ export default function CompanyReportScene({ busy, onCancel, onPrompt, onConfirm
   const company = options?.companies.find(item => item.id === companyId);
   const report = company?.reports.find(item => item.year === year);
   const chooseCompany = (id: string) => {
-    setCompanyId(id); setYear(options?.companies.find(item => item.id === id)?.reports[0]?.year);
+    submitted.current = false; setCompanyId(id); setYear(options?.companies.find(item => item.id === id)?.reports[0]?.year);
   };
   const confirm = () => {
-    if (!options || !companyId || !year || report?.status !== 'available' || busy || submitted.current) return;
+    if (!options || !companyId || report?.status === 'needs_review' || busy || submitted.current) return;
     submitted.current = true;
     onConfirm(companyReportSceneRequest(options, companyId, year));
   };
   return <section ref={panel} className="company-report-scene" aria-label="选择重点企业">
-    <div className="company-report-scene__header"><strong>选择重点企业</strong><span>选择一家企业，确认报告期间后生成深度解读</span></div>
+    <div className="company-report-scene__header"><strong>选择重点企业</strong><span>选择企业和财报期间，结合近90天公开动态生成经营洞察</span></div>
     {error ? <Alert type="error" showIcon title={error} action={<Button size="small" onClick={() => setRevision(value => value + 1)}>重新加载</Button>}/> : !options ?
       <div className="company-report-scene__loading" role="status"><Spin size="small"/>正在读取已核验的企业财报目录…</div> : <>
       <div className="company-report-scene__companies">
         <Radio.Group name="company-report-target" role="radiogroup" value={companyId} onChange={event => chooseCompany(String(event.target.value))} aria-label="重点企业"
           optionType="button" options={options.companies.map(item => ({ value: item.id,
-            label: <><strong>{item.name}</strong><span>{item.segment}</span></>,
+            label: <><span className="company-report-scene__logo"><CompanyLogo id={item.id}/></span><strong>{item.name}</strong><span className="company-report-scene__segment">{item.segment}</span></>,
           }))}/>
       </div>
-      <div className="company-report-scene__selection">
-        {company ? <><span>{company.name} · {company.code}</span><label htmlFor="company-report-period">报告期间</label>
-          <Select id="company-report-period" aria-label="报告期间" value={year} onChange={setYear} placeholder="暂无可用半年报" disabled={!company.reports.length}
-            options={company.reports.map(item => ({ value: item.year, label: `${item.period}${item.status === 'needs_review' ? ' · 版本待核对' : ''}` }))}/>
-          {report && <span>统计期间：一至六月 · 原文披露 {report.publishedAt}</span>}
-        </> : <span>请先选择目标企业</span>}
-      </div>
-      {company && !company.reports.length && <section className="space-y-2"><p>{company.name}（{company.code}）· {company.segment}</p>
-        <p className="text-sm text-text-secondary">本地还没有可核验的半年报全文。可以先看企业公开信息，或读取官方财报目录。</p>
-        <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => onPrompt(`请查询${company.name}（${company.code}）的企业公开信息，介绍主营业务、产品和海外布局，优先引用官网及公开披露；缺少半年报不影响呈现已核验的信息，不推算财务数字。`)}>查看企业公开信息</Button>
-          <Button disabled={busy} onClick={() => onPrompt(`刷新${company.name}历史财报目录`)}>刷新官方财报目录</Button></div>
-      </section>}
+      {company && <div className="company-report-scene__selection"><span>{company.name} · {company.code}</span><label htmlFor="company-report-period">财务基准</label><Select id="company-report-period" aria-label="财报期间" value={year} onChange={value => { submitted.current = false; setYear(value); }} disabled={!company.reports.length} placeholder="生成时检索官方半年报" options={company.reports.map(item => ({ value: item.year, label: item.period + (item.status === 'needs_review' ? '（版本待核对）' : '') }))}/><span>公开动态：近90天</span></div>}
       {report?.status === 'needs_review' && <Alert type="warning" title="该期间有更正或版本变化，核对前暂不生成报告。"/>}
     </>}
-    <div className="company-report-scene__footer"><p>{busy ? '当前回复完成后即可生成。' : '基于所选期间的财报原文生成研究草稿，附数字对照、业务解读及来源页码。'}</p>
-      <div><Button onClick={onCancel}>取消</Button><Button type="primary" disabled={!report || report.status !== 'available' || busy} onClick={confirm}>填入输入框</Button></div>
-    </div>
+    <div className="company-report-scene__footer"><Button type="primary" disabled={!company || report?.status === 'needs_review' || busy} onClick={confirm}>生成经营洞察</Button></div>
   </section>;
 }

@@ -437,7 +437,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         <div className={embedded ? 'py-5 lg:py-6' : 'px-4 py-5 sm:px-6 lg:py-6'}>
           {!embedded && <LsPageHeader title="灵感集市" description="查看外部参考、管理产品素材，并将内容证据交接到制作流程。" />}
           <div className="mb-4 flex min-w-0 flex-col gap-3 border-b border-border lg:flex-row lg:items-start">
-            {embedded ? <h2 className="py-3 text-sm font-semibold text-text-primary">爆款素材</h2> : <Tabs className="min-w-0 flex-1" activeKey={innerView} onChange={key => setInnerView(key as InspirationInnerView)} aria-label="灵感集市分类"
+            {embedded ? <h2 className="py-3 text-sm font-semibold text-text-primary">灵小枢，帮我找本周热门素材</h2> : <Tabs className="min-w-0 flex-1" activeKey={innerView} onChange={key => setInnerView(key as InspirationInnerView)} aria-label="灵感集市分类"
               items={[
                 { key: 'inspiration', label: `爆款视频 · ${tenantVideoTotalItems ?? '…'}`, icon: <Flame size={16} /> },
                 { key: 'library', label: `素材库 · ${!materials.inventoryLoaded ? (materials.materialsLoading ? '加载中' : '待加载') : materialTotal}`, icon: <Film size={16} /> },

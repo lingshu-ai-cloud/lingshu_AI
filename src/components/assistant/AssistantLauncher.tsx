@@ -21,7 +21,7 @@ export default function AssistantLauncher({
   retracted, chatOpen, badgeCount, reduceMotion, weeklyPlanOperating = false, launcherButtonRef, edgeLauncherButtonRef,
   onLauncherClick, onRetract, onRestore,
 }: Props) {
-  const closedLabel = weeklyPlanOperating ? '周计划正在运营中' : '周计划待生成';
+  const closedLabel = weeklyPlanOperating ? '周计划正在执行中' : '周计划待生成';
   if (retracted && !chatOpen) {
     return (
       <Badge count={badgeCount} overflowCount={9} size="small">

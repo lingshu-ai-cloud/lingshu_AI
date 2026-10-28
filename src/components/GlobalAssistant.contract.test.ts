@@ -74,7 +74,7 @@ assert.match(assistantRootMarkup, /launcherRetracted && mode === 'breathing'[\s\
 assert.match(assistantRootMarkup, /bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\][\s\S]*md:bottom-5/, '灵小枢入口必须使用统一安全区基准，桌面端不得留下大块底部空白');
 assert.doesNotMatch(assistantRootMarkup, /5\.5rem/, '制作页不得通过额外抬高灵小枢入口制造底部空白');
 assert.match(conversationPanelSource, /assistantUsesMobileClearance[\s\S]{0,240}viewport\.height - \(assistantUsesMobileClearance \? 160 : 96\)/, '移动端抬高入口时必须同步收紧对话高度，不能把面板顶部裁掉');
-assert.match(launcherSource, /const closedLabel = weeklyPlanOperating \? '周计划正在运营中' : '周计划待生成'/, '右下角入口必须根据真实周运行状态给出明确文案');
+assert.match(launcherSource, /const closedLabel = weeklyPlanOperating \? '周计划正在执行中' : '周计划待生成'/, '右下角入口必须根据真实周运行状态给出明确文案');
 assert.doesNotMatch(weeklyPlanHookSource, /digitalEmployeeApi\.createGoal|defaultWeeklyGoal/, '打开周计划时不得在后台默默创建或保存默认计划');
 assert.match(weeklyPlanHookSource, /digitalEmployeeApi\.overview\(\)[\s\S]{0,280}lingshu:navigate[\s\S]{0,180}page:'digitalEmployees'[\s\S]{0,280}lingshu:open-weekly-plan/, '灵小枢周计划入口必须读取真实状态并打开经营总览中的唯一编辑页');
 assert.match(weeklyPlanHookSource, /在你确认前不会保存或启动计划/, '系统预填建议必须明确保持用户确认边界');
@@ -209,7 +209,7 @@ assert.match(source, /inlineHomeAnchor \? createPortal\(assistantRoot, inlineHom
 assert.match(source, /!inlineHome && <AssistantLauncher/, '首页只有创作输入区，不叠加全局浮动入口');
 assert.match(homeAnchorSource, /ASSISTANT_HOME_PROMPT_EVENT = 'lingshu:assistant-home-prompt'[\s\S]*useAssistantHomeInteraction[\s\S]*const draft = mergeAssistantHomePrompt[\s\S]*setDraftInput\(agent, draft\)/, '首页快捷建议必须写入原助手草稿');
 assert.match(source, /pendingHomeSubmissionRef = useRef<AssistantHomePendingSubmission \| null>/, '结构化查询条件必须等待用户显式发送');
-assert.match(source, /useAssistantHomeInteraction\([\s\S]{0,300}setPendingHomeSubmission\)/, '首页草稿须保留待提交的结构化条件');
+assert.match(source, /useAssistantHomeInteraction\([\s\S]{0,300}setPendingHomeSubmission, detail =>/, '首页草稿须保留待提交的结构化条件');
 assert.match(conversationPanelSource, /<AssistantComposer variant=\{inlineHome \? 'home' : 'default'\}/, '首页沿用同一聊天与上传契约，仅切换输入区外观');
 assert.match(conversationPanelSource, /ls-assistant-panel__header[^"\n]*bg-surface/, '助手标题栏统一使用主题表面');
 assert.doesNotMatch(conversationPanelSource, /bg-gradient-to-r from-blue-50 via-violet-50 to-pink-50/, '夜间模式不得保留浅色专用标题条');
@@ -257,13 +257,13 @@ assert.match(conversationBubblesSource, /data-assistant-bubble="weekly-plan-kick
 assert.match(source, /openWeeklyPlanFromAssistant[\s\S]{0,300}onNavigate\?\.\('digitalEmployees'\)[\s\S]{0,220}lingshu:open-weekly-plan[\s\S]{0,120}source: 'assistant'/, '灵小枢计划按钮必须导航到权威周计划页并派发明确来源的页面动作');
 assert.doesNotMatch(source, /productionSuggestions|data-assistant-surface="production-suggestions"|aria-label="生产快捷问题"/, '不得在页面快捷入口上方重复渲染生产快捷问题');
 const pageQuickEntrySource = sourceSection(
-  '<AssistantQuickEntries',
+  '<AssistantHomeScenes',
   '<AssistantComposer',
   '输入框上方的页面快捷入口',
   conversationPanelSource,
 );
-assert.match(pageQuickEntrySource, /page=\{page\}/, '移除重复生产问题后仍须保留当前页面快捷入口');
-assert.match(pageQuickEntrySource, /onQuestion=\{entry => void send\(entry\.prompt, currentPageAgent\)\}/, '页面快捷问题仍须进入当前业务上下文');
+assert.match(pageQuickEntrySource, /variant="sidebar"[\s\S]*agent=\{activeAgent\}/, '侧边助手复用首页场景并写入当前会话');
+assert.match(pageQuickEntrySource, /setDraftInput\(activeAgent, draft\)[\s\S]*setPendingHomeSubmission/, '场景选择须保留草稿与结构化条件等待显式发送');
 
 const decisionActionResultSource = sourceSection(
   'const handleDecisionActionResult',
@@ -488,7 +488,7 @@ assert.match(quickExecutionSource, /if \(!confirmations\)/, '生产任务启动�
 assert.match(quickExecutionSource, /startAssistantAction\(entry\.taskId, entry\.expectedVersion, executionRequestId\)/, '确认完成后必须向真实任务提交对象版本和幂等键');
 assert.match(quickExecutionSource, /upsertTaskCard\(PRIMARY_ASSISTANT_THREAD/, '真实执行回执必须投影为任务卡片');
 assert.match(taskCardActionsHookSource, /destination\.origin === window\.location\.origin[\s\S]*socialContentTaskId: productionTaskId, socialContentPage: 'smartAssets', directStudio: true/, '生产回执链接必须原子恢复指定任务而非刷新成空制作页');
-assert.match(conversationPanelSource, /<AssistantQuickEntries[\s\S]*onQuestion=\{entry => void send\(entry\.prompt, currentPageAgent\)\}[\s\S]*onExecute=\{entry => void runQuickExecution\(entry\)\}/, '输入框上方必须同时接通页面问答与快捷执行');
+assert.doesNotMatch(conversationPanelSource, /<AssistantQuickEntries|onQuestion=\{entry => void send/, '侧边场景不得再作为快捷回复点击即发送');
 assert.match(hydrationSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\s*!==\s*threadBeforeRequest/, '旧线程快照不得覆盖请求期间产生的本地输入');
 assert.match(hydrationSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\s*!==\s*hydratedThread/, '过期重签结果不得覆盖请求期间产生的新卡片或焦点');
 assert.match(hydrationSource, /actionCardToTaskCard\(response\.card, response, CURRENT_STATUS_TASK_ID\)/, '重新签发的动作必须进入专用的权威状态卡');
