@@ -18,6 +18,8 @@ test('scenario query drafts route to the existing internal, grounded search and 
   assert.deepEqual(parseTradeQuestion(homeQuickPrompt('trade', { country: '中国', year: 2024, flow: '出口', hs: '8504' })), { year: 2024, hs: '8504', reporter: 156, flow: 'X', partner: 0 });
   assert.throws(() => homeQuickPrompt('industry'));
   assert.throws(() => homeQuickPrompt('industry', { industry: '家具' }), /目标市场/);
+  for (const market of ['中国', '中国大陆', 'China', 'Mainland China']) assert.throws(() => homeQuickPrompt('industry', { industry: '美妆', market }), /暂不支持中国地区/);
+  assert.match(homeQuickPrompt('industry', { industry: '美妆', market: '全球' }), /目标市场：全球/);
   assert.match(industry, /^行业资讯：行业：家具，目标市场：全球/);
   assert.throws(() => homeQuickPrompt('rates', { base: '美元', quote: '美元' }));
   assert.throws(() => homeQuickPrompt('trade', { country: '中国', year: 2024, flow: '出口', hs: 'XX' }));

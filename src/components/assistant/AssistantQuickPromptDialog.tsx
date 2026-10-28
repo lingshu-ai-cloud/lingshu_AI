@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Input, InputNumber, Select } from 'antd';
+import { Alert, AutoComplete, Input, InputNumber, Select } from 'antd';
 import { LsFlowDialog } from '../ui/LsExperiencePrimitives';
 import { homeQuickPrompt } from '../../lib/assistantQueryQuickPrompts';
 
@@ -15,7 +15,7 @@ export default function AssistantQuickPromptDialog({ kind, onClose, onPrompt }: 
     okText="填入输入框" cancelText="取消" onOk={submit} onCancel={onClose}>
     {error && <Alert className="mb-4" type="error" title={error}/>}
     <div className="space-y-4">
-      {kind === 'industry' && <><label className="block">关注的行业<Input aria-label="关注的行业" className="mt-2" maxLength={60} placeholder="例如：美妆原料、家具、消费电子" value={industry} onChange={event => setIndustry(event.target.value)}/></label><label className="block">目标市场<Input aria-label="目标市场" className="mt-2" maxLength={60} placeholder="例如：中国、欧盟、全球" value={market} onChange={event => setMarket(event.target.value)}/></label></>}
+      {kind === 'industry' && <><label className="block">关注的行业<Input aria-label="关注的行业" className="mt-2" maxLength={60} placeholder="例如：美妆原料、家具、消费电子" value={industry} onChange={event => setIndustry(event.target.value)}/></label><label className="block">目标市场<AutoComplete aria-label="目标市场" className="mt-2 w-full" options={['全球', '北美', '美国', '加拿大', '欧盟', '英国', '德国', '法国', '日本', '韩国', '东南亚', '中东', '澳大利亚'].map(value => ({ value }))} filterOption={(input, option) => String(option?.value ?? '').toLowerCase().includes(input.toLowerCase())} placeholder="选择或输入目标市场" value={market} onChange={setMarket}/></label></>}
       {kind === 'rates' && <div className="grid grid-cols-2 gap-3"><label>原币种<Select aria-label="原币种" className="mt-2 w-full" options={currencies} value={base} onChange={setBase}/></label><label>目标币种<Select aria-label="目标币种" className="mt-2 w-full" options={currencies} value={quote} onChange={setQuote}/></label></div>}
       {kind === 'trade' && <>
         <label className="block">统计国家<Select aria-label="统计国家" className="mt-2 w-full" value={country} onChange={setCountry} options={['中国', '美国', '英国', '德国', '法国', '印度', '日本', '韩国', '越南', '沙特', '阿联酋', '澳大利亚', '加拿大', '巴西'].map(value => ({ value, label: value }))}/></label>
