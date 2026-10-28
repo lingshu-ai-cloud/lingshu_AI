@@ -19,7 +19,7 @@ export function uniqueIndustryOriginals(originals: SearchOriginal[]): SearchOrig
 /** At most two discovery rounds, twenty-four original reads and one downstream synthesis. */
 export async function collectIndustryOriginals(initial: GroundingSource[], options: {
   discover: (instruction: string, articleRequestBudget: { remaining: number }) => Promise<GroundingSource[]>;
-  read?: typeof readSearchOriginals; signal?: AbortSignal; freshnessDays?: number; publicationDay?:string; fetcher?: typeof fetch;
+  read?: typeof readSearchOriginals; signal?: AbortSignal; freshnessDays?: number; publicationDay?:string; rollingCutoff?:string; fetcher?: typeof fetch;
   shouldSupplement?: (originals: SearchOriginal[]) => boolean;
 }): Promise<ReadResult & { discovery: { attemptedReads: number; reason: 'sufficient' | 'cache-unchanged' | 'few-originals' | 'few-publishers' | 'request-budget'; supplemented: boolean; supplementFailed: boolean } }> {
   const read = options.read ?? readSearchOriginals;
@@ -45,7 +45,7 @@ export async function collectIndustryOriginals(initial: GroundingSource[], optio
     if (!linked.length) return { ...result, discovery };
     discovery.attemptedReads += linked.length;
     try {
-      const next = await read(linked, { signal: options.signal, freshnessDays: options.freshnessDays, publicationDay:options.publicationDay, maxCandidates: linked.length, publicWeb: true, articleRequestBudget, fetcher: options.fetcher });
+      const next = await read(linked, { signal: options.signal, freshnessDays: options.freshnessDays, publicationDay:options.publicationDay, rollingCutoff:options.rollingCutoff, maxCandidates: linked.length, publicWeb: true, articleRequestBudget, fetcher: options.fetcher });
       options.signal?.throwIfAborted();
       const rejectionReasons = { ...result.rejectionReasons };
       for (const [reason, count] of Object.entries(next.rejectionReasons)) rejectionReasons[reason] = (rejectionReasons[reason] ?? 0) + count;
@@ -57,7 +57,7 @@ export async function collectIndustryOriginals(initial: GroundingSource[], optio
   };
   options.signal?.throwIfAborted();
   const firstCandidates = candidates(initial, 12);
-  const first = firstCandidates.length ? await read(firstCandidates, { signal: options.signal, freshnessDays: options.freshnessDays, publicationDay:options.publicationDay, maxCandidates: 12, publicWeb: true, articleRequestBudget, fetcher: options.fetcher }) : { originals: [], rejected: 0, rejectionReasons: {} };
+  const first = firstCandidates.length ? await read(firstCandidates, { signal: options.signal, freshnessDays: options.freshnessDays, publicationDay:options.publicationDay, rollingCutoff:options.rollingCutoff, maxCandidates: 12, publicWeb: true, articleRequestBudget, fetcher: options.fetcher }) : { originals: [], rejected: 0, rejectionReasons: {} };
   options.signal?.throwIfAborted();
   const originals = uniqueIndustryOriginals(first.originals);
   const hosts = new Set(originals.map(original => hostname(original.source.uri)));
@@ -82,7 +82,7 @@ export async function collectIndustryOriginals(initial: GroundingSource[], optio
     const next = candidates([...additional, ...initial], Math.min(12, articleRequestBudget.remaining));
     discovery.attemptedReads += next.length;
     if (!next.length) return finish({ ...first, originals }, discovery);
-    const second = await read(next, { signal: options.signal, freshnessDays: options.freshnessDays, publicationDay:options.publicationDay, maxCandidates: 12, publicWeb: true, articleRequestBudget, fetcher: options.fetcher });
+    const second = await read(next, { signal: options.signal, freshnessDays: options.freshnessDays, publicationDay:options.publicationDay, rollingCutoff:options.rollingCutoff, maxCandidates: 12, publicWeb: true, articleRequestBudget, fetcher: options.fetcher });
     options.signal?.throwIfAborted();
     const mergedReasons = { ...first.rejectionReasons };
     for (const [reason, count] of Object.entries(second.rejectionReasons)) mergedReasons[reason] = (mergedReasons[reason] ?? 0) + count;

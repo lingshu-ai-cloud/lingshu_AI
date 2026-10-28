@@ -118,6 +118,17 @@ test('only selected and deduplicated sources may support a comprehensive report 
  }
 });
 
+test('a few sources cannot turn a global market claim into a confirmed broad trend', async () => {
+ const second: SearchOriginal = { id: 'S2', source: { title: 'Second technical report', uri: 'https://anotherpublisher.com/news/new-research' }, published: ['2026-10-20'], text: 'Another publisher reported a new technical research partnership between companies.' };
+ const items = [draft.items[0], { ...draft.items[0], sourceId: 'S2', quoteIds: ['S2-Q1'], fact: '企业公布技术研究合作，后续执行情况仍需核对。' }];
+ const conclusion = '综合来看，全球美妆原料市场近期呈现三个明确的研发与竞争动向。';
+ const answer = await composeSearchEvidenceAnswer('行业资讯：行业：美妆原料，目标市场：全球。', [original, second], async () => JSON.stringify({ items, conclusion, conclusionSourceIds: ['S1', 'S2'] }));
+ const report = JSON.parse(answer.text.split('\n')[1]);
+ assert.notEqual(report.summary, conclusion);
+ assert.match(report.summary, /专题观察重点/);
+ assert.equal(report.signals.length, 2);
+});
+
 test('eight genuinely distinct source events remain available after duplicate filtering', async () => {
  const letters = 'ABCDEFGH';
  const originals: SearchOriginal[] = [...letters].map(letter => ({ id: `S${letter}`, source: { title: `Company ${letter} formulation research`, uri: `https://industrypublisher.com/news/company-${letter}` },
