@@ -1,5 +1,6 @@
 import type { DataStore } from '../storage/datastore.js';
 import { parseJsonRecord } from '../routes/videoCrawlerNormalization.js';
+import { isGifImageBytes } from './singleImagePostPolicy.js';
 
 /** CDN links may expire, so preserve the collected media before analysis. */
 export function createImagePostMediaPersistence(input: {
@@ -19,6 +20,7 @@ export function createImagePostMediaPersistence(input: {
 
   async function persistImages(recordId: string, urls: string[]): Promise<string[]> {
     const unique = [...new Set(urls.filter(Boolean))].slice(0, 10);
+    if (unique.length !== 1) throw Error('image_post_single_static_image_required');
     const stored: string[] = [];
     const objectKeys: string[] = [];
     for (let index = 0; index < unique.length; index += 1) {
@@ -26,7 +28,9 @@ export function createImagePostMediaPersistence(input: {
       if (!/^https?:\/\//i.test(url)) { stored.push(url); continue; }
       const image = await input.fetchImage(url);
       if (!image) continue;
-      const key = await input.uploadObject(recordId, `image-${index + 1}`, Buffer.from(image.base64, 'base64'), image.mimeType);
+      const bytes = Buffer.from(image.base64, 'base64');
+      if (isGifImageBytes(bytes, image.mimeType)) throw Error('image_post_single_static_image_required');
+      const key = await input.uploadObject(recordId, `image-${index + 1}`, bytes, image.mimeType);
       objectKeys.push(key);
       stored.push(`/api/overseas/videos/${recordId}/image/${objectKeys.length - 1}`);
     }

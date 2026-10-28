@@ -32,3 +32,15 @@ test('无证据时保留明确缺口', () => {
   assert.match(operatingStrategyReply(null), /没有已确认/);
   assert.match(weeklyTaskReply(null), /没有已确认/);
 });
+
+test('查看被阻塞的周计划时说明缺什么而不暴露内部镜头编码', () => {
+  const blocked = { ...overview, run: null, plan: { ...overview.plan,
+    businessPackage: { detailGeneration: { status: 'blocked', blockers: [
+      '默认数字人物尚未授权可用', 'P5A_EXHIBITION 缺少已授权片段',
+    ] } },
+  } } as unknown as DigitalEmployeeOverview;
+  const reply = weeklyTaskReply(blocked);
+  assert.match(reply, /还没有进入生产/);
+  assert.match(reply, /数字人物/);
+  assert.doesNotMatch(reply, /P5A_EXHIBITION/);
+});

@@ -2,6 +2,7 @@ import { publicVideoRecord } from '../routes/videoPublicRecordProjection.js';
 import { accountLabelFromUrl, looksLikeAccountUrl } from '../routes/videoCrawlerSourceUrls.js';
 import { type CrawledImagePost } from '../socialDiscovery/imagePostEvidenceAnalysis.js';
 import { importNewImagePost } from '../socialDiscovery/imagePostImport.js';
+import { isSingleStillImagePost } from '../socialDiscovery/singleImagePostPolicy.js';
 import { refreshExistingImagePost } from '../socialDiscovery/imagePostRefresh.js';
 import { runConfiguredLinkedInCompanyPaidCollection, type LinkedInCompanyPaidPermit } from '../routes/linkedinCompanyPostPaidCollection.js';
 import { store } from '../storage/index.js';
@@ -72,6 +73,7 @@ export function createImagePostCollectionApplication(deps: Pick<VideoApplication
       }
       items = items
         .filter(item => item.platform === input.platform && isPlatformUrl(item.sourceUrl, input.platform))
+        .filter(isSingleStillImagePost)
         .filter(item => accountMode || imagePostRelevant(item, keyword));
       if (hasDateRange(dateFrom, dateTo)) items = items.filter(item => isWithinDateRange(item.uploadedAt, dateFrom, dateTo));
     } catch (e) {
@@ -112,13 +114,17 @@ export function createImagePostCollectionApplication(deps: Pick<VideoApplication
           existingRecords.push(existingRecord);
           continue;
         }
-        const refreshed = await refreshExistingImagePost({
-          store, collection: COL, tenantId: input.tenantId, existingRecord, item, keyword,
-          accountMode, accountUrl, deferImageAnalysis: Boolean(input.deferImageAnalysis),
-          persistThumbnail: persistImagePostThumbnail, persistImages: persistImagePostImages,
-          analyze: analyzeImagePostBestEffort, queue: queueImagePostAnalysis,
-        });
-        existingRecords.push(refreshed);
+        try {
+          const refreshed = await refreshExistingImagePost({
+            store, collection: COL, tenantId: input.tenantId, existingRecord, item, keyword,
+            accountMode, accountUrl, deferImageAnalysis: Boolean(input.deferImageAnalysis),
+            persistThumbnail: persistImagePostThumbnail, persistImages: persistImagePostImages,
+            analyze: analyzeImagePostBestEffort, queue: queueImagePostAnalysis,
+          });
+          existingRecords.push(refreshed);
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== 'image_post_single_static_image_required') throw error;
+        }
         continue;
       }
 

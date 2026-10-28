@@ -13,7 +13,7 @@ const evidence = { version: 2 as const, status: 'analyzed' as const,
   observedFacts: [{ imageIndex: 1, subjects: ['bottle'], scene: 'studio', composition: 'center', colors: [], visibleText: [], confidence: .9 }],
   carouselFlow: [], copyEvidence: { hooks: [], sellingPoints: [], cta: [] }, reusableModules: [], uncertainties: [] };
 
-function fixture(options: { failCreate?: boolean; failStageUpdate?: boolean; failImages?: boolean; defer?: boolean; failAnalysis?: boolean } = {}) {
+function fixture(options: { failCreate?: boolean; failStageUpdate?: boolean; failImages?: boolean; rejectImage?: boolean; defer?: boolean; failAnalysis?: boolean } = {}) {
   const events: string[] = [];
   let row: Record<string, unknown> | null = null;
   let updates = 0;
@@ -25,6 +25,7 @@ function fixture(options: { failCreate?: boolean; failStageUpdate?: boolean; fai
       return structuredClone(row);
     },
     async getById() { return row ? structuredClone(row) : null; },
+    async delete() { events.push('delete'); row = null; return true; },
     async update(_collection: string, _id: string, patch: Record<string, unknown>) {
       updates++;
       events.push(`update-${updates}`);
@@ -37,7 +38,7 @@ function fixture(options: { failCreate?: boolean; failStageUpdate?: boolean; fai
     crawlerSource: 'instagram-image-search', accountMode: false, accountUrl: '',
     deferImageAnalysis: Boolean(options.defer),
     async persistThumbnail() { events.push('thumbnail'); return '/media/record-1.png'; },
-    async persistImages() { events.push('images'); if (options.failImages) throw Error('image_storage_failed'); return ['/api/overseas/videos/record-1/image/0']; },
+    async persistImages() { events.push('images'); if (options.rejectImage) throw Error('image_post_single_static_image_required'); if (options.failImages) throw Error('image_storage_failed'); return ['/api/overseas/videos/record-1/image/0']; },
     async analyze() { events.push('analyze'); return options.failAnalysis
       ? { status: 'failed' as const, error: 'vision_unavailable' }
       : { status: 'analyzed' as const, analysis: evidence, provider: 'qwen' as const }; },
@@ -49,11 +50,18 @@ function fixture(options: { failCreate?: boolean; failStageUpdate?: boolean; fai
 test('new record and source media are durable before visual analysis', async () => {
   const f = fixture();
   const saved = await importNewImagePost(f.input);
-  assert.deepEqual(f.events, ['create', 'thumbnail', 'images', 'update-1', 'analyze', 'update-2']);
+  assert.deepEqual(f.events, ['create', 'images', 'thumbnail', 'update-1', 'analyze', 'update-2']);
   assert.equal(saved?.status, 'analyzed');
   const analysis = JSON.parse(String(saved?.aiAnalysis));
   assert.equal(analysis.imageEvidence.observedFacts[0].subjects[0], 'bottle');
   assert.equal(analysis.imageUrls[0], '/api/overseas/videos/record-1/image/0');
+});
+
+test('rejected animated image leaves no new post or analysis job', async () => {
+  const f = fixture({ rejectImage: true });
+  assert.equal(await importNewImagePost(f.input), null);
+  assert.equal(f.row, null);
+  assert.deepEqual(f.events, ['create', 'images', 'delete']);
 });
 
 test('missing record or failed source persistence never reaches vision model', async () => {
@@ -73,7 +81,7 @@ test('missing record or failed source persistence never reaches vision model', a
 test('deferred analysis queues only after source write and synchronous failures remain visible', async () => {
   const deferred = fixture({ defer: true });
   const staged = await importNewImagePost(deferred.input);
-  assert.deepEqual(deferred.events, ['create', 'thumbnail', 'images', 'update-1', 'queue']);
+  assert.deepEqual(deferred.events, ['create', 'images', 'thumbnail', 'update-1', 'queue']);
   assert.equal(staged?.status, 'pending');
   const failed = fixture({ failAnalysis: true });
   const saved = await importNewImagePost(failed.input);

@@ -8,6 +8,7 @@ import { notifyWeeklyWorkUpdated, WEEKLY_WORK_UPDATED_EVENT } from '../../lib/we
 import { ASSISTANT_WEEKLY_PLAN_OPEN_EVENT } from '../../lib/assistantWeeklyPlanEvents';
 import { prepareWeeklyPlanForLaunch } from '../../lib/weeklyPlanLaunchPreparation';
 import { finishedFilmBudgetDecision, finishedFilmBudgetQuoteKey } from '../../../shared/contracts/finishedFilmBudget';
+import { showWeeklyReadinessGuidance } from '../../lib/weeklyReadinessGuidance';
 
 type GuidanceKey = 'companyName' | 'focusProducts' | 'targetMarkets' | 'customerProfile' | 'weeklyObjective';
 type GuidanceQuestion = { key: GuidanceKey; prompt: string };
@@ -113,12 +114,13 @@ export function useAssistantWeeklyPlanExperience() {
     if (!next.config) throw new Error('企业基础档案尚未建立。请先完成首页的新手卡片，之后我会在这里逐项补充周计划信息。');
     setOverview(next); setGuidance(null); setDraft(null);
     if (next.goal && next.plan) {
-      let readiness = await digitalEmployeeApi.weeklyReferenceReadiness(next.goal.id);
+      const goalId = next.goal.id;
+      let readiness = await digitalEmployeeApi.weeklyReferenceReadiness(goalId);
       if (!readiness.ready && readiness.videoMissingCount === 0 && readiness.imageMissingCount > 0
         && next.plan.status === 'draft') {
         try {
-          next = await digitalEmployeeApi.rebindWeeklyImageReferences(next.goal.id);
-          readiness = await digitalEmployeeApi.weeklyReferenceReadiness(next.goal.id);
+          next = await digitalEmployeeApi.rebindWeeklyImageReferences(goalId);
+          readiness = await digitalEmployeeApi.weeklyReferenceReadiness(goalId);
           setOverview(next);
         } catch (cause) {
           setReferenceMessage(cause instanceof Error ? cause.message : '图文参考自动匹配失败');
@@ -247,7 +249,7 @@ export function useAssistantWeeklyPlanExperience() {
       if (!preparedPackage) throw new Error('任务包准备结果与当前周目标不一致，本周任务尚未启动。');
       const overBudgetFilms = (preparedPackage.tasks.find(task => task.templateId === 'production')?.videoPlans || [])
         .filter(item => item.productionRole !== 'platform_adaptation')
-        .map(item => finishedFilmBudgetDecision({ contentId: item.contentId, durationSeconds: Number(item.duration),
+        .map(item => finishedFilmBudgetDecision({ contentId: item.contentId ?? '', durationSeconds: Number(item.duration),
           estimatedCostCny: Number(item.estimatedCostRange?.maxCny ?? item.estimatedCost) }))
         .filter(item => item.requiresConfirmation);
       if (overBudgetFilms.some(item => !item.estimateAvailable)) {
@@ -278,6 +280,11 @@ export function useAssistantWeeklyPlanExperience() {
       if (!finished) throw new Error('启动请求已经发出，但暂未取得可确认的运行回执。系统不会自动重复启动，请稍后刷新查看。');
     } catch (cause) {
       setOverBudgetConfirmationOpen(false);
+      if (showWeeklyReadinessGuidance(cause)) {
+        setModalOpen(false);
+        setError('');
+        return;
+      }
       const conflict = weeklyStartConflictFromError(cause);
       if (conflict) setError(`${conflict.goalTitle || '另一轮周计划'}正在运行，本周计划没有被重复启动。`);
       else if (requestSent && !reconciliationRead && weeklyStartResultNeedsReconciliation(cause)) {

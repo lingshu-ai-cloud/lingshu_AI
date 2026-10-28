@@ -217,7 +217,7 @@ export function useInspirationDiscoveryInventory({ setMaterialMessage, setSelect
   }, [innerView]);
 
   const openImageCrawl = () => {
-    setImageCrawlPlatform(platform === 'all' ? 'instagram' : platform);
+    setImageCrawlPlatform(['facebook', 'instagram', 'tiktok'].includes(platform) ? platform as InspirationImageCrawlPlatform : 'instagram');
     setImageCrawlKeyword(search.trim());
     setImageCrawlError('');
     setImageCrawlOpen(true);

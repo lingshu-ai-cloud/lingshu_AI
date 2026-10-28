@@ -29,6 +29,8 @@ import { assistantProductionIntent, assistantCreationPortal } from './assistantP
 import { assistantImageReplicationPortal } from './assistantImageReplicationIntent';
 import { assistantImageRevisionTarget, ASSISTANT_IMAGE_REVISION_EVENT } from '../../lib/assistantImageRevision';
 import { ASSISTANT_HOME_PROMPTS, assistantReplyPresentationForPromptId, assistantReplyPresentationForText, isAssistantHomeQuickTaskText } from '../../lib/assistantHomeQuickPrompts';
+import { digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
+import { weeklyTaskReply } from '../contentCreationHomeReplies';
 import { runAssistantProductionRequest } from './assistantProductionRequest';
 import type { useContentTaskIntake } from './useContentTaskIntake';
 import type { AssistantHomePendingSubmission } from './useAssistantHomeAnchor';
@@ -203,6 +205,27 @@ export function useAssistantSend(input: AssistantSendInput) {
       content: visibleMessage,
       ...(referenceMedia ? { referenceMedia } : {}),
     }];
+
+    if (!uploadedAttachments.length && !creationActionOrReference && !options.companyReport
+      && userText === ASSISTANT_HOME_PROMPTS.find(entry => entry.id === 'OP-CALENDAR')?.prompt) {
+      setLoading(true);
+      setMessages(threadAgent, nextVisible);
+      openAgent(routeAgent, 'chat');
+      try {
+        const overview = await digitalEmployeeApi.overview();
+        if (currentScope()) setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: weeklyTaskReply(overview) }]);
+      } catch {
+        if (currentScope()) setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: '当前周计划暂时读取不到，生产状态不能确认。请稍后重试，我不会因此启动或修改任务。' }]);
+      } finally {
+        clearLoadingForCurrentInstance();
+        if (currentScope()) {
+          setFollowingLatest(threadAgent, true);
+          if (!options.preserveDraft) setDraftInput(threadAgent, '');
+          persistThread(threadAgent);
+        }
+      }
+      return;
+    }
 
     const clarifiedDiagram = pendingMapFileRef.current && /(?:业务|路线图|思维导图|流程图|战略)/u.test(visibleText);
     const fileIntent = assistantFileIntent(visibleText) || (clarifiedDiagram ? { format: 'jpg' as const, diagram: true, needsMapScope: false } : null);

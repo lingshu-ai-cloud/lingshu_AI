@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { DataStore, ListQuery, ListResult } from '../storage/datastore.js';
 import type { CandidateEvidenceWorkItem } from './candidateEvidenceWorker.js';
-import { executeApprovedDiscoveryRun, type DiscoveryScopeRecord } from './service.js';
+import type { R3CandidateEvidenceAdapterInput } from './r3CandidateEvidenceAdapter.js';
+import { executeApprovedDiscoveryRun, type ApprovedDiscoveryRunDependencies, type DiscoveryScopeRecord } from './service.js';
 import type { VersionedCandidateEvidence } from './qualityOrchestration.js';
 import { socialRequestHash } from '../starter198/socialContentValidation.js';
 import { collectionBusinessDate } from './dailyCollectionQuota.js';
@@ -388,7 +389,7 @@ test('five-from-account rejects provider surplus before candidate analysis', asy
   assert.equal(analyzed, 0);
 });
 
-test('discovery inventory is sourced only from approved LinkedIn and Facebook benchmark accounts', async () => {
+test('approved discovery collects benchmark accounts and configured keyword sources', async () => {
  const dataStore=new MemoryStore();
  const accounts=['https://www.linkedin.com/company/factory-one','https://www.facebook.com/factory-two'];
  dataStore.rows.set('competitor_accounts',accounts.map((accountUrl,index)=>({id:`account-${index}`,tenantId:'tenant-1',accountUrl})));
@@ -397,16 +398,57 @@ test('discovery inventory is sourced only from approved LinkedIn and Facebook be
  const calls:Array<{platform:string;accountUrl?:string;keyword?:string;limit:number}>=[];
  const result=await executeApprovedDiscoveryRun({tenantId:'tenant-1',triggerType:'manual',requestedModes:['account','momentum']},{
   dataStore,
-  async crawl(input){const platform=input.platform??'facebook';calls.push({platform,accountUrl:input.accountUrl,keyword:input.keyword,limit:input.limit??0});return{platform,keyword:'',imported:1,refreshed:0,skipped:0,skippedExisting:0,skippedNearDuplicate:0,nearDuplicateUnchecked:1,returnedExisting:0,requested:input.limit??0,total:1,source:'test',message:'',candidateIds:[`${platform}:${input.accountUrl}`],items:[]};},
-  candidateEvidenceAdapter:{async toEvidenceWorkItems(input){return[{tenantId:input.tenantId,candidateId:input.result.candidateIds![0]!,discoveryPath:['account'],evidenceRefs:['source'],g1:{runId:input.runId,queryRef:input.queryRef,discoveryMode:'account',sourceUrl:'https://example.invalid/post'}}];}},
+  async crawl(input){const platform=input.platform??'facebook';calls.push({platform,accountUrl:input.accountUrl,keyword:input.keyword,limit:input.limit??0});return{platform,keyword:'',imported:1,refreshed:0,skipped:0,skippedExisting:0,skippedNearDuplicate:0,nearDuplicateUnchecked:1,returnedExisting:0,requested:input.limit??0,total:1,source:'test',message:'',candidateIds:[`${platform}:${input.accountUrl??input.keyword}`],items:[]};},
+  candidateEvidenceAdapter:{async toEvidenceWorkItems(input){return[{tenantId:input.tenantId,candidateId:input.result.candidateIds![0]!,discoveryPath:[input.mode === 'momentum' ? 'keyword' : input.mode],evidenceRefs:['source'],g1:{runId:input.runId,queryRef:input.queryRef,discoveryMode:input.mode,sourceUrl:'https://example.invalid/post'}}];}},
   async runCandidateEvidence(items){return{accepted:items.map(accepted),suggestions:[],failed:[]};},
  });
- assert.deepEqual(calls.map(call=>call.platform),['linkedin','facebook']);
- assert.deepEqual(calls.map(call=>call.accountUrl),accounts);
- assert.ok(calls.every(call=>call.keyword===undefined));
+ assert.deepEqual(calls.map(call=>call.platform),['linkedin','facebook','linkedin']);
+ assert.deepEqual(calls.map(call=>call.accountUrl),[...accounts,undefined]);
+ assert.equal(calls[2]?.keyword,'must not run');
  assert.equal(result.run?.modeStats.account?.requested,2);
- assert.equal(result.run?.modeStats.momentum,undefined);
+ assert.equal(result.run?.modeStats.momentum?.requested,3);
  assert.equal(new Set(result.run?.evidenceOutcomes?.account?.acceptedCandidateIds).size,2);
+});
+
+test('keyword and innovation sources collect single-image candidates even when video source fails', async () => {
+  const dataStore = new MemoryStore();
+  const payload = { approval: { status: 'approved', scopeVersion: 1 }, keywords: [], discoveryBrief: {
+    discoveryBriefId: 'brief-images', keywordSetId: 'keywords-images', keywordSetVersion: 1,
+    productRef: 'product', market: 'US', audience: 'buyer', discoverySeedIds: [], trackedSceneIds: [],
+    competitorAccounts: [], discoveryModes: ['momentum', 'innovation'], platforms: ['instagram'],
+    lookbackDays: 7, resultLimit: 10, budgetLimitCny: null, productionGap: null, createdBy: 'user',
+    modePolicies: {
+      momentum: { enabled: true, sourceRefs: ['buyer question'], platforms: ['instagram'], resultLimit: 3, refreshIntervalMinutes: 60, budgetLimitCny: null },
+      innovation: { enabled: true, sourceRefs: ['adjacent industry'], platforms: ['instagram'], resultLimit: 3, refreshIntervalMinutes: 60, budgetLimitCny: null },
+    },
+  } };
+  dataStore.rows.set('social_discovery_scopes', [{ id: 'scope-images', tenant_id: 'tenant-1', keyword_set_id: 'keywords-images', version: 1, status: 'active', payload }]);
+  const imageRefs: string[] = [];
+  const evidenceModes: string[] = [];
+  const result = await executeApprovedDiscoveryRun({ tenantId: 'tenant-1', triggerType: 'manual', requestedModes: ['momentum', 'innovation'] }, {
+    dataStore,
+    async crawl(input: Parameters<ApprovedDiscoveryRunDependencies['crawl']>[0]) { throw Error(`video unavailable: ${input.keyword}`); },
+    async crawlImages(input: Parameters<NonNullable<ApprovedDiscoveryRunDependencies['crawlImages']>>[0]) {
+      imageRefs.push(input.keyword || '');
+      return { platform: 'instagram', keyword: input.keyword || '', imported: 1, refreshed: 0, skipped: 0,
+        skippedExisting: 0, returnedExisting: 0, requested: input.limit || 1, total: 1,
+        source: 'image-test', message: '', candidateIds: [`image:${input.keyword}`], items: [] };
+    },
+    candidateEvidenceAdapter: { async toEvidenceWorkItems(input: R3CandidateEvidenceAdapterInput) {
+      evidenceModes.push(input.mode);
+      return [{ tenantId: input.tenantId, candidateId: input.result.candidateIds![0]!, discoveryPath: [input.mode === 'momentum' ? 'keyword' : input.mode],
+        evidenceRefs: ['source'], g1: { runId: input.runId, queryRef: input.queryRef, discoveryMode: input.mode, sourceUrl: 'https://example.invalid/post' } }];
+    } },
+    async runCandidateEvidence(items: CandidateEvidenceWorkItem[]) { return { accepted: items.map(accepted), suggestions: [], failed: [] }; },
+  } as any);
+  assert.deepEqual(imageRefs, ['buyer question', 'adjacent industry']);
+  assert.deepEqual(evidenceModes, ['momentum', 'innovation']);
+  assert.equal(result.run?.status, 'partial');
+  assert.deepEqual(result.run?.evidenceOutcomes?.innovation?.acceptedCandidateIds, ['image:adjacent industry']);
+  assert.equal(result.run?.failureDetails?.length, 2);
+  const reservations = dataStore.rows.get('social_discovery_daily_reservations') as unknown as Array<{ request_key: string; count: number }>;
+  assert.equal(reservations.filter(row => row.request_key.endsWith(':image')).length, 2);
+  assert.ok(reservations.reduce((sum, row) => sum + row.count, 0) <= 10);
 });
 
 test('failed sources preserve every platform and query root cause instead of only the final error', async () => {
@@ -433,8 +475,8 @@ test('failed sources preserve every platform and query root cause instead of onl
   });
   assert.equal(result.run?.status, 'failed');
   assert.ok((result.run?.failureDetails?.length || 0) >= 2);
-  assert.match(result.run?.error || '', /linkedin\/https:\/\/www\.linkedin\.com\/company\/factory-one: linkedin rejected/);
-  assert.match(result.run?.error || '', /facebook\/https:\/\/www\.facebook\.com\/factory-two: facebook rejected/);
+  assert.match(result.run?.error || '', /linkedin\/https:\/\/www\.linkedin\.com\/company\/factory-one: 视频：linkedin rejected/);
+  assert.match(result.run?.error || '', /facebook\/https:\/\/www\.facebook\.com\/factory-two: 视频：facebook rejected/);
   const persisted = dataStore.rows.get('social_discovery_runs')?.[0] as any;
   assert.deepEqual(persisted.failureDetails, result.run?.failureDetails);
 });

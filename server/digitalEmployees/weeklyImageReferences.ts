@@ -3,7 +3,7 @@ import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 
 type ImageReferenceRecord = { id: string; contentFormat?: unknown; status?: unknown; title?: unknown;
-  sourceUrl?: unknown; aiAnalysis?: unknown };
+  sourceUrl?: unknown; thumbnailUrl?: unknown; aiAnalysis?: unknown };
 
 export function usableWeeklyImageReference(record: ImageReferenceRecord): boolean {
   if (record.contentFormat !== 'image' || record.status !== 'analyzed') return false;
@@ -32,11 +32,15 @@ export function bindWeeklyImageReferences(pack: WeeklyPackage, records: ImageRef
     if (slot.kind !== 'image' || slot.productionRole !== 'original') return slot;
     const existing = slot.referenceId && byId.get(slot.referenceId);
     const selected = existing && !used.has(existing.id) ? existing : candidates.find(record => !used.has(record.id));
-    if (!selected) return { ...slot, referenceId: undefined, referenceTitle: undefined, referenceSourceUrl: undefined };
+    if (!selected) return { ...slot, referenceId: undefined, referenceTitle: undefined,
+      referenceSourceUrl: undefined, referenceThumbnailUrl: undefined };
     used.add(selected.id);
+    const imageUrls = videoAnalysisOf(selected).imageUrls;
     return { ...slot, referenceId: selected.id,
       referenceTitle: String(selected.title || videoAnalysisOf(selected).caption || '').trim(),
-      referenceSourceUrl: String(selected.sourceUrl || '').trim() };
+      referenceSourceUrl: String(selected.sourceUrl || '').trim(),
+      referenceThumbnailUrl: String(selected.thumbnailUrl || (Array.isArray(imageUrls)
+        ? imageUrls.find(url => typeof url === 'string' && url.trim()) : '') || '').trim() };
   });
   return { ...pack, mixedContentSlots: slots };
 }

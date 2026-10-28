@@ -16,6 +16,9 @@ test('weekly image references bind distinct analyzed posts and count missing ima
   const library = [image('first'), image('second')];
   const bound = bindWeeklyImageReferences(pack, library);
   assert.deepEqual(bound.mixedContentSlots?.map(item => item.referenceId), ['first', 'second']);
+  assert.deepEqual(bound.mixedContentSlots?.map(item => item.referenceThumbnailUrl), ['/image/first', '/image/second']);
+  assert.equal(bindWeeklyImageReferences(pack, [{ ...image('with-thumbnail'), thumbnailUrl: '/thumbnail/with-thumbnail' }])
+    .mixedContentSlots?.[0]?.referenceThumbnailUrl, '/thumbnail/with-thumbnail');
   assert.deepEqual(weeklyReferenceCreationGate(bound, library), {
     ready: true, requiredCount: 2, boundCount: 2, missingCount: 0, videoMissingCount: 0, imageMissingCount: 0,
   });
@@ -23,6 +26,7 @@ test('weekly image references bind distinct analyzed posts and count missing ima
   assert.equal(shortage.imageMissingCount, 2);
   assert.equal(shortage.ready, false);
   assert.equal(bindWeeklyImageReferences(pack, [image('only')]).mixedContentSlots?.[1]?.referenceId, undefined);
+  assert.equal(bindWeeklyImageReferences(bound, [image('only')]).mixedContentSlots?.[1]?.referenceThumbnailUrl, undefined);
 });
 
 test('single-image production prefers single-image evidence over an earlier carousel', () => {

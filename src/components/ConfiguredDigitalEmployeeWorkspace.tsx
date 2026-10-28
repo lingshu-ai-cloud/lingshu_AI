@@ -6,7 +6,6 @@ import { Alert, Button, Modal, Tag } from 'antd';
 import { OnboardingPanel } from './smartBusiness/DigitalEmployeeOnboardingPanel';
 import { GoalPanel, type GoalDraft, type BusinessLine, type ContentPlatform } from './smartBusiness/WeeklyGoalPanel';
 import type { OnboardingConfigurationInput } from './digitalEmployeeConfigurationAction';
-import WeeklyStartConflictAlert from './WeeklyStartConflictAlert';
 import WeeklyProductionStudioEntry from './smartBusiness/WeeklyProductionStudioEntry';
 import PlanHistoryDialog from './PlanHistoryDialog';
 import { Suspense, useEffect, useState, type Dispatch, type SetStateAction } from 'react';
@@ -144,20 +143,6 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
     const openPublishingAccountSetup = () => window.dispatchEvent(new CustomEvent("lingshu:navigate", {
       detail: { page: "accountManagement", businessRef: { taskKey: "publishing_account_setup" } },
     }));
-    const openConflictingRun = async () => {
-      const conflict = weeklyStartConflict;
-      if (!conflict) return;
-      if (!conflict.goalId) {
-        onOpenMonitor?.();
-        return;
-      }
-      setViewGoalId(conflict.goalId);
-      setSelectedTaskId("");
-      const next = await load(conflict.goalId);
-      if (!next) return;
-      setSelectedTaskId(next.tasks.find((task) => ["running", "waiting_external", "waiting_approval", "waiting_human", "failed"].includes(task.status))?.id || next.tasks[0]?.id || "");
-      setWorkspaceView("live");
-    };
     const projectedWeeklyStatus = weeklyWorkStatus(data);
     const currentPlanStatusLabel = viewGoalId
       ? "历史计划"
@@ -254,14 +239,6 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
       const item=items[0];
       openContentGenerationQueue({view:'tasks',taskId:item?.socialContentTaskId||undefined,contentId:item?.contentId||contentItemId||undefined});
     };
-    // Only explicit action failures/conflicts belong here. Persisted run state
-    // remains in the compact header and per-content progress, never a home banner.
-    const weeklyActionFeedback = (weeklyStartConflict && !viewGoalId) || error ? (
-      <div className="space-y-2">
-        {weeklyStartConflict && !viewGoalId && <WeeklyStartConflictAlert conflict={weeklyStartConflict} statusLabels={statusLabel} onViewRun={() => void openConflictingRun()} />}
-        {error && <Alert type="error" showIcon title={error} closable onClose={() => setError("")} />}
-      </div>
-    ) : undefined;
     const weeklyPlanControls = <>
       <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>
       <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={!activeRun && (!goal || canCreateNextGoal) ? <CalendarRange size={15}/> : activeRun && !recoverableProductionTask && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
@@ -272,7 +249,6 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
       data={data}
       statusLabel={currentPlanStatusLabel}
       actions={weeklyPlanControls}
-      feedback={weeklyActionFeedback}
       onMetricClick={goal ? metric => {
         setSelectedContentItemId("");
         if (metric === "waiting_review") { openContentGenerationQueue({view:'tasks',metric:'waiting_review',source:'weekly'}); return; }

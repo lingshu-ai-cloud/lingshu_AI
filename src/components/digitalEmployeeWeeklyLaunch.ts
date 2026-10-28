@@ -12,6 +12,7 @@ import { digitalEmployeeApi, type DigitalEmployeeOverview } from '../lib/digital
 import { Modal } from 'antd';
 import { createElement } from 'react';
 import { finishedFilmBudgetDecision, finishedFilmBudgetQuoteKey } from '../../shared/contracts/finishedFilmBudget';
+import { showWeeklyReadinessGuidance } from '../lib/weeklyReadinessGuidance';
 
 type WeeklyLaunchApi = Pick<typeof digitalEmployeeApi, 'approveGoal' | 'generatePackageDetails' | 'overview'>;
 
@@ -118,7 +119,7 @@ export function createDigitalEmployeeWeeklyLaunch(context: WeeklyLaunchContext) 
       if (!preparedPackage) throw new Error('任务包准备结果与当前周目标不一致，本周任务尚未启动。');
       const decisions = (preparedPackage.tasks.find(task => task.templateId === 'production')?.videoPlans || [])
         .filter(item => item.productionRole !== 'platform_adaptation')
-        .map(item => finishedFilmBudgetDecision({ contentId: item.contentId, durationSeconds: Number(item.duration),
+        .map(item => finishedFilmBudgetDecision({ contentId: item.contentId ?? '', durationSeconds: Number(item.duration),
           estimatedCostCny: Number(item.estimatedCostRange?.maxCny ?? item.estimatedCost) }));
       if (decisions.some(item => !item.estimateAvailable)) throw new Error('成片时长或费用估算缺失，未进入生产。');
       const overBudget = decisions.filter(item => item.requiresConfirmation);
@@ -132,6 +133,11 @@ export function createDigitalEmployeeWeeklyLaunch(context: WeeklyLaunchContext) 
       }
     } catch (actionError) {
       if (await recoverEnterpriseFactsChanged(actionError, goal)) return;
+      if (showWeeklyReadinessGuidance(actionError)) {
+        setError('');
+        feedback({ title: '周计划待补齐资料', description: '灵小枢已在对话中说明下一步；本周生产尚未启动。', tone: 'info' });
+        return;
+      }
       const conflict = weeklyStartConflictFromError(actionError);
       if (conflict) {
         setError('');

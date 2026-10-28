@@ -22,7 +22,7 @@ assert.equal(mixedSlots.filter(slot => slot.kind === 'image' && slot.productionR
 assert.equal(mixedPack.tasks.find(task => task.templateId === 'production')?.videoPlans?.length, 6);
 assert.ok(mixedPack.tasks.find(task => task.templateId === 'production')?.videoPlans?.every(plan => !plan.matrix?.accountId),
   'creative production must not be attached to provisional publishing accounts');
-const changedPublishingQuota = fillMatrixVideos({ ...mixedPack, matrixPlan: mixedPack.matrixPlan?.map(row => ({ ...row, weeklyCount: 1 })) }, mixedConfig.videoDefaults, mixedGoal.endsAt);
+const changedPublishingQuota = fillMatrixVideos({ ...mixedPack, matrixPlan: mixedPack.matrixPlan?.map(row => ({ ...row, weeklyCount: 1 })) }, mixedConfig.videoDefaults ?? {}, mixedGoal.endsAt);
 assert.equal(changedPublishingQuota.tasks.find(task => task.templateId === 'production')?.videoPlans?.length, 6,
   'changing provisional account quotas must not change creative production count');
 assert.equal(mixedPack.directorPlan?.paidMediaBudget, 10 * 36, 'Facebook media outline follows ten planned posts at US$5 each');

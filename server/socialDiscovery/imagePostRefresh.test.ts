@@ -46,7 +46,7 @@ function fixture(options: { defer?: boolean; analyzedBefore?: boolean; failStage
 test('existing post stores refreshed source before vision analysis', async () => {
   const f = fixture();
   const result = await refreshExistingImagePost(f.input);
-  assert.deepEqual(f.events, ['thumbnail', 'images', 'update-1', 'analyze', 'update-2']);
+  assert.deepEqual(f.events, ['images', 'thumbnail', 'update-1', 'analyze', 'update-2']);
   assert.equal(result.thumbnailUrl, '/media/record-1.png');
   assert.equal(f.row.status, 'analyzed');
   assert.equal(JSON.parse(String(f.row.aiAnalysis)).imageEvidence.observedFacts[0].subjects[0], 'bottle');
@@ -64,8 +64,8 @@ test('refresh never analyzes or queues if source persistence fails', async () =>
 test('deferred refresh queues only unanalyzed records after source write', async () => {
   const deferred = fixture({ defer: true });
   await refreshExistingImagePost(deferred.input);
-  assert.deepEqual(deferred.events, ['thumbnail', 'images', 'update-1', 'queue']);
+  assert.deepEqual(deferred.events, ['images', 'thumbnail', 'update-1', 'queue']);
   const analyzed = fixture({ defer: true, analyzedBefore: true });
   await refreshExistingImagePost(analyzed.input);
-  assert.deepEqual(analyzed.events, ['thumbnail', 'images', 'update-1', 'analyze', 'update-2']);
+  assert.deepEqual(analyzed.events, ['images', 'thumbnail', 'update-1', 'analyze', 'update-2']);
 });

@@ -13,6 +13,8 @@ export interface WeeklyMixedContentSlot {
   referenceId?: string;
   referenceTitle?: string;
   referenceSourceUrl?: string;
+  /** First analyzed image for the planning preview, not the post page URL. */
+  referenceThumbnailUrl?: string;
 }
 
 /** Read-only quote inputs. The amount is an estimate, never paid-call authority. */

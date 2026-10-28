@@ -26,7 +26,7 @@ test('only real execution blockers and reviews need confirmation; saved draft pr
 });
 test('completed tasks lead the default queue without changing newest-first order within each group',()=>{
   const newer={...task,taskId:'newer',createdAt:'2026-10-28T00:00:00Z'};
-  const completed={...task,taskId:'completed',status:'delivered',createdAt:'2026-10-25T00:00:00Z'};
+  const completed={...task,taskId:'completed',status:'delivered' as const,createdAt:'2026-10-25T00:00:00Z'};
   assert.deepEqual(creationTaskRows([task,newer,completed],[]).map(row=>row.taskId),['completed','newer','t1']);
 });
 test('calendar and task table share identity, omit undated tasks and preserve date-only entries',()=>{

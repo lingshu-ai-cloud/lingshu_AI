@@ -5,6 +5,7 @@ import type { AssistantWeeklyPlanExperience } from './useAssistantWeeklyPlanExpe
 import { ThumbnailImage } from '../inspiration/InspirationMedia';
 import { SocialPlatformIcon, socialBrandLabel } from '../SocialPlatformIcon';
 import { balancedWeeklyPublishSlots } from '../../../shared/contracts/weeklyPublishSchedule';
+import { estimateWeeklyMixedProduction } from '../../../shared/contracts/weeklyMixedContentPlan';
 
 const money = (value: number) => `¥${value.toFixed(2)}`;
 
@@ -78,7 +79,10 @@ export function AssistantWeeklyPlanOverlay({ experience, reduceMotion }: { exper
       const thumbnail = plan.preproduction?.benchmark.thumbnailUrl || plan.planningEvidence?.referenceThumbnailUrl || '';
       return { key: plan.contentId || `video-${index}`, label: `参考视频 ${index + 1}`, title, thumbnail, platform: plan.platform };
     }),
-    ...imageReferences.map((slot, index) => ({ key: slot.slotId, label: `参考图文 ${index + 1}`, title: slot.referenceTitle || '图文参考待匹配', thumbnail: '', platform: 'facebook' as const })),
+    ...imageReferences.map((slot, index) => ({ key: slot.slotId, label: `参考图文 ${index + 1}`,
+      title: slot.referenceTitle || '图文参考待匹配',
+      thumbnail: slot.referenceThumbnailUrl || (slot.referenceId
+        ? `/api/overseas/videos/${encodeURIComponent(slot.referenceId)}/thumbnail` : ''), platform: slot.platform })),
   ];
   const referencesPerPage = 3;
   const productionPageCount = Math.max(1, Math.ceil(productionReferences.length / referencesPerPage));
@@ -97,7 +101,11 @@ export function AssistantWeeklyPlanOverlay({ experience, reduceMotion }: { exper
     const suggestion = plannedAt || recommendedSlots[index]?.scheduledAt || '';
     const time = /^\d{4}-\d{2}-\d{2}$/.test(suggestion) ? `${suggestion.slice(5)} · 时刻待定`
       : suggestion ? `${suggestion.slice(5, 10)} ${suggestion.slice(11, 16)} 北京时间` : '发布时间待排期';
+    const sourceOrdinal = source.kind === 'video'
+      ? originalVideoSlots.findIndex(item => item.slotId === source.slotId) + 1
+      : imageReferences.findIndex(item => item.slotId === source.slotId) + 1;
     return { key: slot.slotId, kind: source.kind, platform: slot.platform, title, time,
+      sourceLabel: `参考${source.kind === 'video' ? '视频' : '图文'} ${sourceOrdinal > 0 ? sourceOrdinal : '待核验'}`,
       reused: slot.productionRole === 'adaptation' };
   });
   const distributionPageCount = Math.max(1, Math.ceil(distributionRows.length / referencesPerPage));
@@ -106,9 +114,13 @@ export function AssistantWeeklyPlanOverlay({ experience, reduceMotion }: { exper
   const publicationCount = pack?.operatingContext?.outputs.count || pack?.mixedContentSlots?.length || 0;
   const facebookPublications = pack?.mixedContentSlots?.filter(slot => slot.platform === 'facebook').length || 0;
   const linkedinPublications = pack?.mixedContentSlots?.filter(slot => slot.platform === 'linkedin').length || 0;
-  const settledProduction = (data?.contentQueue?.items || []).filter(item => item.origin === 'weekly_plan' && item.lineage.goalId === goal?.id && item.costStatus === 'settled' && item.settledCostCny !== null);
-  const actualProductionCost = settledProduction.reduce((total, item) => total + Number(item.settledCostCny), 0);
-  const hasActualProductionCost = settledProduction.length > 0;
+  // Display-only first-pass estimate. Adaptations reuse originals; retries and
+  // unconfirmed paid-media plans are deliberately not presented as actual spend.
+  const plannedVideoSeconds = referencePlans.reduce((total, plan) => total + Math.max(0, Number(plan.duration) || 0), 0);
+  const estimate = estimateWeeklyMixedProduction(mixedSlots, plannedVideoSeconds && originalVideoSlots.length
+    ? { videoGeneratedSeconds: plannedVideoSeconds / originalVideoSlots.length } : {});
+  const videoEstimate = estimate.videoOriginals * estimate.unitVideoMinCny;
+  const imageEstimate = Math.max(0, estimate.minCny - videoEstimate);
   return <>
     <Modal open={experience.modalOpen} onCancel={experience.close} width={820}
       title={<span className="flex items-center gap-2"><CalendarRange size={18} className="text-accent"/>制定本周运营计划</span>}
@@ -128,26 +140,25 @@ export function AssistantWeeklyPlanOverlay({ experience, reduceMotion }: { exper
           { key: 'outputs', label: '暂定发布计划', children: `${publicationCount} 条` },
           ...(pack?.mixedContentSlots?.length ? [{ key: 'distribution', label: '平台分配', children: `Facebook ${facebookPublications} 条 · LinkedIn ${linkedinPublications} 条` }] : []),
         ]}/>
-        <section className="grid gap-3 sm:grid-cols-3" aria-label="本周实际成本">
-          <div className="rounded-lg border border-border bg-surface-2 p-4"><p className="text-xs text-text-muted">已结算内容制作成本</p><strong className="mt-2 block text-base text-text-primary">{hasActualProductionCost ? money(actualProductionCost) : '暂无结算'}</strong><span className="mt-1 block text-xs text-text-muted">已核验 {settledProduction.length} 条制作回执</span></div>
-          <div className="rounded-lg border border-border bg-surface-2 p-4"><p className="text-xs text-text-muted">实际投流成本</p><strong className="mt-2 block text-base text-text-primary">暂无可核验支出</strong><span className="mt-1 block text-xs text-text-muted">周计划投流预算不计入实付</span></div>
-          <div className="rounded-lg border border-accent bg-surface p-4"><p className="text-xs text-text-muted">已核验成本合计</p><strong className="mt-2 block text-base text-accent">{hasActualProductionCost ? money(actualProductionCost) : '暂无结算'}</strong><span className="mt-1 block text-xs text-text-muted">已结算制作回执求和；不含未回执支出</span></div>
+        <section className="grid gap-3 sm:grid-cols-3" aria-label="本周预计成本">
+          <div className="rounded-lg border border-border bg-surface-2 p-4"><p className="text-xs text-text-muted">预计视频制作</p><strong className="mt-2 block text-base text-text-primary">{money(videoEstimate)}</strong><span className="mt-1 block text-xs text-text-muted">{estimate.videoOriginals} 条独立视频，按计划时长与低价模式首轮生成估算</span></div>
+          <div className="rounded-lg border border-border bg-surface-2 p-4"><p className="text-xs text-text-muted">预计图文制作</p><strong className="mt-2 block text-base text-text-primary">{money(imageEstimate)}</strong><span className="mt-1 block text-xs text-text-muted">{estimate.imageOriginals} 条独立图文；平台适配不重复生成</span></div>
+          <div className="rounded-lg border border-accent bg-surface p-4"><p className="text-xs text-text-muted">预计内容制作合计</p><strong className="mt-2 block text-base text-accent">{money(estimate.minCny)}</strong><span className="mt-1 block text-xs text-text-muted">仅供参考，不是实付金额或生产门槛</span></div>
         </section>
-        <section aria-label="本周任务流程" className="grid gap-4 md:grid-cols-3">
+        <section aria-label="本周任务流程" className="grid items-stretch gap-4 md:grid-cols-3">
           {([
             { title: '采集', tasks: collectionTasks },
             { title: '生产', tasks: productionTasks },
             { title: '分发', tasks: [] },
-          ] as const).map((phase, phaseIndex) => <div key={phase.title} className="relative min-w-0 rounded-xl border border-border bg-surface p-3">
+          ] as const).map((phase, phaseIndex) => <div key={phase.title} className="relative flex h-full min-w-0 flex-col rounded-xl border border-border bg-surface p-3">
             <h3 className="flex min-h-12 items-center justify-center bg-accent/10 px-6 text-sm font-semibold text-accent" style={{ clipPath: phaseIndex === 0 ? 'polygon(0 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 0 100%)' : 'polygon(0 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 0 100%, 18px 50%)' }}>{phase.title}</h3>
-            <ol className="mt-4 space-y-1">
+            <ol className="mt-4 flex-1 space-y-1">
               {phase.tasks.map((task, index) => <li key={`${task.templateId}-${index}`} className="space-y-1"><div className="flex min-h-20 items-start gap-2 rounded-lg border border-border bg-surface-2 p-3"><Check size={15} className="mt-0.5 shrink-0 text-accent" aria-hidden="true"/><span className="min-w-0"><strong className="block text-xs font-semibold text-text-primary">{task.title}</strong><span className="mt-1 block text-xs text-text-secondary">{task.notes || '按计划执行并保留回执'}</span></span></div><ArrowDown size={14} className="mx-auto text-text-muted" aria-hidden="true"/></li>)}
-              {phase.title === '生产' && visibleProductionReferences.map((reference, index) => <li key={reference.key} className="space-y-1"><div className="flex min-h-20 items-center gap-2 rounded-lg border border-border bg-surface-2 p-2"><span className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-md bg-surface text-text-muted">{reference.thumbnail ? <ThumbnailImage src={reference.thumbnail} platform={reference.platform} title={reference.title} className="h-full w-full object-cover"/> : <Clapperboard size={18} aria-hidden="true"/>}</span><span className="min-w-0"><span className="block text-xs text-text-muted">{reference.label}</span><strong className="mt-1 block line-clamp-2 text-xs text-text-primary" title={reference.title}>{reference.title}</strong></span></div>{index < visibleProductionReferences.length - 1 && <ArrowDown size={14} className="mx-auto text-text-muted" aria-hidden="true"/>}</li>)}
-              {phase.title === '分发' && visibleDistributionRows.map((row, index) => <li key={row.key} className="space-y-1"><div className="min-h-20 rounded-lg border border-border bg-surface-2 p-3"><span className="flex items-center gap-2 text-xs font-semibold text-text-primary"><SocialPlatformIcon platform={row.platform} size={17}/>计划发往 {socialBrandLabel(row.platform)} · {row.kind === 'video' ? '视频' : '图文'}{row.reused ? '适配' : ''}</span><span className="mt-2 block text-xs text-text-muted">来源爆款{row.kind === 'video' ? '视频' : '图文'}</span><strong className="mt-1 block line-clamp-2 text-xs text-text-primary" title={row.title}>{row.title}</strong><span className="mt-1 block text-xs text-text-secondary">推荐 {row.time}</span></div>{index < visibleDistributionRows.length - 1 && <ArrowDown size={14} className="mx-auto text-text-muted" aria-hidden="true"/>}</li>)}
+              {phase.title === '生产' && visibleProductionReferences.map((reference, index) => <li key={reference.key} className="space-y-1"><div className="flex h-20 items-center gap-2 overflow-hidden rounded-lg border border-border bg-surface-2 p-2"><span className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-md bg-surface text-text-muted">{reference.thumbnail ? <ThumbnailImage src={reference.thumbnail} platform={reference.platform} title={reference.title} className="h-full w-full object-cover"/> : <Clapperboard size={18} aria-hidden="true"/>}</span><span className="min-w-0 flex-1 overflow-hidden"><span className="block text-xs text-text-muted">{reference.label}</span><strong className="mt-1 block line-clamp-2 break-all text-xs text-text-primary" title={reference.title}>{reference.title}</strong></span></div>{index < visibleProductionReferences.length - 1 && <ArrowDown size={14} className="mx-auto text-text-muted" aria-hidden="true"/>}</li>)}
+              {phase.title === '分发' && visibleDistributionRows.map((row, index) => <li key={row.key} className="space-y-1"><div className="min-h-20 rounded-lg border border-border bg-surface-2 p-3" title={row.title}><span className="flex items-center gap-2 text-xs font-semibold text-text-primary"><SocialPlatformIcon platform={row.platform} size={17}/>计划发往 {socialBrandLabel(row.platform)} · {row.kind === 'video' ? '视频' : '图文'}{row.reused ? '适配' : ''}</span><span className="mt-2 block text-xs text-text-muted">来源{row.sourceLabel}</span><span className="mt-1 block text-xs text-text-secondary">推荐 {row.time}</span></div>{index < visibleDistributionRows.length - 1 && <ArrowDown size={14} className="mx-auto text-text-muted" aria-hidden="true"/>}</li>)}
             </ol>
             {phase.title === '生产' && productionReferences.length > referencesPerPage && <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-3 text-xs text-text-secondary"><span>参考 {visibleProductionPage * referencesPerPage + 1}–{Math.min((visibleProductionPage + 1) * referencesPerPage, productionReferences.length)} / {productionReferences.length}</span><div className="flex gap-1"><Button size="small" disabled={visibleProductionPage === 0} onClick={() => setProductionPage(value => Math.max(0, value - 1))}>上一组</Button><Button size="small" disabled={visibleProductionPage >= productionPageCount - 1} onClick={() => setProductionPage(value => Math.min(productionPageCount - 1, value + 1))}>下一组</Button></div></div>}
             {phase.title === '分发' && distributionRows.length > referencesPerPage && <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-3 text-xs text-text-secondary"><span>发布位 {visibleDistributionPage * referencesPerPage + 1}–{Math.min((visibleDistributionPage + 1) * referencesPerPage, distributionRows.length)} / {distributionRows.length}</span><div className="flex gap-1"><Button size="small" disabled={visibleDistributionPage === 0} onClick={() => setDistributionPage(value => Math.max(0, value - 1))}>上一组</Button><Button size="small" disabled={visibleDistributionPage >= distributionPageCount - 1} onClick={() => setDistributionPage(value => Math.min(distributionPageCount - 1, value + 1))}>下一组</Button></div></div>}
-            {phase.title === '分发' && <p className="mt-2 text-xs text-text-muted">仅为发布建议，实际平台与时间由用户发布时确认。</p>}
             {phaseIndex < 2 && <span className="absolute -right-4 top-1/2 z-10 hidden -translate-y-1/2 text-accent md:block" aria-hidden="true"><ArrowRight size={17}/></span>}
           </div>)}
         </section>

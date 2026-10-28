@@ -98,11 +98,11 @@ export default function DiscoveryScopePanel({ onAccountsCrawled }: { onAccountsC
     setAccountBusyId(account.id); setAccountMessage('');
     try {
       const response = await fetch(`/api/overseas/competitor-accounts/${encodeURIComponent(account.id)}/crawl`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() }, body: JSON.stringify({ limit: 3, lookbackDays: editor.lookbackDays, contentMode: 'video' }),
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() }, body: JSON.stringify({ limit: 3, lookbackDays: editor.lookbackDays, contentMode: 'mixed' }),
       });
       const data = await response.json() as { error?: string; message?: string; imported?: number };
       if (!response.ok) throw new Error(data.error || '采集失败');
-      setAccountMessage(data.message || `已从「${account.accountName}」采集 ${data.imported || 0} 条视频`);
+      setAccountMessage(data.message || `已从「${account.accountName}」采集 ${data.imported || 0} 条视频或单图`);
       await loadAccounts(); onAccountsCrawled();
     } catch (error) { setAccountMessage(error instanceof Error ? error.message : '采集失败'); }
     finally { setAccountBusyId(''); }
@@ -319,12 +319,12 @@ export default function DiscoveryScopePanel({ onAccountsCrawled }: { onAccountsC
         </details>
         <section className="mt-4 rounded-lg border border-cyan-200 bg-cyan-50/40 p-3" aria-label="对标账号库">
           <div><h4 className="text-sm font-bold text-text-primary">对标账号库</h4><p className="mt-1 text-xs text-text-muted">已保存账号常驻此处，保存或移除后会影响下一轮对标采集。</p></div>
-          {accountsLoading ? <p className="mt-3 text-xs text-text-muted">正在读取账号…</p> : accounts.length ? <ul className="mt-3 space-y-1.5">{accounts.map(account => <li key={account.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs"><span className="shrink-0 font-bold text-cyan-900">{account.platform}</span><a href={account.accountUrl} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1 truncate text-text-primary hover:underline">{account.accountName}</a><button type="button" disabled={Boolean(accountBusyId)} onClick={() => void crawlAccount(account)} className="rounded border border-cyan-200 px-2 py-1 font-bold text-cyan-900 disabled:opacity-50">{accountBusyId === account.id ? '处理中…' : `采近${editor.lookbackDays}天·最多3条`}</button><button type="button" disabled={Boolean(accountBusyId)} onClick={() => void removeAccount(account)} className="rounded border border-border px-2 py-1 text-text-muted disabled:opacity-50">移除</button></li>)}</ul> : <p className="mt-3 text-xs text-text-muted">暂无对标账号。</p>}
+          {accountsLoading ? <p className="mt-3 text-xs text-text-muted">正在读取账号…</p> : accounts.length ? <ul className="mt-3 space-y-1.5">{accounts.map(account => <li key={account.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs"><span className="shrink-0 font-bold text-cyan-900">{account.platform}</span><a href={account.accountUrl} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1 truncate text-text-primary hover:underline">{account.accountName}</a><button type="button" disabled={Boolean(accountBusyId)} onClick={() => void crawlAccount(account)} className="rounded border border-cyan-200 px-2 py-1 font-bold text-cyan-900 disabled:opacity-50">{accountBusyId === account.id ? '处理中…' : `采近${editor.lookbackDays}天·视频/单图各最多3条`}</button><button type="button" disabled={Boolean(accountBusyId)} onClick={() => void removeAccount(account)} className="rounded border border-border px-2 py-1 text-text-muted disabled:opacity-50">移除</button></li>)}</ul> : <p className="mt-3 text-xs text-text-muted">暂无对标账号。</p>}
           <details className="mt-3 border-t border-cyan-100 pt-3"><summary className="cursor-pointer text-xs font-bold text-cyan-900">人工手动添加对标账号</summary><div className="mt-3 flex flex-col gap-2 sm:flex-row"><input aria-label="对标账号主页链接" type="url" value={accountUrl} onChange={event => setAccountUrl(event.target.value)} placeholder="粘贴 YouTube / TikTok / Instagram / Facebook 账号主页链接" className="min-w-0 flex-1 rounded-lg border border-border bg-white px-3 py-2 text-sm" /><button type="button" disabled={accountSaving} onClick={() => void addAccount()} className="rounded-lg bg-cyan-800 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{accountSaving ? '添加中…' : '添加到账号库'}</button></div></details>
           {accountMessage && <p role="status" className="mt-2 text-xs text-cyan-900">{accountMessage}</p>}
         </section>
-        <section className="mt-4 rounded-lg border border-border bg-surface-2 p-3 text-xs leading-5 text-text-secondary" aria-label="当前视频采集规则">
-          <h4 className="font-bold text-text-primary">当前视频采集规则</h4>
+        <section className="mt-4 rounded-lg border border-border bg-surface-2 p-3 text-xs leading-5 text-text-secondary" aria-label="当前爆款采集规则">
+          <h4 className="font-bold text-text-primary">当前爆款采集规则</h4>
           <p className="mt-1 font-bold text-amber-800">视频硬规则：只采集 1–60 秒的视频；YouTube 只采集 Shorts。超时长、时长未知或普通 YouTube 视频不会入池，也不会进入智能经营周计划。</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <label className="font-bold text-text-secondary">视频发布时间范围（近几天）
@@ -334,7 +334,7 @@ export default function DiscoveryScopePanel({ onAccountsCrawled }: { onAccountsC
               <input type="number" min={1} max={50} step={1} value={editor.resultLimit} onChange={event => setEditor(current => ({ ...current, resultLimit: Math.max(1, Math.min(50, Math.floor(Number(event.target.value) || 1))) }))} className="mt-1 block h-10 w-full rounded-lg border border-border bg-white px-3 text-sm text-text-primary" />
             </label>
           </div>
-          <p className="mt-1">关键词：在已配置平台搜索最近 {editor.lookbackDays} 天发布、与关键词相关的公开视频。对标账号：采集账号主页最近 {editor.lookbackDays} 天的视频；无法确认发布时间的内容不计入该时间范围。</p>
+          <p className="mt-1">关键词与创新参考：按已启用的来源和平台采集；对标账号：采集账号主页最近 {editor.lookbackDays} 天的视频和单图。图组、轮播与 GIF 不进入单图库；无法确认发布时间的内容不计入该时间范围。LinkedIn 图文须具备独立付费采集许可，缺少许可会显示来源失败，不会暗中采集。</p>
           <p className="mt-1">按来源链接去重，完成来源与内容证据检查后才计入灵感池。滚动 7 天的合格入池目标上限为 {editor.resultLimit} 条，按关键词、对标账号及创新参考分配；结果不足时不会凑数。</p>
           <p className="mt-1">修改后点击下方“保存并用于后续采集”。社媒定时任务中的“目标数量”只控制对应爬虫任务的单次采集，不会修改这里的滚动 7 天入池目标。</p>
         </section>

@@ -93,8 +93,8 @@ assert.match(conversationBubblesSource, /<AssistantWeeklyObjectiveChoices[\s\S]{
 assert.match(sendHookSource, /const sendWeeklyPlanGuidanceAnswer[\s\S]{0,500}visibleLabel[\s\S]{0,600}answerWeeklyPlan\(value\)/, '点击经营目标必须复用周计划回答链路并把选择写入对话');
 assert.match(conversationPanelSource, /onWeeklyPlanObjective=\{sendWeeklyPlanGuidanceAnswer\}/, '对话面板必须接通经营目标的直接选择动作');
 assert.match(weeklyPlanHookSource, /企业基础档案尚未建立。请先完成首页的新手卡片/, '完全缺少企业档案时必须指向真实新手入口，不能伪造企业资料');
-assert.match(weeklyPlanSource, /data-weekly-plan-modal="confirmation"[\s\S]*本周实际成本[\s\S]*本周任务流程/, '周计划必须在同一页先展示已核验成本再展示任务流程');
-assert.match(weeklyPlanSource, /costStatus === 'settled'[\s\S]*暂无可核验支出/, '实际成本必须取自已结算回执，投流无回执不得冒充实际费用');
+assert.match(weeklyPlanSource, /data-weekly-plan-modal="confirmation"[\s\S]*本周预计成本[\s\S]*本周任务流程/, '周计划必须在同一页先展示预计成本再展示任务流程');
+assert.match(weeklyPlanSource, /estimateWeeklyMixedProduction\(mixedSlots,[\s\S]*仅供参考，不是实付金额或生产门槛/, '预计成本只能作为展示，不得冒充实付或成为生产门槛');
 assert.doesNotMatch(weeklyPlanSource, /有 \$\{overBudgetFilms\.length\} 条成片预计超过|标准上限 ¥\$\{decision\.allowedCostCny/, '确认页不得常驻展示逐条超预算长警告');
 assert.match(weeklyPlanSource, /overBudgetConfirmationOpen[\s\S]*最高费用预留超过 ¥0\.70\/秒[\s\S]*不是实际扣费/, '超预算时仍须说明预留不是实际扣费并单独确认');
 assert.match(weeklyPlanSource, /title: '采集'[\s\S]*title: '生产'[\s\S]*title: '分发'/, '任务流程必须从左到右呈现采集、生产和分发');
@@ -103,9 +103,11 @@ assert.doesNotMatch(weeklyPlanSource, /确认方案，查看预算|<Steps|查看
 assert.match(weeklyPlanSource, /referencePlans\.map[\s\S]*imageReferences\.map[\s\S]*visibleProductionReferences\.map[\s\S]*ThumbnailImage/, '生产列必须展示分页后的爆款视频缩略图和图文参考');
 assert.match(weeklyPlanSource, /clipPath:[\s\S]*<ArrowDown[\s\S]*<ArrowRight/, '三阶段流程必须呈现箭头标题、纵向任务流和跨栏指示');
 assert.match(weeklyPlanSource, /采集并筛选爆款参考[\s\S]*逐条分析爆款结构[\s\S]*编写适配脚本[\s\S]*完成镜头分镜/, '采集阶段必须将爆款分析与脚本分镜拆成可见步骤');
-assert.match(weeklyPlanSource, /originalSlotId[\s\S]*planBySlotId[\s\S]*SocialPlatformIcon[\s\S]*计划发往[\s\S]*来源爆款/, '分发阶段必须按原始内容关联参考、真实平台标识与发布建议');
+assert.match(weeklyPlanSource, /originalSlotId[\s\S]*planBySlotId[\s\S]*SocialPlatformIcon[\s\S]*计划发往[\s\S]*来源\{row\.sourceLabel\}/, '分发阶段必须按原始内容关联参考、真实平台标识与发布建议');
 assert.doesNotMatch(weeklyPlanSource, /distributionTasks|phase\.title === '分发'[\s\S]{0,300}复盘本周工作/, '周复盘不得被当成分发任务');
-assert.match(weeklyPlanSource, /settledProduction\.reduce[\s\S]*hasActualProductionCost[\s\S]*已核验成本合计/, '实际制作成本必须汇总已结算的本周回执');
+assert.match(weeklyPlanSource, /videoEstimate[\s\S]*imageEstimate[\s\S]*money\(estimate\.minCny\)/, '预计制作成本须按独立视频与图文数量计算，平台适配不得重复计费');
+assert.doesNotMatch(weeklyPlanSource, /暂无结算|暂无可核验支出|仅为发布建议，实际平台与时间由用户发布时确认/, '确认页须显示数值，不保留已删除的说明');
+assert.match(weeklyPlanSource, /imageReferences\.map\(\(slot, index\)[\s\S]*referenceThumbnailUrl/, '图文参考必须使用已分析图片作缩略图');
 assert.doesNotMatch(weeklyPlanSource, /\{plan\.referenceId\}|已绑定的爆款视频 ID/, '内部参考 ID 不得暴露在方案弹窗');
 assert.doesNotMatch(weeklyPlanSource, /本周内容方向/, '方案第一步不得以内容方向代替爆款参考');
 assert.match(weeklyPlanSource, /label: '平台分配'[\s\S]*Facebook/, '发布平台安排只显示平台分配');

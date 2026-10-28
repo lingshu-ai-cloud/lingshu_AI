@@ -31,14 +31,14 @@ export default function InspirationImageCrawlDialog({
       destroyOnHidden
     >
       <Form layout="vertical" onFinish={onSubmit} requiredMark={false}>
-        <p className="mb-4 text-sm leading-6 text-text-secondary">用于补充对标账号库之外的图文线索；图文会同时保留图片、轮播顺序和原帖配文。</p>
+        <p className="mb-4 text-sm leading-6 text-text-secondary">用于补充对标账号库之外的单图线索；只保留一张静态图片及原帖配文，不采图组、轮播或 GIF。</p>
         <Form.Item label="平台">
           <Select value={platform} onChange={onPlatformChange} options={[
             { value: 'instagram', label: 'Instagram' },
-            { value: 'linkedin', label: 'LinkedIn' },
+            { value: 'linkedin', label: 'LinkedIn（仅授权账号采集）', disabled: true },
             { value: 'facebook', label: 'Facebook' },
             { value: 'tiktok', label: 'TikTok' },
-            { value: 'youtube', label: 'YouTube 社区' },
+            { value: 'youtube', label: 'YouTube 社区（暂无可核验单图）', disabled: true },
           ]} />
         </Form.Item>
         <Form.Item label="补充关键词" validateStatus={error ? 'error' : undefined} help={error || undefined}>

@@ -4,6 +4,7 @@ import test from 'node:test';
 import sharp from 'sharp';
 import { resolveSocialImageProductCutout } from './socialImageProductCutout.js';
 import { cloudMaterialView } from '../lib/cloudMaterials.js';
+import type { MaterialRecord } from '../lib/materialLibrary.js';
 
 const metadata = { schemaVersion: 'material-asset.v2', assetRole: 'exact_product',
   contentRole: 'transparent_cutout', productIdentityLevel: 'exact', enterpriseCommon: false,
@@ -45,7 +46,7 @@ test('cloud cutout projection retains the object key needed to read and verify i
   const material = cloudMaterialView({ id: 'uploaded-cutout', tenantId: 'tenant-a', scope: 'own', type: 'image',
     productId: 'sku-a', sha256, objectKey: 'materials/tenants/tenant-a/cutout.png',
     provenance: { materialAssetV2: metadata } });
-  const selected = await resolveSocialImageProductCutout({ tenantId: 'tenant-a', productId: 'sku-a', materials: [material],
+  const selected = await resolveSocialImageProductCutout({ tenantId: 'tenant-a', productId: 'sku-a', materials: [material as MaterialRecord],
     readBytes: async item => {
       assert.equal(item.objectKey, 'materials/tenants/tenant-a/cutout.png');
       return { bytes: cutout, mimeType: 'image/png' };

@@ -51,6 +51,7 @@ export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplic
       const rebound = bindWeeklyImageReferences(pack, library.items);
       const gate = weeklyReferenceCreationGate(rebound, library.items);
       if (!gate.ready) { res.status(409).json({ error: 'weekly_reference_shortage', ...gate }); return; }
+      const reboundSlots = rebound.mixedContentSlots || [];
       if (JSON.stringify(rebound.mixedContentSlots) !== JSON.stringify(pack.mixedContentSlots)) {
         if (!store.compareAndSwap || await store.supportsAtomicCompareAndSwapFor?.(COLLECTION.plans) !== true) {
           res.status(503).json({ error: 'weekly_plan_atomic_store_required' }); return;
@@ -59,7 +60,7 @@ export function createDigitalEmployeeGoalRoutes(deps: Pick<DigitalEmployeeApplic
           { status: 'draft', plan: current.plan }, { plan: { ...body, businessPackage: { ...rebound, revision: rebound.revision + 1 } } });
         if (!updated) { res.status(409).json({ error: 'weekly_plan_changed' }); return; }
         await appendAudit({ tenantId, userId, action: 'weekly_image_references.bound', targetType: 'weekly_plan', targetId: current.id,
-          metadata: { goalId: req.params.goalId, imageCount: rebound.mixedContentSlots.filter(slot => slot.kind === 'image' && slot.productionRole === 'original').length } });
+          metadata: { goalId: req.params.goalId, imageCount: reboundSlots.filter(slot => slot.kind === 'image' && slot.productionRole === 'original').length } });
       }
       res.json(await buildOverview(tenantId, req.params.goalId));
     });

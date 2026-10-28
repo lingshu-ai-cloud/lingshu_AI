@@ -199,7 +199,7 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
         if (pack.tasks.some(t => t.ownerId && !members.some(m => m.id === t.ownerId))) { return { status: 409, body: { error: 'owner_unavailable', message: '计划中的负责人已不可用，请重新分配任务。' } }; }
         const masterPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans?.filter(item => item.productionRole !== 'platform_adaptation') || [];
         const filmBudgetDecisions = masterPlans.map(item => finishedFilmBudgetDecision({
-          contentId: item.contentId, durationSeconds: Number(item.duration),
+          contentId: item.contentId ?? '', durationSeconds: Number(item.duration),
           estimatedCostCny: Number(item.estimatedCostRange?.maxCny ?? item.estimatedCost),
         }));
         const unavailableEstimates = filmBudgetDecisions.filter(item => !item.estimateAvailable);
@@ -269,7 +269,7 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
           confirmedAt: overBudgetQuoteKey ? now : null, packageRevision: pack.revision,
           quoteKey: overBudgetQuoteKey || null,
           films: pack.tasks.find(task => task.templateId === 'production')?.videoPlans?.filter(item => item.productionRole !== 'platform_adaptation')
-            .map(item => finishedFilmBudgetDecision({ contentId: item.contentId, durationSeconds: Number(item.duration),
+            .map(item => finishedFilmBudgetDecision({ contentId: item.contentId ?? '', durationSeconds: Number(item.duration),
               estimatedCostCny: Number(item.estimatedCostRange?.maxCny ?? item.estimatedCost) })) || [] } } : {}),
         ...(managedPublishingGrantId ? { managedPublishingGrantId } : {}),
         ...(pack ? { packageApprovedBy: userId, packageApprovedAt: now } : {}),

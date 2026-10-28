@@ -22,6 +22,7 @@ import AssistantNavigationPortalCard from './AssistantNavigationPortalCard';
 import { navigationPortalForAnswer } from '../../lib/assistantNavigationPortal';
 import { AssistantWeeklyObjectiveChoices, AssistantWeeklyPlanCard, AssistantWeeklyReferenceChoices } from './AssistantWeeklyPlanExperience';
 import type { AssistantWeeklyPlanExperience } from './useAssistantWeeklyPlanExperience';
+import { weeklyPlanConversationAnchor } from './weeklyPlanConversationAnchor';
 
 interface Props {
   inlineHome?: boolean;
@@ -58,6 +59,8 @@ export default function AssistantConversationBubbles(props: Props) {
     reduceMotion,
     contentIntakeNode, loading, focusedTaskCard, onOpenTaskDetail,
     weeklyPlanKickoffAvailable, onOpenWeeklyPlan, weeklyPlanExperience, onWeeklyPlanObjective } = props;
+  const weeklyPlanAnchor = weeklyPlanExperience.proposal?.goal
+    ? weeklyPlanConversationAnchor(messages) : -1;
   return (
     <div className={inlineHome ? 'ls-assistant-flow' : 'space-y-4'}>
       {!inlineHome && <div key={`decision-feed-${decisionFeedRevision}`}
@@ -119,6 +122,7 @@ export default function AssistantConversationBubbles(props: Props) {
             {msg.companyReport && <CompanyReportCard report={msg.companyReport}/>}
             {msg.businessScene?.sceneId === 'AD-01' && msg.analysisComplete && msg.content && <AssistantReportExport content={msg.content} events={msg.analysisWork || []} period={`${msg.businessScene.from} 至 ${msg.businessScene.to}`}/>}
             {msg.businessScenePrompt && <AssistantBusinessSceneChoice key={`${useAssistantStore.getState().threads.business.conversationKey || ''}:${index}`} request={msg.businessScenePrompt}/>}
+            {index === weeklyPlanAnchor && <div className="mt-3"><AssistantWeeklyPlanCard experience={weeklyPlanExperience}/></div>}
           </div>}
         </div>
       ))}
@@ -130,8 +134,6 @@ export default function AssistantConversationBubbles(props: Props) {
       <AssistantWeeklyReferenceChoices experience={weeklyPlanExperience}/>
 
       {contentIntakeNode}
-
-      <AssistantWeeklyPlanCard experience={weeklyPlanExperience}/>
 
       {loading && (
         <div role="status" aria-live="polite" data-assistant-bubble="loading" className={`ls-assistant-bubble-enter flex gap-2 ${inlineHome ? 'ls-assistant-flow__turn ls-assistant-flow__turn--assistant' : ''}`}

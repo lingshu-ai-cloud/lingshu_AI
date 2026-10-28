@@ -52,8 +52,20 @@ export async function importNewImagePost(input: {
   });
   if (!record) return null;
   const recordId = String(record.id);
-  const thumbnailUrl = await input.persistThumbnail(recordId, item.thumbnailUrl);
-  const storedImageUrls = await input.persistImages(recordId, item.imageUrls?.length ? item.imageUrls : [item.thumbnailUrl]);
+  let thumbnailUrl: string;
+  let storedImageUrls: string[];
+  try {
+    storedImageUrls = await input.persistImages(recordId, item.imageUrls?.length ? item.imageUrls : [item.thumbnailUrl]);
+    thumbnailUrl = await input.persistThumbnail(recordId, item.thumbnailUrl);
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== 'image_post_single_static_image_required') throw error;
+    if (!await input.store.delete(input.collection, recordId)) throw Error('image_post_rejected_record_cleanup_required');
+    return null;
+  }
+  if (storedImageUrls.length !== 1) {
+    if (!await input.store.delete(input.collection, recordId)) throw Error('image_post_rejected_record_cleanup_required');
+    return null;
+  }
   const storedRecord = await input.store.getById<Record<string, unknown>>(input.collection, recordId);
   if (!storedRecord || storedRecord.tenantId !== input.tenantId) throw Error('image_post_record_disappeared_before_analysis');
   const storedAnalysis = videoAnalysisOf(storedRecord);

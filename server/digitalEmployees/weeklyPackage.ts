@@ -182,7 +182,9 @@ export function normalizePackage(raw: WeeklyPackage): WeeklyPackage {
       originalSlotId: clean(slot.originalSlotId, 120),
       ...(slot.kind === 'image' && slot.productionRole === 'original' && clean(slot.referenceId, 160)
         ? { referenceId: clean(slot.referenceId, 160), referenceTitle: clean(slot.referenceTitle, 500),
-          referenceSourceUrl: clean(slot.referenceSourceUrl, 2_000) } : {}),
+          referenceSourceUrl: clean(slot.referenceSourceUrl, 2_000),
+          ...(clean(slot.referenceThumbnailUrl, 2_000)
+            ? { referenceThumbnailUrl: clean(slot.referenceThumbnailUrl, 2_000) } : {}) } : {}),
     } satisfies WeeklyMixedContentSlot)) } : {}),
     ...(raw.directorPlan !== undefined ? { directorPlan: normalizeDirectorPlan(raw.directorPlan) } : {}),
     ...(raw.matrixPlan !== undefined ? { matrixPlan: normalizeMatrixPlan(raw.matrixPlan) } : {}),
