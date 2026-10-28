@@ -9,3 +9,9 @@ test('real receipt examples remove unverified geography and demand without losin
  const safe=evidenceSafeSocialInsightReport(report);const a=safe.materials!.assignments[0];
  assert.equal(a.reason,'分类依据待核验');assert.equal(a.confidence,'low');assert.equal(a.merchantHelp,'内容帮助待核验');assert.equal(a.contentAngle,'展示防晒配方测试');assert.deepEqual(a.evidenceNeeded,['补充稳定性测试报告']);assert.equal(safe.materials!.groups[1].summary,'');assert.deepEqual(safe.materials!.groups[1].recommendations,['展示原料检测流程']);assert.equal(report.materials!.assignments[0].reason,'面向美国消费者');
 });
+
+test('small sample cannot establish demand or prove market potential',()=>{
+ assert.equal(filterSocialInsightEvidence('呼吁日常使用防晒，反映终端教育需求旺盛。建议拍摄配方测试。'),'建议拍摄配方测试。');
+ assert.equal(filterSocialInsightEvidence('用终端教育热度佐证品类代工市场潜力。'),'');
+ assert.equal(filterSocialInsightEvidence('可以借鉴防晒教育选题展示配方研发。'),'可以借鉴防晒教育选题展示配方研发。');
+});
