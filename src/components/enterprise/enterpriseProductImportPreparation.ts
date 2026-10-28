@@ -1,6 +1,7 @@
 import { heuristicProductMapping, mapRowToProduct, parseWorkbook, prepareSheet } from '../../lib/productImport';
 import { parseProductDocument } from '../../lib/productDocumentImport';
 import type { ProductItem } from './enterpriseProfileTypes';
+import { prepareProductBundleImport } from './productBundleImport';
 
 export interface PendingProductImport {
   fileName: string;
@@ -10,7 +11,7 @@ export interface PendingProductImport {
   skippedRows: number;
   sourceLabel: string;
   unassignedImages: Array<{ name: string; url: string; file: File; status?: 'pending' | 'uploading' | 'uploaded' | 'failed'; error?: string }>;
-  assignedImages: Array<{ productIndex: number; name: string; url: string; file: File; uploadedUrl?: string }>;
+  assignedImages: Array<{ productIndex: number; name: string; url: string; file: File; uploadedUrl?: string; field?: string }>;
   remoteImageTransfers: Record<number, { status: 'pending' | 'uploading' | 'uploaded' | 'failed'; error?: string; originalUrl: string }>;
 }
 
@@ -32,6 +33,10 @@ export function remoteProductImageTransfers(products: ProductItem[]): PendingPro
 }
 
 export async function prepareEnterpriseProductImport(file: File, category: string): Promise<{ pending: PendingProductImport; message: string }> {
+  if (/\.lingshu-products\.json$/i.test(file.name)) {
+    const pending = await prepareProductBundleImport(file);
+    return { pending, message: `已校验 ${pending.products.length} 个产品和 ${pending.assignedImages.length} 张图片；确认后上传到当前登录账号` };
+  }
   if (/\.(pdf|docx)$/i.test(file.name)) {
     const parsed = await parseProductDocument(file);
     const incoming = parsed.products.map((item, index): ProductItem => ({

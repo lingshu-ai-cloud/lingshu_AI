@@ -171,7 +171,8 @@ export function useInspirationMaterialInventory({ innerView, materialSource, mat
     window.addEventListener('lingshu:materials-updated', refresh);
     window.addEventListener('focus', refresh);
     document.addEventListener('visibilitychange', refresh);
-    const pending = localMaterials.some(item => ['pending', 'analyzing'].includes(String(item.segmentAnalysisStatus)));
+    const pending = localMaterials.some(item => ['pending', 'analyzing'].includes(String(item.segmentAnalysisStatus))
+      || ['queued', 'running'].includes(String(item.productImageProcessing?.cutout)));
     // Poll only the visible page; full inventory is loaded on explicit filters.
     const timer = window.setInterval(refresh, pending ? 30_000 : 120_000);
     return () => {
@@ -180,7 +181,8 @@ export function useInspirationMaterialInventory({ innerView, materialSource, mat
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [innerView, allMaterialsLoaded, localMaterials.some(item => ['pending', 'analyzing'].includes(String(item.segmentAnalysisStatus)))]);
+  }, [innerView, allMaterialsLoaded, localMaterials.some(item => ['pending', 'analyzing'].includes(String(item.segmentAnalysisStatus))
+    || ['queued', 'running'].includes(String(item.productImageProcessing?.cutout)))]);
 
   useEffect(() => {
     setProductMaterialSummaries(Object.fromEntries(materialProducts.map(product => [product.id, {

@@ -53,3 +53,14 @@ test('cloud cutout projection retains the object key needed to read and verify i
   assert.equal(selected.materialId, 'pb-uploaded-cutout');
   assert.equal(selected.contentSha256, sha256);
 });
+
+test('a generated cutout is not reused after its product source image changes', async () => {
+  const cutout = await sharp({ create: { width: 40, height: 80, channels: 4, background: '#00000000' } })
+    .composite([{ input: await sharp({ create: { width: 20, height: 60, channels: 4, background: '#00aabbff' } }).png().toBuffer(), left: 10, top: 10 }]).png().toBuffer();
+  const material = { id: 'old-cutout', tenantId: 'tenant-a', productId: 'sku-a', type: 'image', scope: 'own',
+    contentSha256: createHash('sha256').update(cutout).digest('hex'), materialV2: metadata,
+    provenance: { cutoutSourceSha256: 'a'.repeat(64) } };
+  await assert.rejects(resolveSocialImageProductCutout({ tenantId: 'tenant-a', productId: 'sku-a',
+    sourceSha256: 'b'.repeat(64), materials: [material], readBytes: async () => ({ bytes: cutout, mimeType: 'image/png' }) }),
+  /social_image_product_cutout_required/);
+});

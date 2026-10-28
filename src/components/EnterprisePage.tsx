@@ -430,7 +430,9 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
         const next = [...existing];
         for (const item of incoming) {
           const sku = item.sku?.trim();
-          const index = sku ? next.findIndex(product => product.sku?.trim() === sku) : -1;
+          const id = item.id?.trim();
+          const index = id ? next.findIndex(product => product.id?.trim() === id)
+            : sku ? next.findIndex(product => product.sku?.trim() === sku) : -1;
           if (index >= 0) next[index] = { ...next[index], ...item };
           else next.push(item);
         }

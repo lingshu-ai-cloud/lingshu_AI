@@ -32,7 +32,12 @@ export async function confirmEnterpriseProductImportAssets(
         : await ports.upload(image.file);
       if (!asset.url) throw new Error('PDF 产品图片上传后缺少可用地址');
       assignedImages[imageIndex] = { ...image, uploadedUrl: asset.url };
-      product.images = [...(product.images || []).filter(existing => existing.url !== asset.url), asset];
+      const field = image.field || 'images';
+      if (field === 'imageUrl') product.imageUrl = asset.url;
+      else if (['images', 'packagingImages', 'factoryImages', 'certificateImages', 'sceneImages', 'brandAssets'].includes(field)) {
+        const key = field as 'images' | 'packagingImages' | 'factoryImages' | 'certificateImages' | 'sceneImages' | 'brandAssets';
+        product[key] = [...(product[key] || []).filter(existing => existing.url !== asset.url), asset];
+      }
       if (!product.imageUrl) product.imageUrl = asset.url;
       publish({ assignedImages: [...assignedImages] });
     }

@@ -5,6 +5,7 @@ import { enterpriseProductMaterials, materialResponse, type Material } from './s
 import { loadStudioPublishLinks } from './studioPublishLinkRoutes.js';
 import { productIdentity } from '../digitalEmployees/contentProductionPlanning.js';
 import { isMaterialAnalysisActive } from '../lib/materialLibraryAnalysis.js';
+import { productCutoutProcessingState } from '../lib/productCutoutPipeline.js';
 import { readMaterialLibrary } from '../lib/materialLibrary.js';
 import fs from 'fs';
 import path from 'path';
@@ -72,6 +73,18 @@ export function createStudioMaterialReadRoutes(deps: Pick<StudioApplicationPorts
       }
       const response = await Promise.all(sorted.map(async m => ({
         ...(await materialResponse(m, tenantId)),
+        ...(m.type === 'image' && m.productId && m.materialV2?.contentRole !== 'transparent_cutout'
+          && ['enterprise_product_table', 'enterprise_upload', 'enterprise_product_image_import'].includes(String(m.sourceType || ''))
+          ? { productImageProcessing: {
+            analysis: ['pending', 'analyzing', 'completed', 'failed'].includes(String(m.segmentAnalysisStatus || ''))
+              ? m.segmentAnalysisStatus : 'pending',
+            cutout: inventory.items.some(item => item.productId === m.productId
+              && item.materialV2?.contentRole === 'transparent_cutout' && !item.libraryRemovedAt
+              && (!item.provenance?.cutoutSourceSha256 || item.provenance.cutoutSourceSha256 === m.contentSha256))
+              ? 'completed' : productCutoutProcessingState(tenantId, String(m.productId))
+                && [m.contentSha256, ''].includes(productCutoutProcessingState(tenantId, String(m.productId))!.sourceSha256)
+                ? productCutoutProcessingState(tenantId, String(m.productId))!.status : 'pending',
+          } } : {}),
         usage: materialUsage(m),
         usageSummary: usageByMaterial.get(m.id) || {
           ...EMPTY_MATERIAL_USAGE_SUMMARY,

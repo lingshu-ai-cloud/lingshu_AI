@@ -12,13 +12,15 @@ export interface SocialImageProductCutout {
 
 /** Resolve an exact, tenant-owned transparent product asset; never fall back to the catalog photo. */
 export async function resolveSocialImageProductCutout(input: {
-  tenantId: string; productId: string; materials?: MaterialRecord[];
+  tenantId: string; productId: string; sourceSha256?: string; materials?: MaterialRecord[];
   readBytes?: typeof readTenantMaterialBytes;
 }): Promise<SocialImageProductCutout> {
   const items = input.materials || (await readMaterialLibrary(input.tenantId)).items;
   const candidates = items.filter(item => item.type === 'image' && item.scope === 'own'
     && String(item.tenantId || item.tenant_id || '') === input.tenantId
     && String(item.productId || item.product_id || '') === input.productId
+    && (!input.sourceSha256 || !item.provenance?.cutoutSourceSha256
+      || item.provenance.cutoutSourceSha256 === input.sourceSha256)
     && !item.libraryRemovedAt && materialAssetV2FromRecord(item)?.contentRole === 'transparent_cutout'
     && materialAssetV2FromRecord(item)?.assetRole === 'exact_product'
     && materialAssetV2FromRecord(item)?.productIdentityLevel === 'exact');

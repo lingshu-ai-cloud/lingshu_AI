@@ -24,6 +24,7 @@ const issueLabels:Record<string,string>={
   social_image_product_cutout_unreadable:'已找到透明抠图，但暂时无法读取文件。请检查素材存储连接后在原任务中继续，不需重新上传。',
   social_image_product_cutout_ambiguous:'当前产品有多份可用透明抠图，请确认唯一版本后再制作。',
   social_image_product_cutout_invalid:'透明抠图的像素或素材校验未通过，请检查产品素材后再制作。',
+  social_image_product_asset_processing:'该产品图片正在进行抠图和分析。素材加工完成后，请在原任务中继续生成。',
 };
 
 /** Read-only polling survives refresh; only explicit confirmation submits the durable command. */
@@ -90,7 +91,7 @@ export default function ImageCreationTaskExecution({contentTaskId}:{contentTaskI
   const blocked=Boolean(execution&&['blocked','dead_letter','paused'].includes(execution.status));
   const canRetryPlanning=Boolean(blocked&&execution&&['social_image_planning_failed',
     'social_image_product_cutout_required','social_image_product_cutout_unreadable','social_image_product_cutout_ambiguous',
-    'social_image_product_cutout_invalid'].includes(execution.lastError||''));
+    'social_image_product_cutout_invalid','social_image_product_asset_processing'].includes(execution.lastError||''));
   const issue=execution?.lastError?issueLabels[execution.lastError]||'当前步骤未能继续，系统已保留原任务和已完成结果。':'';
   const currentPlanId=task?.productionRuntime?.nodes.find(node=>node.nodeId==='execution_plan'&&node.status==='completed')?.outputRef?.id;
   const currentPlan=task?.productionRuntime?.nodeOutputs.find(node=>node.id===currentPlanId&&node.nodeId==='execution_plan'&&node.status==='completed');

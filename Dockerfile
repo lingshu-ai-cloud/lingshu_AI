@@ -21,6 +21,7 @@ COPY scripts/customer-preview-ai-scope.mjs scripts/customer-isolated-test-guard.
 COPY scripts/recover-assistant-pb-claims.ts ./scripts/
 COPY scripts/fast_head_pipeline.py scripts/fast_head_preflight.py scripts/fast_head_composite.py scripts/person-replacement-quality.ts ./scripts/
 COPY scripts/person-replacement-qa-requirements.txt scripts/person_replacement_visual_qa.py scripts/validate-syncnet.py ./scripts/
+COPY scripts/product_cutout.py ./scripts/
 ARG APP_BUILD_SHA=unknown
 ENV APP_BUILD_SHA=${APP_BUILD_SHA}
 RUN pnpm run build \
@@ -30,7 +31,7 @@ FROM node:22-bookworm-slim AS runtime
 
 WORKDIR /app
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg fonts-wqy-zenhei libgl1 libglib2.0-0 python3 python3-pip \
+  && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg fonts-wqy-zenhei libgl1 libglib2.0-0 python3 python3-pip python3-venv \
   && python3 -m pip install --break-system-packages --no-cache-dir "yt-dlp[default,curl-cffi]" reportlab \
   && rm -rf /var/lib/apt/lists/* \
   && corepack enable \
@@ -40,7 +41,12 @@ RUN apt-get update \
 # host dependency. This imports OpenCV/MediaPipe at build time; the live
 # readiness probe runs the same script with --self-check.
 COPY scripts/person-replacement-qa-requirements.txt scripts/person_replacement_visual_qa.py ./scripts/
+ENV PRODUCT_CUTOUT_PYTHON=/opt/product-cutout/bin/python
+ENV U2NET_HOME=/opt/product-cutout/models
 RUN python3 -m pip install --break-system-packages --no-cache-dir -r /app/scripts/person-replacement-qa-requirements.txt \
+  && python3 -m venv /opt/product-cutout \
+  && /opt/product-cutout/bin/pip install --no-cache-dir 'rembg[cpu]==2.0.85' \
+  && /opt/product-cutout/bin/python -c "from rembg import new_session; new_session('u2netp')" \
   && python3 /app/scripts/person_replacement_visual_qa.py --self-check
 
 # Keep stable Python dependencies cached when application source changes.

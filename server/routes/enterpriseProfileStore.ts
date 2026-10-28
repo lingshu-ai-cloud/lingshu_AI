@@ -668,6 +668,17 @@ async function writeTenantProfileUnlocked(
     }
     throw new Error('tenant_profile_storage_unavailable');
   }
+  const priorImages = new Map((previous?.products.items || []).map(item => [
+    String(item.id || item.productId || item.sku || '').trim(), String(item.images?.[0]?.url || item.imageUrl || '').trim(),
+  ]));
+  const changed = new Set((clean.products.items || []).flatMap(item => {
+    const id = String(item.id || item.productId || item.sku || '').trim();
+    const imageUrl = String(item.images?.[0]?.url || item.imageUrl || '').trim();
+    return id && imageUrl && priorImages.get(id) !== imageUrl ? [id] : [];
+  }));
+  if (changed.size) void import('../lib/productCutoutPipeline.js')
+    .then(module => module.startImportedProductCutouts(tenantId, clean, changed))
+    .catch(error => console.warn('[enterprise] product image processing start failed', error instanceof Error ? error.message : error));
 }
 
 export function readEnterpriseProfile(): EnterpriseProfile {

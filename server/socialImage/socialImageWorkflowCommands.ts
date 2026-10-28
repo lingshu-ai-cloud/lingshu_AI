@@ -18,6 +18,7 @@ import { readSocialImageReferenceBytes } from '../socialImage/socialImageReferen
 import { referenceProductCheckIssue } from './socialImageReferenceProductPolicy.js';
 import { readReferenceStyle } from './socialImageReferenceStyle.js';
 import { resolveSocialImageProductCutout } from './socialImageProductCutout.js';
+import { ensureProductCutout } from '../lib/productCutoutPipeline.js';
 import { inspectSocialImageCandidateFactors, prepareSocialImageReferenceStrategy, socialImageFrozenGraphMatches, socialImageFrozenSourceIssue } from '../socialImage/socialImageReferenceStrategy.js';
 import { localProductOcrReadiness, recognizeProductImageLocally, recognizeProductImageTokensLocally } from '../lib/localProductOcr.js';
 import { runSocialImageVisualPreflight } from '../socialImage/socialImageQualityPreflight.js';
@@ -226,7 +227,16 @@ export async function renderImageLayers(input: ImageWorkflowInput) {
         const productIssue = referenceProductCheckIssue(task, reference?.bytes || null);
         if (productIssue) throw imageCommandFailure(422, { ok: false, code: productIssue, error: '参考图产品确认已失效，请重新确认。' });
         for (const productId of assets.keys()) {
-            const cutout = await resolveSocialImageProductCutout({ tenantId, productId });
+            const preparation = await ensureProductCutout(tenantId, productId,
+                task.productionRuntime?.binding?.entrySource === 'weekly_package' ? { wait: true, waitForAnalysis: true } : {})
+                .catch(error => {
+                    if (error instanceof Error && error.message === 'product_cutout_source_unavailable') return null;
+                    throw error;
+                });
+            if (preparation === 'processing') throw new Error('social_image_product_asset_processing');
+            let cutout;
+            cutout = await resolveSocialImageProductCutout({ tenantId, productId,
+                sourceSha256: createHash('sha256').update(assets.get(productId)!).digest('hex') });
             assets.set(productId, cutout.bytes);
         }
     }
