@@ -72,7 +72,7 @@ export function industryInsightBlock(question: string, signals: IndustrySignal[]
   const asOf = dailyWindow ? new Intl.DateTimeFormat('sv-SE',{timeZone:dailyWindow.timeZone,dateStyle:'short',timeStyle:'short',hour12:false}).format(new Date(dailyWindow.cutoff)) : '';
   const supplemented = !!dailyWindow && selected.some(signal => signal.publishedAt !== dailyWindow.day);
   const observedSummary = dailyWindow ? `截至${asOf}（Asia/Shanghai），实际收录${supplemented ? '最近24小时' : dailyWindow.day+'当天'}发布的${selected.length}条资讯、${new Set(selected.map(signal=>new URL(signal.sourceUrl).hostname.replace(/^www\./u,''))).size}个发布方。${summary}` : summary;
-  const brief = !!dailyWindow && selected.length > 0 && (selected.length < 3 || new Set(selected.map(signal => new URL(signal.sourceUrl).hostname.replace(/^www\./u,''))).size < 2);
+  const brief = selected.length > 0 && (selected.length < 3 || new Set(selected.map(signal => new URL(signal.sourceUrl).hostname.replace(/^www\./u,''))).size < 2);
   const report = { version: 1, ...(brief ? { presentation: 'brief' } : {}), title: '专题观察', industry, market, period: dailyWindow ? (supplemented ? '最近24小时（北京时间）' : `${dailyWindow.day}（Asia/Shanghai当天）`) : days ? `最近${days}天` : '按查询范围', generatedAt: new Date().toISOString(), summary:observedSummary,
     signals: selected.map(signal => ({ ...signal, sourceType: signal.sourceType || industrySourceType(signal.sourceTitle + ' ' + signal.quote), title: industrySignalHeadline(signal.fact, signal.title) })), ...(metrics.length ? { metrics } : {}), limitations };
   // Fence delimiters cannot be supplied by an untrusted title, URL or model output.

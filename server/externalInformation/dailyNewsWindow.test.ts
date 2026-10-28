@@ -42,6 +42,11 @@ test('daily evidence requires three originals across two hosts and prefers suffi
  assert.deepEqual(selectDailyNewsOriginals(today.slice(0,2),'2026-10-29'),today.slice(0,2));
  assert.equal(selectDailyNewsOriginals([],'2026-10-29'),undefined);
 });
+test('industry with only two verified signals uses the brief presentation',()=>{
+ const signal=(n:number)=>({title:`资讯${n}`,category:'技术',publishedAt:'2026-10-28',fact:`企业发布原料技术${n}。`,implication:'提示研发方向。',action:'建议核对原文。',sourceTitle:`资讯${n}`,sourceUrl:`https://publisher${n}.com/news/${n}`,quote:`原文${n}`});
+ const report=JSON.parse(industryInsightBlock('行业资讯：行业：美妆，目标市场：全球。',[signal(1),signal(2)],'专题观察',0,30).split('\n')[1]);
+ assert.equal(report.presentation,'brief');assert.equal(report.signals.length,2);
+});
 test('daily summary states cutoff and actual included range without filling old news; industry period stays unchanged',()=>{
  const window=dailyNewsWindow('今日资讯',Date.parse('2026-10-28T14:00:00Z'))!;
  const report=JSON.parse(industryInsightBlock('今日资讯，行业：美妆。',[],'暂无可展示的专题资料。',0,1,[],window).split('\n')[1]);

@@ -19,7 +19,7 @@ export function qwenPublicNewsQueries(question:string,days?:number,supplementIns
  }
  const {industry}=industryInsightScope(question);
  const keywords:Array<[RegExp,string]>=[
-  [/美妆|化妆品|护肤|个护|cosmetic|skincare|personal care/iu,'cosmetics skincare'],
+  [/美妆|化妆品|护肤|个护|cosmetic|skincare|personal care/iu,'skincare'],
   [/家具|家居|furniture/iu,'家具 OR furniture'],[/服装|apparel/iu,'服装 OR apparel'],[/纺织|textile/iu,'纺织 OR textiles'],
   [/机械|machinery/iu,'机械 OR machinery'],[/电子|electronics/iu,'电子 OR electronics'],[/食品|food/iu,'食品 OR food'],
  ];
