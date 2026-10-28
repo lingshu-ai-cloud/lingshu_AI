@@ -39,4 +39,3 @@ export async function missingLabelStartFixture(t:test.TestContext,scriptStatus:'
  const detail=await readSocialTaskDetail({repository,tenantId:'tenant',taskId:'film'});assert.ok(detail);
  return {store,repository,detail,resolve,record,source};
 }
-

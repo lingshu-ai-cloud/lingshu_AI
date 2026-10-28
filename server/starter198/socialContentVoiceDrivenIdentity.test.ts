@@ -83,4 +83,3 @@ test('a short verified certification does not approve a longer competitor-only c
 
   assert.equal(rewrite('产品通过 Gold CE Mark。普通说明。').text, '产品通过 CE。普通说明。');
 });
-

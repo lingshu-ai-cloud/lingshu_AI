@@ -87,4 +87,3 @@ export const tariff = () => ({ QWEN_IMAGE_MODEL: 'qwen-image-3.0', SCENE_REWORK_
   SCENE_REWORK_QWEN_MAX_BILLED_CNY_PER_IMAGE: '0.25',
   SCENE_REWORK_QWEN_TARIFF_SOURCE_REF: 'server-approved-contract-v1', SCENE_REWORK_QWEN_TARIFF_VERSION: '1',
   SCENE_REWORK_QWEN_TARIFF_VALID_UNTIL: new Date(Date.now() + 3_600_000).toISOString() });
-
