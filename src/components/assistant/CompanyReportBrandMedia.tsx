@@ -13,7 +13,7 @@ function OfficialBrandPicture({ item, onFailure }: { item: CompanyBrandMedia; on
           height={210} style={{ objectFit: 'contain' }} onLoad={() => setLoaded(true)} onError={() => onFailure(item.id)}/>
       </LsMediaStateFrame>
     </a>
-    <figcaption><strong>{item.brand}</strong><span>官方品牌 / 产品图片</span>
+    <figcaption><strong>{item.brand}</strong><span>官方产品系列 / 品类图片</span>
       <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer">官方来源<ArrowUpRight size={12} aria-hidden="true"/></a>
     </figcaption>
   </figure>;
@@ -26,6 +26,6 @@ export default function CompanyReportBrandMedia({ companyId, text }: { companyId
   return <aside className="company-report-brand-media" aria-label="官方品牌与产品图片">
     <div className="company-report-brand-media__grid">{media.map(item => <OfficialBrandPicture key={item.id} item={item}
       onFailure={id => setFailed(previous => previous.includes(id) ? previous : [...previous, id])}/>)}</div>
-    <p className="company-report-brand-media__note">来源：{media[0].sourceName} · 读取于 {media[0].retrievedOn}。当前品牌图片仅用于辨识，不代表报告期销量或畅销排名。{media[0].attribution}。</p>
+    <p className="company-report-brand-media__note">来源：{media[0].sourceName} · 读取于 {media[0].retrievedOn}。图片展示官方品牌或产品系列，不代表所述事件中的具体单品或报告期销量。{media[0].attribution}。</p>
   </aside>;
 }

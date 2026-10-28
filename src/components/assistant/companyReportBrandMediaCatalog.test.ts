@@ -29,3 +29,12 @@ test('Proya business sections include only their explicitly mentioned official b
  assert.deepEqual(companyReportBrandMedia('botanee','业务分布：珀莱雅和彩棠。'),[]);
  assert.deepEqual(companyReportBrandMedia('proya','整体经营：收入和利润同比变化。'),[]);
 });
+
+test('Proya product mentions use the matching official category image instead of the brand logo', () => {
+ const sunscreen=companyReportBrandMedia('proya','珀莱雅修颜防晒乳参与对比测评')[0];
+ assert.equal(sunscreen.image,'/company-brands/proya-sunscreen.jpg');
+ assert.match(sunscreen.brand,/防晒美白系列/);
+ assert.equal(companyReportBrandMedia('proya','珀莱雅产品：源力精华')[0].image,'/company-brands/proya-yuanli.jpg');
+ assert.equal(companyReportBrandMedia('proya','珀莱雅品牌业务')[0].image,'/company-brands/proya-ruby.jpg');
+ for (const item of [sunscreen,companyReportBrandMedia('proya','珀莱雅产品：源力精华')[0]]) assert.ok(readFileSync(new URL(`../../../public${item.image}`, import.meta.url)).length>10000);
+});
