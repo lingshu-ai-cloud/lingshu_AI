@@ -97,6 +97,9 @@ export async function composeSearchEvidenceAnswer(question:string,originals:Sear
   const original=originals.find(value=>value.id===item.sourceId);
   const chosen=item.quoteIds.map(id=>excerpts.get(item.sourceId)?.find(excerpt=>excerpt.id===id));
   if(!original||chosen.some(excerpt=>!excerpt))throw new ExternalInformationError('search_analysis_quote_invalid','解读引用未能对应原文，本次未输出未经核验的事实。');
+  // A model may cite a real article while explicitly saying it is outside the requested scope.
+  // Do not allow that rejected item to supply a signal, source, metric, or cross-source conclusion.
+  if (industry && /(?:与.{0,48}(?:无直接|没有直接|无关|不相关)|(?:未涉及|不涉及).{0,48}(?:行业|原料|市场)|属于.{0,24}(?:行业|品类).{0,30}(?:未涉及|无关))/u.test(`${item.fact} ${item.meaning}`)) continue;
   const number=selected.findIndex(value=>value.id===original.id);const index=number>=0?number+1:selected.push(original);
   // Restore the source's date granularity instead of inventing a year from nearby headings.
   let normalizedDate=false;

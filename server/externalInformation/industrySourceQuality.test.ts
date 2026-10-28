@@ -27,3 +27,12 @@ test('legal terminology guard preserves trigger wording and genuine source exemp
  assert.equal(regulatoryInterpretationSupported('建议核对豁免适用范围。','Certain small businesses are exempt from facility registration requirements.'),true);
  assert.equal(regulatoryInterpretationSupported('建议核对豁免适用范围。','该类企业不得豁免设施注册。'),false);
 });
+
+test('excluding a verified but explicitly unrelated news item also excludes its source and combined conclusion', async () => {
+ const relevant:SearchOriginal={id:'S1',source:{title:'化妆品新原料界定指导原则征求意见',uri:'https://example.com/beauty'},text:'中检院发布化妆品新原料界定指导原则征求意见，涉及植物提取物新原料管理。',published:['2026-10-28']};
+ const unrelated:SearchOriginal={id:'S2',source:{title:'广交会陶瓷企业出口动态',uri:'https://example.org/ceramics'},text:'广交会聚焦品质家居，陶瓷企业参展并吸引境外采购商洽谈。',published:['2026-10-25']};
+ const result=await composeSearchEvidenceAnswer('行业资讯：行业：美妆原料，目标市场：全球。',[relevant,unrelated],async()=>JSON.stringify({items:[
+  {sourceId:'S1',quoteIds:['S1-Q1'],fact:'中检院发布化妆品新原料界定指导原则征求意见，涉及植物提取物新原料管理。',meaning:'提示原料企业可关注监管口径。',action:'建议核对原文中的适用范围。'},
+  {sourceId:'S2',quoteIds:['S2-Q1'],fact:'广交会聚焦品质家居，陶瓷企业参展并吸引境外采购商洽谈。该报道属于陶瓷出口行业动向，未涉及美妆原料市场。',meaning:'提示该来源与全球美妆原料市场无直接业务关联。',action:'建议排除非相关品类展会综合报道。'}],conclusion:'化妆品原料和陶瓷出口共同反映行业趋势。',conclusionSourceIds:['S1','S2']}));
+ assert.match(result.text,/化妆品新原料/);assert.doesNotMatch(result.text,/陶瓷/);assert.deepEqual(result.sources.map(source=>source.uri),['https://example.com/beauty']);
+});

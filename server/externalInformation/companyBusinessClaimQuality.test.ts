@@ -39,3 +39,9 @@ test('actual Proya audit replay removes benchmark assertion, retains P11-backed 
   assert.deepEqual(result.actions.map(item => item.audience).sort(), ['代工厂', '原料商', '品牌方'].sort());
   assert.ok(result.actions.some(item => item.audience === '代工厂' && /微珠包裹|双形态喷雾/u.test(item.text)));
 });
+
+test('cash receipts falling does not establish slower collections without cited evidence', () => {
+ assert.throws(() => assertCompanyBusinessClaim('经营现金流下降主因宣传费支付增加及回款放缓。', '经营活动产生的现金流量净额变动原因：销售商品收到的现金下降；支付的形象宣传推广费增加。'), /payment_delay_unsupported/);
+ assert.doesNotThrow(() => assertCompanyBusinessClaim('销售商品收到的现金下降。', '销售商品收到的现金下降。'));
+ assert.doesNotThrow(() => assertCompanyBusinessClaim('回款周期延长。', '公司披露回款周期延长。'));
+});

@@ -2,6 +2,11 @@
 export function assertCompanyBusinessClaim(prose: string, source: string): void {
   const text = prose.replace(/\s+/gu, '');
   const evidence = source.replace(/\s+/gu, '');
+  // A fall in cash received is not, by itself, evidence that customer payments slowed.
+  if (/回款(?:放缓|变慢|延迟|周期(?:延长|拉长))/u.test(text)
+    && !/回款(?:放缓|变慢|延迟|周期(?:延长|拉长))|(?:回款|收款)(?:周期|速度)[^。；！？]{0,12}(?:延长|拉长|变慢|放缓)/u.test(evidence)) {
+    throw Error('payment_delay_unsupported');
+  }
   if (/研发(?:投入|费用率)[^。；！？]{0,12}(?:偏低|不足|低于行业)|(?:偏低|不足)[^。；！？]{0,8}研发(?:投入|费用率)/u.test(text)
     && !/(?:同行|行业|可比公司)[^。；！？]{0,40}(?:平均|中位|基准|研发)|研发[^。；！？]{0,40}(?:同行|行业平均|中位|可比公司)/u.test(evidence)) {
     throw Error('research_benchmark_missing');
