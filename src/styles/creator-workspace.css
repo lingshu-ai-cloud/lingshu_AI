@@ -455,6 +455,9 @@ html[data-lingshu-appearance='light'] .ls-assistant-home-root .ls-assistant-flow
 .creator-home__prompt-grid--creation { grid-auto-columns: minmax(210px, calc((100% - 30px) / 4)); }
 
 /* Active conversations reserve the bottom row for a compact composer. */
+.ls-assistant-home-root[data-home-empty='false'] [data-assistant-conversation-controls] { position: absolute; top: 8px; right: 12px; z-index: 3; padding: 0; }
+.ls-assistant-home-root[data-home-empty='false'] [data-assistant-return-latest] { position: absolute; right: 0; bottom: 68px; left: 0; z-index: 2; border: 0; background: transparent; pointer-events: none; }
+.ls-assistant-home-root[data-home-empty='false'] [data-assistant-return-latest] button { pointer-events: auto; }
 .ls-assistant-home-root[data-home-empty='false'] .ls-assistant-composer { padding: 8px 16px 10px; }
 .ls-assistant-home-root[data-home-empty='false'] .ls-assistant-composer__surface { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: end; gap: 8px; }
 .ls-assistant-home-root[data-home-empty='false'] .ls-assistant-composer__editing { grid-column: 2; grid-row: 2; padding: 0; }

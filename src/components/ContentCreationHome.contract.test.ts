@@ -91,6 +91,9 @@ assert.match(creatorStyles, /data-home-empty='true'\] \[data-assistant-conversat
 assert.match(creatorStyles, /data-home-empty='true'\] \.ls-assistant-composer \{ padding-top: 16px;/, '空白会话输入文字应从顶部开始');
 assert.match(creatorStyles, /data-home-empty='true'\] \.ls-assistant-composer__editing \{ padding-right: 56px;/, '输入文字必须避开右上角会话管理按钮');
 assert.match(creatorStyles, /\.ls-assistant-home-root \.ls-assistant-panel \{ border: 0; border-radius: inherit; background: transparent; box-shadow: none; \}/, '首页对话只允许外层容器绘制边界，通用助手面板不得形成第二层框');
+assert.match(assistantPanel, /data-assistant-return-latest/, '回到最新消息控件必须提供首页紧凑布局锚点');
+assert.match(creatorStyles, /data-home-empty='false'\] \[data-assistant-conversation-controls\][^{]*\{ position: absolute;/, '已有对话的会话管理控件不得占用输入栏高度');
+assert.match(creatorStyles, /data-home-empty='false'\] \[data-assistant-return-latest\][^{]*\{ position: absolute;/, '回到最新消息控件不得把首页输入栏挤出外框');
 assert.match(creatorStyles, /\.ls-assistant-home-root \.ls-assistant-flow__answer/, '首页助手回复必须使用连续文本流，而不是通用消息气泡');
 assert.match(creatorStyles, /@keyframes ls-assistant-flow-reveal/, '首页助手文本须使用一次性分层进入动效');
 assert.match(layout, /Math\.round\(viewportWidth \* 0\.173\)/, '左侧栏按参考图桌面比例布局');

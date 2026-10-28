@@ -231,7 +231,7 @@ export default function AssistantConversationPanel(props: Props) {
             </div>
 
             {!activeThread.isFollowingLatest && (
-              <div className="flex shrink-0 justify-center border-t border-border/60 bg-surface px-3 py-1.5">
+              <div data-assistant-return-latest className="flex shrink-0 justify-center border-t border-border/60 bg-surface px-3 py-1.5">
                 <button type="button" onClick={() => {
                   const scroller = messageScrollRef.current;
                   if (scroller) scroller.scrollTop = scroller.scrollHeight;
