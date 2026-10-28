@@ -1,5 +1,18 @@
 # Git 工作树状态盘点
 
+## 2026-10-28 节节图片联调完成安全集成
+
+- 当前 `baseline/unified-20261028` 原干净目录已 ff-only 推进到源码 `e67e0c5d`，治理记录随后单独提交；隔离集成目录为 `/Users/julia1/Documents/ChatGPT/基线管理/jiejie-image-safe-20261028`。
+- 来源 `节节图片联调完成` / `453ef28b...` 已定向拉取并建立同名本地跟踪分支；双亲合并 `378a7a64`，恢复分支 `backup/pre-jiejie-image-20261028-21a9fb94` 保留。
+- 其他旧工作树和分支不变。原始来源对照测试工作树位于 `/Users/julia1/.codex/integration-evidence/20261028-jiejie-image/source-453ef28b`；仅用于复现已知预算与 worker 验收失败。详见 [合并记录](JIEJIE-IMAGE-INTEGRATION-20261028.md)。未推送或部署。
+
+## 2026-10-28 图文联调本地基线
+
+- 新本地统一基线目录 `/Users/julia1/Documents/ChatGPT/基线管理/image-text-baseline-20261028`，分支 `baseline/unified-20261028`。源码双亲合并 `0bc495bdd75925437b86231188de3727a50b66ee`，治理记录随后单独提交；该目录仅软链依赖，未复制运行数据或凭据。
+- 原统一基线目录、`baseline/unified-20261026` / `0ca19acf…` 和原 55 项未提交内容不变；图文来源 `xixi改图文联调` / `ac12a041…` 不变。原已跟踪补丁、状态及未跟踪文件哈希复核一致。
+- 不清理、不归档其他工作树，不推进旧脏目录的基线引用。新版本从新干净目录交付。详见 [合并记录](IMAGE-TEXT-BASELINE-20261028.md)。未推送、部署或切换预览。
+
+
 ## 2026-10-27 首页快捷卡片安全集成
 
 - 功能现场与权威基线共用 `/Users/julia1/.codex/worktrees/lingshu-unified-baseline-20261026`，从 `8cecbd02` 独立 index 固定 54 个任务文件为 `0e9872a0`。其余 43 个脏文件哈希全部保持，不清理其他开发现场。
