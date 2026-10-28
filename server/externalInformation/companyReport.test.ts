@@ -89,6 +89,17 @@ test('model selects original excerpt ids; missing ids and cross-page substitutio
   assert.ok(report.analysis.sections[0].observation.quote.includes('公司持续开发新原料和客户'));
 });
 
+test('drops an uncited section only when three verifiable sections remain', async () => {
+ const input = structuredClone(draft);
+ input.sections.push({ ...structuredClone(input.sections[0]), title: '没有引用的章节', observation: { ...structuredClone(input.sections[0].observation), text: '未经核验的事实。', quoteIds: [] } });
+ const read = async () => ({ pages, totalPages: 204, fetchedAt: '2026-10-26T00:00:00Z', sha256: 'd'.repeat(64), audited: false });
+ const report = await generateCompanyReport(target, 'uncited-section-recovery', { read, analyze: async () => JSON.stringify(input) });
+ assert.equal(report.analysis.sections.length, 3);
+ assert.doesNotMatch(JSON.stringify(report), /未经核验的事实|没有引用的章节/);
+ input.sections[0].observation.quoteIds = [];
+ await assert.rejects(generateCompanyReport(target, 'uncited-section-insufficient', { read, analyze: async () => JSON.stringify(input) }), { code: 'company_report_response_invalid' });
+});
+
 test('numeric proof keeps table-cell boundaries, normalizes split PDF year and verifies rounded administration expense', () => {
   const table = pages.map(page => page.page === 6 ? { ...page, text: `${page.text}\n202 6 年半年度报告\n研发投入占营业收入比例 12.07 10.22 增加1.85个百分点` }
     : page.page === 41 ? { ...page, text: `${page.text}\n管理费用 226,860,666.38 275,140,183.32 -17.55` } : page);

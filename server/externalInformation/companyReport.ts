@@ -92,6 +92,15 @@ export async function generateCompanyReport(target: CompanyReportTarget, tenantI
     // Repeating a real ID adds no support and must not consume the bounded unique-reference allowance.
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       const input = parsed as Record<string, unknown>;
+      // A section with no source excerpt cannot be delivered. Preserve the other
+      // sections only if the unchanged schema still accepts at least three.
+      if (Array.isArray(input.sections)) input.sections = input.sections.filter(section => {
+        if (!section || typeof section !== 'object' || Array.isArray(section)) return true;
+        const observation = (section as Record<string, unknown>).observation;
+        if (!observation || typeof observation !== 'object' || Array.isArray(observation)) return true;
+        const quoteIds = (observation as Record<string, unknown>).quoteIds;
+        return !Array.isArray(quoteIds) || quoteIds.length > 0;
+      });
       const sections = Array.isArray(input.sections) ? input.sections : [];
       const citedItems = [input.conclusion, ...(Array.isArray(input.watchpoints) ? input.watchpoints : []), ...sections.flatMap(section => section && typeof section === 'object' ? [section.observation, section.interpretation, section.implication] : [])];
       for (const item of citedItems) if (item && typeof item === 'object') {
