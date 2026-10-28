@@ -224,7 +224,8 @@ test('explicit BASF publisher lookup discovers real directory links before synth
   }
 });
 
-test('industry and daily briefs search diverse sources instead of stopping at a publisher directory', async () => {
+test('industry and daily briefs search diverse sources instead of stopping at a publisher directory', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-28T12:00:00Z') });
   const originalFetch=globalThis.fetch, previousKey=process.env.DASHSCOPE_API_KEY, previousEndpoint=process.env.QWEN_SEARCH_ENDPOINT;
   process.env.DASHSCOPE_API_KEY='fixture-only';process.env.QWEN_SEARCH_ENDPOINT='https://fixture.invalid/search';
   let searchCalls=0,directoryCalls=0,analysisCalls=0;
@@ -344,7 +345,8 @@ test('real sparse North America shape uses exactly max then turbo freshness, wit
  }finally{globalThis.fetch=savedFetch;keys.forEach((key,index)=>{if(saved[index]===undefined)delete process.env[key];else process.env[key]=saved[index];});}
 });
 
-test('public RSS candidates enter the same verified-original and single-synthesis flow without another paid call',async()=>{
+test('public RSS candidates enter the same verified-original and single-synthesis flow without another paid call',async(t)=>{
+ t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-28T12:00:00Z')});
  const savedFetch=globalThis.fetch;const keys=['QWEN_SEARCH_ENDPOINT','DASHSCOPE_API_KEY'] as const,saved=keys.map(key=>process.env[key]);
  process.env.QWEN_SEARCH_ENDPOINT='https://fixture.invalid/rss-candidate-search';process.env.DASHSCOPE_API_KEY='fixture-only';
  let searches=0,syntheses=0,feedCalls=0,articleReads=0;

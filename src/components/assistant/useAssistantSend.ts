@@ -91,6 +91,10 @@ const API_PATH: Record<AgentType, string> = {
 };
 
 /** Sends one scoped assistant turn; the parent still owns identity and conversation state. */
+export function shouldRouteWeeklyGuidance(draft: string, active: boolean, hasPendingScene: boolean): boolean {
+  return active && !hasPendingScene && !isAssistantHomeQuickTaskText(draft);
+}
+
 export function useAssistantSend(input: AssistantSendInput) {
   const { page, pageContext, currentPageAgent, enterpriseContext, loading, fileGenerating,
     replyStreaming, contentIntake, uiMessage, persistenceFenceRef, stablePersistenceScope,
@@ -483,7 +487,9 @@ export function useAssistantSend(input: AssistantSendInput) {
       if (files.length) { setAttachmentError('请先完成或取消当前任务问答，再发送附件。'); return; }
       void send(draft); return;
     }
-    if (!files.length && weeklyPlanGuidanceActive) {
+    const pendingScene = pendingHomeSubmissionRef.current;
+    const hasPendingScene = pendingScene?.agent === activeAgent && pendingScene.draft === draft;
+    if (!files.length && shouldRouteWeeklyGuidance(draft, weeklyPlanGuidanceActive, hasPendingScene)) {
       await sendWeeklyPlanGuidanceAnswer(draft);
       return;
     }

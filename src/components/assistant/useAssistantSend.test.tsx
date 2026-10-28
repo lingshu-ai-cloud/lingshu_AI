@@ -4,11 +4,17 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useAssistantStore } from '../../stores/assistantStore';
 import { emptyAssistantThread, mergeConsecutiveAssistant } from './globalAssistantRuntime';
-import { useAssistantSend } from './useAssistantSend';
+import { shouldRouteWeeklyGuidance, useAssistantSend } from './useAssistantSend';
 import { assistantHomePromptById } from '../../lib/assistantHomeQuickPrompts';
 import { navigationPortalForAnswer } from '../../lib/assistantNavigationPortal';
 
 type SendInput = Parameters<typeof useAssistantSend>[0];
+test('weekly guidance does not intercept external news and other scene prompts', () => {
+  for (const id of ['OP-02', 'OP-09', 'OP-12', 'CS-01', 'AD-01']) assert.equal(shouldRouteWeeklyGuidance(assistantHomePromptById(id)!.prompt, true, false), false, id);
+  assert.equal(shouldRouteWeeklyGuidance('行业资讯：行业：美妆，目标市场：全球。', true, false), false);
+  assert.equal(shouldRouteWeeklyGuidance('已确认业务场景', true, true), false);
+  assert.equal(shouldRouteWeeklyGuidance('提高询盘量', true, false), true);
+});
 test('inline business selectors and scoped replies are never merged away on hydration',()=>{
  const messages=mergeConsecutiveAssistant([{role:'assistant',content:'前一条回答'}, {role:'assistant',content:'你想先关注谁？',businessScenePrompt:{sceneId:'CS-02'}}, {role:'assistant',content:'客户回复',businessScene:{sceneId:'CS-02',from:'2026-10-21',to:'2026-10-27',customerId:'owned'}}]);
  assert.equal(messages.length,3);assert.equal(messages[1].businessScenePrompt?.sceneId,'CS-02');assert.equal(messages[2].businessScene?.customerId,'owned');
