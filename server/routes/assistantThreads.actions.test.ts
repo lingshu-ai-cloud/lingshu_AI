@@ -802,6 +802,56 @@ test('conversation lifecycle clears context, fences stale saves, isolates owners
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
+test('conversation lifecycle cancels only an unstarted image draft without a formal child run', async () => {
+  const baseStore = memoryStore([{ id: 'thread-draft', tenantId: 'tenant-a', userId: 'user-a', agentId: 'business',
+    source: 'desktop', version: 1, messages: [
+      { role: 'assistant', content: '待提交草稿', creationPortal: { id: 'portal-pending', imageReplication: { intake: { submitted: true } } } },
+      { role: 'assistant', content: '已有正式任务', creationPortal: { id: 'portal-formal', imageReplication: { intake: { submitted: true, imageTaskId: 'formal-run' } } } },
+      { role: 'assistant', content: '尚未提交', creationPortal: { id: 'portal-idle', imageReplication: { intake: { submitted: false } } } },
+    ], taskCards: {} }]);
+  const tasks: Row[] = ['pending', 'formal', 'idle'].map(kind => ({ id: `row-${kind}`, tenant_id: 'tenant-a',
+    task_id: `task-${kind}`, created_by: 'user-a', create_idempotency_key: `portal-${kind}:content`, task_mode: 'instant',
+    status: 'draft', version: '1', run_id: '', weekly_plan_id: '', source_count: 0, artifact_count: 0,
+    delivery_package_count: 0, publication_count: 0, metric_submission_count: 0 }));
+  const childRuns: Row[] = [{ id: 'formal-run', tenant_id: 'tenant-a', workflow_task_id: 'task-formal' }];
+  const dataStore: DataStore = {
+    ...baseStore,
+    async list<T>(collection: string, query: ListQuery = {}) {
+      const source = collection === 'starter_social_content_tasks' ? tasks
+        : collection === 'studio_projects' ? childRuns : null;
+      if (!source) return baseStore.list<T>(collection, query);
+      const items = source.filter(row => Object.entries(query.where ?? {}).every(([key, value]) => row[key] === value));
+      return { items: items as T[], totalItems: items.length, totalPages: 1, page: 1, perPage: query.perPage ?? 20 };
+    },
+    async compareAndSwap(collection, id, expected, data) {
+      if (collection !== 'starter_social_content_tasks') return baseStore.compareAndSwap!(collection, id, expected, data);
+      const row = tasks.find(item => item.id === id);
+      if (!row || !Object.entries(expected).every(([key, value]) => row[key] === value)) return false;
+      Object.assign(row, structuredClone(data)); return true;
+    },
+  };
+  const app = express(); app.use(express.json());
+  app.use('/threads', createAssistantThreadsRouter({ dataStore, authMiddleware: (_req, res, next) => {
+    res.locals.tenantId = 'tenant-a'; res.locals.userId = 'user-a'; next();
+  } }));
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/threads/business/clear`;
+  try {
+    const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedVersion: 1 }) });
+    assert.equal(response.status, 200);
+    assert.equal(tasks.find(row => row.task_id === 'task-pending')?.status, 'cancelled');
+    assert.equal(tasks.find(row => row.task_id === 'task-pending')?.cancellation_reason, 'assistant_conversation_discarded');
+    assert.equal(tasks.find(row => row.task_id === 'task-formal')?.status, 'draft', 'a bound child run is a formal task');
+    assert.equal(tasks.find(row => row.task_id === 'task-idle')?.status, 'draft', 'an unsubmitted intake is only conversation state');
+    const restored = await fetch(endpoint.replace('/clear', '/restore'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedVersion: 2 }) });
+    assert.equal(restored.status, 200);
+    const restoredBody = await restored.json() as { messages: Array<{ creationPortal: { id: string; imageReplication: { intake: { submitted: boolean } } } }> };
+    assert.equal(restoredBody.messages[0]?.creationPortal.imageReplication.intake.submitted, false);
+    assert.match(restoredBody.messages[0]?.creationPortal.id || '', /^portal-pending-retry-3$/);
+    assert.equal(restoredBody.messages[1]?.creationPortal.id, 'portal-formal', 'formal task checkpoints remain resumable');
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
 test.after(() => {
   for (const [key, value] of Object.entries(previousEnvironment)) {
     if (value === undefined) delete process.env[key];

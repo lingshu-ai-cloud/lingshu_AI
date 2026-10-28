@@ -9,6 +9,7 @@ import { enterpriseFactContentHash } from '../routes/enterprise.js';
 import type { AssetCandidate } from './contentProductionContracts.js';
 import {
   enterpriseOnboardingEvidence,
+  compatibleProductionOnboardingPreferences,
   evaluateServerProductionOnboardingReadiness,
   fixedYieldArchetypeForBenchmarkShot,
   inventoryFixedYieldArchetypes,
@@ -250,4 +251,21 @@ test('missing onboarding preferences or exact local archetype blocks before prod
   assert.deepEqual(missingMaterial.blockers.map(item => item.code), ['local_material_missing']);
   assert.equal(referenceCoveredByProductionEvidence({ analysis: analysis([shot()]), preferences, evidence }), false);
   assert.equal(referenceCoveredByProductionEvidence({ analysis: analysis([shot()]), preferences, evidence: { ...evidence, inventoryArchetypes: ['P3B_MACHINE_CLOSEUP'] } }), true);
+});
+
+test('confirmed legacy enterprise facts receive only safe local-video production defaults', () => {
+  const profile = confirmedProfile();
+  const evidence = {
+    companyReady: true, brandReady: true, productFactsReady: true,
+    presenterReady: false, voiceReady: false, inventoryArchetypes: [] as never[], budgetConfirmed: true,
+  };
+  assert.deepEqual(compatibleProductionOnboardingPreferences(profile, evidence), {
+    schemaVersion: 'fixed-yield.production-onboarding.v1',
+    contact: { kind: 'none', value: '', primaryCta: '' },
+    presenterPolicy: 'local_video_only',
+    output: { primaryLanguage: 'en', aspectRatio: '9:16', resolution: '1080p' },
+    includeOneRevision: true,
+    confirmedAt: profile.factVersion!.confirmedAt,
+  });
+  assert.equal(compatibleProductionOnboardingPreferences({ ...profile, factVersion: undefined }, evidence), undefined);
 });

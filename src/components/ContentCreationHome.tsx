@@ -18,12 +18,12 @@ import {
   Compass,
   UserRound,
 } from 'lucide-react';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Page } from '../pageRegistry';
 import { AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
 import { digitalEmployeeApi } from '../lib/digitalEmployeeApi';
 import type { DigitalEmployeeOverview } from '../lib/digitalEmployees';
-import { HOME_GROWTH_TOUR_COMPLETE_EVENT, HOME_GROWTH_TOUR_START_EVENT, HOME_INTRODUCTION_COMPLETE_EVENT, readHomeFirstRun, writeHomeFirstRun } from '../lib/homeFirstRun';
+import { HOME_FIRST_RUN_RESET_EVENT, HOME_GROWTH_TOUR_COMPLETE_EVENT, HOME_GROWTH_TOUR_START_EVENT, HOME_INTRODUCTION_COMPLETE_EVENT, readHomeFirstRun, resetHomeFirstRun, writeHomeFirstRun } from '../lib/homeFirstRun';
 import { EMPTY_CONFIG } from './smartBusiness/digitalEmployeeConfigRules';
 import HomeIntroduction from './HomeIntroduction';
 import {
@@ -68,7 +68,7 @@ function resolveLauncherPrompts(launcher: AssistantHomeQuickLauncher | null): As
     .filter((entry): entry is AssistantHomePrompt => Boolean(entry));
 }
 
-export default function ContentCreationHome({ onNavigate, inspirationWorkspace, sessionScope }: { onNavigate?: (page: Page) => void; inspirationWorkspace?: ReactNode; sessionScope: string }) {
+export default function ContentCreationHome({ onNavigate, inspirationWorkspace, sessionScope, firstRunRequestKey, onFirstRunRestored }: { onNavigate?: (page: Page) => void; inspirationWorkspace?: ReactNode; sessionScope: string; firstRunRequestKey?: string; onFirstRunRestored?: () => void }) {
   const [activeLauncherId, setActiveLauncherId] = useState<AssistantHomeQuickLauncherId | null>(null);
   const [companyReportOpen, setCompanyReportOpen] = useState(false);
   const [highlightOpen, setHighlightOpen] = useState(false);
@@ -82,6 +82,7 @@ export default function ContentCreationHome({ onNavigate, inspirationWorkspace, 
   const [overviewRevision, setOverviewRevision] = useState(0);
   const [firstRunProgress, setFirstRunProgress] = useState(() => readHomeFirstRun(sessionScope));
   const [introductionOpen, setIntroductionOpen] = useState(false);
+  const handledFirstRunRequestRef = useRef<string | null>(null);
   const activeLauncher = useMemo(
     () => ASSISTANT_HOME_QUICK_LAUNCHERS.find(entry => entry.id === activeLauncherId) || null,
     [activeLauncherId],
@@ -138,6 +139,25 @@ export default function ContentCreationHome({ onNavigate, inspirationWorkspace, 
   }, [sessionScope]);
 
   useEffect(() => {
+    if (!firstRunRequestKey || handledFirstRunRequestRef.current === firstRunRequestKey) return;
+    handledFirstRunRequestRef.current = firstRunRequestKey;
+    setActiveLauncherId(null);
+    setIntroductionOpen(false);
+    setFirstRunProgress(resetHomeFirstRun(sessionScope));
+    onFirstRunRestored?.();
+  }, [firstRunRequestKey, onFirstRunRestored, sessionScope]);
+
+  useEffect(() => {
+    const reset = () => {
+      setActiveLauncherId(null);
+      setIntroductionOpen(false);
+      setFirstRunProgress(readHomeFirstRun(sessionScope));
+    };
+    window.addEventListener(HOME_FIRST_RUN_RESET_EVENT, reset);
+    return () => window.removeEventListener(HOME_FIRST_RUN_RESET_EVENT, reset);
+  }, [sessionScope]);
+
+  useEffect(() => {
     const onAssistantActivity = (event: Event) => {
       const detail = (event as CustomEvent<{ active?: boolean; busy?: boolean }>).detail;
       setAssistantBusy(Boolean(detail?.busy));
@@ -161,10 +181,7 @@ export default function ContentCreationHome({ onNavigate, inspirationWorkspace, 
 
   const choosePrompt = (entry: AssistantHomePrompt) => {
     if (entry.id === 'OP-CALENDAR') {
-      if (!hasWeeklyPlan) { preparePrompt(entry); return; }
-      onNavigate?.('digitalEmployees');
-      window.setTimeout(() => window.dispatchEvent(new CustomEvent('lingshu:open-weekly-plan', { detail: { source: 'home' } })), 0);
-      setActiveLauncherId(null);
+      preparePrompt(entry);
       return;
     }
     if (entry.id === 'CO-11') { openContentGenerationQueue({view:'tasks'});setActiveLauncherId(null);return; }

@@ -1,8 +1,7 @@
-/* A quiet bookmark on the conversation's left edge, using the shared action palette. */
-.ls-assistant-panel:has(.assistant-work-bookmark) { padding-inline-start: 48px; }
+/* A quiet bookmark attached outside the conversation, without shrinking its content. */
 .assistant-work-bookmark {
   position: absolute;
-  inset-inline-start: 0;
+  inset-inline-start: -42px;
   top: 100px;
   z-index: 20;
   display: flex;
@@ -14,8 +13,8 @@
   gap: 16px;
   padding: 18px 6px;
   border: 1px solid rgb(255 255 255 / 28%);
-  border-inline-start: 0;
-  border-radius: 0 10px 16px 0;
+  border-inline-end: 0;
+  border-radius: 16px 0 0 16px;
   background: linear-gradient(165deg, #2563eb 0%, #4f46e5 58%, #7c3aed 100%);
   color: white;
   box-shadow: inset -3px 0 0 rgb(255 255 255 / 14%), 3px 0 12px rgb(79 70 229 / 12%);
@@ -41,8 +40,7 @@
 .assistant-work-calendar > header { padding-inline: 16px; border-bottom: 1px solid var(--color-border); }
 .assistant-work-records { margin-top: 24px; border-top: 1px solid var(--color-border); padding-top: 12px; }
 @media (max-width: 767px) {
-  .ls-assistant-panel:has(.assistant-work-bookmark) { padding-inline-start: 38px; }
-  .assistant-work-bookmark { width: 32px; min-height: 232px; padding: 14px 4px; top: 78px; }
+  .assistant-work-bookmark { inset-inline-start: -16px; width: 32px; min-height: 232px; padding: 14px 4px; top: 78px; }
 }
 @media (prefers-reduced-motion: reduce) { .assistant-work-bookmark { transition: none; } }
 .ls-assistant-panel--work-expanded {

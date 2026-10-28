@@ -9,7 +9,7 @@ import { notifyWeeklyWorkUpdated } from '../lib/weeklyWorkEvents';
 import { weeklyWorkStatus } from '../lib/weeklyWorkStatus';
 import { digitalEmployeeApi, type DigitalEmployeeOverview } from '../lib/digitalEmployees';
 
-type WeeklyLaunchApi = Pick<typeof digitalEmployeeApi, 'approveGoal' | 'overview'>;
+type WeeklyLaunchApi = Pick<typeof digitalEmployeeApi, 'approveGoal' | 'generatePackageDetails' | 'overview'>;
 
 interface WeeklyLaunchContext {
   data: DigitalEmployeeOverview | null;
@@ -98,9 +98,52 @@ export function createDigitalEmployeeWeeklyLaunch(context: WeeklyLaunchContext) 
     setWeeklyStartConflict(null);
     let launchRequestSent = false;
     try {
-      // Preparation is runtime work; only the server validates this revision.
+      const productionPlans = (source.plan.businessPackage.tasks || [])
+        .find(task => task.templateId === 'production')?.videoPlans || [];
+      const hasPreparedVideoWork = productionPlans.some(plan => plan.productionRole !== 'platform_adaptation');
+      let prepared = source;
+      if (hasPreparedVideoWork) {
+        try {
+          prepared = await api.generatePackageDetails(goal.id);
+        } catch (preparationError) {
+          if (!weeklyStartResultNeedsReconciliation(preparationError)) throw preparationError;
+          try {
+            const reconciled = await api.overview(goal.id);
+            const detail = reconciled.goal?.id === goal.id
+              ? reconciled.plan?.businessPackage?.detailGeneration
+              : undefined;
+            if (detail?.status !== 'ready') {
+              const message = detail?.status === 'generating'
+                ? '任务包正在准备，尚未启动本周任务；请稍后再次确认，系统会复用已保存的准备结果。'
+                : detail?.status === 'blocked'
+                  ? `任务包准备未通过：${detail.blockers.join('；') || '请先补齐制作条件'}。本周任务尚未启动。`
+                  : preparationError instanceof Error ? preparationError.message : '任务包准备结果待确认，本周任务尚未启动。';
+              reportWeeklyStartFailure(message);
+              return;
+            }
+            prepared = reconciled;
+          } catch {
+            reportWeeklyStartFailure('任务包准备请求已经发出，但暂未取得可确认的结果；本周任务尚未启动，请稍后再次确认。');
+            return;
+          }
+        }
+        const preparedPackage = prepared.goal?.id === goal.id ? prepared.plan?.businessPackage : undefined;
+        if (!preparedPackage) throw new Error('任务包准备结果与当前周目标不一致，本周任务尚未启动。');
+        const detail = preparedPackage.detailGeneration;
+        if (detail?.status !== 'ready') {
+          overviewRequestVersionRef.current += 1;
+          setData(prepared);
+          const message = detail?.status === 'generating'
+            ? '任务包正在准备，尚未启动本周任务；请稍后再次确认。'
+            : `任务包准备未通过：${detail?.blockers.join('；') || '请先补齐制作条件'}。本周任务尚未启动。`;
+          reportWeeklyStartFailure(message);
+          return;
+        }
+      }
+      const preparedPackage = prepared.goal?.id === goal.id ? prepared.plan?.businessPackage : undefined;
+      if (!preparedPackage) throw new Error('任务包准备结果与当前周目标不一致，本周任务尚未启动。');
       launchRequestSent = true;
-      const next = await api.approveGoal(goal.id, source.plan.businessPackage.revision, true);
+      const next = await api.approveGoal(goal.id, preparedPackage.revision, true);
       if (!presentConfirmedWeeklyExecution(next, goal.id)) {
         throw new Error('启动结果未返回可确认的真实运行；系统不会自动重复提交同一周计划。');
       }

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { growthTourBubblePosition } from './HomeGrowthTour';
 
@@ -16,4 +17,11 @@ test('tour bubble uses the open side of a sidebar spotlight', () => {
   const target = { left: 6, top: 160, right: 240, bottom: 235, width: 234, height: 75 };
   const position = growthTourBubblePosition(target, bubble, viewport);
   assert.ok(position.top >= target.bottom || position.left >= target.right);
+});
+
+test('calendar tour step opens the unified queue and can leave it', () => {
+  const source = readFileSync(new URL('./HomeGrowthTour.tsx', import.meta.url), 'utf8');
+  assert.match(source, /openContentGenerationQueue\(\{ view: 'calendar' \}\)/);
+  assert.match(source, /if \(index === 2\) closeContentGenerationQueue\(\)/);
+  assert.match(source, /data-growth-tour=\"queue-modal\"/);
 });

@@ -1,5 +1,5 @@
 import { Activity, Suspense, type Dispatch, type SetStateAction } from 'react';
-import type { AuthSession } from './lib/auth';
+import { authApi, type AuthSession } from './lib/auth';
 import type { Page } from './pageRegistry';
 import { PAGE_REGISTRY } from './pageRegistry';
 import type { AgentType, ConversationContext, RestoreSignal } from './appSession';
@@ -78,6 +78,8 @@ export default function AppPageSlot({
             <Activity mode={page === 'strategy' ? 'visible' : 'hidden'}>
             <StrategyPage
               sessionScope={pagePreferenceScope(session)}
+              firstRunRequestKey={session.demo?.guideTrigger ? session.demo.guideScope : undefined}
+              onFirstRunRestored={() => { void authApi.guideSeen().then(refreshSession); }}
               onEnterConversation={enterConversation}
               onLeaveConversation={leaveConversation}
               isInConversation={conversation?.agent === 'strategy'}

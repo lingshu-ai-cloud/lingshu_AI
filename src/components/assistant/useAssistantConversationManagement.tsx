@@ -179,7 +179,7 @@ export function useAssistantConversationManagement(input: Input) {
   };
   const confirm = (action: 'clear' | 'delete', key = activeKey, version?: number) => modal.confirm({
     title: action === 'clear' ? '清空当前会话？' : '删除这条会话？',
-    content: `${action === 'clear' ? '聊天消息将被清空，会话会保留。' : '会话及聊天消息将从历史记录中移除。'}可在历史会话中恢复已删除的会话；清空后可撤销最近一次操作。已创建的任务、素材、企业资料和已保存的长期记忆会保留，正在执行的任务不受影响。`,
+    content: `${action === 'clear' ? '聊天消息将被清空，会话会保留。' : '会话及聊天消息将从历史记录中移除。'}可在历史会话中恢复已删除的会话；清空后可撤销最近一次操作。尚未取得正式任务回执的内容草稿会取消；已创建的任务、素材、企业资料和已保存的长期记忆会保留，正在执行的任务不受影响。`,
     okText: action === 'clear' ? '清空会话' : '删除会话', cancelText: '取消',
     autoFocusButton: 'cancel', okButtonProps: { danger: true }, onOk: () => run(action, key, version),
   });

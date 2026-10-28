@@ -41,6 +41,7 @@ const conversionDraftEffectsSource = fs.readFileSync(new URL('./customers/useCon
 const trafficPageSource = fs.readFileSync(new URL('./TrafficWorkspacePage.tsx', import.meta.url), 'utf8');
 const composerSource = fs.readFileSync(new URL('./assistant/AssistantComposer.tsx', import.meta.url), 'utf8');
 const assistantStylesSource = fs.readFileSync(new URL('./assistant/assistantDecisionCenter.css', import.meta.url), 'utf8');
+const assistantBookmarkStylesSource = fs.readFileSync(new URL('./assistant/assistantWorkBookmark.css', import.meta.url), 'utf8');
 const conversationContextSource = fs.readFileSync(new URL('../lib/assistantConversationContext.ts', import.meta.url), 'utf8');
 const assistantGuidesSource = fs.readFileSync(new URL('../lib/assistantGuides.ts', import.meta.url), 'utf8');
 const globalStylesSource = fs.readFileSync(new URL('../index.css', import.meta.url), 'utf8');
@@ -76,8 +77,9 @@ assert.doesNotMatch(assistantRootMarkup, /5\.5rem/, '制作页不得通过额外
 assert.match(conversationPanelSource, /assistantUsesMobileClearance[\s\S]{0,240}viewport\.height - \(assistantUsesMobileClearance \? 160 : 96\)/, '移动端抬高入口时必须同步收紧对话高度，不能把面板顶部裁掉');
 assert.match(launcherSource, /const closedLabel = weeklyPlanOperating \? '周计划正在运营中' : '周计划待生成'/, '右下角入口必须根据真实周运行状态给出明确文案');
 assert.doesNotMatch(weeklyPlanHookSource, /digitalEmployeeApi\.createGoal|defaultWeeklyGoal/, '打开周计划时不得在后台默默创建或保存默认计划');
-assert.match(weeklyPlanHookSource, /digitalEmployeeApi\.overview\(\)[\s\S]{0,280}lingshu:navigate[\s\S]{0,180}page:'digitalEmployees'[\s\S]{0,280}lingshu:open-weekly-plan/, '灵小枢周计划入口必须读取真实状态并打开经营总览中的唯一编辑页');
-assert.match(weeklyPlanHookSource, /在你确认前不会保存或启动计划/, '系统预填建议必须明确保持用户确认边界');
+assert.match(weeklyPlanHookSource, /digitalEmployeeApi\.overview\(\)[\s\S]{0,420}next\.goal && next\.plan[\s\S]{0,180}setProposal\(next\);setModalOpen\(true\)/, '已有周计划时必须在当前会话打开同一份真实计划');
+assert.doesNotMatch(weeklyPlanHookSource, /const prepare[\s\S]{0,900}lingshu:navigate|const prepare[\s\S]{0,900}lingshu:open-weekly-plan/, '首页发送创建周计划后不得跳转到经营总览');
+assert.match(weeklyPlanHookSource, /我们就在这里制定本周计划，不会跳转页面[\s\S]{0,260}在你最终确认前不会保存或启动/, '新周计划必须留在当前会话逐项引导并保持用户确认边界');
 assert.match(weeklyPlanHookSource, /请先点击上方『让灵小枢认识我』完成基础资料/, '缺少初始资料时必须直接告知用户可操作的页面入口');
 assert.match(weeklyPlanSource, /确认周计划/, '完整周计划弹窗必须只显示直接的计划确认动作');
 assert.doesNotMatch(weeklyPlanSource, /Checkbox|generationAuthorized|确认授权/, '周计划弹窗不得增加独立授权复选框或授权按钮');
@@ -108,6 +110,9 @@ assert.match(edgeLauncherMarkup, /!bg-surface[\s\S]*active:!bg-surface[\s\S]*foc
 assert.doesNotMatch(launcherMarkup + edgeLauncherMarkup, /!bg-white/, '夜间模式的灵小枢入口不得强制纯白');
 assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
 assert.match(conversationPanelSource, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
+assert.match(conversationPanelSource, /ls-assistant-panel-shell[\s\S]{0,900}<AssistantWorkBookmark\/>[\s\S]{0,200}ls-assistant-panel relative flex h-full w-full/, '周任务包书签必须挂在面板外壳，聊天内容保留完整宽度');
+assert.doesNotMatch(assistantBookmarkStylesSource, /ls-assistant-panel:has\([^)]*assistant-work-bookmark[^)]*\)[^{]*\{[^}]*padding-inline-start/, '周任务包书签不得再通过面板级内边距制造整列空白');
+assert.match(assistantBookmarkStylesSource, /assistant-work-bookmark[\s\S]{0,180}inset-inline-start:\s*-42px/, '桌面周任务包书签必须贴在对话面板外沿');
 assert.match(conversationPanelSource, /max-h-\[calc\(100dvh-env\(safe-area-inset-bottom\)-96px\)\]/, '灵小枢弹窗高度必须避让移动设备底部安全区');
 assert.match(conversationPanelSource, /role="dialog"[\s\S]{0,160}aria-modal="false"[\s\S]{0,160}aria-labelledby="global-assistant-panel-title"[\s\S]{0,160}aria-describedby="global-assistant-panel-description"/, '灵小枢必须以有名称和说明的非模态对话浮层呈现');
 assert.match(source, /mode !== 'chat'\) return;[\s\S]{0,300}panel\?\.focus\(\{ preventScroll: true \}\)/, '打开弹窗后必须在不滚动页面的前提下把焦点移入对话区域');
@@ -242,8 +247,8 @@ for (const [key, sourcePage] of [['legacy-traffic', 'traffic'], ['smart-assets-'
   assert.match(appPageSlotSource, new RegExp(`key=[^\\n]*${key}[\\s\\S]{0,160}sourcePage=["']${sourcePage}["']`), `${key} 必须标记准确的助手上下文来源`);
 }
 assert.match(appPageSlotSource, /page === 'socialInspiration'[\s\S]{0,300}<ContentCreationOverviewPage/, '内容创作页必须使用独立经营式工作区');
-assert.match(contentCreationOverviewSource, /<CreationPlan[^\n]*onCreate=\{\(\)=>setCreateOpen\(true\)\}/, '内容创作计划入口必须打开创建表单');
-assert.match(contentCreationOverviewSource, /<CreateContentPlanModal open=\{createOpen\}[\s\S]{0,350}openContentGenerationQueue\(\{view:'tasks',taskId\}\)/, '创建单条任务后必须打开统一内容生成队列并聚焦新任务');
+assert.match(contentCreationOverviewSource, /<CreationPlan[^\n]*onCreate=\{openHomeViralLibrary\}/, '内容创作计划入口必须回到首页爆款素材区继续创建');
+assert.match(contentCreationOverviewSource, /<CreationTaskWorkspace data=\{overview\} request=\{queueRequest\}/, '内容创作页必须常驻展示统一任务区');
 for (const reference of ['goalId', 'planId', 'runId', 'taskId', 'contentId', 'viewKey']) {
   assert.match(liveContextSource, new RegExp(`${reference}: contextIdentifier\\(detail\\.${reference}`), `页面上下文必须安全绑定 ${reference}`);
 }
@@ -253,7 +258,7 @@ assert.match(source, /liveContext\?\.sourcePage === normalizedPage/, '切换页�
 assert.match(source, /workflowStage === 'unplanned'/, '灵小枢必须识别尚未制定周计划的真实空白状态');
 assert.match(floatingRemindersSource, /data-lingshu-weekly-plan-prompt="true"[\s\S]{0,900}先制定本周计划[\s\S]{0,500}制定周计划/, '关闭态灵小枢必须主动说明先预览计划再生产');
 assert.match(conversationBubblesSource, /data-assistant-bubble="weekly-plan-kickoff"[\s\S]{0,900}确认后，数字员工才会开始生产[\s\S]{0,500}制定周计划/, '打开灵小枢后必须提供同一条计划制定入口');
-assert.match(source, /openWeeklyPlanFromAssistant[\s\S]{0,300}onNavigate\?\.\('digitalEmployees'\)[\s\S]{0,220}lingshu:open-weekly-plan[\s\S]{0,120}source: 'assistant'/, '灵小枢计划按钮必须导航到权威周计划页并派发明确来源的页面动作');
+assert.match(source, /openWeeklyPlanFromAssistant[\s\S]{0,220}if \(inlineHome\)[\s\S]{0,260}ASSISTANT_HOME_PROMPT_EVENT[\s\S]{0,220}return;[\s\S]{0,220}onNavigate\?\.\('digitalEmployees'\)/, '首页灵小枢的周计划按钮必须留在当前对话，其他页面才可进入权威周计划页');
 assert.doesNotMatch(source, /productionSuggestions|data-assistant-surface="production-suggestions"|aria-label="生产快捷问题"/, '不得在页面快捷入口上方重复渲染生产快捷问题');
 const pageQuickEntrySource = sourceSection(
   '<AssistantQuickEntries',

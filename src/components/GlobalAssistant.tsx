@@ -31,8 +31,7 @@ import { useAssistantQuickExecution } from './assistant/useAssistantQuickExecuti
 import { useAssistantTaskCardActions } from './assistant/useAssistantTaskCardActions';
 import { useAssistantDecisionDialog } from './assistant/useAssistantDecisionDialog';
 import { useAssistantPanelControls } from './assistant/useAssistantPanelControls';
-import { ASSISTANT_HOME_ACTIVITY_EVENT, useAssistantHomeAnchor, useAssistantHomeInteraction, useAssistantHomeMode,
-  type AssistantHomePendingSubmission } from './assistant/useAssistantHomeAnchor';
+import { ASSISTANT_HOME_ACTIVITY_EVENT, ASSISTANT_HOME_PROMPT_EVENT, useAssistantHomeAnchor, useAssistantHomeInteraction, useAssistantHomeMode, type AssistantHomePendingSubmission } from './assistant/useAssistantHomeAnchor';
 import { useAssistantLauncherRetraction } from './assistant/useAssistantLauncherRetraction';
 import { useAssistantDecisionCount, useAssistantPageContextSignal } from './assistant/useAssistantPageSignals';
 import { useAssistantContentTaskCard } from './assistant/useAssistantContentTaskCard';
@@ -63,14 +62,10 @@ import {
   pageKey,
   type AssistantContext, type AssistantThreadSaveQueue,
 } from './assistant/globalAssistantRuntime';
-
 type AssistantTool = 'knowledge-intake';
 const ASSISTANT_CONVERSATION_WELCOME_SEEN_KEY = 'lingshu-assistant-conversation-welcome-seen-v1';
-
 const ASSISTANT_UI_WATCHDOG_TIMEOUT_MS = 25_000;
-
 type AssistantPanelView = 'todo' | 'chat';
-
 interface Props {
   page: Page;
   persistenceScope: AssistantJournalScope;
@@ -84,12 +79,10 @@ interface Props {
   onSessionRefresh?: () => void;
   onNavigate?: (page: Page) => void;
 }
-
 function requestId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
   return `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
-
 export default function GlobalAssistant({
   page,
   persistenceScope,
@@ -238,10 +231,16 @@ export default function GlobalAssistant({
   }, [mode, selectedProductionTaskId]);
   const openWeeklyPlanFromAssistant = useCallback(() => {
     setWeeklyPlanPromptDismissed(true);
+    if (inlineHome) {
+      setMode('chat');
+      window.dispatchEvent(new CustomEvent(ASSISTANT_HOME_PROMPT_EVENT, {
+        detail: { prompt: '请帮我创建本周计划。', mode: 'replace' },
+      })); return;
+    }
     setMode('breathing');
     onNavigate?.('digitalEmployees');
     window.setTimeout(()=>window.dispatchEvent(new CustomEvent('lingshu:open-weekly-plan', { detail: { source: 'assistant' } })),0);
-  }, [onNavigate]);
+  }, [inlineHome, onNavigate]);
   const activeThread = threads[activeAgent];
   useAssistantHomeInteraction(inlineHome, activeThread.messages.length, loading, activeAgent, setDraftInput, assistantInputRef,
     Boolean(activeThread.creationDraft), setPendingHomeSubmission);

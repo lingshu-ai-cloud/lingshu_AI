@@ -4,6 +4,7 @@ import { ASSISTANT_HOME_PROMPT_EVENT } from './assistant/useAssistantHomeAnchor'
 import { PRIMARY_ASSISTANT_THREAD } from './assistant/globalAssistantRuntime';
 import { useAssistantStore } from '../stores/assistantStore';
 import { HOME_GROWTH_TOUR_COMPLETE_EVENT, HOME_GROWTH_TOUR_START_EVENT } from '../lib/homeFirstRun';
+import { closeContentGenerationQueue, openContentGenerationQueue } from '../lib/contentGenerationQueue';
 
 const TASK_EXAMPLE = '为我生成本周运营计划';
 const steps = [
@@ -43,6 +44,7 @@ export function growthTourBubblePosition(rect: TargetRect, bubble: { width: numb
 }
 
 function targetForStep(index: number): Element | null {
+  if (index === 2) return document.querySelector('[data-growth-tour="calendar"]') || document.querySelector('[data-growth-tour="queue-modal"]');
   if (index === 4) return document.querySelector('[data-growth-tour="weekly-task"]') || document.querySelector('[aria-label="当前周计划"]');
   return document.querySelector(steps[index]?.target || '');
 }
@@ -55,11 +57,13 @@ export default function HomeGrowthTour({ page, scope, onNavigate }: { page: Page
   const bubbleRef = useRef<HTMLElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const completedRef = useRef(false);
+  const queueRequestedRef = useRef(false);
   const step = steps[index] ?? steps[0];
 
   useEffect(() => {
     const start = (event: Event) => {
       completedRef.current = false;
+      queueRequestedRef.current = false;
       triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       let saved = 0;
       const restart = event instanceof CustomEvent && event.detail?.restart === true;
@@ -73,6 +77,16 @@ export default function HomeGrowthTour({ page, scope, onNavigate }: { page: Page
     window.addEventListener(HOME_GROWTH_TOUR_START_EVENT, start);
     return () => window.removeEventListener(HOME_GROWTH_TOUR_START_EVENT, start);
   }, [onNavigate, page, scope]);
+
+  useEffect(() => {
+    if (!active || index !== 2 || page !== 'socialInspiration') {
+      queueRequestedRef.current = false;
+      return;
+    }
+    if (document.querySelector('[data-growth-tour="queue-modal"]') || queueRequestedRef.current) return;
+    queueRequestedRef.current = true;
+    openContentGenerationQueue({ view: 'calendar' });
+  }, [active, index, page]);
 
   useEffect(() => {
     if (!active) return;
@@ -114,6 +128,7 @@ export default function HomeGrowthTour({ page, scope, onNavigate }: { page: Page
   }, [active, index, page, step.page]);
 
   const pause = () => {
+    if (index === 2) closeContentGenerationQueue();
     if (index === 5) {
       document.querySelector<HTMLElement>('.ant-drawer:has([data-growth-tour="weekly-details"]) .ant-drawer-close')?.click();
       try { sessionStorage.setItem(progressKey(scope), '4'); } catch { /* optional storage */ }
@@ -138,8 +153,7 @@ export default function HomeGrowthTour({ page, scope, onNavigate }: { page: Page
       onNavigate('socialInspiration');
       setIndex(2);
     } else if (index === 2) {
-      const calendar = document.querySelector('[data-growth-tour="calendar"]');
-      [...(calendar?.querySelectorAll('label') || [])].find(item => item.textContent?.trim() === '发布日历')?.click();
+      closeContentGenerationQueue();
       setIndex(3);
     } else if (index === 3) {
       onNavigate('digitalEmployees');

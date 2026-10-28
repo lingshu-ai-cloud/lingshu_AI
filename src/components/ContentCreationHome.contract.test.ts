@@ -43,7 +43,8 @@ assert.ok(home.indexOf('<strong>让灵小枢认识我</strong>') < home.indexOf(
 assert.match(home, /activeLauncher \? <div className="creator-home__quick-panel">[\s\S]{0,1600}activePrompts\.map/, '点击小按钮后才可显示其对应的大卡片');
 assert.match(home, /const hasWeeklyPlan = Boolean\(overview\?\.goal && overview\.plan\)[\s\S]{0,500}activeLauncher\?\.id !== 'weekly-plan'[\s\S]{0,200}hasWeeklyPlan[\s\S]{0,500}label: '创建周计划'[\s\S]{0,300}prompt: '请帮我创建本周计划。'/, '周计划快捷卡须根据真实计划状态切换查看或创建提示词');
 assert.doesNotMatch(home, /全部快捷任务/, '首页不应增加额外的全部快捷任务层级');
-assert.match(home, /entry\.id === 'OP-CALENDAR'[\s\S]{0,120}!hasWeeklyPlan\) \{ preparePrompt\(entry\); return; \}[\s\S]{0,180}onNavigate\?\.\('digitalEmployees'\)[\s\S]{0,220}lingshu:open-weekly-plan/, '周计划入口必须在无计划时进入首页对话、有计划时打开唯一计划编辑页');
+assert.match(home, /entry\.id === 'OP-CALENDAR'\) \{[\s\S]{0,80}preparePrompt\(entry\);[\s\S]{0,40}return;/, '首页周计划卡无论当前状态都必须先进入原位对话');
+assert.doesNotMatch(home, /entry\.id === 'OP-CALENDAR'[\s\S]{0,300}onNavigate\?\.\('digitalEmployees'\)|entry\.id === 'OP-CALENDAR'[\s\S]{0,300}lingshu:open-weekly-plan/, '首页周计划卡不得直接跳转经营总览');
 assert.match(home, /entry\.id === 'CO-11'[\s\S]{0,120}openContentGenerationQueue\(\{view:'tasks'\}\)/, '首页内容任务入口必须打开全局统一内容生成队列');
 assert.match(home, /className="creator-home__suggestions"/, '自由创作的提示输入须保留在数字员工输入框下方');
 assert.match(home, /ASSISTANT_HOME_QUICK_LAUNCHERS\.map\(launcher =>/, '底部须渲染全部小按钮入口');
@@ -63,17 +64,17 @@ assert.match(creationOverview, /创作计划/, '内容创作页顶部必须使�
 for (const metric of ['计划内容', '待制作', '制作中', '待验收成片', '已完成成片', '已排期发布']) {
   assert.match(creationOverview, new RegExp(`label: '${metric}'`), `创作计划必须展示${metric}`);
 }
-assert.match(creationOverview, /const openMetric[\s\S]{0,260}openContentGenerationQueue\(\{ view: metric\.view[\s\S]{0,180}metric: metric\.metric/, '六项创作计划数据必须聚焦统一队列中对应的任务或日历视图');
+assert.match(creationOverview, /const focusQueue[\s\S]{0,500}setQueueRequest[\s\S]{0,400}scrollIntoView/, '六项创作计划数据必须聚焦下方统一任务区的对应列表或日历视图');
 assert.doesNotMatch(creationOverview, /按已连接账号历史发布数据的播放量排序|点击“创建一条新计划”，填写本条内容/, '批注要求的说明小字不得保留');
 assert.match(creationOverview, /新建单条内容任务/, '创作计划须将非周计划的新建动作明确命名为单条任务');
 assert.match(creationOverview, /loadConnectedSocialPerformance\(50\)/, '右侧必须读取已连接账号的真实历史发布表现');
 assert.match(creationOverview, /当前最火的 3 条视频/, '右侧必须展示历史发布表现前三');
 assert.match(creationOverview, /sort\(\(left, right\) => \(right\.metrics\.views \|\| 0\) - \(left\.metrics\.views \|\| 0\)\)[\s\S]{0,120}slice\(0, 3\)/, '历史视频必须按真实播放量取前三');
-assert.match(creationOverview, /openContentGenerationQueue\(\{view:'tasks'\}\)[\s\S]{0,100}>查看内容生成队列<\//, '内容创作页必须通过明确按钮打开全局统一队列');
+assert.doesNotMatch(creationOverview, />查看内容生成队列<\//, '内容创作页不得再把任务区收缩成按钮');
 assert.match(creationOverview, /function openHomeViralLibrary\(\)[\s\S]{0,240}lingshu:navigate[\s\S]{0,160}page: 'strategy'[\s\S]{0,500}getElementById\(HOME_VIRAL_LIBRARY_ID\)[\s\S]{0,240}scrollIntoView\(\{ behavior: getScrollBehavior\(\), block: 'start' \}\)[\s\S]{0,120}focus\(\{ preventScroll: true \}\)/, '新建单条内容任务必须回到 hi 灵小枢首页并定位爆款视频区域');
 assert.match(home, /id="creator-home-library" tabIndex=\{-1\}/, '首页爆款视频区域必须支持跨页定位后的程序化焦点');
 assert.doesNotMatch(creationOverview, /CreateContentPlanModal|createOpen/, '内容创作页不得再为单条任务打开独立创建弹窗');
-assert.doesNotMatch(creationOverview, /<CreationTaskWorkspace\b/, '内容创作页不得再嵌入第二份任务队列');
+assert.match(creationOverview, /id="content-creation-queue"[\s\S]{0,240}<CreationTaskWorkspace data=\{overview\} request=\{queueRequest\}/, '内容创作页必须在创作计划下方常驻展示统一任务区');
 assert.doesNotMatch(home, /到爆款库创作/, '首页不得保留旧的中转按钮文案');
 assert.match(inspiration, /requestedReference\?\.startViralReplication[\s\S]{0,1600}startInspirationCreation\(selectedVideo\)/, '其他显式生产入口必须先核对精确引用，再进入既有爆款裂变生产函数');
 assert.match(inspiration, /selectedVideo\.id\.startsWith\('weekly-reference-'\)[\s\S]{0,700}const exactMatch =/, '只有实时库存精确引用可自动发起生产，周快照不得绕过门禁');
@@ -89,6 +90,7 @@ assert.doesNotMatch(assistantComposer, /Agent 模式|ls-assistant-composer__mode
 assert.match(creatorStyles, /data-home-empty='true'\] \[data-assistant-conversation-controls\] \{ position: absolute;/, '空白会话的管理入口不得占一行挤压输入区');
 assert.match(creatorStyles, /data-home-empty='true'\] \.ls-assistant-composer \{ padding-top: 16px;/, '空白会话输入文字应从顶部开始');
 assert.match(creatorStyles, /data-home-empty='true'\] \.ls-assistant-composer__editing \{ padding-right: 56px;/, '输入文字必须避开右上角会话管理按钮');
+assert.match(creatorStyles, /\.ls-assistant-home-root \.ls-assistant-panel \{ border: 0; border-radius: inherit; background: transparent; box-shadow: none; \}/, '首页对话只允许外层容器绘制边界，通用助手面板不得形成第二层框');
 assert.match(creatorStyles, /\.ls-assistant-home-root \.ls-assistant-flow__answer/, '首页助手回复必须使用连续文本流，而不是通用消息气泡');
 assert.match(creatorStyles, /@keyframes ls-assistant-flow-reveal/, '首页助手文本须使用一次性分层进入动效');
 assert.match(layout, /Math\.round\(viewportWidth \* 0\.173\)/, '左侧栏按参考图桌面比例布局');

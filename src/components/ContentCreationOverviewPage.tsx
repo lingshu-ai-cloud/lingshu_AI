@@ -8,7 +8,8 @@ import { loadConnectedSocialPerformance, type ConnectedSocialPerformance } from 
 import { getScrollBehavior } from '../lib/usePrefersReducedMotion';
 import { PAGE_REGISTRY } from '../pageRegistry';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
-import { openContentGenerationQueue } from '../lib/contentGenerationQueue';
+import type { ContentGenerationQueueMetric, ContentGenerationQueueRequest } from '../lib/contentGenerationQueue';
+import CreationTaskWorkspace from './socialContent/CreationTaskWorkspace';
 
 const statusLabel: Partial<Record<string, { text: string; color: string }>> = {
   running: { text: '执行中', color: 'processing' },
@@ -36,7 +37,7 @@ function countStatuses(data: DigitalEmployeeOverview, statuses: ContentQueueStat
   return (data.contentQueue?.items || []).filter(item => statuses.includes(item.status)).length;
 }
 
-function CreationPlan({ data, onCreate }: { data: DigitalEmployeeOverview; onCreate:()=>void }) {
+function CreationPlan({ data, onCreate, onOpenMetric }: { data: DigitalEmployeeOverview; onCreate:()=>void; onOpenMetric:(view:'tasks'|'calendar',metric:ContentGenerationQueueMetric)=>void }) {
   const queue = data.contentQueue?.items || [];
   const displayStatus = statusLabel[data.run?.status || data.goal?.status || ''] || { text: data.goal ? '待启动' : '待创建', color: data.goal ? 'warning' : 'default' };
   const metrics = [
@@ -47,9 +48,6 @@ function CreationPlan({ data, onCreate }: { data: DigitalEmployeeOverview; onCre
     { label: '已完成成片', value: `${countStatuses(data, ['completed'])} 条`, view: 'tasks', metric: 'completed' },
     { label: '已排期发布', value: `${queue.filter(item => Boolean(item.plannedPublishDate)).length} 条`, view: 'calendar', metric: 'scheduled' },
   ];
-  const openMetric = (metric: typeof metrics[number]) => openContentGenerationQueue({ view: metric.view as 'tasks'|'calendar', metric: metric.metric as 'all'|'planned'|'producing'|'waiting_review'|'completed'|'scheduled' });
-
-
   return <section aria-labelledby="creation-plan-title" className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface">
     <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-6 pb-4 pt-5">
       <div className="min-w-0">
@@ -60,10 +58,10 @@ function CreationPlan({ data, onCreate }: { data: DigitalEmployeeOverview; onCre
         </div>
         {(data.plan?.strategy || data.goal?.objective) && <p className="mt-2 text-sm text-text-secondary">{data.plan?.strategy || data.goal?.objective}</p>}
       </div>
-      <div className="flex flex-wrap gap-2"><Button onClick={()=>openContentGenerationQueue({view:'tasks'})}>查看内容生成队列</Button><Button type="primary" icon={<CalendarPlus size={16}/>} onClick={onCreate}>新建单条内容任务</Button></div>
+      <Button type="primary" icon={<CalendarPlus size={16}/>} onClick={onCreate}>新建单条内容任务</Button>
     </header>
     <div className="grid gap-x-6 gap-y-4 px-6 py-5 sm:grid-cols-3">
-      {metrics.map(metric => <button type="button" key={metric.label} onClick={() => openMetric(metric)} aria-label={`查看${metric.label}，${metric.value}`} className="group min-w-0 rounded-lg px-1 py-3 text-left outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent">
+      {metrics.map(metric => <button type="button" key={metric.label} onClick={() => onOpenMetric(metric.view as 'tasks'|'calendar', metric.metric as ContentGenerationQueueMetric)} aria-label={`查看${metric.label}，${metric.value}`} className="group min-w-0 rounded-lg px-1 py-3 text-left outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent">
         <Statistic title={metric.label} value={metric.value} styles={{ title: { color: 'var(--color-text-secondary)', fontSize: 14, marginBottom: 8 }, content: { color: 'var(--color-text-primary)', fontSize: 26, fontWeight: 600 } }}/>
         <span className="mt-2 inline-flex items-center gap-1 text-xs text-text-muted group-hover:text-accent">查看详情 <ArrowRight size={12}/></span>
       </button>)}
@@ -107,6 +105,16 @@ export default function ContentCreationOverviewPage() {
   const [overviewError, setOverviewError] = useState('');
   const [performanceError, setPerformanceError] = useState('');
   const [revision, setRevision] = useState(0);
+  const [queueRequest, setQueueRequest] = useState<ContentGenerationQueueRequest>({ requestId: 0, view: 'tasks', metric: 'all', source: 'all', status: 'all' });
+
+  const focusQueue = (view: 'tasks'|'calendar', metric: ContentGenerationQueueMetric) => {
+    setQueueRequest(current => ({ requestId: (current.requestId || 0) + 1, view, metric, source: 'all', status: 'all' }));
+    window.setTimeout(() => {
+      const target = document.getElementById('content-creation-queue');
+      target?.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' });
+      target?.focus({ preventScroll: true });
+    }, 0);
+  };
 
   useEffect(() => {
     const reset = () => { setOverview(null); setPerformance(null); setRevision(value => value + 1); };
@@ -139,8 +147,11 @@ export default function ContentCreationOverviewPage() {
       {overviewError && <Alert type="warning" showIcon title={overviewError}/>}
       {loading && !overview ? <section className="rounded-lg border border-border bg-surface p-6"><Skeleton active paragraph={{ rows: 8 }}/></section> : overview ? <>
         <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-          <CreationPlan data={overview} onCreate={openHomeViralLibrary}/>
+          <CreationPlan data={overview} onCreate={openHomeViralLibrary} onOpenMetric={focusQueue}/>
           <TopPublishedVideos performance={performance} loading={loading} error={performanceError}/>
+        </div>
+        <div id="content-creation-queue" tabIndex={-1} className="scroll-mt-4">
+          <CreationTaskWorkspace data={overview} request={queueRequest} onRefresh={() => setRevision(value => value + 1)}/>
         </div>
       </> : null}
     </div>

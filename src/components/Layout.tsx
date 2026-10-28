@@ -24,6 +24,7 @@ import { PLATFORM_ADS_PAGE_IDS, PLATFORM_ADS_SURFACE_ENABLED } from '../config/p
 import PointsManagementDrawer from './PointsManagementDrawer';
 import { CreationModeContext, type CreationMode } from '../lib/creationMode';
 import { accountProductNavigation, primaryProductNavigation, type PrimaryProductPage } from '../productNavigation';
+import { HOME_FIRST_RUN_RESET_EVENT, resetHomeFirstRun } from '../lib/homeFirstRun';
 
 const PRODUCT_NAV_ICONS: Record<PrimaryProductPage, ReactNode> = {
   strategy: <DuotoneGlyph kind="conversation" />,
@@ -212,15 +213,13 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
     }
     onNavigate(nextPage);
   };
-  const openDigitalEmployeeGuide = () => {
+  const openHomeFirstRunGuide = () => {
     setAccountMenuOpen(false);
     if (mobileViewport) setMobileSidebarExpanded(false);
-    if (page === 'digitalEmployees') {
-      window.dispatchEvent(new CustomEvent('lingshu:open-digital-employee-guide'));
-      return;
-    }
-    try { sessionStorage.setItem('lingshu:open-digital-employee-guide', 'true'); } catch { /* storage can be unavailable */ }
-    onNavigate('digitalEmployees');
+    if (!activeSession) return;
+    resetHomeFirstRun(pagePreferenceScope(activeSession));
+    onNavigate('strategy');
+    window.setTimeout(() => window.dispatchEvent(new CustomEvent(HOME_FIRST_RUN_RESET_EVENT)), 0);
   };
   const toggleSidebar = () => {
     if (mobileViewport) setMobileSidebarExpanded(value => !value);
@@ -311,7 +310,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
                 </div>
                 <div className="pt-2">
                   <button onClick={openQuota} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Star size={17} className="text-amber-500" fill="currentColor"/><span className="flex-1 text-left">积分管理</span><ChevronRight size={14} className="text-text-muted" /></button>
-                  <button onClick={openDigitalEmployeeGuide} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Sparkles size={17} /><span className="flex-1 text-left">新手引导</span><ChevronRight size={14} className="text-text-muted" /></button>
+                  <button onClick={openHomeFirstRunGuide} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Sparkles size={17} /><span className="flex-1 text-left">新手引导</span><ChevronRight size={14} className="text-text-muted" /></button>
                   <button onClick={() => { setAccountMenuOpen(false); setMobileRightPanelOpen(false); setAccountSettingsOpen(true); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Settings size={17} /><span className="flex-1 text-left">账号设置</span><ChevronRight size={14} className="text-text-muted" /></button>
                   {accountPages.map(accountPage => <button key={accountPage} onClick={() => { setAccountMenuOpen(false); navigateFromSidebar(accountPage); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><ShieldCheck size={17}/><span className="flex-1 text-left">{PAGE_REGISTRY[accountPage].navLabel}</span><ChevronRight size={14} className="text-text-muted"/></button>)}
                   {onLogout && <button onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-red-50 hover:text-red-600"><LogOut size={17} /><span className="flex-1 text-left">退出登录</span></button>}

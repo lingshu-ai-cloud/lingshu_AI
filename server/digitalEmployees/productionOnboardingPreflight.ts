@@ -313,6 +313,24 @@ export type ServerProductionOnboardingReadiness = ProductionOnboardingReadiness 
   evidence: ProductionOnboardingEvidence;
 };
 
+export function compatibleProductionOnboardingPreferences(
+  profile: EnterpriseProfile,
+  evidence: ProductionOnboardingEvidence,
+  preferences?: ProductionOnboardingPreferences,
+): ProductionOnboardingPreferences | undefined {
+  if (preferences) return preferences;
+  const confirmedAt = text(profile.factVersion?.confirmedAt);
+  if (!confirmedAt || !evidence.companyReady || !evidence.brandReady || !evidence.productFactsReady) return undefined;
+  return {
+    schemaVersion: 'fixed-yield.production-onboarding.v1',
+    contact: { kind: 'none', value: '', primaryCta: '' },
+    presenterPolicy: 'local_video_only',
+    output: { primaryLanguage: 'en', aspectRatio: '9:16', resolution: '1080p' },
+    includeOneRevision: true,
+    confirmedAt,
+  };
+}
+
 export function evaluateServerProductionOnboardingReadiness(input: {
   preferences?: ProductionOnboardingPreferences;
   evidence: ProductionOnboardingEvidence;
@@ -366,7 +384,7 @@ export async function readServerProductionOnboardingReadiness(input: {
     requiredFixedYieldLocalMaterials(input.plans),
   );
   return evaluateServerProductionOnboardingReadiness({
-    preferences: input.preferences,
+    preferences: compatibleProductionOnboardingPreferences(input.profile, evidence, input.preferences),
     evidence,
     plans: input.plans,
   });

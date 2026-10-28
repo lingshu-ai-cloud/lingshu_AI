@@ -1,4 +1,5 @@
 export const CONTENT_GENERATION_QUEUE_OPEN_EVENT = 'lingshu:open-content-generation-queue';
+export const CONTENT_GENERATION_QUEUE_CLOSE_EVENT = 'lingshu:close-content-generation-queue';
 export const AGENT_SETTINGS_OPEN_EVENT = 'lingshu:open-agent-settings';
 
 export type ContentGenerationQueueView = 'tasks' | 'calendar';
@@ -24,6 +25,11 @@ export function openContentGenerationQueue(request: ContentGenerationQueueReques
   window.dispatchEvent(new CustomEvent<ContentGenerationQueueRequest>(CONTENT_GENERATION_QUEUE_OPEN_EVENT, {
     detail: { requestId: requestSequence, view: 'tasks', metric: 'all', source: 'all', status: 'all', ...request },
   }));
+}
+
+/** Close the global queue after an entry-point flow or guided tour finishes with it. */
+export function closeContentGenerationQueue() {
+  window.dispatchEvent(new Event(CONTENT_GENERATION_QUEUE_CLOSE_EVENT));
 }
 
 export function openAgentSettings() {

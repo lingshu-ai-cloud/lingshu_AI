@@ -25,6 +25,7 @@ assert.match(pageShellSource, /ConfiguredDigitalEmployeeWorkspace, statusLabel/,
 const weeklyStartValidationSource = fs.readFileSync('src/lib/weeklyStartValidation.ts', 'utf8');
 const weeklyStartConflictAlertSource = fs.readFileSync('src/components/WeeklyStartConflictAlert.tsx', 'utf8');
 const onboardingPanelSource = fs.readFileSync('src/components/smartBusiness/DigitalEmployeeOnboardingPanel.tsx', 'utf8');
+const digitalEmployeeConfigRulesSource = fs.readFileSync('src/components/smartBusiness/digitalEmployeeConfigRules.ts', 'utf8');
 const onboardingStepsSource = fs.readFileSync('src/components/smartBusiness/DigitalEmployeeOnboardingSteps.tsx', 'utf8');
 assert.match(pageSource, /import \{ OnboardingPanel \} from '\.\/smartBusiness\/DigitalEmployeeOnboardingPanel'/, 'the page must mount the extracted onboarding state and save boundary');
 assert.match(pageSource, /<OnboardingPanel[\s\S]{0,800}onSave=/, 'the extracted onboarding panel must keep the page-owned save callback');
@@ -343,7 +344,8 @@ assert.doesNotMatch(pageSource, /id: "live", label: "周计划"/, 'the repetitiv
 assert.doesNotMatch(pageSource, /删除旧任务/, 'the weekly command center must not expose a destructive old-task action');
 assert.match(layoutSource, /\{accountMenuOpen && \([\s\S]{0,1800}新手引导/, 'the beginner guide must live in the expanded user menu');
 assert.doesNotMatch(layoutSource, /aria-label="主导航"[\s\S]{0,900}新手引导/, 'the beginner guide must not remain in the primary navigation');
-assert.match(layoutSource, /lingshu:open-digital-employee-guide/, 'the user-menu guide entry must open the Digital Employee guide');
+assert.match(layoutSource, /resetHomeFirstRun\(pagePreferenceScope\(activeSession\)\)[\s\S]{0,220}onNavigate\('strategy'\)/, 'the user-menu guide entry must restore the hi assistant home first-run cards');
+assert.match(appPageSlotSource, /firstRunRequestKey=\{session\.demo\?\.guideTrigger \? session\.demo\.guideScope : undefined\}/, 'an account guide reset must restore the hi assistant home first-run cards on the next verified session');
 assert.match(pageSource, /addEventListener\('lingshu:open-digital-employee-guide'/, 'Smart Business must respond to the sidebar guide entry');
 assert.doesNotMatch(pageSource, /SMART OPERATIONS/, 'the redundant Smart Operations masthead must be removed');
 assert.match(weeklyPlanControlsSource, /查看当前周计划/, 'the current-plan controls must expose the user-requested read-only current plan action');
@@ -429,7 +431,7 @@ assert.doesNotMatch(pageSource, /<BusinessOverviewTabs\b/, '经营总览 must re
 assert.match(workspaceTabsSource, /<Tabs key=\{identity\} aria-label="经营总览页内视图"/, 'retained standalone business modules must keep their accessible shared Ant tabs');
 const outlineFlowSource = pageSource.slice(pageSource.indexOf('const createWeeklyOutline'), pageSource.indexOf('const generateCurrentPlanDetails'));
 assert.match(outlineFlowSource, /digitalEmployeeApi\.createGoal/, 'weekly goal creation must persist before product confirmation');
-assert.match(confirmWeeklyPlanSource, /launchRequestSent = true;[\s\S]{0,200}approveGoal/, 'one click must directly request a real run, with preparation left to its pipeline');
+assert.match(confirmWeeklyPlanSource, /hasPreparedVideoWork[\s\S]{0,500}api\.generatePackageDetails\(goal\.id\)[\s\S]{0,2600}launchRequestSent = true;[\s\S]{0,200}approveGoal/, 'one confirmation must prepare persisted video details before requesting the real run');
 assert.match(weeklyPlanCalendarSource, /publication\?\.title/, 'weekly calendar cards must show the future publishing title');
 assert.match(weeklyPlanCalendarSource, /planningEvidence\?\.referenceThumbnailUrl/, 'weekly calendar cards must render persisted viral thumbnails');
 assert.doesNotMatch(pageSource, /const updateWeeklyPlanProduct|const refreshWeeklyViralPlan/, 'removed plan-detail editing actions must not survive as unreachable page code');
@@ -444,8 +446,8 @@ assert.match(weeklyPlanCalendarSource, /<LsCalendar/, 'the weekly calendar must 
 assert.match(smartBusinessFeatureSource, /function inspirationReferenceForPlan[\s\S]{0,700}referenceId[\s\S]{0,260}sourceUrl[\s\S]{0,260}title:/, 'weekly content cards must preserve a traceable reference for Inspiration Center after the detail page is removed');
 assert.match(publishingCalendarSource, /detailsTitle="内容制作进度"[\s\S]{0,600}WeeklyContentProgressPanel/, 'the Digital Employee publishing calendar must open read-only content progress in the shared drawer');
 assert.match(publishingCalendarSource, /onOpenReference[\s\S]{0,350}inspirationReferenceNavigationDetail/, 'the drawer must retain the exact persisted inspiration reference as a secondary action');
-assert.doesNotMatch(confirmWeeklyPlanSource, /approvalBlocked|missingProducts|missingReferences|generatePackageDetails|readiness\.canStart/, 'launch must not duplicate production preparation or publishing readiness gates in the UI');
-assert.match(confirmWeeklyPlanSource, /api\.approveGoal\(goal\.id, source\.plan\.businessPackage\.revision, true\)/, 'launch must submit the exact plan revision with explicit generation authorization');
+assert.doesNotMatch(confirmWeeklyPlanSource, /approvalBlocked|missingProducts|missingReferences|readiness\.canStart/, 'launch must not duplicate production or publishing readiness rules in the UI');
+assert.match(confirmWeeklyPlanSource, /api\.approveGoal\(goal\.id, preparedPackage\.revision, true\)/, 'launch must submit the server-prepared plan revision with explicit generation authorization');
 assert.match(digitalEmployeeApiSource, /approveGoal:[\s\S]{0,900}AbortSignal\.timeout\(12_000\)/, 'weekly launch must stop indefinite loading and hand unknown results to read-only reconciliation');
 assert.match(inspirationSource, /receiveReference[\s\S]{0,2200}resolveInspirationReference\([\s\S]{0,900}setSelectedVideo\(resolved\.video\)/, 'Inspiration Center must resolve and open the requested viral-video detail');
 assert.match(inspirationReferenceResolverSource, /videoMatchesReference\(video, target\)[\s\S]{0,1500}recordsToVideos[\s\S]{0,1500}videoMatchesReference\(video, target\)/, 'reference resolver must match inventory and read-only search candidates against the requested reference');
@@ -706,7 +708,9 @@ assert.doesNotMatch(onboardingPanelSource, /saveEnterpriseProfile|saveSocialCont
 assert.match(onboardingStepsSource, /step=\{3\} title="确认面向谁、在哪里沟通，以及唯一 CTA"[\s\S]{0,1800}主要目标市场[\s\S]{0,600}主推买家[\s\S]{0,600}主平台[\s\S]{0,1000}唯一 CTA/, 'the third step must collect the complete market, audience, platform, stage, language, and CTA baseline');
 assert.match(onboardingStepsSource, /aria-label="主要目标市场" mode="tags"[\s\S]{0,400}ONBOARDING_MARKET_OPTIONS/, '目标市场应提供可搜索、可多选并兼容自定义的选项');
 assert.match(onboardingStepsSource, /aria-label="主推买家" mode="tags"[\s\S]{0,400}ONBOARDING_BUYER_OPTIONS/, '主推买家应提供选项并保留既有自定义资料');
-assert.match(onboardingPanelSource, /completeMinimalOnboarding[\s\S]{0,600}validateEnterpriseOnboardingConfirmation[\s\S]{0,900}minimalOnboarding:\s*true[\s\S]{0,200}onboardingConfirmation:/, 'minimal onboarding may complete only with the validated final confirmation payload');
+assert.match(onboardingPanelSource, /completeMinimalOnboarding[\s\S]{0,800}validateEnterpriseOnboardingConfirmation[\s\S]{0,1800}minimalOnboarding:\s*true[\s\S]{0,400}onboardingConfirmation:/, 'minimal onboarding may complete only with the validated final confirmation payload');
+assert.match(onboardingPanelSource, /completeMinimalOnboarding[\s\S]{0,1800}safeProductionOnboarding\(initial, savedDraft\.language\)[\s\S]{0,1200}minimalOnboarding:\s*true[\s\S]{0,300}productionOnboarding/, '完成首页新手引导必须同时保存安全的生产偏好，旧账号不得再次被误判为未确认');
+assert.match(digitalEmployeeConfigRulesSource, /safeProductionOnboarding[\s\S]{0,500}presenterPolicy: 'local_video_only'/, '旧账号的兼容生产偏好必须保持本地视频和无外部联络的安全默认值');
 assert.match(enterpriseOnboardingDraftRouteSource, /supportsAtomicCompareAndSwapFor[\s\S]{0,300}compareAndSwap/, 'draft updates must fail closed when atomic revision persistence is unavailable');
 assert.match(enterpriseOnboardingConfirmationSource, /expected !== current\.factVersion\?\.id[\s\S]{0,1200}updateTenantEnterpriseProfile[\s\S]{0,5000}readTenantEnterpriseProfileStrict/, 'final confirmation must guard the base version, write once, and strictly reread authoritative facts');
 assert.match(pageSource, /!data\?\.config \|\|[\s\S]{0,250}viewGoalId \|\|[\s\S]{0,250}!run/, 'first-time onboarding must not subscribe to an obsolete run stream');
@@ -905,7 +909,7 @@ assert.match(pageSource, /title="确认开始本周生产"/, 'weekly production 
 assert.match(pageSource, /okText="确认周计划"/, 'weekly production must expose one direct plan confirmation action');
 assert.doesNotMatch(pageSource, /generationAuthorized|我授权数字员工开始本周内容生成任务/, 'weekly production must not show a separate generation authorization control');
 assert.match(pageSource, /纯产品内容不要求数字人形象/, 'the weekly confirmation must not impose a presenter gate on product-only plans');
-assert.match(confirmWeeklyPlanSource, /approveGoal\(goal\.id, source\.plan\.businessPackage\.revision, true\)/, 'confirming the weekly plan must implicitly record generation authorization');
+assert.match(confirmWeeklyPlanSource, /approveGoal\(goal\.id, preparedPackage\.revision, true\)/, 'confirming the weekly plan must implicitly record generation authorization');
 
 console.log('DigitalEmployeePage contract tests passed');
 

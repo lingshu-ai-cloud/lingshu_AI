@@ -282,6 +282,7 @@ html[data-lingshu-appearance='dark'] .ls-inspiration-watch-dialog [data-preview-
 .creator-home--employee .creator-home__conversation { margin-top: 46px; }
 
 .ls-assistant-home-root > [data-global-assistant='panel'] { inset: 0 !important; max-height: 100% !important; border: 0 !important; border-radius: 33px !important; background: transparent !important; box-shadow: none !important; color: #f5f5f7; }
+.ls-assistant-home-root .ls-assistant-panel { border: 0; border-radius: inherit; background: transparent; box-shadow: none; }
 .ls-assistant-home-root[data-home-creation-mode='free'] { transform-origin: center top; animation: ls-home-composer-expand 420ms cubic-bezier(.22,1,.36,1); }
 .ls-assistant-home-root[data-home-creation-mode='employee'] { transform-origin: center top; animation: ls-home-composer-compact 420ms cubic-bezier(.22,1,.36,1); }
 @keyframes ls-home-composer-expand { from { opacity: .68; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }

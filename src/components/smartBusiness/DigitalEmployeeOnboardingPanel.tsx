@@ -4,7 +4,7 @@ import { Button } from 'antd';
 import KnowledgeIntakePanel from '../enterprise/KnowledgeIntakePanel';
 import { agentRuleFields } from '../../lib/agentRuleFields';
 import { Field, inputClass } from './DigitalEmployeeFormField';
-import { completeConfig, configErrors, platformCountsFromCadence, primaryEnterpriseLanguage, publishingPlatforms } from './digitalEmployeeConfigRules';
+import { completeConfig, configErrors, platformCountsFromCadence, primaryEnterpriseLanguage, publishingPlatforms, safeProductionOnboarding } from './digitalEmployeeConfigRules';
 import { importOnboardingProducts } from './onboardingProductImport';
 import { OnboardingConfirmationStep, OnboardingEnterpriseStep, OnboardingMarketStep, OnboardingProductsStep, PresenterSetupDialog } from './DigitalEmployeeOnboardingSteps';
 import { contentPlatformLabel } from './WeeklyGoalPanel';
@@ -33,9 +33,7 @@ import {
 } from '../../../shared/contracts/enterpriseOnboarding';
 import { EnterpriseOnboardingDraftError, generateEnterpriseOnboardingProposals, readEnterpriseOnboardingDraft, saveEnterpriseOnboardingDraft } from '../../lib/enterpriseOnboardingApi';
 
-function newOnboardingConfirmationId(): string {
-  return `onboarding:${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
-}
+function newOnboardingConfirmationId(): string { return `onboarding:${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`; }
 export function OnboardingPanel({
   initial,
   readiness,
@@ -553,6 +551,7 @@ export function OnboardingPanel({
       const parsed = validateEnterpriseOnboardingConfirmation({ ...savedDraft, draftRevision: savedDraft.revision });
       if (!parsed.confirmation) throw new Error(`还需确认：${parsed.missing.join('、')}`);
       const focusProducts = savedDraft.productsDeferred ? [] : savedDraft.focusProductIds.map(id => savedDraft.products.find(product => product.id === id)).filter(Boolean) as EnterpriseOnboardingProduct[];
+      const productionOnboarding = safeProductionOnboarding(initial, savedDraft.language);
       const completed = await onSave({
         ...form,
         companyName: form.companyName.trim(),
@@ -564,6 +563,7 @@ export function OnboardingPanel({
         operatingMaturity: contentStage === 'b2b_launch' ? 'starting' : 'growing',
         minimalOnboarding: true,
         brandName: brandName.trim(),
+        productionOnboarding,
         onboardingConfirmation: parsed.confirmation,
       });
       if (completed === false) throw new Error("新手引导暂未完成，请稍后重试");

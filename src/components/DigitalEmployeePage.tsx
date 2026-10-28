@@ -573,16 +573,6 @@ export default function DigitalEmployeePage({
     setBusy("create-weekly-plan");
     setError("");
     try {
-      if (goalInput.videoPlans?.length) {
-        const defaults = await productionApi.defaults();
-        const presenterGate = presenterProductionGate(defaults);
-        setWeeklyPresenterGate(presenterGate);
-        if (!presenterGate.ready) {
-          setApplicationGuideEntry("presenter");
-          setApplicationGuideOpen(true);
-          throw new Error(presenterGate.message);
-        }
-      }
       const created = await digitalEmployeeApi.createGoal(goalInput);
       if (!created.goal) throw new Error("周计划未能创建，请重试。");
       overviewRequestVersionRef.current += 1;
@@ -591,8 +581,9 @@ export default function DigitalEmployeePage({
       setWeeklyPlanOpen(false);
       await launchWeeklyPlan(created);
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "周目标生成失败");
+      const message = actionError instanceof Error ? actionError.message : "周目标生成失败";
       await load();
+      setError(message);
     } finally {
       setBusy("");
     }

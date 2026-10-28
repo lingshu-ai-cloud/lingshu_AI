@@ -51,6 +51,15 @@ export const EMPTY_CONFIG: DigitalEmployeeConfig = {
   },
 };
 
+export function safeProductionOnboarding(config: DigitalEmployeeConfig, language: string): NonNullable<DigitalEmployeeConfig['productionOnboarding']> {
+  return config.productionOnboarding || {
+    schemaVersion: 'fixed-yield.production-onboarding.v1',
+    contact: { kind: 'none', value: '', primaryCta: '' }, presenterPolicy: 'local_video_only',
+    output: { primaryLanguage: language || config.videoDefaults?.language || 'en', aspectRatio: '9:16', resolution: '1080p' },
+    includeOneRevision: true, confirmedAt: new Date().toISOString(),
+  };
+}
+
 export const publishingPlatforms = ["youtube", "tiktok", "instagram", "facebook", "linkedin"] as const;
 
 export function primaryEnterpriseLanguage(value: unknown): string {

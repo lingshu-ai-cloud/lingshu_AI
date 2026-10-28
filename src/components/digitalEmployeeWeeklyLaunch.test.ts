@@ -6,18 +6,33 @@ import { createDigitalEmployeeWeeklyLaunch } from './digitalEmployeeWeeklyLaunch
 
 const draft = {
   goal: { id: 'goal-a', version: 1 },
-  plan: { businessPackage: { revision: 3 } },
+  plan: { businessPackage: {
+    revision: 3,
+    tasks: [{ templateId: 'production', videoPlans: [{ contentId: 'content-a', productionRole: 'master' }] }],
+  } },
   run: null,
   tasks: [],
 } as unknown as DigitalEmployeeOverview;
-const running = {
+const prepared = {
   ...draft,
+  plan: { businessPackage: {
+    ...draft.plan!.businessPackage!,
+    revision: 4,
+    detailGeneration: {
+      status: 'ready', startedAt: '2026-10-23T07:55:00Z', generatedAt: '2026-10-23T07:56:00Z',
+      estimatedMinutes: 2, usageCostCny: null, readyCount: 1, blockedCount: 0, blockers: [],
+    },
+  } },
+} as unknown as DigitalEmployeeOverview;
+const running = {
+  ...prepared,
   run: { id: 'run-a', goal_id: 'goal-a', status: 'running', started_at: '2026-10-23T08:00:00Z' },
   tasks: [{ id: 'task-a', run_id: 'run-a', status: 'running', sequence: 1, title: '内容生产' }],
 } as DigitalEmployeeOverview;
 
 function setup(options: {
   data?: DigitalEmployeeOverview | null;
+  generatePackageDetails?: () => Promise<DigitalEmployeeOverview>;
   approveGoal?: () => Promise<DigitalEmployeeOverview>;
   overview?: () => Promise<DigitalEmployeeOverview>;
   recover?: () => Promise<boolean>;
@@ -31,6 +46,7 @@ function setup(options: {
   const data: DigitalEmployeeOverview[] = [];
   const version = { current: 0 };
   const api = {
+    generatePackageDetails: async () => { calls.push('prepare'); return options.generatePackageDetails ? options.generatePackageDetails() : prepared; },
     approveGoal: async () => { calls.push('approve'); return options.approveGoal ? options.approveGoal() : running; },
     overview: async () => { calls.push('overview'); return options.overview ? options.overview() : running; },
   } as unknown as typeof digitalEmployeeApi;
@@ -57,6 +73,7 @@ function setup(options: {
 test('one confirmation accepts only a persisted matching run and publishes its scoped receipt', async () => {
   const run = setup();
   await run.confirmWeeklyPlan();
+  assert.deepEqual(run.calls.filter(value => ['prepare', 'approve'].includes(value)), ['prepare', 'approve']);
   assert.equal(run.calls.filter(value => value === 'approve').length, 1);
   assert.equal(run.calls.includes('overview'), false);
   assert.deepEqual(run.data, [running]);
@@ -71,7 +88,46 @@ test('one confirmation accepts only a persisted matching run and publishes its s
 test('a newly persisted draft can use the same version-bound launch path without relying on stale page data', async () => {
   const run = setup({ data: null });
   await run.launchWeeklyPlan(draft);
+  assert.deepEqual(run.calls.filter(value => ['prepare', 'approve'].includes(value)), ['prepare', 'approve']);
   assert.equal(run.calls.filter(value => value === 'approve').length, 1);
+  assert.deepEqual(run.data, [running]);
+});
+
+test('a blocked preparation remains visible and never requests a real run', async () => {
+  const blocked = {
+    ...prepared,
+    plan: { businessPackage: {
+      ...prepared.plan!.businessPackage!,
+      detailGeneration: {
+        ...prepared.plan!.businessPackage!.detailGeneration!,
+        status: 'blocked', readyCount: 0, blockedCount: 1, blockers: ['缺少产品素材'],
+      },
+    } },
+  } as unknown as DigitalEmployeeOverview;
+  const run = setup({ generatePackageDetails: async () => blocked });
+  await run.confirmWeeklyPlan();
+  assert.deepEqual(run.calls.filter(value => ['prepare', 'approve'].includes(value)), ['prepare']);
+  assert.deepEqual(run.data, [blocked]);
+  assert.match(run.errors.at(-1) || '', /缺少产品素材/);
+  assert.deepEqual(run.feedback.at(-1), { title: '周任务未启动', tone: 'error' });
+});
+
+test('a preparation receipt for another goal is rejected without replacing visible state', async () => {
+  const mismatched = { ...prepared, goal: { ...prepared.goal!, id: 'goal-other' } } as DigitalEmployeeOverview;
+  const run = setup({ generatePackageDetails: async () => mismatched });
+  await run.confirmWeeklyPlan();
+  assert.deepEqual(run.calls.filter(value => ['prepare', 'approve'].includes(value)), ['prepare']);
+  assert.deepEqual(run.data, []);
+  assert.match(run.errors.at(-1) || '', /当前周目标不一致/);
+});
+
+test('an uncertain preparation continues only after a read-only receipt proves it is ready', async () => {
+  const run = setup({
+    generatePackageDetails: async () => { throw new Error('connection closed'); },
+    overview: async () => prepared,
+  });
+  await run.confirmWeeklyPlan();
+  assert.deepEqual(run.calls.filter(value => ['prepare', 'overview', 'approve'].includes(value)), ['prepare', 'overview', 'approve']);
   assert.deepEqual(run.data, [running]);
 });
 

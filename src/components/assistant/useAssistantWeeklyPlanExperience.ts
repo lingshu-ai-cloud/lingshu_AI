@@ -30,12 +30,13 @@ export function useAssistantWeeklyPlanExperience() {
     setError('');
     const next = await digitalEmployeeApi.overview();
     if (!next.config) throw new Error('请先点击上方『让灵小枢认识我』完成基础资料');
-    setOverview(next);setProposal(null);setModalOpen(false);
-    window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{page:'digitalEmployees'}}));
-    window.setTimeout(()=>window.dispatchEvent(new CustomEvent('lingshu:open-weekly-plan',{detail:{source:'assistant'}})),0);
-    return next.goal&&next.plan
-      ? '已打开经营总览中的当前周计划。计划范围、预算、版本和启动确认都在同一处处理。'
-      : '已打开经营总览中的周计划编辑页。系统会预填建议，但在你确认前不会保存或启动计划。';
+    setOverview(next);
+    if (next.goal && next.plan) {
+      setProposal(next);setModalOpen(true);
+      return '已在当前窗口打开本周计划。你可以先核对目标、任务、预算和排期；只有确认后才会启动。';
+    }
+    setProposal(null);setModalOpen(false);
+    return '我们就在这里制定本周计划，不会跳转页面。我会依次确认本周目标、重点产品、投放平台、内容数量、预算上限和排期；在你最终确认前不会保存或启动。先告诉我：本周最重要的业务目标是什么？';
   }, []);
 
   const confirm = useCallback(async () => {
