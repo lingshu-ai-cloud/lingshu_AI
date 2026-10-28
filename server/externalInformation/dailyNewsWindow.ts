@@ -3,7 +3,7 @@ export type DailyNewsWindow = { day: string; cutoff: string; timeZone: 'Asia/Sha
 export function selectDailyNewsOriginals<T extends { publicationDay?: string; source: { uri: string } }>(originals: T[], day: string): T[] | undefined {
  const enough = (items: T[]) => items.length >= 3 && new Set(items.map(item => new URL(item.source.uri).hostname.replace(/^www\./u, ''))).size >= 2;
  const today = originals.filter(original => original.publicationDay === day);
- return enough(today) ? today : enough(originals) ? originals : undefined;
+ return enough(today) ? today : originals.length ? originals : undefined;
 }
 export function dailyNewsWindow(question: string, now = Date.now()): DailyNewsWindow | undefined {
  if (!/今日资讯/u.test(question)) return undefined;

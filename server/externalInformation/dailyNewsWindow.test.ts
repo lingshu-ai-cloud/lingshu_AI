@@ -39,8 +39,8 @@ test('daily evidence requires three originals across two hosts and prefers suffi
  const prior=item('2026-10-28','c.example',4);
  assert.deepEqual(selectDailyNewsOriginals([...today,prior],'2026-10-29'),today);
  assert.deepEqual(selectDailyNewsOriginals([...today.slice(0,2),prior],'2026-10-29'),[...today.slice(0,2),prior]);
- assert.equal(selectDailyNewsOriginals(today.slice(0,2),'2026-10-29'),undefined);
- assert.equal(selectDailyNewsOriginals([today[0],today[1],item('2026-10-28','a.example',4)],'2026-10-29'),undefined);
+ assert.deepEqual(selectDailyNewsOriginals(today.slice(0,2),'2026-10-29'),today.slice(0,2));
+ assert.equal(selectDailyNewsOriginals([],'2026-10-29'),undefined);
 });
 test('daily summary states cutoff and actual included range without filling old news; industry period stays unchanged',()=>{
  const window=dailyNewsWindow('今日资讯',Date.parse('2026-10-28T14:00:00Z'))!;

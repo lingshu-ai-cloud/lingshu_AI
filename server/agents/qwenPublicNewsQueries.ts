@@ -6,6 +6,10 @@ export function qwenPublicNewsQueries(question:string,days?:number,supplementIns
   const prompt=qwenDiscoveryQuery(question,days,supplementInstruction);
   const queries=prompt.split('\n').filter(line=>/^\d\. /u.test(line)).map(line=>line.replace(/^\d\. /u,''));
   const {market}=industryInsightScope(question);
+  const {industry}=industryInsightScope(question);
+  if (/^(?:中国|China)$/iu.test(market.trim()) && /美妆|化妆品|护肤|个护/u.test(industry)) {
+   return ['中国 化妆品', '中国 美妆 原料'];
+  }
   if (/^(?:全球|global)$/iu.test(market.trim()) && queries[0]) {
    // RSS handles freshness separately; query prose and a literal global token can starve discovery.
    const topic=queries[0].replace(/^global\s+/iu,'').split(/\s+(?:product launch market news|supply chain pricing|manufacturing capacity partnerships|research technology regulation|regulation standards|research technology|market competition|manufacturing supply chain partnerships)\b/iu)[0].replace(/\bcosmetics\s+(?=cosmetic ingredients\b)/iu,'').trim();

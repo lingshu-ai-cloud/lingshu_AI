@@ -187,9 +187,6 @@ export async function qwenSearchAnswer(messages: ChatMessage[], opts: LLMCallOpt
       }
       return content;
     }, { rejected, freshnessDays: opts.searchFreshnessDays, dailyWindow });
-    if (dailyWindow && (answer.sources.length < 3 || new Set(answer.sources.map(source => new URL(source.uri).hostname.replace(/^www\./u, ''))).size < 2)) {
-      throw new ExternalInformationError('search_originals_insufficient', '已完成资料核验，但可用于本次主题的独立资讯不足，暂无法生成完整资讯报告。');
-    }
     if (process.env.LINGSHU_LOCAL_PREVIEW === '1' && process.env.NODE_ENV === 'development') {
       const directory = path.resolve('data/local-store/search-candidates');
       await fs.mkdir(directory, { recursive: true });

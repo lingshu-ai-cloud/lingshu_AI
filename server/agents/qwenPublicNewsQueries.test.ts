@@ -17,6 +17,9 @@ test('industry scene retains its previous target-market discovery scope',()=>{
  const queries=qwenPublicNewsQueries('行业资讯：行业：家具，目标市场：德国。最近30天。',30);
  assert.equal(queries.length,2);assert.match(queries[0],/^Germany furniture product launch market news/);assert.doesNotMatch(queries.join(' '),/家具 OR furniture/);
 });
+test('China beauty discovery uses short Chinese industry queries',()=>{
+ assert.deepEqual(qwenPublicNewsQueries('行业资讯：行业：美妆，目标市场：中国。查询最近30天。',30),['中国 化妆品','中国 美妆 原料']);
+});
 
 test('global industry RSS uses a short industry query while freshness remains a separate filter',()=>{
  const queries=qwenPublicNewsQueries('行业资讯：行业：美妆原料，目标市场：全球。查询最近30天。',30);
