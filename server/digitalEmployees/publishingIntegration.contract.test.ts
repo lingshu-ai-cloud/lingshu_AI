@@ -28,6 +28,7 @@ assert.match(publisher, /workflowRunId[\s\S]*realPublishingAuthorized !== true/,
 assert.match(publishing, /awaiting_reapproval/, 'editing an approved calendar item must stop delivery and require reapproval');
 assert.doesNotMatch(page, /frontend_preview|BUSINESS_PREVIEW|PreviewExecutionPanel|查看示例数据/, 'real tenant pages must contain no synthetic operating receipt path');
 assert.match(onboardingPanel, /发布平台与具体账号/, 'onboarding must collect concrete publishing accounts before the goal');
-assert.match(onboardingPanel, /审批通过后允许真实发布/, 'real publishing consent must be explicit');
+assert.doesNotMatch(onboardingPanel, /审批通过后允许真实发布/, 'onboarding no longer exposes the real-publishing switch');
+assert.match(onboardingPanel, /allowRealPublishing:\s*false/, 'new onboarding must not grant real-publishing authorization by default');
 
 console.log('digital employee publishing integration contract tests passed');
