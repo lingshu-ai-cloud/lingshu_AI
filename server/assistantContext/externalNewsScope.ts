@@ -28,7 +28,7 @@ export async function prepareExternalNewsScope(messages: ChatMessage[], tenantId
  const defaults=await (options.readDefaults ?? (options.read ? async()=>({}) : readNewsEnterpriseDefaults))(tenantId).catch(()=>({})) as NewsEnterpriseDefaults;
  const bounded=(value:unknown)=>typeof value==='string'?value.trim().slice(0,120):'';
  const industry=bounded(profile?.company.industry)||bounded(defaults.industry), products=bounded(profile?.products.categories), market=bounded(profile?.strategy?.focusMarkets)||bounded(profile?.company.mainMarkets)||bounded(defaults.market);
- const platforms=[...new Set([...(profile?.socialStrategy?.primaryPlatforms??[]),...(defaults.platforms??[])].map(bounded).filter(Boolean))].join('、');
+ const platforms=kind==='社交媒体资讯'?[...new Set([...(profile?.socialStrategy?.primaryPlatforms??[]),...(defaults.platforms??[])].map(bounded).filter(Boolean))].join('、'):'';
  // An explicit user scope is preserved as written. Generic launcher text is not a concrete sector or destination.
  const explicitIndustry=/(?:行业|产品|品类)[：:][^，。,\n]{2,}|美妆|化妆品|护肤|防晒|原料|纺织|服装|机械|电子|家居|家具|食品|玩具|汽车|新能源|cosmetic|skincare/iu.test(question);
  const explicitMarket=/市场[：:][^，。,\n]{2,}|德国|法国|意大利|西班牙|中国|国内|全球|美国|欧盟|欧洲|英国|日本|韩国|越南|泰国|印尼|印度尼西亚|马来西亚|新加坡|菲律宾|东南亚|中东|沙特|阿联酋|澳大利亚|加拿大|巴西|墨西哥|印度|非洲/iu.test(question);
@@ -36,5 +36,5 @@ export async function prepareExternalNewsScope(messages: ChatMessage[], tenantId
  const missing=[!industry&&!products&&!explicitIndustry?'行业或产品':'',!market&&!explicitMarket?'目标市场':'',kind==='社交媒体资讯'&&!platforms&&!explicitPlatform?'目标平台':''].filter(Boolean);
  const scopeNote=missing.length?`企业现有资料未配置${missing.join('、')}；先展示通用官方动态，不推断企业适用性，也不要求用户重复填写。`:'';
  const timeRule=/不(?:需要|要求|用|必).{0,3}(?:近期|最新)|历史|20\d{2}年/iu.test(question)?'尊重用户指定的历史期间，不把历史资料称为最新。':'优先最近30天，若未取得合格近期原文则明确不足，不以历史资料替代今日动态。';
- return {question:`${kind}。${question}\n已明确的查询范围：${JSON.stringify({industry:explicitIndustry?'以用户本轮指定为准':industry,products:explicitIndustry?'':products,market:explicitMarket?'以用户本轮指定为准':market,platforms:explicitPlatform?'以用户本轮指定为准':platforms})}。只检索与上述行业、市场及平台直接相关的原始资料；没有证据的类别留缺，不使用宏观新闻凑数。${scopeNote}${timeRule}`};
+ return {question:`${kind}。${question}\n已明确的查询范围：${JSON.stringify({industry:explicitIndustry?'以用户本轮指定为准':industry,products:explicitIndustry?'':products,market:explicitMarket?'以用户本轮指定为准':market,platforms:explicitPlatform?'以用户本轮指定为准':platforms})}。${kind==='行业资讯'||kind==='今日资讯'?'不限定指定站点；从可访问、有发布日期且与上述行业和市场直接相关的公开报道取材，官网不可访问时采用可信行业媒体、协会或合作伙伴报道，标注报道归属并跳过打不开的站点；':'只检索与上述行业、市场及平台直接相关的原始资料；'}没有证据的类别留缺，不使用宏观新闻凑数。${scopeNote}${timeRule}${kind==='今日资讯'?'今日指本次整理日期；事件沿用原文发布日期，报告标清实际观察期，不把观察期内所有事件称作今天发生。':''}`};
 }

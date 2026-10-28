@@ -1,3 +1,4 @@
+import { isLocalExampleCustomer } from '../../lib/localExampleOrigin';
 import { Button, Checkbox, Empty, Input, Popover, Select, Tabs, Tag } from 'antd';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Filter, Search } from 'lucide-react';
@@ -157,6 +158,7 @@ export function CompactCustomerList({
                 <p className="truncate text-[13px] font-semibold leading-5 text-text-primary" title={displayName}>{displayName}</p>
                 <p dir="auto" className="mt-0.5 line-clamp-2 text-left text-xs leading-[18px] text-text-muted" title={lastMessagePreview}>{lastMessagePreview}</p>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  {isLocalExampleCustomer(customer.id) && <Tag className="!m-0 !text-[9px]">本地示例</Tag>}
                   {customer.isHistorical && <Tag className="!m-0 !text-[9px]">历史会话</Tag>}
                   {customer.simulation?.warning && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">大单预警</span>}
                   <SourceIcon source={customer.source} size={11} />
@@ -172,6 +174,7 @@ export function CompactCustomerList({
   return <aside data-testid="conversation-list" className="flex h-full w-full shrink-0 flex-col bg-surface lg:w-52 xl:w-56 2xl:w-60">
     <div className="border-b border-border px-3 pt-2">
       {headerActions}
+      {customers.some(customer => isLocalExampleCustomer(customer.id)) && <p className="mb-2 text-xs text-text-muted">示例不计入经营报告</p>}
       <div className="flex items-center gap-2">
         <Input className="min-w-0 flex-1" allowClear value={query} onChange={event => setQuery(event.target.value)} prefix={<Search size={15}/>} placeholder="搜索客户或消息" aria-label="搜索客户或消息" />
         <Popover trigger="click" placement="bottomLeft" open={filterOpen} onOpenChange={setFilterOpen} title="筛选客户" content={<div className="w-72 max-w-[calc(100vw-48px)]">

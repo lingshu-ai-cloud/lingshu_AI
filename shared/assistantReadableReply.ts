@@ -1,3 +1,4 @@
+import { hasAssistantMarkdownTable } from './assistantMarkdownTable.js';
 import type { AssistantReplyPresentationKind } from './assistantReplyPresentation.js';
 
 export const ASSISTANT_READABLE_POLICY = `【面向客户的表达规则】
@@ -49,7 +50,7 @@ export function readableAssistantReply(content: string): string {
     const marker = raw.trim().match(/^```([\w-]*)\s*$/);
     if (marker) {
       if (fence !== null) { if (keepFence) output.push(raw); fence = null; keepFence = false; }
-      else { fence = marker[1]; keepFence = ['copy', 'next', 'chart', 'details'].includes(fence); if (keepFence) output.push(raw); }
+      else { fence = marker[1]; keepFence = ['copy', 'next', 'chart', 'details', 'social-insight', 'industry-insight'].includes(fence); if (keepFence) output.push(raw); }
       continue;
     }
     if (fence !== null) { if (keepFence) output.push(fence === 'next' || fence === 'details' ? readableAssistantReply(raw) : raw); continue; }
@@ -158,6 +159,7 @@ function foldOperationsReply(main: string): { summary: string; detail: string } 
 }
 
 function foldPresentationReply(main: string, kind: AssistantReplyPresentationKind): { summary: string; detail: string } | null {
+  if (hasAssistantMarkdownTable(main)) return null;
   if (kind === 'operations') {
     const operations = foldOperationsReply(main);
     if (operations?.detail) return operations;
@@ -214,7 +216,7 @@ export function splitAssistantReply(content: string, options: { compact?: boolea
   }
   // Older replies have no details protocol. Fold only clearly long, paragraph-based
   // explanations, never code/copy, tables, file receipts or a single paragraph.
-  if (!details.length && main.length > 1500 && !/```|<!--assistant-file:|^\s*\|/mu.test(main)) {
+  if (!details.length && main.length > 1500 && !hasAssistantMarkdownTable(main) && !/```|<!--assistant-file:|^\s*\|/mu.test(main)) {
     const paragraphs = main.split(/\n\s*\n/u).filter(value => value.trim());
     if (paragraphs.length > 3) {
       let boundary = 1;
@@ -223,7 +225,7 @@ export function splitAssistantReply(content: string, options: { compact?: boolea
       details.push(paragraphs.slice(boundary).join('\n\n'));
     }
   }
-  if (options.compact && !details.length && main.length > 420 && !/```(?:copy|chart)|<!--assistant-file:|^\s*\|/mu.test(main)) {
+  if (options.compact && !details.length && main.length > 420 && !hasAssistantMarkdownTable(main) && !/```(?:copy|chart|social-insight|industry-insight)|<!--assistant-file:|^\s*\|/mu.test(main)) {
     const units = main.split(/\n\s*\n/u).filter(value => value.trim()).flatMap(paragraph => {
       if (paragraph.length <= 220) return [paragraph];
       const sentences = paragraph.match(/[^。！？\n]+[。！？]?/gu)?.map(value => value.trim()).filter(Boolean) ?? [];

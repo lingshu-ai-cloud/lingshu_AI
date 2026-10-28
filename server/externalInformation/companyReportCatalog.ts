@@ -14,7 +14,7 @@ export type CompanyReportTarget = { id: string; name: string; code: string; alia
 
 export function companyReportIntent(question: string): { target?: CompanyReportTarget; lookup?: { companyId: string; year: number }; error?: string } | null {
   if (/不(?:用|要|必)联网|无需联网|不(?:用|要)搜索/u.test(question)) return null;
-  if (!/财报|年报|季报|半年报|半年度|企业.*解读|龙头.*(?:报告|解读|动向)/u.test(question)) return null;
+  if (!/企业经营洞察|经营洞察|财报|年报|季报|半年报|半年度|企业.*解读|龙头.*(?:报告|解读|动向)/u.test(question)) return null;
   const companies = reportCompaniesIn(question);
   if (companies.length !== 1) return { error: companies.length > 1 ? '请一次选择一家企业，以便逐项核对报告期间和证据。' : '请指定观察池内企业。可先查询“美妆企业财报资料库”查看支持企业及官方原文目录。' };
   const company = companies[0];

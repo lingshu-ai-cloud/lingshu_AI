@@ -1,8 +1,10 @@
+import { assertCompanyIncomeDisclosure } from './companyDisclosureContradictions.js';
+import { assertCompanyFinancialRatioDirection } from './companyFinancialRatioDirection.js';
 import { createHash } from 'node:crypto';
 import { companyCoverIdentityMatches } from './companyRegistry.js';
 import { ExternalInformationError } from './http.js';
 import type { CompanyReportTarget } from './companyReportCatalog.js';
-import type { CompanyReport, CompanyAnalysis } from '../../shared/contracts/companyReport.js';
+import { COMPANY_REPORT_MAX_EVIDENCE_PAGES, type CompanyReport, type CompanyAnalysis } from '../../shared/contracts/companyReport.js';
 
 export type ReportPage = { page: number; text: string };
 export const compactReportText = (value: string) => value.replace(/\s+/gu, '').normalize('NFKC');
@@ -61,7 +63,7 @@ export function selectCompanyEvidence(pages: ReportPage[], target: CompanyReport
     const page = pages.find(page => compactReportText(page.text).includes(term));
     if (page) selected.set(page.page, page);
   }
-  return [...selected.values()].slice(0, 12).sort((a, b) => a.page - b.page)
+  return [...selected.values()].slice(0, COMPANY_REPORT_MAX_EVIDENCE_PAGES).sort((a, b) => a.page - b.page)
     .map(page => ({ id: `P${page.page}`, page: page.page, text: page.text.slice(0, 6000) }));
 }
 
@@ -101,23 +103,61 @@ export async function readCompanyDocument(target: CompanyReportTarget, signal?: 
   } finally { await document.destroy(); }
 }
 
+/** Repair only decimal glyph gaps seen in PDF table cells; never concatenate adjacent complete figures. */
+export function normalizeReportNumericText(value: string): string {
+  return value.normalize('NFKC').replace(/\b(20\d)\s+(\d)\b/gu, '$1$2')
+    .replace(/(?<![\d.])(\d)[ \t]+(\d)[ \t]+\.[ \t]*(\d+)(?![\d.])/gu, '$1$2.$3')
+    .replace(/(\d)\.[ \t]+(\d)/gu, '$1.$2')
+    .replace(/(\d+\.\d)[ \t](\d)(?![\d.])/gu, '$1$2')
+    .replace(/\d{1,3}(?:,\d{3})+/gu, number => number.replaceAll(',', ''));
+}
+
+/** Selected pages cannot establish exhaustive absence or a comparable multi-period trend. */
+export function assertCompanyClaimScope(prose: string, source: string): void {
+  assertCompanyIncomeDisclosure(prose, source);
+  source = compactReportText(source);
+  const compactProse = compactReportText(prose);
+  const sourceBacked = (claim: string) => source.includes(compactReportText(claim));
+  const continuous = [...compactProse.matchAll(/连续(?:两|三|四|五|多|[2-9])(?:年|个季度|季度|个半年)[^。；;！？]{0,14}(?:负增长|增长|下降|下滑|承压|增加|减少)|(?:持续|连续)(?:负增长|增长|下降|下滑|增加|减少|加码|攀升|承压)/gu)]
+    .filter(match => !/(?:若|如果|假如|一旦|是否|能否|会否)[^。；;！？]{0,30}$/u.test(compactProse.slice(Math.max(0, (match.index ?? 0) - 32), match.index)))
+    .map(match => match[0]);
+  if (continuous.some(claim => !sourceBacked(claim))) throw new ExternalInformationError('company_report_scope_mismatch', '所引证据未明确支持同口径连续期间变化，本次未采用此趋势判断。');
+  const priorPeriod = [...compactProse.matchAll(/(20\d{2})年同期/gu)].map(match => match[0]);
+  if (priorPeriod.some(period => !source.includes(period)) && /20\d{2}H1/iu.test(source) && /20\d{2}(?:年)?(?:比上年|同比)|20\d{2}年/u.test(source)) {
+    throw new ExternalInformationError('company_report_scope_mismatch', '报告将历史全年列与上半年同期口径混用，本次未采用此比较。');
+  }
+  const exhaustive = compactProse.match(/(?:未披露|未提及|未公开|没有披露)(?:任何)?(?:境外|海外|国际|出口|国际化)(?:业务)?[^。；;！？]{0,28}|(?:暂无|尚无)(?:国际|海外|境外|实质)(?:业务)?(?:收入|进展|布局|动作|披露)[^。；;！？]{0,12}/gu) ?? [];
+  if (exhaustive.some(claim => !sourceBacked(claim))) throw new ExternalInformationError('company_report_claim_unsupported', '局部证据不能证明全部业务未披露或不存在，本次未采用此否定判断。');
+  const exclusiveAi = compactProse.match(/(?:AI|人工智能)[^。；;！？]{0,16}(?:仅限于|限于|仅用于|只用于)[^。；;！？]{0,45}|(?:AI|人工智能)[^。；;！？]{0,35}而非(?:研发|产品|供应链)[^。；;！？]{0,20}|(?:AI|人工智能)[^。；;！？]{0,35}(?:尚未|没有|未曾)(?:触及|应用于|进入|涉及)(?:研发|产品|供应链)[^。；;！？]{0,20}|尚未形成[^。；;！？]{0,35}实质性赋能/giu) ?? [];
+  if (exclusiveAi.some(claim => !sourceBacked(claim))) throw new ExternalInformationError('company_report_claim_unsupported', '局部AI案例不能证明其应用仅限于某一领域，本次未采用此排他判断。');
+  const allBrands = compactProse.match(/(?:各品牌均|全品牌|所有品牌)[^。；;！？]{0,18}(?:线上|在线)[^。；;！？]{0,10}/gu) ?? [];
+  if (allBrands.some(claim => !sourceBacked(claim))) throw new ExternalInformationError('company_report_claim_unsupported', '部分品牌的渠道披露不能代表所有品牌，本次未采用此全量判断。');
+  if (/翻倍(?:式)?增长|增长(?:了)?一倍|粉饰利润|财务造假|虚增收入|操纵财报/u.test(compactProse)
+    && !(compactProse.match(/翻倍(?:式)?增长|增长(?:了)?一倍|粉饰利润|财务造假|虚增收入|操纵财报/gu) ?? []).every(sourceBacked)) {
+    throw new ExternalInformationError('company_report_claim_unsupported', '所引原文不支持该增长倍数或指控，本次未采用。');
+  }
+}
+
 export function validateCompanyAnalysis(analysis: CompanyAnalysis, evidence: CompanyReport['evidence'], metrics: CompanyReport['metrics']): void {
   const byId = new Map(evidence.map(item => [item.id, item]));
-  const insights = [analysis.conclusion, ...analysis.sections.flatMap(section => [section.observation, section.interpretation, section.implication]), ...analysis.watchpoints];
+  const insights = [analysis.conclusion, ...analysis.sections.flatMap(section => [section.observation, ...(section.interpretation ? [section.interpretation] : []), ...(section.implication ? [section.implication] : [])]), ...analysis.watchpoints];
   for (const insight of insights) {
     if (insight.evidenceIds.some(id => !byId.has(id))) throw new ExternalInformationError('company_report_citation_invalid', '报告引用了不存在的财报证据，本次未采用。');
     const source = compactReportText(insight.evidenceIds.map(id => byId.get(id)!.text).join(''));
-    const numericSource = insight.evidenceIds.map(id => byId.get(id)!.text).join('\n').normalize('NFKC').replace(/\b(20\d)\s+(\d)\b/g, '$1$2').replace(/\d{1,3}(?:,\d{3})+/g, value => value.replaceAll(',', ''));
+    const numericSource = normalizeReportNumericText(insight.evidenceIds.map(id => byId.get(id)!.text).join('\n'));
     const allowed = new Set([...numericSource.matchAll(/\d+(?:\.\d+)?/g)].map(match => match[0]));
     for (const metric of metrics.filter(item => insight.evidenceIds.includes(`P${item.page}`))) {
       for (const value of [Math.abs(Number(metric.changePct)).toFixed(0), Math.abs(Number(metric.changePct)).toFixed(1), metric.current, metric.previous, metric.changePct, (Number(metric.current) / 1e8).toFixed(2), (Number(metric.previous) / 1e8).toFixed(2)]) allowed.add(value.replace(/^-/, ''));
     }
     const prose = insight.text + ('verifyWith' in insight ? ` ${insight.verifyWith}` : '');
+    assertCompanyClaimScope(prose, insight.evidenceIds.map(id => byId.get(id)!.text).join('\n'));
+    assertCompanyFinancialRatioDirection(prose, metrics, insight.evidenceIds);
     for (const match of prose.replace(/财报第\d+页/gu, '').replace(/\d{1,3}(?:,\d{3})+/g, value => value.replaceAll(',', '')).matchAll(/\d+(?:\.\d+)?/g)) {
       if (!allowed.has(match[0])) { console.error('[company-report-number]', JSON.stringify({ number: match[0], evidenceIds: insight.evidenceIds, text: insight.text })); throw new ExternalInformationError('company_report_number_unsupported', '报告中有数字无法与所引财报对应，本次未采用。'); }
     }
     if ('quote' in insight && String(insight.quote).split('\n').some(piece => !source.includes(compactReportText(piece)))) throw new ExternalInformationError('company_report_quote_unsupported', '报告原文摘录未能在证据中匹配，本次未采用。');
-    if (/占(?:公司)?(?:总收入|集团收入)/u.test(prose) && /占公司主营业务收入/u.test(source) && !/占(?:公司)?(?:总收入|集团收入)/u.test(source)) throw new ExternalInformationError('company_report_scope_mismatch', '报告把主营业务收入与集团总收入的口径混用了，本次未采用。');
+    if (/占(?:公司)?(?:总收入|集团收入)/u.test(prose) && /占(?:公司)?主营业务(?:总)?收入/u.test(source) && !/占(?:公司)?(?:总收入|集团收入)/u.test(source)) throw new ExternalInformationError('company_report_scope_mismatch', '报告把主营业务收入与集团总收入的口径混用了，本次未采用。');
+    if (/(?:未披露任何(?:境外|海外|国际)(?:收入|市场|注册|子公司)|尚无(?:国际收入|海外收入|境外收入|实质收入))/u.test(prose) && !/(?:未披露任何(?:境外|海外|国际)|尚无(?:国际收入|海外收入|境外收入|实质收入))/u.test(source)) throw new ExternalInformationError('company_report_claim_unsupported', '所选证据不能证明全部境外业务未披露，本次未采用此结论。');
     if (/采购支出减少[（(]营业成本/u.test(prose)) throw new ExternalInformationError('company_report_scope_mismatch', '报告把采购现金与营业成本口径混用了，本次未采用。');
     if (/超预期|不及预期|市场一致预期|consensus|明年必然|保证增长|一定上涨/iu.test(prose + analysis.headline)) throw new ExternalInformationError('company_report_claim_unsupported', '报告包含未接入预期或确定性预测，本次未采用。');
   }

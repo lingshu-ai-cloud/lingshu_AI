@@ -4,7 +4,7 @@ import tls from 'node:tls';
 import http from 'node:http';
 import https from 'node:https';
 import {syncBuiltinESMExports} from 'node:module';
-import {customerPreviewAiRequestAllowed,auditedCustomerPreviewAiFetch,customerPreviewAiTransportAllowed} from './customer-preview-ai-scope.mjs';
+import {customerPreviewAiRequestAllowed,auditedCustomerPreviewAiFetch,customerPreviewAiTransportAllowed,customerPreviewPublicReadRequestAllowed,customerPreviewPublicReadLease} from './customer-preview-ai-scope.mjs';
 import {installCustomerIsolationCanary} from './customer-isolation-canary.mjs';
 import {customerIsolationDiagnostic} from './customer-isolation-diagnostics.mjs';
 import {installIsolatedProcesses} from './customer-isolated-processes.mjs';
@@ -45,7 +45,7 @@ guardedFetch=async(input,init)=>{
 globalThis.fetch=guardedFetch;
 for(const module of [http,https]){
  const request=module.request;
- module.request=function(input,...args){if(!requestLocal(input,typeof args[0]==='object'?args[0]:{}))throw blocked(module===http?'http':'https',typeof input==='object'&&!(input instanceof URL)?{...input,...(typeof args[0]==='object'?args[0]:{})}:input);return request.call(this,input,...args);};
+ module.request=function(input,...args){const options=typeof args[0]==='object'?args[0]:{};const localRequest=requestLocal(input,options);const publicRead=!localRequest&&module===https&&customerPreviewPublicReadRequestAllowed(input,options);if(!localRequest&&!publicRead)throw blocked(module===http?'http':'https',typeof input==='object'&&!(input instanceof URL)?{...input,...options}:input);const req=request.call(this,input,...args);if(publicRead){const lease=customerPreviewPublicReadLease(()=>req.destroy());const end=req.end;const flush=req.flushHeaders;req.flushHeaders=function(...args){if(!lease())throw blocked('https-expired',input);return flush.apply(this,args);};const target=new URL(input);Object.defineProperties(req,{method:{value:req.method,writable:false,configurable:false},path:{value:req.path,writable:false,configurable:false}});req.write=function(){throw blocked('https-body',input);};req.setHeader=function(){throw blocked('https-header',input);};req.addTrailers=function(){throw blocked('https-body',input);};req.end=function(data,...rest){if(!lease())throw blocked('https-expired',input);if(data!==undefined&&data!==null&&typeof data!=='function')throw blocked('https-body',input);if(req.path!==target.pathname+target.search||req.method!=='GET')throw blocked('https-target',input);return end.call(this,data,...rest);};}return req;};
  module.get=function(input,...args){const req=module.request(input,...args);req.end();return req;};
 }
 for(const [object,name]of [[net.Socket.prototype,'connect'],[tls,'connect'],[http,'request'],[https,'request'],[http,'get'],[https,'get']])integrity.push([object,name,object[name]]);

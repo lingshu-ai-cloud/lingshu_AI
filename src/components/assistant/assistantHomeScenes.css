@@ -1,0 +1,11 @@
+.assistant-home-scenes--home{display:contents}
+.assistant-home-scenes--sidebar{min-width:0;padding:8px 16px 0}
+.assistant-home-scenes--sidebar .creator-home__suggestions{margin:0;gap:8px;padding:2px 0 8px}
+.assistant-home-scenes--sidebar .creator-home__suggestions button{min-height:48px;flex-shrink:0}
+.assistant-home-scenes--sidebar .creator-home__canvas-stage{margin:0;max-height:280px;overflow-y:auto}
+.assistant-home-scenes--sidebar .creator-home__canvas{padding:0;min-width:0}
+.assistant-home-scenes--sidebar .creator-home__prompt-grid{grid-auto-columns:240px;gap:8px;padding:4px 0 8px}
+.assistant-home-scenes--sidebar .creator-home__prompt-card{min-height:128px;padding:12px}
+.assistant-home-scenes--sidebar .company-report-scene{margin:4px 0 8px;padding:12px}
+.assistant-home-scenes--sidebar .creator-home__canvas-stage:not(.is-collapsed){grid-template-rows:1fr;opacity:1;transform:translateY(0);pointer-events:auto}
+.assistant-home-scenes--sidebar .creator-home__canvas-stage.is-collapsed{max-height:0;overflow:hidden}

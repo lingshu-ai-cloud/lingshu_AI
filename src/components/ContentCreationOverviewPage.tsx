@@ -56,7 +56,6 @@ function CreationPlan({ data, onCreate, onOpenMetric }: { data: DigitalEmployeeO
           <Tag color={displayStatus.color}>{displayStatus.text}</Tag>
           {data.goal && <Tag>{data.goal.startsAt.slice(5)} — {data.goal.endsAt.slice(5)}</Tag>}
         </div>
-        {(data.plan?.strategy || data.goal?.objective) && <p className="mt-2 text-sm text-text-secondary">{data.plan?.strategy || data.goal?.objective}</p>}
       </div>
       <Button type="primary" icon={<CalendarPlus size={16}/>} onClick={onCreate}>新建单条内容任务</Button>
     </header>

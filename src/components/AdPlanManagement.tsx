@@ -1,3 +1,4 @@
+import { isLocalExampleAd } from '../lib/localExampleOrigin';
 import { useEffect, useState } from 'react';
 import { Alert, Button, Input, Select, Space, Table, Tag } from 'antd';
 import { type PlatformAdTask } from '../lib/platformAds';
@@ -30,18 +31,19 @@ export default function AdPlanManagement({ tasks, loading, error, onOpen, onUpda
       <Select disabled={budgetBusy} aria-label="筛选渠道" value={channel} onChange={filter(setChannel)} options={[{ value: '', label: '全部渠道' }, ...['Facebook', 'Instagram', 'TikTok', 'YouTube'].map(value => ({ value, label: value }))]}/>
       <Button disabled={budgetBusy} loading={busy} onClick={() => setRefresh(v => v + 1)}>刷新效果</Button>
     </div></div>
+    {tasks.some(task => isLocalExampleAd(task.id)) && <p className="mb-3 text-xs text-text-muted">示例不计入经营报告</p>}
     {error && <Alert type="error" showIcon title={error}/>}
     <Table<PlatformAdTask> className="ads-compact-plan-table" size="small" rowKey="id" loading={loading} dataSource={visible} pagination={{ current: page, pageSize: 10, total: filtered.length, showSizeChanger: false, disabled: budgetBusy, onChange: value => { setPage(value); setExpanded([]); } }} scroll={{ x: 862 }} locale={{ emptyText: error ? '计划目录暂未读取成功' : '当前筛选暂无计划' }}
       onRow={task => ({ onClick: event => { if (!budgetBusy && !(event.target as HTMLElement).closest('button, a, input, select, textarea')) setExpanded(keys => keys.includes(task.id) ? [] : [task.id]); } })}
       expandable={{ expandedRowKeys: expanded, showExpandColumn: false, expandRowByClick: false, onExpand: (open, task) => { if (!budgetBusy) setExpanded(open ? [task.id] : []); }, expandedRowRender: task => <div className="ads-plan-row-panel">
-        <div className="ads-plan-row-panel-heading"><strong>{task.name}</strong><Button size="small" disabled={budgetBusy} onClick={() => setExpanded([])}>收起</Button></div>
+        <div className="ads-plan-row-panel-heading"><strong>{task.name}{isLocalExampleAd(task.id) && <Tag className="ml-2">本地示例</Tag>}</strong><Button size="small" disabled={budgetBusy} onClick={() => setExpanded([])}>收起</Button></div>
         {draftNameConflict(task) && <Alert type="warning" showIcon title="名称与真实投放状态不一致" description="计划名称包含仅草稿或不投放，但平台回执显示正在投放。请核对原操作记录及预算；页面不会自动修改广告状态。" />}
         <p className="ads-plan-advice-detail"><strong>AI 建议：</strong>{planAdvice(task, current[task.id]).text} <small>{planAdvice(task, current[task.id]).detail}</small></p>
         {readOnly ? <p>计划预算 {task.currency} {n(task.budget)} · 计划日预算 {task.currency} {n(task.configuration.dailyBudget)}</p> : !previewMode ? <AdPlanBudgetDialog inline task={task} onClose={() => setExpanded([])} onUpdate={onUpdate} onReadback={() => setRefresh(v => v + 1)} onBusyChange={setBudgetBusy}/> : <p>演示数据仅供查看预算。</p>}
         <Space wrap><Button disabled={budgetBusy} onClick={() => onOpen(task.id)}>素材配置与投放操作</Button><Button disabled={budgetBusy} onClick={() => onAI(task.id)}>查看 AI 决策与授权记录</Button></Space>
       </div> }} columns={[
       { title: '缩略图', key: 'cover', width: 80, render: (_, task) => <div onClick={event => event.stopPropagation()}><AdPlanThumbnail task={task} entry={planLiveEntries(task, current[task.id])[0]}/></div> },
-      { title: '计划标题', key: 'name', width: 210, render: (_, task) => <><Button type="link" className="ads-compact-plan-title" title={task.name} aria-expanded={expanded.includes(task.id)} disabled={budgetBusy} onClick={event => { event.stopPropagation(); setExpanded(keys => keys.includes(task.id) ? [] : [task.id]); }}>{task.name}</Button><small>{task.goal} · {task.market}</small></> },
+      { title: '计划标题', key: 'name', width: 210, render: (_, task) => <><Button type="link" className="ads-compact-plan-title" title={task.name} aria-expanded={expanded.includes(task.id)} disabled={budgetBusy} onClick={event => { event.stopPropagation(); setExpanded(keys => keys.includes(task.id) ? [] : [task.id]); }}>{task.name}</Button>{isLocalExampleAd(task.id) && <Tag>本地示例</Tag>}<small>{task.goal} · {task.market}</small></> },
       { title: '投放状态', key: 'status', width: 104, render: (_, task) => <><Tag>{planStatusText(task, current[task.id])}</Tag>{draftNameConflict(task) && <Tag color="warning">投放状态待核对</Tag>}<small>{managementModeLabels[task.managementMode]}</small></> },
       { title: '预算与消耗', key: 'budget', width: 158, render: (_, task) => { const data = current[task.id], entries = planLiveEntries(task, data), live = entries.length === 1 && entries[0].currency === task.currency ? entries[0] : null; return <div title={data?.audit ? `平台核对：${new Date(data.audit.checkedAt).toLocaleString('zh-CN')}` : '平台预算待回传'}><div>{live ? `平台日预算 ${task.currency} ${n(live.dailyBudget)}` : entries.length > 1 ? `${entries.length} 组平台预算 · 展开核对` : `计划日预算 ${task.currency} ${n(task.configuration.dailyBudget)}`}</div><small>{data?.metrics ? `${data.metricsError ? '上次消耗' : '消耗'} ${data.metrics.currency} ${n(data.metrics.spend)}` : '消耗待回传'}</small></div>; } },
       { title: '关键成效', key: 'metrics', width: 144, render: (_, task) => <AdPlanMetricsCell task={task} data={current[task.id]} disabled={budgetBusy || busy} onRetry={() => retryMetrics(task.id)}/> },

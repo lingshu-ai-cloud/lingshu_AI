@@ -100,26 +100,42 @@ test('numeric proof keeps table-cell boundaries, normalizes split PDF year and v
   assert.throws(() => validateCompanyAnalysis(valid, evidence, metrics), /数字/);
 });
 
-test('unsupported sentences are omitted explicitly, never rewritten with invented replacement facts', async () => {
+test('unsupported sentences are omitted without placeholder prose or invented replacement facts', async () => {
   const input = structuredClone(draft);
-  input.sections[0].interpretation.text = '原料业务需要继续核对客户采用情况。新增订单增长999.99%。';
+  input.sections[0].interpretation!.text = '原料业务需要继续核对客户采用情况。新增订单增长999.99%。';
   input.conclusion.evidenceIds = ['P12-Q1'];
   const report = await generateCompanyReport(target, 'partial-proof-test', {
     read: async () => ({ pages, totalPages: 204, fetchedAt: '2026-10-26T00:00:00Z', sha256: 'c'.repeat(64), audited: false }),
     analyze: async () => JSON.stringify(input),
   });
-  assert.equal(report.analysis.sections[0].interpretation.text, '原料业务需要继续核对客户采用情况。');
-  assert.ok(report.limitations.some(item => item.includes('有1句未通过')));
+  assert.equal(report.analysis.sections[0].interpretation!.text, '原料业务需要继续核对客户采用情况。');
+  assert.ok(!JSON.stringify(report).includes('999.99'));
+  assert.ok(report.limitations.every(item => !/有\d+句未通过|该段未取得/u.test(item)));
   assert.deepEqual(report.analysis.conclusion.evidenceIds, ['P12']);
   assert.ok(!report.evidence.find(item => item.id === 'P6')?.text.includes('原料业务实现收入'));
 });
 
-test('removing unsupported claims cannot turn an empty conclusion into a successful report', async () => {
+test('an empty filtered conclusion is restored only from verified financial rows and never from rejected model claims', async () => {
   const bad = structuredClone(draft); bad.conclusion.text = '订单增长999.99%。';
-  await assert.rejects(generateCompanyReport(target, 'empty-proof-test', {
+  const report = await generateCompanyReport(target, 'empty-proof-test', {
     read: async () => ({ pages, totalPages: 204, fetchedAt: '2026-10-26T00:00:00Z', sha256: 'd'.repeat(64), audited: false }),
     analyze: async () => JSON.stringify(bad),
-  }), /可用分析不足/);
+  });
+  assert.match(report.analysis.conclusion.text, /营业收入同比下降50.00%/);
+  assert.doesNotMatch(report.analysis.conclusion.text, /999.99|订单/);
+  assert.deepEqual(report.analysis.conclusion.evidenceIds, ['P6']);
+});
+
+test('unsupported facts in multiple sections cannot pass as a complete report', async () => {
+  const bad = structuredClone(draft);
+  bad.sections[0].observation.text = '收入增长999.99%。';
+  bad.sections[1].observation.text = '利润增长888.88%。';
+  let requestedPrompt = '';
+  await assert.rejects(generateCompanyReport(target, 'missing-sections-proof-test', {
+    read: async () => ({ pages, totalPages: 204, fetchedAt: '2026-10-26T00:00:00Z', sha256: 'e'.repeat(64), audited: false }),
+    analyze: async prompt => { requestedPrompt = prompt; return JSON.stringify(bad); },
+  }), /有效内容不足/);
+  assert.match(requestedPrompt, /独立事实分别写成完整短句/);
 });
 
 test('SZSE layouts require RMB evidence, support split headings and glyph-spaced amounts, and preserve research-input labels', () => {
@@ -143,4 +159,117 @@ test('PDF identity uses verified legal names rather than loose query aliases or 
   assert.equal(companyCoverIdentityMatches('cosmos', '科思股份', '南京科思化学股份有限公司2026年半年度报告全文'), true);
   assert.equal(companyCoverIdentityMatches('cosmos', '科思股份', '其他科思材料股份有限公司2026年半年度报告'), false);
   assert.equal(companyCoverIdentityMatches('jahwa', '上海家化', '嘉亨家化股份有限公司2026年半年度报告'), false);
+});
+
+test('missing interpretation is omitted and triggers at most one bounded evidence repair', async () => {
+  const input = structuredClone(draft);
+  input.sections[0].interpretation = { ...insight, text: '新增订单增长999.99%。' };
+  input.sections[0].implication = { ...insight, text: '产品销量增长888.88%。' };
+  let calls = 0;
+  const read = async () => ({ pages, totalPages: 204, fetchedAt: '2026-10-26T00:00:00Z', sha256: 'f'.repeat(64), audited: false });
+  const report = await generateCompanyReport(target, 'missing-inference-hidden', { read, analyze: async () => JSON.stringify(input), supplement: async () => { calls++; return { sources: [], patches: [] }; } });
+  assert.equal(calls, 1);
+  assert.equal(report.analysis.sections[0].interpretation, undefined);
+  assert.equal(report.analysis.sections[0].implication, undefined);
+  assert.ok(report.analysis.sections[0].observation.text);
+  assert.ok(!JSON.stringify(report.analysis).includes('该段未取得'));
+});
+
+test('supplement repair is traceable and cannot backfill financial numbers from a website', async () => {
+  const input = structuredClone(draft); input.sections[0].interpretation = { ...insight, text: '订单增长999.99%。' };
+  const read = async () => ({ pages, totalPages: 204, fetchedAt: '2026-10-26T00:00:00Z', sha256: '1'.repeat(64), audited: false });
+  for (const [tenant, text, accepted] of [['good', '原文提示新原料开发可能需要与客户采用情况联合验证。', true], ['bad', '网站提示收入达到999.99亿元。', false]] as const) {
+    const report = await generateCompanyReport(target, `supplement-${tenant}`, { read, analyze: async () => JSON.stringify(input), supplement: async () => ({ sources: [{ id: 'W1', title: '企业产品资料', url: 'https://www.bloomagebioactive.com/products/example.html', publishedAt: '2026-06-01', excerpt: '公司持续开发新原料和客户，客户采用情况需要验证。' }], patches: [{ section: 0, field: 'interpretation', text, evidenceIds: ['P12'], supplementaryEvidenceIds: ['W1'] }] }) });
+    assert.equal(Boolean(report.analysis.sections[0].interpretation), accepted);
+    assert.equal(report.supplementarySources?.length ?? 0, accepted ? 1 : 0);
+  }
+});
+
+
+test('one rejected disclosure section is omitted when three others remain, preserving repair indices', async () => {
+  const input = structuredClone(draft);
+  input.sections.push({ ...structuredClone(input.sections[1]), title: '保留的客户采用分析' });
+  input.sections[0].observation.text = '收入增长999.99%。';
+  input.sections[3].interpretation = { ...insight, text: '订单增长888.88%。' };
+  let calls = 0;
+  const report = await generateCompanyReport(target, 'four-sections-one-rejected', {
+    read: async () => ({ pages, totalPages: 204, fetchedAt: '2026-10-26T00:00:00Z', sha256: '2'.repeat(64), audited: false }),
+    analyze: async () => JSON.stringify(input),
+    supplement: async (_target, original) => {
+      calls++; assert.equal(original.sections.length, 4);
+      return { sources: [{ id: 'W1', title: '企业产品资料', url: 'https://www.bloomagebioactive.com/products/example.html', publishedAt: '2026-06-01', excerpt: '公司持续开发新原料和客户，客户采用情况需要验证。' }],
+        patches: [{ section: 3, field: 'interpretation', text: '原文提示新原料开发可能需要与客户采用情况联合验证。', evidenceIds: ['P12'], supplementaryEvidenceIds: ['W1'] }] };
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(report.analysis.sections.length, 3);
+  assert.ok(!report.analysis.sections.some(section => section.title === input.sections[0].title));
+  assert.equal(report.analysis.sections[2].title, '保留的客户采用分析');
+  assert.equal(report.analysis.sections[2].interpretation?.text, '原文提示新原料开发可能需要与客户采用情况联合验证。');
+  assert.equal(report.supplementarySources?.length, 1);
+  assert.equal(companyReportSchema.safeParse(report).success, true);
+});
+
+test('PDF split decimal glyphs preserve real ratios without concatenating adjacent complete cells', () => {
+ const source = [{ id: 'P10', page: 10, text: '护肤类（含洁肤）39.10 -6.8 7；美容彩妆类8.97 7.1 5；洗护类5.60 7 4 . 95。研发投入占比12.07 10.22。另表12.0   1。' }];
+ for (const text of ['护肤类同比下降6.87%。', '美容彩妆类同比增长7.15%。', '洗护类同比增长74.95%。']) assert.doesNotThrow(() => validateCompanyAnalysis({ ...analysis, conclusion: { text, evidenceIds: ['P10'] }, sections: [], watchpoints: [] }, source, []));
+ assert.throws(() => validateCompanyAnalysis({ ...analysis, conclusion: { text: '研发投入占比12.0710%。', evidenceIds: ['P10'] }, sections: [], watchpoints: [] }, source, []), /数字/);
+ assert.throws(() => validateCompanyAnalysis({ ...analysis, conclusion: { text: '另一比例12.01%。', evidenceIds: ['P10'] }, sections: [], watchpoints: [] }, source, []), /数字/);
+ assert.throws(() => validateCompanyAnalysis({ ...analysis, conclusion: { text: '洗护类同比增长174.95%。', evidenceIds: ['P10'] }, sections: [], watchpoints: [] }, source, []), /数字/);
+});
+
+test('real excerpt IDs recover an omitted additional parent page while unknown and entirely displaced quotations remain invalid', async () => {
+ const input = structuredClone(draft);
+ input.sections[0].observation.quoteIds = ['P12-Q1', 'P6-Q1'];
+ const report = await generateCompanyReport(target, 'recover-additional-quote-page', { read: async () => ({ pages, totalPages: 100, fetchedAt: '2026-10-28T00:00:00Z', sha256: 'd'.repeat(64), audited: false }), analyze: async () => JSON.stringify(input) });
+ assert.ok(report.analysis.sections[0].observation.evidenceIds.includes('P6'));
+ assert.ok(report.analysis.sections[0].observation.evidenceIds.includes('P12'));
+});
+
+test('invalid semicolon facts and watchpoints are removed without discarding supported sibling facts or manufacturing replacement points', async () => {
+ const input = structuredClone(draft);
+ input.sections[0].observation.text = '公司披露持续开发新原料和客户；新增订单增长999.99%；原料业务需要核对客户采用情况。';
+ input.watchpoints[0].text = '新增订单增长999.99%。';
+ const report = await generateCompanyReport(target, 'retain-semicolon-siblings', { read: async () => ({ pages, totalPages: 100, fetchedAt: '2026-10-28T00:00:00Z', sha256: 'e'.repeat(64), audited: false }), analyze: async () => JSON.stringify(input) });
+ assert.match(report.analysis.sections[0].observation.text, /持续开发新原料和客户/);
+ assert.doesNotMatch(JSON.stringify(report), /999\.99/);
+ assert.equal(report.analysis.watchpoints.length, 2);
+});
+
+test('main-business total income is never silently relabelled as group income and limited pages cannot prove all overseas absence', () => {
+ const source = [{ id: 'P10', page: 10, text: '各品牌收入占比，为占主营业务总收入的比例。护肤类收入占比72.86%。' }];
+ for (const text of ['护肤类占总收入72.86%。', '报告未披露任何海外收入。']) assert.throws(() => validateCompanyAnalysis({ ...analysis, conclusion: { text, evidenceIds: ['P10'] }, sections: [], watchpoints: [] }, source, []));
+});
+
+test('unsupported numbers and total-absence claims cannot survive in section titles after their prose is filtered', async () => {
+ const input = structuredClone(draft);
+ input.sections[0].title = '增长999.99%形成业绩突破'; input.sections[1].title = '全球化尚无实质收入支撑';
+ const report = await generateCompanyReport(target, 'sanitize-unsupported-section-titles', { read: async () => ({ pages, totalPages: 100, fetchedAt: '2026-10-28T00:00:00Z', sha256: 'f'.repeat(64), audited: false }), analyze: async () => JSON.stringify(input) });
+ assert.equal(report.analysis.sections[0].title, '业务与经营披露'); assert.equal(report.analysis.sections[1].title, '业务与经营披露');
+ assert.doesNotMatch(JSON.stringify(report), /999\.99|尚无实质收入/);
+});
+
+test('real Proya draft with seven true page/excerpt references canonicalizes every support instead of failing a six-item cap', async () => {
+ const fs = await import('node:fs/promises');
+ const audit = JSON.parse(await fs.readFile(new URL('./fixtures/proya-seven-reference-replay.json', import.meta.url), 'utf8'));
+ const model = JSON.parse(audit.raw);
+ assert.equal(model.conclusion.evidenceIds.length, 7);
+ const proya = COMPANY_REPORT_CATALOG.find(item => item.id === 'proya')!;
+ const read = async () => ({ pages: audit.evidence.map((item: { page: number; text: string }) => ({ page: item.page, text: item.text })),
+  totalPages: 209, fetchedAt: '2026-10-28T00:00:00Z', sha256: audit.sourceSha256, audited: false });
+ const options = { read, analyze: async () => audit.raw, supplement: async () => ({ sources: [], patches: [] }) };
+ const report = await generateCompanyReport(proya, 'real-seven-reference-replay', options);
+ assert.deepEqual(report.analysis.conclusion.evidenceIds, ['P6', 'P10', 'P23']);
+ assert.equal(report.analysis.sections.length, 4);
+ const unknown = structuredClone(model); unknown.conclusion.evidenceIds.push('P999-Q1');
+ await assert.rejects(generateCompanyReport(proya, 'real-seven-reference-unknown', { ...options, analyze: async () => JSON.stringify(unknown) }), /不存在的财报证据/);
+ const repeated = structuredClone(model); repeated.conclusion.evidenceIds.push(...Array.from({ length: 100 }, () => 'P6'), 'P10-Q3');
+ const deduped = await generateCompanyReport(proya, 'real-seven-reference-duplicates', { ...options, analyze: async () => JSON.stringify(repeated) });
+ assert.deepEqual(deduped.analysis.conclusion.evidenceIds, ['P6', 'P10', 'P23']);
+});
+
+test('financial delivery allows all twelve selected pages and rejects additional or unknown page support', () => {
+ const twelve = Array.from({ length: 12 }, (_, index) => 'P' + (index + 1));
+ assert.deepEqual(companyAnalysisSchema.parse({ ...analysis, conclusion: { ...analysis.conclusion, evidenceIds: twelve } }).conclusion.evidenceIds, twelve);
+ assert.equal(companyAnalysisSchema.safeParse({ ...analysis, conclusion: { ...analysis.conclusion, evidenceIds: [...twelve, 'P13'] } }).success, false);
 });

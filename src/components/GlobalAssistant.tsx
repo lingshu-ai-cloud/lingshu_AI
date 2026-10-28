@@ -242,8 +242,6 @@ export default function GlobalAssistant({
     window.setTimeout(()=>window.dispatchEvent(new CustomEvent('lingshu:open-weekly-plan', { detail: { source: 'assistant' } })),0);
   }, [inlineHome, onNavigate]);
   const activeThread = threads[activeAgent];
-  useAssistantHomeInteraction(inlineHome, activeThread.messages.length, loading, activeAgent, setDraftInput, assistantInputRef,
-    Boolean(activeThread.creationDraft), setPendingHomeSubmission);
   const inlineHomeActive = inlineHome && Boolean(activeThread.messages.length || loading || activeThread.creationDraft);
   useEffect(() => {
     if (!inlineHome) return;
@@ -491,6 +489,8 @@ export default function GlobalAssistant({
     prepareWeeklyPlan: weeklyPlanExperience.prepare, weeklyPlanGuidanceActive: weeklyPlanExperience.guidanceActive, answerWeeklyPlan: weeklyPlanExperience.answer,
     pendingHomeSubmissionRef,
   });
+  useAssistantHomeInteraction(inlineHome, activeThread.messages.length, loading, activeAgent, setDraftInput, assistantInputRef,
+    Boolean(activeThread.creationDraft), setPendingHomeSubmission, detail => { void send(detail.prompt, currentPageAgent, undefined, [], undefined, { ...detail.submitOptions, preserveDraft: true }); });
   const runQuickExecution = useAssistantQuickExecution({
     loading, fileGenerating, pipelineInFlightRef, pipelineModalOpenRef, persistenceFenceRef,
     openWeeklyPlanFromAssistant, contentIntake, modal, uiMessage, setMessages, upsertTaskCard,
@@ -754,7 +754,7 @@ export default function GlobalAssistant({
         sendComposerMessage={sendComposerMessage} sendWeeklyPlanGuidanceAnswer={sendWeeklyPlanGuidanceAnswer} runQuickExecution={runQuickExecution}
         setAssistantTool={setAssistantTool} setScrollPosition={setScrollPosition}
         setFollowingLatest={setFollowingLatest} focusTaskCard={focusTaskCard}
-        setMessages={setMessages} setDraftInput={setDraftInput}
+        setMessages={setMessages} setDraftInput={setDraftInput} setPendingHomeSubmission={setPendingHomeSubmission}
         setDecisionFeedRevision={setDecisionFeedRevision} setMode={setMode}
         setWeeklyActionBusy={setWeeklyActionBusy} setPendingAttachments={setPendingAttachments}
         setAttachmentError={setAttachmentError} persistThread={persistThread}

@@ -8,7 +8,7 @@ import {
   type DragEvent,
   type KeyboardEvent,
 } from 'react';
-import { ArrowUp, FileAudio2, FileImage, FileVideo2, Loader2, Paperclip, X } from 'lucide-react';
+import { ArrowUp, FileAudio2, FileImage, FileVideo2, Folder, Loader2, Paperclip, X } from 'lucide-react';
 
 export type AssistantAttachmentKind = 'image' | 'video' | 'audio';
 
@@ -180,12 +180,10 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
             rows={1}
             maxLength={4000}
             aria-label="给灵小枢发送消息"
-            aria-describedby={suggestion && !draft && !files.length ? 'assistant-follow-up-hint' : undefined}
             placeholder={suggestion && !files.length ? suggestion : '输入消息，或拖入图片、视频'}
             className="ls-assistant-composer__input max-h-[88px] min-h-10 w-full resize-none overflow-y-auto bg-transparent px-3 pt-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted"
           />
         </div>
-        {suggestion && !draft && !files.length && <p id="assistant-follow-up-hint" className="px-3 pb-1 text-xs text-text-muted">回车填入建议，再次回车发送</p>}
         <div className="flex items-center justify-between gap-2 px-2 pb-2">
           <div className="ls-assistant-composer__tools min-w-0">
             <input
@@ -201,12 +199,11 @@ const AssistantComposer = forwardRef<HTMLTextAreaElement, AssistantComposerProps
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={disabled || uploading || files.length >= ASSISTANT_ATTACHMENT_LIMIT}
-              className="inline-flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-full px-3 text-[11px] font-semibold text-text-secondary hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40"
+              className={`inline-flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-full ${variant === 'home' ? 'w-11 shrink-0' : 'px-3'} text-[11px] font-semibold text-text-secondary hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40`}
               aria-label="添加附件"
               title="添加图片、视频或音频；发送时才会上传到我的素材"
             >
-              <Paperclip aria-hidden="true" size={14} />
-              <span>{variant === 'home' ? '添加参考' : '附件'}</span>
+              {variant === 'home' ? <Folder aria-hidden="true" size={17} strokeWidth={1.8} /> : <><Paperclip aria-hidden="true" size={14} /><span>附件</span></>}
             </button>
           </div>
           <button

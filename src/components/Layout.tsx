@@ -85,7 +85,7 @@ function NavItem({
         items={[{
           key: item.id,
           disabled,
-          icon: <span className="inline-flex items-center justify-center">{item.icon}</span>,
+          icon: item.id === 'strategy' && !collapsed ? undefined : <span className="inline-flex items-center justify-center">{item.icon}</span>,
           title: collapsed ? item.label : '',
           label: <span data-demo-target={item.id} aria-current={active ? 'page' : undefined}>{item.label}{disabled && !collapsed && <span className="ml-1 text-[10px] text-text-muted">待接通</span>}</span>,
         }]}
@@ -249,7 +249,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
         <div className={`creator-sidebar-brand relative h-12 flex items-center flex-shrink-0 ${sidebarCollapsed ? 'justify-center px-2' : 'px-3 gap-2'}`}>
           {!sidebarCollapsed && (starterMode
             ? <span aria-hidden="true" className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-accent text-xs font-bold text-white">{initial}</span>
-            : <img src="/brand-logo.png?v=20260921" alt="灵枢 AI" className="w-7 h-7 object-contain flex-shrink-0" />)}
+            : <img src="/brand-logo.png?v=20260921" alt="灵枢 AI" className="creator-sidebar-brand__logo w-7 h-7 object-contain flex-shrink-0" />)}
           {!sidebarCollapsed && <span className="min-w-0 flex-1 truncate text-[15px] font-bold text-text-primary font-display">{starterMode ? tenantName : '灵枢 AI'}</span>}
           <button
             type="button"

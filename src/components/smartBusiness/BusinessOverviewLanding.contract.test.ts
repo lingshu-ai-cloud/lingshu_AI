@@ -15,7 +15,7 @@ test('today workspace keeps the requested information hierarchy', () => {
   assert.match(workspace, /disabled=\{Boolean\(busy\) \|\| activeRun \|\| Boolean\(goal && !canCreateNextGoal\) \|\| Boolean\(viewGoalId\)\}/, 'preview must not bypass real weekly-plan eligibility');
   assert.match(workspace, /setSampleWeeklyPlanOpen\(true\)[\s\S]*<BusinessOverviewDetailDrawer detail=\{sampleWeeklyPlanOpen && sampleWeekly/, 'preview view action must open weekly-plan details');
   assert.match(source, /周经营计划与今日经营概览[\s\S]{0,220}当前周计划[\s\S]{0,180}weeklyPlan\}/, 'today, score and topics must share the weekly-plan surface');
-  for (const heading of ['今日实时数据', '热门话题', '爆款与曝光', '投流', '询盘与人群']) {
+  for (const heading of ['今日实时数据', '热门话题', '流量与曝光', '投流与转化', '询盘与人群']) {
     assert.ok((source + analytics).includes(heading), `missing overview section: ${heading}`);
   }
   assert.match(analytics, /<Value label="整体曝光"/);

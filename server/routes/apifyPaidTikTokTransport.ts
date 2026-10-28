@@ -183,6 +183,10 @@ export async function runPaidApifyTikTokDataset(input: {
       if (usageTotalUsd > cap) throw Error('apify_paid_usage_exceeds_cap');
       await permit.recordTerminal({ runId: known.runId, status, usageTotalUsd, rawReceiptRef: observed.rawReceiptRef });
       if (status !== 'SUCCEEDED') throw Error(`apify_paid_run_${status.toLowerCase()}`);
+      // The Actor can finish successfully while every search request failed.
+      // Its status message counts completed queries, not matching videos.
+      const searchProgress = /^Scraped\s+(\d+)\/(\d+)\s+search queries\b/i.exec(String(run.statusMessage || '').trim());
+      if (Array.isArray(actorInput.searchQueries) && actorInput.searchQueries.length && searchProgress && Number(searchProgress[2]) > 0 && Number(searchProgress[1]) === 0) throw Error('apify_paid_search_uncompleted');
       // Dataset reads/transfers may be billed outside the Actor run cap.
       // In the absence of a separately verified reservation, stay closed even
       // though the paid Actor has succeeded.

@@ -1,3 +1,4 @@
+import { sourceArticleLinks } from './sourceVerification.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { publicSourceUrl, extractSourceArticle, assertSourceSupport, verifySearchAnswer } from './sourceVerification.js';
@@ -76,4 +77,78 @@ test('numeric proof preserves spaces and list punctuation rather than merging ad
  const article={text:'在2026年展会上发布，日期为10月21日。防晒配方SPF 50，另列21项。'+quote,published:['2026-10-21']};
  assert.doesNotThrow(()=>assertSourceSupport('2026，2026年发布，SPF 50。“'+quote+'”',[article]));
  assert.throws(()=>assertSourceSupport('数字20262026，SPF 500。“'+quote+'”',[article]));
+});
+
+test('unique article time datetime is a publication fallback while metadata remains authoritative', () => {
+  const article = '<article><h1>Industry analysis</h1><time datetime="2026-10-21T09:30:00+02:00">21 October 2026</time><p>Actual article text.</p></article>';
+  assert.deepEqual(extractSourceArticle(article).published, ['2026-10-21']);
+  assert.deepEqual(extractSourceArticle(article.replaceAll('article', 'main')).published, ['2026-10-21']);
+  assert.deepEqual(extractSourceArticle(article.replace('<h1>', '<header><h1>').replace('</time>', '</time></header>')).published, ['2026-10-21']);
+  assert.deepEqual(extractSourceArticle('<meta property="article:published_time" content="2025-01-01">' + article).published, ['2025-01-01']);
+  assert.deepEqual(extractSourceArticle('<script type="application/ld+json">{"@type":"NewsArticle","datePublished":"2025-01-01"}</script>' + article).published, ['2025-01-01']);
+});
+
+test('time fallback excludes update widgets, footer dates, invalid dates and ambiguous article dates', () => {
+  for (const content of [
+    '<time datetime="2026-10-21">21 October</time>',
+    '<article><footer><time datetime="2026-10-21">21 October</time></footer></article>',
+    '<main><aside><time datetime="2026-10-21">Related article</time></aside></main>',
+    '<article><time itemprop="dateModified" datetime="2026-10-21">21 October</time></article>',
+    '<article>Updated: <time datetime="2026-10-21">21 October</time></article>',
+    '<article><time datetime="2026-02-30">30 February</time></article>',
+    '<article><time datetime="2026-10-21Tinvalid">21 October</time></article>',
+    '<article><time datetime="2026-10-21">First date</time><time datetime="2026-10-22">Second date</time></article>',
+    '<article><time itemprop="startDate" datetime="2026-10-21">Event date</time></article>',
+  ]) assert.deepEqual(extractSourceArticle(content).published, [], content);
+  const content = '<article><time datetime="2026-10-21">Published</time><footer><time datetime="2026-10-25">Footer</time></footer></article>';
+  assert.deepEqual(extractSourceArticle(content).published, ['2026-10-21']);
+});
+
+test('semantic div article bodies preserve nested text and explicitly labelled publication dates', () => {
+ const body = '<header><h1>行业技术研究的新进展</h1></header><div class="byline">发布时间：2026-10-20</div><div>首段正文<div>嵌套资料</div>之后仍需保留的正文</div>';
+ for (const marker of ['class="article-content clearfix"', 'id="news-body"', 'itemprop="articleBody"', 'role="main"']) {
+  const result = extractSourceArticle('<nav>导航日期2026-10-27</nav><div '+marker+'>'+body+'</div><footer>发布时间：2026-10-28</footer>');
+  assert.deepEqual(result.published, ['2026-10-20']); assert.equal(result.headline, '行业技术研究的新进展');
+  assert.match(result.text, /嵌套资料/); assert.match(result.text, /之后仍需保留/); assert.doesNotMatch(result.text, /2026-10-28/);
+ }
+ assert.deepEqual(extractSourceArticle('<div class="content"><h1>泛栏目页面</h1>发布时间：2026-10-20</div>').published, []);
+});
+
+test('article-scoped headlines outrank a site navigation heading and explicit meta publication aliases are supported', () => {
+ const html = '<header><h1>网站品牌导航标题</h1></header><meta name="publish_date" content="2026-10-20"><article><h1>真实报道的文章标题</h1><p>Article.</p></article>';
+ assert.equal(extractSourceArticle(html).headline, '真实报道的文章标题'); assert.deepEqual(extractSourceArticle(html).published, ['2026-10-20']);
+ for (const key of ['publish_time', 'pubtime']) assert.deepEqual(extractSourceArticle(html.replace('publish_date', key)).published, ['2026-10-20']);
+ const outside = '<meta property="og:title" content="真实报道的文章标题"><meta name="PubDate" content="2026-10-20"><h1>真实报道的文章标题</h1><div class="article-body"><p>正文不重复标题但确实在同一文章页面。</p></div>';
+ const result = extractSourceArticle(outside); assert.equal(result.headline, '真实报道的文章标题'); assert.match(result.text, /^真实报道的文章标题/);
+});
+
+test('div article fallback never treats sidebar, updated or unlabelled dates as publication proof', () => {
+ const base = '<div class="article-content"><h1>报道标题文本</h1><p>正文资料</p>PLACEHOLDER</div>';
+ for (const value of ['<aside>发布时间：2026-10-20</aside>', '<footer>发布时间：2026-10-20</footer>', '更新时间：2026-10-20', '2026-10-20', '<time itemprop="dateModified" datetime="2026-10-20">Updated</time>']) assert.deepEqual(extractSourceArticle(base.replace('PLACEHOLDER', value)).published, [], value);
+});
+
+test('an article section h1 cannot replace the real page headline from metadata or document title', () => {
+ const title = '2026美妆包材新趋势:从环保合规到智能包装的源头对接';
+ const body = '<article><h1>一、市场背景与现状</h1><p>2026年全球美妆包装市场规模预计将突破580亿美元。</p></article>';
+ for (const head of ['<meta property="og:title" content="'+title+'">', '<title>'+title+'</title>']) {
+  const result = extractSourceArticle('<html><head>'+head+'</head><body>'+body+'</body></html>');
+  assert.equal(result.headline, title);
+  assert.match(result.text, /一、市场背景与现状/);
+ }
+ assert.equal(extractSourceArticle(body).headline, undefined);
+ assert.equal(extractSourceArticle('<title>目录</title>'+body).headline, undefined);
+});
+
+test('business audience acronyms do not become quantitative evidence or unsupported statistics', () => {
+  const original={text:'企业披露研发合作与质量管理安排，采购商可进一步了解产品适配范围。',published:[]};
+  const quote='企业披露研发合作与质量管理安排';
+  for(const label of ['B2B','B2C','b2b','Ｂ２Ｂ']) assert.doesNotThrow(()=>assertSourceSupport(`提示${label}采购商核对产品适配范围。“${quote}”`,[original]));
+  for(const claim of ['预计增长2%','增加2家客户','产品B12','产品B2B2']) assert.throws(()=>assertSourceSupport(`${claim}。“${quote}”`,[original]),/source_number_mismatch/);
+  assert.throws(()=>assertSourceSupport(`增加2家客户。“${quote}”`,[{...original,text:original.text+'B2B服务'}]),/source_number_mismatch/,'an audience acronym in the source cannot authorize a numeric claim');
+});
+
+test('outbound original citations come only from article anchors and still require public safe URLs',()=>{
+ const html='<nav><a href="https://nav.com/article">导航链接</a></nav><article><a href="https://www.fda.gov/cosmetics/cosmetics-news-events/final-guidance">FDA final recall guidance</a><a href="https://digest.com/other">同站推荐</a><a href="http://unsafe.com/article">不安全链接</a><a href="https://localhost/article">内部地址</a><script><a href="https://evil.com/article">脚本伪造</a></script></article>';
+ assert.deepEqual(sourceArticleLinks(html,'https://digest.com/news/item'),[{title:'FDA final recall guidance',uri:'https://www.fda.gov/cosmetics/cosmetics-news-events/final-guidance'}]);
+ assert.deepEqual(sourceArticleLinks('<a href="https://www.fda.gov/cosmetics/recall">无正文外链</a>','https://digest.com/news/item'),[]);
 });

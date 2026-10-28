@@ -1,3 +1,4 @@
+import { publicSearchOriginalUrl } from '../../shared/publicSearchReadPolicy.mjs';
 import type { GroundingSource } from '../agents/llm.js';
 import { externalText, ExternalInformationError } from './http.js';
 import { appendInformationSources, hasOverallConclusion } from './sourceFooter.js';
@@ -7,7 +8,7 @@ export { publicSourceUrl };
 
 export const SEARCH_ORIGINAL_RULES = `联网输出契约：最多引用3篇HTTPS原始公告，不用首页或栏目页。每条事实单独成段，附明确发布日（无发布日且不是近期问题时，直接说明未标明）、一段12至80字的逐字原文短摘录（用中文双引号“”，保留原文语言，不将译文冒充原文）及检索返回的角标[编号]。不编造摘录或数字，不复述查询起止日期。最后单独用“总体结论：”综合判断，注明适用范围或证据不足；不引入新的事实，不自行追加来源清单。`;
 
-function plain(value: string): string {
+export function sourcePlainText(value: string): string {
   return value.replace(/<!--[^]*?-->/gu, ' ').replace(/<(script|style|nav|footer|header)\b[^>]*>[^]*?<\/\1\s*>/giu, ' ')
     .replace(/<[^>]*>/gu, ' ').replace(/&#(x[\da-f]+|\d+);/giu, (_, code: string) => {
       const point = code[0].toLowerCase() === 'x' ? parseInt(code.slice(1), 16) : Number(code);
@@ -19,11 +20,54 @@ function dates(value: string): string[] {
   return [...value.matchAll(/(20\d{2})\s*(?:年|[-/])\s*(\d{1,2})\s*(?:月|[-/])\s*(\d{1,2})\s*日?/gu)]
     .map(match => `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`);
 }
-export function extractSourceArticle(html: string): { text: string; published: string[] } {
+/** A chapter heading is not the document title, even when the publisher styles it as h1. */
+export function isArticleSectionHeading(value: string): boolean {
+  return /^(?:第[一二三四五六七八九十百\d]+[章节部分]|[一二三四五六七八九十百]+[、.．]|[（(][一二三四五六七八九十百\d]+[）)]|\d{1,2}[、.．])|^(?:市场背景与现状|市场背景|内容摘要|目录|引言|核心趋势分析|市场概述)$/u.test(value.trim());
+}
+function semanticArticleBody(html: string): string | undefined {
+  const clean = html.replace(/<!--[^]*?-->/gu, ' ').replace(/<(script|style|nav|footer|aside)\b[^>]*>[^]*?<\/\1\s*>/giu, ' ');
+  const article = clean.match(/<article\b[^>]*>([^]*?)<\/article>/iu)?.[1]
+    ?? clean.match(/<main\b[^>]*>([^]*?)<\/main>/iu)?.[1];
+  if (article !== undefined) return article;
+  // Many publishers use div-based article templates. Admit only explicit article/main markers,
+  // not arbitrary "content" containers, and balance nested tags instead of truncating at the first div.
+  for (const opening of clean.matchAll(/<(div|section)\b([^>]*)>/giu)) {
+    const attrs = Object.fromEntries([...opening[2].matchAll(/([\w:-]+)\s*=\s*["']([^"']*)["']/gu)].map(match => [match[1].toLowerCase(), match[2]]));
+    const marked = attrs.role === 'main' || /(?:^|\s)articleBody(?:\s|$)/iu.test(attrs.itemprop ?? '')
+      || /(?:^|[\s_-])(?:article-content|article-body|article-detail|news-content|news-body|post-content|post-body)(?:$|[\s_-])/iu.test([attrs.id, attrs.class].filter(Boolean).join(' '));
+    if (!marked) continue;
+    const start = opening.index! + opening[0].length;
+    const tags = new RegExp('<(\\/?)' + opening[1] + '\\b[^>]*>', 'giu'); tags.lastIndex = start;
+    let depth = 1; for (const tag of clean.matchAll(tags)) { depth += tag[1] ? -1 : 1; if (!depth) return clean.slice(start, tag.index); }
+  }
+  return undefined;
+}
+/** Follow only explicit outbound article citations, never navigation or invented provider URLs. */
+export function sourceArticleLinks(html: string, sourceUri: string): GroundingSource[] {
+  const body = semanticArticleBody(html);
+  if (!body) return [];
+  const base = new URL(sourceUri), seen = new Set<string>(), links: GroundingSource[] = [];
+  for (const match of body.matchAll(/<a\b([^>]*)>([^]*?)<\/a\s*>/giu)) {
+    const href = match[1].match(/\bhref\s*=\s*["']([^"']+)["']/iu)?.[1];
+    const title = sourcePlainText(match[2]);
+    if (!href || title.length < 2 || title.length > 240) continue;
+    try {
+      const url = publicSearchOriginalUrl(new URL(href.replaceAll('&amp;', '&'), base).href);
+      url.hash = '';
+      if (url.hostname.replace(/^www\./u, '') === base.hostname.replace(/^www\./u, '') || seen.has(url.href)) continue;
+      seen.add(url.href); links.push({ title, uri: url.href });
+      if (links.length === 8) break;
+    } catch { /* Unsafe, private and non-article URLs are not read candidates. */ }
+  }
+  return links;
+}
+export function extractSourceArticle(html: string): { text: string; published: string[]; headline?: string; publishedTimes?: string[] } {
   const publicationFields: string[] = [];
+  let metadataHeadline: string | undefined;
   for (const tag of html.match(/<meta\b[^>]*>/giu) ?? []) {
     const attributes = Object.fromEntries([...tag.matchAll(/([\w:-]+)\s*=\s*["']([^"']*)["']/gu)].map(match => [match[1].toLowerCase(), match[2]]));
-    if (/^(?:article:published_time|datePublished|publishdate|pubdate|publication_date|DC.date.issued)$/iu.test(attributes.property ?? attributes.name ?? attributes.itemprop ?? '')) publicationFields.push(attributes.content ?? '');
+    if (/^(?:og:title|twitter:title)$/iu.test(attributes.property ?? attributes.name ?? '')) metadataHeadline ??= sourcePlainText(attributes.content ?? '');
+    if (/^(?:article:published_time|datePublished|publishdate|publish_date|publish_time|pubtime|pubdate|publication_date|DC.date.issued)$/iu.test(attributes.property ?? attributes.name ?? attributes.itemprop ?? '')) publicationFields.push(attributes.content ?? '');
   }
   // Explicit article JSON-LD is publication evidence; dateModified and unrelated widgets are not.
   if (!publicationFields.flatMap(dates).length) {
@@ -38,13 +82,39 @@ export function extractSourceArticle(html: string): { text: string; published: s
       } catch { /* Invalid structured data is not publication evidence. */ }
     }
   }
-  const text = plain(html);
+  const articleBody = semanticArticleBody(html);
+  const scopedHeading = articleBody?.match(/<h1\b[^>]*>([^]*?)<\/h1>/iu)?.[1];
+  const scopedTitle = scopedHeading ? sourcePlainText(scopedHeading) : undefined;
+  const documentTitle = sourcePlainText(html.match(/<title\b[^>]*>([^]*?)<\/title>/iu)?.[1] ?? '');
+  const headline = articleBody !== undefined ? [scopedTitle && !isArticleSectionHeading(scopedTitle) ? scopedTitle : undefined, metadataHeadline, documentTitle].find(title => title && title.length >= 4 && title.length <= 240 && !isArticleSectionHeading(title)) : undefined;
+  // A headline explicitly associated with the article stays valid when the page renders it outside the body wrapper.
+  let text = sourcePlainText(articleBody === undefined ? html : articleBody.replace(/<(\/?)header\b/giu, '<$1div'));
+  if (headline && headline.length >= 4 && headline.length <= 240 && !text.includes(headline)) text = headline + ' ' + text;
   // Named publication fields only: a dated URL, copyright or query time is not a publication date.
   if (!publicationFields.flatMap(dates).length) {
-    const article = html.match(/<(?:article|main)\b[^>]*>([^]*?)<\/(?:article|main)>/iu)?.[1] ?? '';
-    publicationFields.push(...[...plain(article).matchAll(/(?:发布时间|发布日期|发布日|Published(?: on)?|Date published)\s*[:：]?\s*(20\d{2}[年/-]\s*\d{1,2}[月/-]\s*\d{1,2}日?)/giu)].map(match => match[1]));
+    const articleText = articleBody === undefined ? '' : text;
+    publicationFields.push(...[...articleText.matchAll(/(?:发布时间|发布日期|发布日|Published(?: on)?|Date published)\s*[:：]?\s*(20\d{2}[年/-]\s*\d{1,2}[月/-]\s*\d{1,2}日?)/giu)].map(match => match[1]));
   }
-  return { text, published: [...new Set(publicationFields.flatMap(dates))] };
+  if (!publicationFields.flatMap(dates).length) {
+    // Media articles often publish only <time datetime>. Restrict this fallback to
+    // article/main, excluding navigation, related content and explicit updates.
+    const scope = articleBody ?? '';
+    const content = scope.replace(/<(script|style|nav|footer|aside)\b[^>]*>[^]*?<\/\1\s*>/giu, ' ');
+    const candidates: string[] = [], candidateTimes: string[] = [];
+    for (const match of content.matchAll(/<time\b([^>]*)>([^]*?)<\/time\s*>/giu)) {
+      const attributes = Object.fromEntries([...match[1].matchAll(/([\w:-]+)\s*=\s*["']([^"']*)["']/gu)].map(attribute => [attribute[1].toLowerCase(), attribute[2]]));
+      const context = content.slice(Math.max(0, (match.index ?? 0) - 80), match.index) + ' ' + match[1] + ' ' + sourcePlainText(match[2]);
+      if (/modified|updated|dateModified|startDate|endDate|eventDate|更新|修改|活动时间|活动日期/iu.test(context)) continue;
+      const value = attributes.datetime;
+      if (!value || !/^20\d{2}-\d{2}-\d{2}(?:T[^\s]+)?$/u.test(value) || !Number.isFinite(Date.parse(value))) continue;
+      const day = value.slice(0, 10);
+      if (Number.isFinite(Date.parse(day)) && new Date(day).toISOString().slice(0, 10) === day) { candidates.push(day); candidateTimes.push(value); }
+    }
+    const unique = [...new Set(candidates)];
+    if (unique.length === 1) publicationFields.push(unique[0], ...candidateTimes);
+  }
+  const publishedTimes = [...new Set(publicationFields.filter(value => /^20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/u.test(value) && Number.isFinite(Date.parse(value))))];
+  return { text, published: [...new Set(publicationFields.flatMap(dates))], ...(headline ? { headline } : {}), ...(publishedTimes.length ? {publishedTimes} : {}) };
 }
 function compact(value: string): string { return value.replace(/[\s,，]/gu, '').normalize('NFKC'); }
 export function assertSourceSupport(answer: string, articles: Array<{ text: string; published: string[] }>, days?: number, now = Date.now()): void {
@@ -52,7 +122,8 @@ export function assertSourceSupport(answer: string, articles: Array<{ text: stri
   const quotes = [...body.matchAll(/“([^”\n]{12,160})”/gu)].map(match => compact(match[1]));
   const texts = articles.map(article => compact(article.text + ' ' + article.published.join(' ')));
   if (!quotes.length || quotes.some(quote => !texts.some(text => text.includes(quote)))) throw Error('source_quote_mismatch');
-  const numericText=(value:string)=>value.normalize('NFKC').replace(/(?<![\d.])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?!\d)/gu,number=>number.replaceAll(',',''));
+  // B2B/B2C are business audience labels, not numeric evidence; strip on both sides.
+  const numericText=(value:string)=>value.normalize('NFKC').replace(/\bB2[BC]\b/giu,'').replace(/(?<![\d.])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?!\d)/gu,number=>number.replaceAll(',',''));
   const originalNumbers = new Set([...numericText(articles.map(article=>article.text+' '+article.published.join(' ')).join(' ')).matchAll(/\d+(?:\.\d+)?%?/gu)].map(match => match[0]));
   // Exact lexical guard, not a semantic proof: never release changed or invented figures.
   const numbers = [...numericText(body).matchAll(/\d+(?:\.\d+)?%?/gu)].map(match => match[0]);

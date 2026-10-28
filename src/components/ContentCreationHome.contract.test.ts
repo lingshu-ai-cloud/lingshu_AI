@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const home = fs.readFileSync(new URL('./ContentCreationHome.tsx', import.meta.url), 'utf8');
+const scenes = fs.readFileSync(new URL('./assistant/AssistantHomeScenes.tsx', import.meta.url), 'utf8');
 const assistant = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const assistantPanel = fs.readFileSync(new URL('./assistant/AssistantConversationPanel.tsx', import.meta.url), 'utf8');
 const assistantComposer = fs.readFileSync(new URL('./assistant/AssistantComposer.tsx', import.meta.url), 'utf8');
@@ -24,6 +25,8 @@ assert.match(homeAnchor, /resizeObserver\.observe\(layout\)/, '切换数字员�
 assert.doesNotMatch(homeAnchor, /addEventListener\('scroll'/, '首页输入框不得通过滚动监听逐帧重算位置');
 assert.match(assistant, /createPortal\(assistantRoot, inlineHomeAnchor\)/, '首页输入框须挂载到真实占位节点，避免滚动时浮层漂移');
 assert.match(home, /id="creator-home-library"/);
+assert.match(home, /<AssistantHomeScenes variant="home"/, '首页和侧边助手必须复用同一场景组件');
+assert.ok(home.indexOf('!showFirstRun && panel') < home.indexOf('content-creation-assistant-anchor') && home.indexOf('content-creation-assistant-anchor') < home.indexOf('!showFirstRun && launchers'), '首页场景卡片和类别入口必须保留输入框上下位置');
 assert.doesNotMatch(home, /onWheel=|onTouchEnd=|tryEnterLibrary/, '首页与爆款库应为连续滚动，不得在滚轮阈值处跳路由');
 assert.match(strategy, /embeddedInspiration/, '原爆款库的真实工作区必须嵌入 hi，灵小枢，而不是复制空页签');
 assert.match(inspiration, /label: `爆款视频 ·/);
@@ -37,23 +40,22 @@ assert.match(promptCatalog, /id: 'external-news'[\s\S]{0,300}promptIds: \['OP-02
 for (const newsType of ['行业资讯', '社交媒体资讯', '政策与平台资讯']) {
   assert.match(promptCatalog, new RegExp(`label: '${newsType}'`), `今日资讯必须提供${newsType}卡片`);
 }
-assert.match(home, /useState<AssistantHomeQuickLauncherId \| null>\(null\)/, '首页默认不得展示任何大卡片');
+assert.match(scenes, /useState<AssistantHomeQuickLauncherId \| null>\(null\)/, '首页默认不得展示任何大卡片');
 assert.match(home, /HOME_GROWTH_TOUR_START_EVENT, \{ detail: \{ restart: true \} \}/, '点击海外增长导览卡片必须从头开始，不能停留在旧进度');
 assert.ok(home.indexOf('<strong>让灵小枢认识我</strong>') < home.indexOf('<strong>灵枢如何助力海外增长</strong>'), '首次引导须先展示企业介绍，再展示海外增长导览');
-assert.match(home, /activeLauncher \? <div className="creator-home__quick-panel">[\s\S]{0,1600}activePrompts\.map/, '点击小按钮后才可显示其对应的大卡片');
-assert.match(home, /const hasWeeklyPlan = Boolean\(overview\?\.goal && overview\.plan\)[\s\S]{0,500}activeLauncher\?\.id !== 'weekly-plan'[\s\S]{0,200}hasWeeklyPlan[\s\S]{0,500}label: '创建周计划'[\s\S]{0,300}prompt: '请帮我创建本周计划。'/, '周计划快捷卡须根据真实计划状态切换查看或创建提示词');
+assert.match(scenes, /activeLauncher \? <div className="creator-home__quick-panel">[\s\S]{0,1600}activePrompts\.map/, '点击小按钮后才可显示其对应的大卡片');
+assert.match(scenes, /const hasWeeklyPlan = Boolean\(overview\?\.goal && overview\.plan\)[\s\S]{0,500}activeLauncher\?\.id !== 'weekly-plan'[\s\S]{0,200}hasWeeklyPlan[\s\S]{0,500}label: '创建周计划'[\s\S]{0,300}prompt: '请帮我创建本周计划。'/, '周计划快捷卡须根据真实计划状态切换查看或创建提示词');
 assert.doesNotMatch(home, /全部快捷任务/, '首页不应增加额外的全部快捷任务层级');
-assert.match(home, /entry\.id === 'OP-CALENDAR'\) \{[\s\S]{0,80}preparePrompt\(entry\);[\s\S]{0,40}return;/, '首页周计划卡无论当前状态都必须先进入原位对话');
-assert.doesNotMatch(home, /entry\.id === 'OP-CALENDAR'[\s\S]{0,300}onNavigate\?\.\('digitalEmployees'\)|entry\.id === 'OP-CALENDAR'[\s\S]{0,300}lingshu:open-weekly-plan/, '首页周计划卡不得直接跳转经营总览');
-assert.match(home, /entry\.id === 'CO-11'[\s\S]{0,120}openContentGenerationQueue\(\{view:'tasks'\}\)/, '首页内容任务入口必须打开全局统一内容生成队列');
-assert.match(home, /className="creator-home__suggestions"/, '自由创作的提示输入须保留在数字员工输入框下方');
-assert.match(home, /ASSISTANT_HOME_QUICK_LAUNCHERS\.map\(launcher =>/, '底部须渲染全部小按钮入口');
+assert.match(scenes, /entry\.id === 'OP-CALENDAR'\) \{ preparePrompt\(entry\); return; \}/, '周计划入口进入首页对话');
+assert.match(scenes, /entry\.id === 'CO-11'[\s\S]{0,120}openContentGenerationQueue\(\{view:'tasks'\}\)/, '首页内容任务入口必须打开全局统一内容生成队列');
+assert.match(scenes, /className="creator-home__suggestions"/, '自由创作的提示输入须保留在数字员工输入框下方');
+assert.match(scenes, /ASSISTANT_HOME_QUICK_LAUNCHERS\.map\(launcher =>/, '底部须渲染全部小按钮入口');
 assert.match(creatorStyles, /\.creator-home__suggestions \{[^}]*flex-wrap: nowrap[^}]*justify-content: flex-start[^}]*overflow-x: auto/, '高频按钮须保持单行，空间不足时左右滑动');
 assert.match(promptCatalog, /id: 'viral-script'[\s\S]{0,1800}id: 'traffic-optimization'/, '其余快捷按钮须覆盖内容、素材、发布、客户和投流高频动作');
-assert.match(home, /ASSISTANT_HOME_PROMPT_EVENT[\s\S]{0,260}detail: \{ prompt: entry\.prompt, mode, submitOptions \}/, '普通卡片和条件补齐后的查询只能填入原输入框');
+assert.match(scenes, /onPrompt\(\{ prompt: entry\.prompt, mode, submitOptions \}\)/, '普通卡片和条件补齐后的查询只能填入原输入框');
 assert.doesNotMatch(home, /lingshu-assistant-open/, '首页卡片不得绕过输入框直接发送');
-assert.match(home, /if \(isBusinessScene\(entry\.id\)\) \{ preparePrompt\(entry\); return; \}/, '经营分析卡片必须先填入草稿');
-assert.match(home, /追加到现有内容[\s\S]{0,300}替换现有内容/, '输入框已有内容时必须明确提供追加与替换选择');
+assert.match(scenes, /if \(isBusinessScene\(entry\.id\)\) \{ preparePrompt\(entry\); return; \}/, '经营分析卡片必须先填入草稿');
+assert.match(scenes, /追加到现有内容[\s\S]{0,300}替换现有内容/, '输入框已有内容时必须明确提供追加与替换选择');
 assert.doesNotMatch(home, /DigitalEmployeeHomeWork/, '三栏进行中工作必须从首页移走');
 assert.doesNotMatch(workspace, /<DigitalEmployeeHomeWork/, '进行中工作由灵小枢书签承接，不再占据经营总览');
 assert.match(layout, /aria-label="经营导航"/, '经营总览必须与上方轻量入口分组');
@@ -100,11 +102,11 @@ assert.match(creatorStyles, /@keyframes ls-assistant-flow-reveal/, '首页助手
 assert.match(layout, /Math\.round\(viewportWidth \* 0\.173\)/, '左侧栏按参考图桌面比例布局');
 assert.match(creatorStyles, /\.creator-home__assistant-anchor \{ position: relative; isolation: isolate; height: 156px/, '首页输入框占位节点须成为稳定的原生滚动定位容器');
 assert.match(home, /className="creator-home creator-home--employee/, '轻量首页须暴露固定数字员工状态');
-assert.match(home, /className=\{`creator-home__canvas-stage\$\{canvasCollapsed \? ' is-collapsed' : ''\}`\}/, '数字员工区域须常驻过渡容器，避免条件挂载硬切');
+assert.match(scenes, /className=\{`creator-home__canvas-stage\$\{canvasCollapsed \? ' is-collapsed' : ''\}`\}/, '数字员工区域须常驻过渡容器，避免条件挂载硬切');
 assert.doesNotMatch(home, /mode === 'employee' && <section className="creator-home__canvas"/, '数字员工画布不得以条件挂载造成硬切');
 assert.match(creatorStyles, /\.creator-home__canvas-stage \{[^}]*grid-template-rows: 0fr/, '数字员工画布须以可插值高度平滑收起');
 assert.match(home, /ASSISTANT_HOME_ACTIVITY_EVENT/, '首页对话开始后须通知快捷入口自动收起');
-assert.match(home, /aria-controls="creator-home-operations"[^>]*aria-expanded=\{active\}/, '每个小按钮须暴露其展开状态并可由键盘操作');
+assert.match(scenes, /aria-controls=\{panelId\}[^>]*aria-expanded=\{active\}/, '每个小按钮须暴露其展开状态并可由键盘操作');
 assert.match(creatorStyles, /\.creator-home--employee \.creator-home__canvas-stage\.is-collapsed \{[^}]*grid-template-rows: 0fr/, '对话展开后快捷入口须平滑收起');
 assert.match(creatorStyles, /\.creator-home--employee \.creator-home__assistant-anchor:not\(\.creator-home__assistant-anchor--active\) \{ height: 156px/, '数字员工首页须使用原自由创作输入区高度');
 assert.match(creatorStyles, /\.creator-home__quick-panel \{ overflow: hidden; \}/, '能力卡外层不得再显示独立大方框');

@@ -11,10 +11,15 @@ import { readableAssistantReply, splitAssistantReply } from '../../shared/assist
 import { extractAssistantFiles } from '../../shared/assistantFileIntent';
 import AssistantFileCard from './assistant/AssistantFileCard';
 import AssistantSourceLink from './assistant/AssistantSourceLink';
+import { SocialInsightReportBlock } from './assistant/SocialInsightReportView';
+import { IndustryInsightReportView } from './assistant/IndustryInsightReportView';
 import type { ReplySource } from '../lib/assistantSourceLinks';
+import { hasUsableReplySource } from './assistant/AssistantSearchFailure';
+import { readAssistantMarkdownTable } from '../../shared/assistantMarkdownTable';
 import { assistantDraftSuggestion } from '../../shared/assistantDraftSuggestion';
 import { openContentGenerationQueue } from '../lib/contentGenerationQueue';
 import { openAssistantWeeklyPlan } from '../lib/assistantWeeklyPlanEvents';
+import { reportPresentationLine } from '../../shared/reportPresentation';
 import {
   ASSISTANT_REPLY_PRESENTATIONS,
   type AssistantReplyPresentationKind,
@@ -70,19 +75,6 @@ function renderInline(text: string, kb: string, sources?: ReplySource[]): ReactN
   return nodes;
 }
 
-function splitTableRow(line: string): string[] {
-  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim().replace(/<br\s*\/?>/gi, '；'));
-}
-
-function isTableLine(line: string): boolean {
-  const t = line.trim();
-  return t.startsWith('|') && t.endsWith('|') && t.includes('|');
-}
-
-function isTableSeparator(line: string): boolean {
-  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
-}
-
 function CopyButton({ text, label = '复制' }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -117,8 +109,9 @@ function MiniChart({ raw }: { raw: string }) {
   let spec: ChartSpec | null = null;
   try { spec = JSON.parse(raw) as ChartSpec; } catch { spec = null; }
   const data = (spec?.data ?? [])
-    .filter((d): d is { label: string; value: number } => typeof d?.value === 'number' && Number.isFinite(d.value) && !!d?.label)
+    .filter((d): d is { label: string; value: number } => typeof d?.value === 'number' && Number.isFinite(d.value) && !!d?.label && !!reportPresentationLine(d.label))
     .slice(0, 12);
+  if (spec?.data?.some(item => item.label && !reportPresentationLine(item.label)) && data.length < 2) return null;
   if (!spec || data.length < 2) {
     return <div className="my-2 rounded-xl border border-dashed border-border bg-surface px-3 py-2.5 text-xs text-text-muted">图表数据生成中…</div>;
   }
@@ -126,7 +119,7 @@ function MiniChart({ raw }: { raw: string }) {
   const axisTick = { fontSize: 10, fill: 'var(--color-text-muted, #71717a)' };
   return (
     <div className="my-2 rounded-xl border border-border bg-white/75 px-3 pb-1 pt-2.5">
-      {spec.title && (
+      {spec.title && reportPresentationLine(spec.title) && (
         <p className="mb-1 text-xs font-bold text-text-primary">
           {spec.title}
           {spec.unit ? <span className="ml-1 font-normal text-text-muted">（{spec.unit}）</span> : null}
@@ -153,7 +146,7 @@ function MiniChart({ raw }: { raw: string }) {
           )}
         </ResponsiveContainer>
       </div>
-      {spec.conclusion && <p className="mb-1.5 mt-1 text-xs leading-relaxed text-text-secondary">{spec.conclusion}</p>}
+      {spec.conclusion && reportPresentationLine(spec.conclusion) && <p className="mb-1.5 mt-1 text-xs leading-relaxed text-text-secondary">{spec.conclusion}</p>}
     </div>
   );
 }
@@ -187,6 +180,20 @@ export function splitReplySourceFooter(content: string): { body: string; footer:
 }
 
 type ReplyNavigation = { label: string; page: string; view?: string } | { label: string; action: 'weekly-plan' | 'content-tasks' };
+
+/** Project prose only; structured report payloads and code remain intact. */
+export function visibleReplyMarkdown(content: string): string {
+  let fence = '';
+  return content.split('\n').map(line => {
+    const marker = line.match(/^\s*(`{3,}|~{3,})(.*)$/u);
+    if (marker) {
+      if (!fence) fence = marker[1];
+      else if (marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = '';
+      return line;
+    }
+    return fence ? line : reportPresentationLine(line);
+  }).join('\n');
+}
 
 const REPLY_NAVIGATION: Partial<Record<AssistantReplyPresentationKind, ReplyNavigation[]>> = {
   operations: [
@@ -239,7 +246,7 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
   const inline = (text: string, key: string) => renderInline(text, key, sources);
   const files = extractAssistantFiles(content);
   const sourcePresentation = allowSources ? splitReplySourceFooter(files.text) : { body: files.text, footer: '' };
-  const readableBody = readableAssistantReply(sourcePresentation.body);
+  const readableBody = visibleReplyMarkdown(readableAssistantReply(sourcePresentation.body));
   const replyParts = allowDetails ? splitAssistantReply(readableBody, { compact: compact && !presentation, presentation }) : { summary: readableBody, details: [] };
   const lines = replyParts.summary.split('\n');
   const blocks: ReactNode[] = [];
@@ -303,17 +310,22 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
         body.push(lines[i]);
         i++;
       }
-      if (lang === 'chart') {
+      if (lang === 'industry-insight') {
+        blocks.push(<IndustryInsightReportView key={`industry_${i}`} raw={body.join('\n').trim()} sources={sources} />);
+      } else if (lang === 'social-insight') {
+        blocks.push(<SocialInsightReportBlock key={`social_${i}`} raw={body.join('\n').trim()} />);
+      } else if (lang === 'chart') {
         blocks.push(<MiniChart key={`chart_${i}`} raw={body.join('\n').trim()} />);
       } else if (lang === 'next') {
-        const items = body.map(l => l.replace(/^\s*(?:[-*•·]|\d+[.、)])\s*/, '').trim()).filter(Boolean).slice(0, 2);
+        const items = body.map(l => l.replace(/^\s*(?:[-*•·]|\d+[.、)])\s*/, '').trim()).filter(item => item && reportPresentationLine(item)).slice(0, 2);
         if (onSuggest && items.length) {
           blocks.push(quickReplyCards(items, `next_${i}`));
         }
       } else {
         // 语言标记缺失或是 text/markdown 这类"无信息"标记时，用中文兜底标题，不把 "text" 当标题展示
         const title = lang === 'copy' ? '话术 / 文案' : /^(?:text|txt|plaintext|markdown|md)$/i.test(lang) ? '可复制内容' : lang;
-        blocks.push(<CopyBlock key={`code_${i}`} title={title} text={body.join('\n').trim()} />);
+        const displayed = /^(?:copy|text|txt|plaintext|markdown|md)$/i.test(lang) ? body.map(reportPresentationLine).filter(value => value.trim()).join('\n').trim() : body.join('\n').trim();
+        if (displayed) blocks.push(<CopyBlock key={`code_${i}`} title={title} text={displayed} />);
       }
       continue;
     }
@@ -339,17 +351,11 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
       continue;
     }
 
-    if (isTableLine(line)) {
+    const table = readAssistantMarkdownTable(lines,i);
+    if (table) {
       flush();
-      const tableLines: string[] = [];
-      while (i < lines.length && isTableLine(lines[i])) {
-        tableLines.push(lines[i]);
-        i++;
-      }
-      i--;
-      const hasSeparator = tableLines.length > 1 && isTableSeparator(tableLines[1]);
-      const header = splitTableRow(tableLines[0]);
-      const rows = tableLines.slice(hasSeparator ? 2 : 1).map(splitTableRow);
+      const { header, rows } = table;
+      i = table.end - 1;
       // TSV：粘贴到 Excel / 飞书表格即还原成表
       const tsv = [header, ...rows].map(r => r.map(cell => cleanLooseMarkdown(cell)).join('\t')).join('\n');
       blocks.push(
@@ -364,6 +370,7 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
               <tr>{header.map((cell, idx) => <th key={idx} className="border-b border-border px-3 py-2 font-semibold text-text-primary whitespace-nowrap">{inline(cell, `th_${i}_${idx}`)}</th>)}</tr>
             </thead>
             <tbody>
+              {!rows.length && <tr><td colSpan={header.length} className="px-3 py-2 text-text-muted">表格内容整理中…</td></tr>}
               {rows.map((row, rIdx) => (
                 <tr key={rIdx} className="border-t border-border/70 align-top">
                   {header.map((_, cIdx) => <td key={cIdx} className="px-3 py-2 text-text-secondary leading-relaxed min-w-24">{inline(row[cIdx] ?? '', `td_${i}_${rIdx}_${cIdx}`)}</td>)}
@@ -412,7 +419,7 @@ export default function AgentReply({ content, sources, onSuggest, detailExpanded
   if (!blocks.length && presentation === 'operations') {
     blocks.push(<p key="operations-summary" className="leading-relaxed my-1 whitespace-pre-wrap">已读取当前周计划和内容任务。你可以在当前页面分别查看计划详情与任务进度；查看不会自动启动、修改或创建任务。</p>);
   }
-  const visibleSources = allowSources && presentationMeta?.showSources && (sourcePresentation.footer || sources?.length);
+  const visibleSources = allowSources && presentationMeta?.showSources && hasUsableReplySource(sources);
   const sourceLinks = sources?.slice(0, 3) ?? [];
   const remainingSources = sources?.slice(3) ?? [];
 
