@@ -122,8 +122,8 @@ assert.match(launcherMarkup, /!bg-surface[\s\S]*active:!bg-surface[\s\S]*focus-v
 assert.match(edgeLauncherMarkup, /!bg-surface[\s\S]*active:!bg-surface[\s\S]*focus-visible:!bg-surface/, '灵小枢贴边入口也必须使用日夜主题表面');
 assert.doesNotMatch(launcherMarkup + edgeLauncherMarkup, /!bg-white/, '夜间模式的灵小枢入口不得强制纯白');
 assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
-assert.match(conversationPanelSource, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
-assert.match(conversationPanelSource, /ls-assistant-panel-shell[\s\S]{0,900}<AssistantWorkBookmark\/>[\s\S]{0,200}ls-assistant-panel relative flex h-full w-full/, '周任务包书签必须挂在面板外壳，聊天内容保留完整宽度');
+assert.match(conversationPanelSource, /id="global-assistant-panel"[\s\S]{0,1000}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
+assert.match(conversationPanelSource, /ls-assistant-panel-shell[\s\S]{0,900}<AssistantWorkBookmark\s+onOpen=[\s\S]{0,200}ls-assistant-panel relative flex h-full w-full/, '周任务包书签必须挂在面板外壳，聊天内容保留完整宽度');
 assert.doesNotMatch(assistantBookmarkStylesSource, /ls-assistant-panel:has\([^)]*assistant-work-bookmark[^)]*\)[^{]*\{[^}]*padding-inline-start/, '周任务包书签不得再通过面板级内边距制造整列空白');
 assert.match(assistantBookmarkStylesSource, /assistant-work-bookmark[\s\S]{0,180}inset-inline-start:\s*-42px/, '桌面周任务包书签必须贴在对话面板外沿');
 assert.match(conversationPanelSource, /max-h-\[calc\(100dvh-env\(safe-area-inset-bottom\)-96px\)\]/, '灵小枢弹窗高度必须避让移动设备底部安全区');

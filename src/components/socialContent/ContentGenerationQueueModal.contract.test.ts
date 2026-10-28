@@ -33,7 +33,7 @@ const readTsxFiles = (directory: string): string[] => fs.readdirSync(directory, 
 const modalMountCount = readTsxFiles(componentsRoot)
   .reduce((count, source) => count + (source.match(/<ContentGenerationQueueModal\b/g)?.length || 0), 0);
 
-assert.equal(modalMountCount, 1, '内容生成队列弹窗必须只在全局应用壳挂载一次');
+assert.equal(modalMountCount, 2, '全局弹窗与侧栏内嵌视图应复用同一任务包组件');
 assert.match(shell, /<ContentGenerationQueueModal\s*\/>/, '应用壳必须承载唯一的全局队列弹窗');
 assert.match(modal, /const show=[^\n]+setRequest\(detail\);setSettingsOpen\(false\);setOpen\(true\)/, '统一事件必须携带请求并打开弹窗');
 assert.match(modal, /addEventListener\(CONTENT_GENERATION_QUEUE_OPEN_EVENT,show\)/, '任意入口必须通过同一全局事件打开弹窗');
@@ -42,7 +42,8 @@ assert.match(modal, /request\.source==='weekly'\?'本周全部计划任务':'周
 assert.match(modal, /request\.source==='weekly'\?<WeeklyTaskPackageView data=\{overview\}\/>:<CreationTaskWorkspace/, '周任务包入口必须展示全部真实周计划任务，不能继续复用内容生成队列');
 assert.match(modal, /本周经营目标、全部计划阶段、任务依赖、负责 Agent 和真实运行状态/, '周任务包说明必须覆盖完整计划范围');
 assert.match(assistantWorkBookmark, /aria-label="打开周任务包"[\s\S]{0,240}<span>周任务包<\/span>/, '助手侧边入口必须使用周任务包名称并保留可访问名称');
-assert.match(assistantWorkBookmark, /openContentGenerationQueue\(\{ view: 'tasks', source: 'weekly' \}\)/, '周任务包书签必须只打开真实周计划任务');
+assert.match(assistantWorkBookmark, /onClick=\{onOpen\}/, '周任务包书签必须展开助手面板');
+assert.match(modal, /embedded \? \{ source: 'weekly' as const \}/, '侧栏展开必须展示真实周计划任务');
 assert.doesNotMatch(assistantWorkBookmark, /打开内容生成队列|<span>内容生成队列<\/span>/, '助手侧边入口不得继续暴露旧的内容生成队列名称');
 for (const entrypoint of entrypointSources) {
   assert.match(entrypoint.source, /openContentGenerationQueue\(/, `${entrypoint.relativePath} 必须打开全局统一队列`);

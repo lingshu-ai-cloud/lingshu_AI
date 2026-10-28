@@ -208,6 +208,7 @@
     "1792944000_allow_original_social_production_handoffs.js": "351114cda39c0a5f4987710a1fa5f5d93523185af69a6a95fda3d86a2b157fc8",
     "1793059200_assistant_conversation_lifecycle.js": "28b90b8c3a87d4c8f8f62cd1da05b9181059898460b5886a43bf6e2b2d5a77b6",
     "1793062800_assistant_pending_content_binding.js": "fd5db9f9688df8e6aa91bf60ecb1722e2f9d0c389d9013ce22b51af997562ff2",
-    "1793066400_assistant_conversation_recovery.js": "d6f9e958392d848f2fb093f59679ec02139d3397d39c65887471602278f291fe"
+    "1793066400_assistant_conversation_recovery.js": "d6f9e958392d848f2fb093f59679ec02139d3397d39c65887471602278f291fe",
+    "1793145600_persist_social_content_reference_outputs.js": "bca70d8d9ffd79d0f8ca257369f0095ca7aa24055b944910897dc2dcdf672689"
   }
 }

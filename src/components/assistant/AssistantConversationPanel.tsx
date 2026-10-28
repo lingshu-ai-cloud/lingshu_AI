@@ -1,4 +1,6 @@
 import AssistantWorkBookmark from './AssistantWorkBookmark';
+import ContentGenerationQueueModal from '../socialContent/ContentGenerationQueueModal';
+import { useState } from 'react';
 import GuidedCreationChoices from './GuidedCreationChoices';
 import ContentCreationChoices from './ContentCreationChoices';
 import { useCreationMode } from '../../lib/creationMode';
@@ -102,6 +104,7 @@ export default function AssistantConversationPanel(props: Props) {
     setAssistantTool, setScrollPosition, setFollowingLatest, focusTaskCard, setMessages,
     setDraftInput, setPendingHomeSubmission, setDecisionFeedRevision, setMode, setWeeklyActionBusy,
     setPendingAttachments, setAttachmentError, persistThread } = props;
+  const [weeklyExpanded, setWeeklyExpanded] = useState(false);
   const generationBusy = loading || replyStreaming || fileGenerating;
   const queue = useAssistantPromptQueue({ scope: `${persistenceScopeKey}:${activeThread.conversationKey || activeAgent}:${activeThread.conversationResetVersion || 0}`, busy: generationBusy, blocked: Boolean(props.conversationLocked || activeThread.deletedAt || attachmentUploading || contentIntake.busy || weeklyActionBusy), agent: currentPageAgent, send });
   const creationMode = useCreationMode();
@@ -140,12 +143,14 @@ export default function AssistantConversationPanel(props: Props) {
         animate={mode === 'chat' || inlineHomeBounds ? { opacity: 1, y: 0 } : { opacity: 0, y: reduceMotion ? 0 : 8 }}
         exit={{ y: reduceMotion ? 0 : 8, opacity: 0, transition: { ...spatialTransition, opacity: fadeExit.transition } }}
         transition={spatialTransition}
-        className={`ls-assistant-panel-shell absolute bottom-14 right-0 z-10 max-h-[calc(100dvh-env(safe-area-inset-bottom)-96px)] max-w-[calc(100vw-32px)] outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' || inlineHomeBounds ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
+        className={`ls-assistant-panel-shell ${weeklyExpanded && !inlineHome ? 'ls-assistant-panel--work-expanded' : ''} absolute bottom-14 right-0 z-10 max-h-[calc(100dvh-env(safe-area-inset-bottom)-96px)] max-w-[calc(100vw-32px)] outline-none ${assistantTool === 'knowledge-intake' ? 'w-[560px]' : 'w-[420px]'} ${mode === 'chat' || inlineHomeBounds ? 'pointer-events-auto visible' : 'pointer-events-none invisible'}`}
         style={{ height: inlineHomeBounds?.height ?? assistantPanelHeight, width: inlineHomeBounds?.width ?? assistantPanelWidth, maxWidth: inlineHomeBounds ? '100%' : 'calc(100vw - 32px)' }}
         data-assistant-view="conversation"
       >
-        {!inlineHome && <AssistantWorkBookmark/>}
+        {!inlineHome && !weeklyExpanded && <AssistantWorkBookmark onOpen={() => setWeeklyExpanded(true)}/>}
         <div className="ls-assistant-panel relative flex h-full w-full flex-col overflow-hidden border border-border bg-surface">
+        {weeklyExpanded && !inlineHome && <><span id="global-assistant-panel-title" className="sr-only">周任务包</span><span id="global-assistant-panel-description" className="sr-only">本周全部计划任务</span><ContentGenerationQueueModal embedded onBack={() => setWeeklyExpanded(false)}/></>}
+        <div className={weeklyExpanded && !inlineHome ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
         {inlineHome && <div className="sr-only"><h2 id="global-assistant-panel-title">灵小枢创作对话</h2><p id="global-assistant-panel-description">描述创作需求，或添加图片、视频和音频参考。</p></div>}
         {inlineHome && <div className="flex shrink-0 justify-end px-3 pt-1" data-assistant-conversation-controls>{props.conversationControls}</div>}
         {activeThread.deletedAt && <p role="status" className="px-4 text-sm text-text-secondary">这条会话已删除，请从会话管理中新建会话。</p>}
@@ -163,8 +168,8 @@ export default function AssistantConversationPanel(props: Props) {
             </button>
             <AssistantMascot size="sm" interactive reduceMotion={reduceMotion} />
             <div className="min-w-0">
-              <p id="global-assistant-panel-title" className="ls-type-title-small truncate text-text-primary">{panelTitle}</p>
-              <p id="global-assistant-panel-description" className="ls-type-body-small truncate text-text-muted">{panelSubtitle}</p>
+              <p id={weeklyExpanded ? undefined : "global-assistant-panel-title"} className="ls-type-title-small truncate text-text-primary">{panelTitle}</p>
+              <p id={weeklyExpanded ? undefined : "global-assistant-panel-description"} className="ls-type-body-small truncate text-text-muted">{panelSubtitle}</p>
             </div>
           </div>
           <div className="flex items-center gap-1">
@@ -307,6 +312,7 @@ export default function AssistantConversationPanel(props: Props) {
             />
           </>
         )}
+        </div>
         </div>
       </motion.section>
     )}
