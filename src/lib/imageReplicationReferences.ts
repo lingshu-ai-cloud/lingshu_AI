@@ -56,10 +56,19 @@ export async function readImageReplicationReferences(selectedId?: string): Promi
 }
 
 /** Explicitly requested once for an old collected post; a transport failure is never replayed automatically. */
-export async function reanalyzeCollectedImageReference(sourceRecordId: string): Promise<void> {
+export const INSPIRATION_IMAGE_ANALYSIS_UPDATED_EVENT = 'lingshu:inspiration-image-analysis-updated';
+
+export async function reanalyzeCollectedImageReference(sourceRecordId: string, selectedImageUrl?: string): Promise<void> {
+  const prefix = `/api/overseas/videos/${encodeURIComponent(sourceRecordId)}/image/`;
+  const index = selectedImageUrl?.startsWith(prefix) ? selectedImageUrl.slice(prefix.length) : '';
+  if (selectedImageUrl && !/^[0-9]$/.test(index)) {
+    throw Object.assign(new Error('参考图片与原始记录不一致，尚未提交分析。'), { payload: { code: 'image_post_analysis_selection_invalid' } });
+  }
   const response = await fetch(`/api/overseas/videos/${encodeURIComponent(sourceRecordId)}/reanalyze-image`, {
-    method: 'POST', headers: authHeader(), cache: 'no-store',
+    method: 'POST', headers: { ...authHeader(), 'Content-Type': 'application/json' }, cache: 'no-store',
+    body: JSON.stringify(selectedImageUrl ? { imageIndex: Number(index) + 1 } : {}),
   });
-  const result = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
-  if (!response.ok || result.ok !== true) throw new Error(result.error || `参考图补充分析失败（HTTP ${response.status}）`);
+  const result = await response.json().catch(() => ({})) as { ok?: boolean; error?: string; record?: unknown };
+  if (!response.ok || result.ok !== true) throw Object.assign(new Error(result.error || `参考图补充分析失败（HTTP ${response.status}）`), { status: response.status, payload: { code: result.error } });
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(INSPIRATION_IMAGE_ANALYSIS_UPDATED_EVENT, { detail: { sourceRecordId, record: result.record } }));
 }

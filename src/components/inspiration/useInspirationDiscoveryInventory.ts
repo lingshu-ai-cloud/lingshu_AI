@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SocialDiscoverySupplyItem } from '../../../shared/contracts/socialContentWorkflow';
 import { readCompetitorAccounts } from '../../lib/competitorAccountsApi';
+import { INSPIRATION_IMAGE_ANALYSIS_UPDATED_EVENT } from '../../lib/imageReplicationReferences';
 import { authHeader } from '../../lib/auth';
 import type { InspirationImageCrawlPlatform } from '../../lib/inspirationImageCrawl';
 import type { ContentFormat, Platform, TrendVideo } from '../../lib/inspirationTypes';
@@ -185,6 +186,21 @@ export function useInspirationDiscoveryInventory({ setMaterialMessage, setSelect
       if (requestId === videoRequestRef.current) setVideosLoading(false);
     }
   };
+
+  const imageAnalysisRefreshRef = useRef(() => refreshVideos(videoPage, true));
+  imageAnalysisRefreshRef.current = () => refreshVideos(videoPage, true);
+  useEffect(() => {
+    const refresh = (event: Event) => {
+      const detail = (event as CustomEvent<{ sourceRecordId: string; record?: CrawlerRecord }>).detail;
+      const updated = detail?.record ? recordsToVideos([detail.record])[0] : undefined;
+      if (updated && updated.id === detail.sourceRecordId) {
+        setCrawledVideos(items => items.map(item => item.id === updated.id ? updated : item));
+        setSelectedVideo(current => current?.id === updated.id ? updated : current);
+      } else { void imageAnalysisRefreshRef.current(); }
+    };
+    window.addEventListener(INSPIRATION_IMAGE_ANALYSIS_UPDATED_EVENT, refresh);
+    return () => window.removeEventListener(INSPIRATION_IMAGE_ANALYSIS_UPDATED_EVENT, refresh);
+  }, [setSelectedVideo]);
 
   const [shootingVideos, setShootingVideos] = useState<TrendVideo[]>([]);
   const [shootingNeeds, setShootingNeeds] = useState<ShootingNeed[]>([]);

@@ -597,7 +597,7 @@ Schema:
 }
 
 硬规则：
-- observedFacts 按每张图分别输出，imageIndex 从 1 开始。
+- observedFacts 按每张图分别输出，imageIndex 必须使用图片前标注的原始编号；单张图片也不能重新编号。
 - productionLabels 按每张图分别输出。productPresence 只判断画面里是否实际可见产品，与是否需要实拍分开；看不清就标 unknown。仅画面仅有产品及非事实性的普通背景时标 product_only；人物、真实工厂、实拍过程、实际场景或其他非产品事实画面标 shoot_required；无法确认标 unknown。必须写可见依据，禁止根据标题推断。此标签仅供后续复核，不代表授权。
 - style 独立判断广告产品图、可辨认的非广告风格或未知。产品置于设计过的背景、台面、光影或色块中，就是 advertising；没有前缀文字、标题、CTA 或品牌文案也仍可判为 advertising。不得把“没有广告文字”当成风格未知。elements 只选实际可见的光线、明暗、构图与层次，不确定标 unknown。
 - visibleText 只能写实际能读清的 OCR 文字。
@@ -613,20 +613,20 @@ Schema:
   }), 12_000);
   const content: Array<Record<string, unknown>> = [
     { type: 'text', text: `${meta}\n\n按顺序分析下面的轮播图片。` },
-    ...opts.images.sort((a, b) => a.imageIndex - b.imageIndex).map(image => ({
-      type: 'image_url',
-      image_url: { url: `data:${image.mimeType};base64,${image.base64.replace(/^data:[^,]+,/, '')}` },
-    })),
+    ...[...opts.images].sort((a, b) => a.imageIndex - b.imageIndex).flatMap(image => [
+      { type: 'text', text: `原始图片编号 imageIndex=${image.imageIndex}，所有分析字段使用此编号。` },
+      { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.base64.replace(/^data:[^,]+,/, '')}` } },
+    ]),
   ];
   const request = {
-    model: QWEN_VL_MODEL(),
+    model: (process.env.QWEN_IMAGE_POST_VL_MODEL || process.env.QWEN_VL_MODEL || QWEN_EXACT_VL_MODEL()).trim(),
     messages: [{ role: 'system', content: prompt }, { role: 'user', content: content as any }],
     response_format: { type: 'json_object' },
     max_tokens: 7000,
   };
   const completion = opts.paidOperation
     ? await submitMaterialAnalysisPaidRequest(request as unknown as Record<string, unknown>, opts.paidOperation, async body => await client().chat.completions.create(body as any, {maxRetries:0}))
-    : await client().chat.completions.create(request as any);
+    : await client().chat.completions.create(request as any, {maxRetries:0});
   const parsed = parseJson<Partial<ImagePostEvidenceAnalysis>>(completion.choices[0]?.message?.content ?? '', {});
   if (!Array.isArray(parsed.observedFacts) || !parsed.observedFacts.length) throw new Error('Qwen returned no image facts');
   return {

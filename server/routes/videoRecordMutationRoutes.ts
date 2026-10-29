@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { acquireDurableOperationLease, releaseDurableOperationLease, type DurableOperationLease } from '../runtime/durableLease.js';
 import { publicVideoRecord } from './videoPublicRecordProjection.js';
 import { recordContentFormat } from './videoRecordVisibility.js';
 import { reanalyzeStoredImagePost } from '../socialDiscovery/imagePostReanalysis.js';
@@ -7,6 +9,10 @@ import { requireAdminUser } from '../lib/demoAccounts.js';
 import { videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 import { COL } from '../videos/runtimeConfig.js';
 import type { VideoApplicationPorts } from '../videos/applicationPorts.js';
+import { withAssistantPreviewInformation } from '../../scripts/customer-preview-ai-scope.mjs';
+import { z } from 'zod';
+
+const imageReanalysisInput = z.object({ imageIndex: z.number().int().min(1).max(10).optional() }).strict();
 
 export function createVideoRecordMutationRoutes(deps: Pick<VideoApplicationPorts, 'videosRouter' | 'analyzeImagePostBestEffort'>) {
   const videosRouter = deps.videosRouter;
@@ -15,20 +21,40 @@ export function createVideoRecordMutationRoutes(deps: Pick<VideoApplicationPorts
   function registerPostIdReanalyzeImage() {
     videosRouter.post('/:id/reanalyze-image', async (req, res) => {
       const { tenantId } = res.locals as AuthLocals;
+      const selection = imageReanalysisInput.safeParse(req.body ?? {});
+      if (!selection.success) { res.status(400).json({ ok: false, error: 'image_post_analysis_selection_invalid' }); return; }
       const record = await store.getById<Record<string, unknown>>(COL, req.params.id);
       if (!record || recordContentFormat(record) !== 'image') { res.status(404).json({ error: 'Image post not found' }); return; }
       if (record.tenantId !== tenantId && !await requireAdminUser(req)) { res.status(404).json({ error: 'Image post not found' }); return; }
+      if (process.env.LINGSHU_LOCAL_PREVIEW === '1'
+        && (process.env.NODE_ENV !== 'development' || process.env.ASSISTANT_PREVIEW_REAL_QUERIES !== '1')) {
+        res.status(503).json({ ok: false, error: 'image_post_analysis_network_blocked' });
+        return;
+      }
       const analysis = videoAnalysisOf(record);
       if (['queued', 'processing', 'unknown'].includes(String(analysis.imageAnalysisQueueState || ''))
         || (analysis.imageAnalysisStatus === 'pending' && analysis.imageAnalysisAttemptId)) {
         res.status(409).json({ ok: false, error: 'image_post_queue_requires_reconciliation' });
         return;
       }
+      let lease: DurableOperationLease | null = null;
       try {
+        lease = await acquireDurableOperationLease({ dataStore: store, tenantId: String(record.tenantId), scope: 'image_post_analysis', subjectId: req.params.id, ownerId: randomUUID(), leaseDurationMs: 15 * 60_000 });
+        if (!lease) throw Error('image_post_queue_requires_reconciliation');
+        const latest = await store.getById<Record<string, unknown>>(COL, req.params.id);
+        if (!latest || latest.tenantId !== record.tenantId) throw Error('image_post_record_disappeared_after_analysis');
+        const analyze = async (...args: Parameters<typeof analyzeImagePostBestEffort>) => {
+          if (process.env.LINGSHU_LOCAL_PREVIEW !== '1') return analyzeImagePostBestEffort(...args);
+          // Reuse the existing, explicitly enabled preview model scope for this
+          // user-requested analysis; all other preview network traffic stays denied.
+          const result = await withAssistantPreviewInformation(() => analyzeImagePostBestEffort(...args));
+          return { ...result.value, providerAudit: result.audit };
+        };
         const output = await reanalyzeStoredImagePost({
-          store, collection: COL, tenantId: String(record.tenantId), record, analyze: analyzeImagePostBestEffort,
+          store, collection: COL, tenantId: String(record.tenantId), record: latest, analyze, imageIndex: selection.data.imageIndex,
         });
-        res.status(output.status === 'analyzed' ? 200 : 502).json({ ok: output.status === 'analyzed', analysis: output.analysis, error: output.error });
+        const updated = output.status === 'analyzed' ? await store.getById<Record<string, unknown>>(COL, req.params.id) : null;
+        res.status(output.status === 'analyzed' ? 200 : 502).json({ ok: output.status === 'analyzed', analysis: output.analysis, error: output.error, ...(updated ? { record: publicVideoRecord(updated) } : {}) });
       } catch (error) {
         const code = error instanceof Error ? error.message : 'image_post_analysis_unknown';
         console.error('[videos] image post reanalysis did not complete:', code);
@@ -37,12 +63,13 @@ export function createVideoRecordMutationRoutes(deps: Pick<VideoApplicationPorts
           'image_post_analysis_superseded', 'image_post_analysis_source_changed',
           'image_post_record_disappeared_after_analysis', 'image_post_analysis_provider_result_unknown',
           'image_post_queue_requires_reconciliation', 'image_post_analysis_attempt_requires_reconciliation',
+          'image_post_analysis_selection_invalid',
         ].includes(code) ? code : 'image_post_analysis_unknown';
-        res.status(['image_post_analysis_superseded', 'image_post_analysis_source_changed',
+        res.status(publicCode === 'image_post_analysis_selection_invalid' ? 400 : ['image_post_analysis_superseded', 'image_post_analysis_source_changed',
           'image_post_analysis_provider_result_unknown', 'image_post_queue_requires_reconciliation',
           'image_post_analysis_attempt_requires_reconciliation'].includes(publicCode) ? 409 : 503)
           .json({ ok: false, error: publicCode });
-      }
+      } finally { if (lease) await releaseDurableOperationLease({ dataStore: store, lease }); }
     });
   }
 

@@ -430,7 +430,7 @@ export function stripStoryboardReferenceLeaks(
 
 export function unsupportedNumericClaims(candidate: string, productInfo: string): string[] {
   const normalizedCandidate = normalizeNumericEvidenceText(candidate);
-  const pattern = /\d+(?:\.\d+)?\s*(?:瓶|bottles?|ml|毫升|kg|千克|公斤|g|克|斤|cm|厘米|mm|毫米|天|day|days|秒|seconds?|secs?|%|percent|个|pcs?|pieces?|件|箱|cartons?|boxes?|元|美元|usd|rmb|cny)/gi;
+  const pattern = /\d+(?:\.\d+)?\s*(?:(?:bottles?|ml|kg|g|cm|mm|days?|seconds?|secs?|percent|pcs?|pieces?|cartons?|boxes?|usd|rmb|cny)(?![a-z])|瓶|毫升|千克|公斤|克|斤|厘米|毫米|天|秒|%|个|件|箱|元|美元)/gi;
   return [...new Set(Array.from(normalizedCandidate.matchAll(pattern))
     .filter(match => {
       const claim = match[0];

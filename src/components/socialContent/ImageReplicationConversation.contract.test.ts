@@ -16,7 +16,7 @@ test('embedded image replication stays a compact assistant reply', () => {
   assert.match(sceneSource, /已带入原帖，请选择参考图。/);
   assert.match(sceneSource, /参考图已选，请确认产品、平台和语言。/);
   assert.match(sceneSource, /信息已收齐，请确认后生成首版。/);
-  assert.match(sceneSource, /已确认，正在生成图文首版。/);
+  assert.match(sceneSource, /已创建图文任务，制作进度如下。/);
   assert.match(conversationSource, /<ImageCreationTaskExecution contentTaskId=\{contentTaskId\}\/>/, '确认后必须在灵小枢会话内显示真实制作进度');
   assert.doesNotMatch(conversationSource, /openImageCreationTask|进入创作任务/, '确认后不得跳转或退化为任务跳转按钮');
 });

@@ -108,7 +108,11 @@ export async function executeImageProduction(store: DataStore, job: ContentExecu
     catch (error) {
         if(error instanceof ContentExecutionStoppedError)throw error;
     // A lost planning/QA receipt is never a reason to replay a paid request.
-        throw new Error(`user_input_required:${error instanceof Error ? error.message : 'social_image_execution_failed'}`);
+        const failure = error as { code?: unknown; body?: { code?: unknown } } | null;
+        const stableCode = failure?.body?.code || failure?.code;
+        const reason = typeof stableCode === 'string' && /^social_image_[a-z0-9_]+$/.test(stableCode)
+            ? stableCode : error instanceof Error ? error.message : 'social_image_execution_failed';
+        throw new Error(`user_input_required:${reason}`);
     }
 }
 export async function executePersistedImageProduction(store: DataStore, job: ContentExecutionJob) {

@@ -10,7 +10,8 @@ import type { SocialContentCreateRequest } from '../socialContent/SocialContentW
 const ImageReplicationConversation = lazy(() => import('../socialContent/ImageReplicationConversation'));
 
 export function assistantImageReplicationMessage(intake: ImageReplicationIntake) {
-  if (intake.submitted || intake.imageTaskId) return '已确认，正在生成图文首版。';
+  if (intake.imageTaskId) return '已创建图文任务，制作进度如下。';
+  if (intake.submitted) return '已确认，正在核验参考图与企业素材。';
   if (intake.step >= 2) return '信息已收齐，请确认后生成首版。';
   if (intake.step === 1) return '参考图已选，请确认产品、平台和语言。';
   return '已带入原帖，请选择参考图。';

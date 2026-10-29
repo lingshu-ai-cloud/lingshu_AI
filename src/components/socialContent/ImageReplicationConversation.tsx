@@ -17,6 +17,7 @@ import { createImageReplicationDraft, imageReplicationDraftIssue,
 
 import { readImageReplicationReferences, reanalyzeCollectedImageReference } from '../../lib/imageReplicationReferences';
 import { imageReplicationReferenceRatio } from '../../lib/imageReplicationReferenceRatio';
+import { recoverImageReferenceAnalysis } from '../../lib/imageReferenceAnalysisRecovery';
 import ImageCreationTaskExecution from './ImageCreationTaskExecution';
 
 const QUESTIONS = [
@@ -169,16 +170,16 @@ export default function ImageReplicationConversation({ request, onShowCreations,
     locked.current = true; setBusy(true); setSubmitted(true); setError(''); setAnalysisMessage('');
     let pendingTask: SocialImageCreationTask | undefined;
     const confirmAndQueue = async (current: SocialImageCreationTask) => {
-      const checked = current.referenceProductCheck?.decision === 'present'
-        ? current : (await socialImageApi.confirmReferenceProduct(current, 'auto')).task;
-      if (!isCurrent()) return;
-      if (checked.referenceProductCheck?.decision === 'absent') {
-        setAwaitingReference(checked); setSubmitted(false); frozen.current = undefined; setStep(0);
-        setError('参考图不符合本次制作要求，请更换参考图。');
-        return;
-      }
-      const queued = await socialImageApi.enqueueExecution(checked);
-      if (isCurrent()) setCreated(queued.task);
+      const contentTaskId = current.productionRuntime?.binding?.contentTaskId;
+      if (!contentTaskId) throw new Error('原图文任务缺少内容任务关联，暂时无法继续。');
+      const result = await recoverImageReferenceAnalysis(contentTaskId, {
+        read: socialImageApi.getContentExecution,
+        confirm: current => socialImageApi.confirmReferenceProduct(current, 'auto'),
+        analyze: reanalyzeCollectedImageReference,
+        enqueue: socialImageApi.enqueueExecution,
+        isCurrent, onProgress: text => { if (isCurrent()) setAnalysisMessage(text); },
+      });
+      if (isCurrent()) { setAnalysisMessage(''); setCreated(result.task); }
     };
     try {
       let task = awaitingReference || await createImageReplicationDraft({ draft: frozen.current, operationKey: key.current,
@@ -199,35 +200,26 @@ export default function ImageReplicationConversation({ request, onShowCreations,
       await confirmAndQueue(task);
     } catch (cause) { if (isCurrent()) {
       const code = (cause as { payload?: { code?: string } })?.payload?.code;
-      if (code === 'social_image_reference_analysis_outdated' && pendingTask?.referenceSnapshot?.sourceRecordId) {
-        setAwaitingReference(pendingTask);
-        setAnalysisMessage('旧版参考图分析缺少产品判断，正在对原图补充分析；原任务已保留。');
-        try {
-          await reanalyzeCollectedImageReference(pendingTask.referenceSnapshot.sourceRecordId);
-          if (isCurrent()) { setAnalysisMessage(''); await confirmAndQueue(pendingTask); }
-        } catch (analysisError) {
-          if (isCurrent()) {
-            const nextCode = (analysisError as { payload?: { code?: string } })?.payload?.code;
-            setAnalysisMessage(''); setSubmitted(false);
-            setError(nextCode === 'social_image_reference_product_uncertain'
-              ? '补充分析已完成，但仍无法可靠判断图中产品；原任务已保留，请更换参考图。'
-              : `参考图补充分析未完成，原任务已保留；${analysisError instanceof Error ? analysisError.message : '请在灵感中心查看分析状态。'}`);
-          }
-        }
+      setAnalysisMessage(''); setSubmitted(false);
+      if (pendingTask) setAwaitingReference(pendingTask);
+      if (code === 'social_image_reference_product_shoot_required' && pendingTask) {
+        const restored = await socialImageApi.getTask(pendingTask.id).catch(() => null);
+        if (!isCurrent()) return;
+        if (restored) setAwaitingReference(restored.task);
+        frozen.current = undefined; setStep(0);
+        setError('参考图中未发现可辨认的产品，请更换参考图后继续原任务。');
       } else if (code === 'social_image_reference_analysis_in_progress') {
-        if (pendingTask) setAwaitingReference(pendingTask);
-        setSubmitted(false);
-        setError('参考图正在补充分析，原任务已保留；分析完成后可继续。');
-      } else if (code === 'social_image_reference_analysis_reconciliation_required') {
-        if (pendingTask) setAwaitingReference(pendingTask);
-        setSubmitted(false);
-        setError('参考图分析结果待核对，原任务已保留；不会自动重复分析。');
-      } else if (code === 'social_image_reference_product_uncertain' || code === 'social_image_reference_analysis_failed') {
-        if (pendingTask) setAwaitingReference(pendingTask);
-        setSubmitted(false);
-        setError(code === 'social_image_reference_analysis_failed'
-          ? '参考图补充分析失败，原任务已保留；请在灵感中心查看原因或更换参考图。'
-          : '参考图分析结果不足以可靠判断是否有产品，原任务已保留；请更换参考图。');
+        setError('参考图正在分析，原任务已保留；分析完成后可继续。');
+      } else if (code === 'social_image_reference_analysis_reconciliation_required'
+        || code === 'image_post_analysis_provider_result_unknown' || code === 'image_post_queue_requires_reconciliation') {
+        setError('上次图片分析尚未返回可确认的结果，原任务已保留；暂不重复提交。');
+      } else if (code === 'image_post_analysis_model_unavailable') {
+        setError('图片分析模型暂不可用，尚未取得识别结果；原任务已保留。');
+      } else if (code === 'image_post_analysis_network_blocked') {
+        setError('图片分析服务暂时无法连接，原任务已保留。');
+      } else if (code === 'social_image_reference_product_uncertain' || code === 'social_image_reference_analysis_failed'
+        || code === 'social_image_reference_analysis_required' || code === 'social_image_reference_analysis_outdated') {
+        setError('参考图分析未取得可靠的产品识别结果，原任务已保留；可在当前任务中重新分析或更换参考图。');
       } else setError(cause instanceof Error ? cause.message : '复刻任务保存失败，请重试');
     } }
     finally { locked.current = false; if (isCurrent()) setBusy(false); }

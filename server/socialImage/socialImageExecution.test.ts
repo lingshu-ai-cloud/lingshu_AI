@@ -31,6 +31,10 @@ import {socialTaskSummary} from '../starter198/socialContentRecords.js';
 import express from 'express';
 import {registerSocialImageExecutionRoutes} from '../routes/socialImageExecutionRoutes.js';
 import type {SocialContentTaskSummary} from '../../shared/contracts/socialContentWorkflow.js';
+import {createImagePostEvidenceAnalyzer} from '../socialDiscovery/imagePostEvidenceAnalysis.js';
+import {reanalyzeStoredImagePost} from '../socialDiscovery/imagePostReanalysis.js';
+import {recoverImageReferenceAnalysis} from '../../src/lib/imageReferenceAnalysisRecovery.js';
+import {reconcileImagePlanningValidation} from './socialImagePlanningRecovery.js';
 class MemoryStore implements DataStore {
   private sequence = 0;
   readonly rows = new Map<string, Record_[]>();
@@ -110,6 +114,22 @@ test('confirmation persists one receipt; replay after reload does not enqueue or
  await assert.rejects(enqueueImageExecution({...input,tenantId:'tenant-b'}),/social_image_task_missing/);
  const rows=await store.list('content_execution_jobs');assert.equal(rows.totalItems,1);
 });
+test('planning recovery preserves a definitive rejection and refuses unknown transport or a second reconciliation',async()=>{
+ const {store,task,input}=await setup();const queued=await enqueueImageExecution(input);const id=queued.execution.jobId;
+ const job=await store.getById<any>('content_execution_jobs',id);const stamp='2026-10-29T00:05:23.198Z';
+ const original={...job.checkpoints['image.confirmed'],payload:{state:'outcome_unknown',code:'social_image_planning_timeout'},updatedAt:stamp};
+ await store.update('content_execution_jobs',id,{status:'blocked',worker_id:'',lease_expires_at:'',checkpoints:{...job.checkpoints,'image.planning':original}});
+ const review={store,tenantId:'tenant-a',jobId:id,taskId:task.id,expectedCheckpointAt:stamp,approvedBy:'owner',reason:'Review known returned response validation error'};
+ await assert.rejects(reconcileImagePlanningValidation(review),/scope_changed/);
+ original.payload.code='social_image_buyer_copy_evidence_invalid';
+ await store.update('content_execution_jobs',id,{checkpoints:{...job.checkpoints,'image.planning':original}});
+ await assert.rejects(reconcileImagePlanningValidation({...review,expectedCheckpointAt:'stale'}),/scope_changed/);
+ await reconcileImagePlanningValidation(review);
+ const changed=await store.getById<any>('content_execution_jobs',id);
+ assert.equal(changed.checkpoints['image.planning'].payload.state,'validation_rejected_reconciled');
+ assert.deepEqual(changed.checkpoints['image.planning.validation_review'].payload.original,original);
+ await assert.rejects(reconcileImagePlanningValidation(review),/scope_changed/);
+});
 test('reference product confirmation is tenant and byte-bound; an absent product never creates a job',async()=>{
  const {store,task,input}=await setup();
  const changed=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{referenceSnapshot:{imageUrls:['/replacement.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
@@ -151,7 +171,54 @@ test('old analyzed reference without byte-bound labels requests reanalysis witho
  const changed=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{referenceSnapshot:{sourceRecordId:'old-post',imageUrls:['/reference.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
  assert.equal(changed.kind,'updated');if(changed.kind!=='updated')throw Error('fixture');
  await assert.rejects(confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:changed.task.version,decision:'auto',readReference}),/social_image_reference_analysis_outdated/);
+ await store.create('trend_videos',{id:'pending-post',tenant_id:'tenant-a',aiAnalysis:JSON.stringify({contentFormat:'image',imageAnalysisStatus:'pending'})});
+ const pending=await updateSocialImageTask(store,'tenant-a',task.id,changed.task.version,{referenceSnapshot:{sourceRecordId:'pending-post',imageUrls:['/reference.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
+ assert.equal(pending.kind,'updated');if(pending.kind!=='updated')throw Error('fixture');
+ await assert.rejects(confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:pending.task.version,decision:'auto',readReference}),/social_image_reference_analysis_required/);
  assert.equal((await store.list('content_execution_jobs')).totalItems,0);
+});
+
+test('selected image recovery saves its evidence, confirms products and reaches the same durable creation worker once',async()=>{
+ const {store,task,readReference}=await setup();
+ const urls=[0,1,2,3].map(index=>`/api/overseas/videos/flow-post/image/${index}`);
+ await store.create('trend_videos',{id:'flow-post',tenantId:'tenant-a',contentFormat:'image',platform:'facebook',
+  title:'Product carousel',aiAnalysis:JSON.stringify({contentFormat:'image',imageUrls:urls,imageAnalysisStatus:'pending'})});
+ const updated=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{
+  referenceUrls:[urls[3]!],referenceSnapshot:{sourceRecordId:'flow-post',imageUrls:[urls[3]!],collectedAt:new Date().toISOString(),fingerprint:''}});
+ if(updated.kind!=='updated')throw Error('fixture');
+ let supplierCalls=0,sourceReads=0,prepareCalls=0;
+ const analyzer=createImagePostEvidenceAnalyzer({store,collection:'trend_videos',mediaDir:'/unused',normalizeThumbnailUrl:url=>url,
+  readStoredReference:async(tenantId,url)=>{assert.equal(url,urls[3]);sourceReads++;return readReference(tenantId);},
+  analyzeQwen:async input=>{
+   supplierCalls++;assert.deepEqual(input.images.map(image=>image.imageIndex),[4]);
+   return {version:2,status:'analyzed',observedFacts:[{imageIndex:4,subjects:['product'],scene:'poster',composition:'centered',colors:[],visibleText:[],confidence:.99}],
+    carouselFlow:[],copyEvidence:{hooks:[],sellingPoints:[],cta:[]},reusableModules:[],uncertainties:[],
+    productionLabels:[{imageIndex:4,kind:'product_only',productPresence:'present',evidence:'Product is visible in the selected fourth image',confidence:.99,sourceSha256:null,verification:'unverified'}]};
+  }});
+ const ports={
+  read:async()=>{const current=await readSocialImageTask(store,'tenant-a',task.id);if(!current)throw Error('fixture');
+   const job=await readImageExecutionJob(store,'tenant-a',current);return {task:current,execution:job?imageExecutionReceipt(job):null};},
+  confirm:async(current:typeof task)=>({task:await confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:current.version,decision:'auto',readReference})}),
+  analyze:async(sourceId:string,url?:string)=>{assert.equal(sourceId,'flow-post');assert.equal(url,urls[3]);
+   const record=await store.getById('trend_videos',sourceId);if(!record)throw Error('fixture');
+   await reanalyzeStoredImagePost({store,collection:'trend_videos',tenantId:'tenant-a',record,imageIndex:4,analyze:analyzer.analyzeImagePostBestEffort});},
+  enqueue:async(current:typeof task)=>enqueueImageExecution({store,tenantId:'tenant-a',userId:'owner',taskId:current.id,expectedVersion:current.version,readReference}),
+  isCurrent:()=>true,onProgress:()=>{},
+ };
+ const admitted=await recoverImageReferenceAnalysis('content-a',ports);
+ assert.equal(admitted.task.id,task.id);assert.equal(admitted.task.referenceProductCheck?.decision,'present');
+ assert.equal(admitted.task.referenceProductCheck?.confirmedBy,'agent:image-post-evidence.v2');
+ assert.equal((await store.list('content_execution_jobs')).totalItems,1);
+ const worker=new DurableContentExecutionWorker({dataStore:store,allowedJobIds:[admitted.execution!.jobId],execute:job=>executeImageProduction(store,job,{
+  prepare:async()=>{prepareCalls++;throw Object.assign(Error('Readable product asset error'),{code:'social_image_required_asset_unreadable'});},
+  plan:async()=>{throw Error('unexpected paid plan');},render:async()=>{throw Error('unexpected image payment');},quality:async()=>{throw Error('unexpected QA payment');},readReference,
+ })});
+ await worker.drain();const settled=await settle(store,admitted.task);
+ assert.equal(settled.status,'blocked');assert.equal(imageExecutionReceipt(settled).lastError,'social_image_required_asset_unreadable');
+ const restored=await recoverImageReferenceAnalysis('content-a',ports);
+ assert.equal(restored.execution?.jobId,admitted.execution?.jobId);
+ assert.equal(supplierCalls,1);assert.equal(sourceReads,1);assert.equal(prepareCalls,1);
+ assert.equal((await store.list('content_execution_jobs')).totalItems,1);
 });
 test('legacy timed-out planning receipt identifies the unknown provider outcome without replaying it',async()=>{
  const {store,input}=await setup();const queued=await enqueueImageExecution(input);
@@ -443,6 +510,7 @@ test('bound English poster rejects a different package variant and mixed-languag
 
 test('bound B2B planning freezes only selected product facts and inquiry copy',async()=>{
   const {store,task}=await preparedViralTask('product_poster','paid','en');
+  let persistedResponse='';
   const response=await planStudioPoster({store,tenantId:'tenant-a',
     body:{imageTaskId:task.id,expectedImageTaskVersion:task.version},
     packagingHint:'GUIANFA\nSORBET CREAM',
@@ -452,10 +520,12 @@ test('bound B2B planning freezes only selected product facts and inquiry copy',a
       products:{items:[{id:'product-a',sku:'GUIANFA-RS-005',name:'冰沙面霜',category:'面霜',brand:'GUIANFA',
         attributes:{净含量:'50g'}},{id:'other',sku:'other',name:'竞品',attributes:{净含量:'100g'}}]}} as any),
     allowPaidCall:async()=>true,
+    afterProviderResponse:async text=>{persistedResponse=text;},
     callPlanner:async()=>JSON.stringify({poster:{headline:'Product overview',subheadline:'OEM ready',cta:'Contact'},
       caption:'Explore the product.',hashtags:[]}),
   });
   assert.equal(response?.poster.headline,'SORBET CREAM');
+  assert.equal(JSON.parse(persistedResponse).poster.headline,'Product overview','raw response is captured before normalization');
   assert.deepEqual(response?.poster.sellingPoints,['Face cream','Sorbet-like texture','SKU: GUIANFA-RS-005']);
   assert.equal(response?.poster.bottomBar[0],'50 g');
   assert.equal(response?.poster.cta,'Message us for catalog and quote');
@@ -483,15 +553,16 @@ test('a bound task does not turn broad model marketing claims into confirmed ima
 
 test('a timed-out bound planner keeps the director node unapproved and exposes the provider uncertainty', async () => {
   const {store,task}=await preparedViralTask('product_poster','paid');
-  let submissions=0,claims=0;
+  let submissions=0,claims=0,received=0;
   await assert.rejects(planStudioPoster({store,tenantId:'tenant-a',
     body:{imageTaskId:task.id,expectedImageTaskVersion:task.version},
     enterpriseCtx:async()=>`公司名称：示例企业\n产品1：${task.contentBrief.productNames[0]}`,
     allowPaidCall:async()=>true,
     beforeProviderCall:async()=>{claims++;},
     callPlanner:async()=>{submissions++;throw new Error('qwen LLM request timed out after 90s');},
+    afterProviderResponse:async()=>{received++;},
   }),error=>error instanceof PosterPlanningError && error.body.code==='social_image_planning_provider_outcome_unknown');
-  assert.equal(submissions,1);assert.equal(claims,1);
+  assert.equal(submissions,1);assert.equal(claims,1);assert.equal(received,0);
   const persisted=await readSocialImageTask(store,'tenant-a',task.id);
   assert.equal(persisted?.productionRuntime?.nodes.find(node=>node.nodeId==='director_brief')?.status,'waiting');
   assert.equal(persisted?.generationJobs.length,0);

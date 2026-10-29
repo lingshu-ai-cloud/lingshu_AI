@@ -50,9 +50,15 @@ export function createImageExecutionPorts(store: DataStore, job: ContentExecutio
                 if (process.env.SOCIAL_IMAGE_EXECUTION_PAID_ENABLED === 'false')
                     throw new Error('social_image_paid_execution_disabled');
                 const claim = { stage: 'image.planning', version: '1', inputHash: job.checkpoints['image.confirmed']!.inputHash };
-                if (readCurrentContentExecutionCheckpoint(claim))
+                const prior = readCurrentContentExecutionCheckpoint<Record<string, any>>(claim);
+                const cached = typeof prior?.responseText === 'string' ? prior.responseText : null;
+                const correctionApproved = prior?.state === 'validation_rejected_reconciled'
+                    && prior.code === 'social_image_buyer_copy_evidence_invalid'
+                    && typeof prior.approvedBy === 'string' && Boolean(prior.approvedBy);
+                if (prior && !cached && !correctionApproved)
                     throw new Error('social_image_planning_outcome_requires_review');
                 let providerCallStarted = false;
+                let responseReceived = Boolean(cached);
                 try {
                     const selectedProduct = task.contentBrief.productRefs[0]
                         ? await assets.enterpriseProductAsset(job.tenantId, task.contentBrief.productRefs[0]) : null;
@@ -61,17 +67,26 @@ export function createImageExecutionPorts(store: DataStore, job: ContentExecutio
                         body: { imageTaskId: task.id, expectedImageTaskVersion: task.version },
                         packagingHint,
                         enterpriseProfile: readTenantEnterpriseProfile,
-                        enterpriseCtx: async () => buildEnterpriseContext(await readTenantEnterpriseProfile(job.tenantId)), allowPaidCall,
-                        beforeProviderCall: async () => {
+                        enterpriseCtx: async () => buildEnterpriseContext(await readTenantEnterpriseProfile(job.tenantId)),
+                        allowPaidCall: cached ? async () => true : allowPaidCall,
+                        ...(cached ? { callPlanner: async () => cached } : {}),
+                        beforeProviderCall: cached ? undefined : async () => {
                             // Only pre-transport claims are uncertain. Validation and
                             // quota denials must not poison the task as a paid result.
                             await recordCurrentContentExecutionCheckpoint({ ...claim, payload: { state: 'started' } });
                             providerCallStarted = true;
+                        },
+                        afterProviderResponse: async text => {
+                            await recordCurrentContentExecutionCheckpoint({ ...claim, payload: { state: 'received', responseText: text } });
+                            responseReceived = true;
                         } });
                 } catch (error) {
                     const code = socialImagePlanningFailureCode(error);
-                    if (providerCallStarted)
-                        await recordCurrentContentExecutionCheckpoint({ ...claim, payload: { state: 'outcome_unknown', code } });
+                    if (providerCallStarted || responseReceived) {
+                        const received = readCurrentContentExecutionCheckpoint<Record<string, any>>(claim);
+                        await recordCurrentContentExecutionCheckpoint({ ...claim, payload: { ...received,
+                            state: responseReceived ? 'completed_requires_review' : 'outcome_unknown', code } });
+                    }
                     throw new Error(code);
                 }
                 const planned = await readSocialImageTask(store, job.tenantId, task.id);

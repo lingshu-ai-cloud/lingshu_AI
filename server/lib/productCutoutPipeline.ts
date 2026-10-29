@@ -124,16 +124,15 @@ export async function ensureProductCutout(tenantId: string, productId: string, o
       media: { name: `${sourceSha256}.png`, buf: loaded.bytes, contentType: loaded.mimeType } });
   // A failed analysis is a recorded failure, not a reason to reissue an
   // external analysis request on every image-production retry.
-  const analysis = source.segmentAnalysisStatus === 'failed'
+  let analysis: Promise<void> | undefined;
+  const startAnalysis = () => analysis ||= source.segmentAnalysisStatus === 'failed'
     ? Promise.resolve()
     : requestMaterialAnalysis(tenantId, String(bound.id || '')).then(() => undefined);
-  void analysis.catch(error =>
-    console.warn('[product-cutout] analysis start failed', tenantId, productId, error instanceof Error ? error.message : error));
   const waitForAnalysis = async () => {
     if (!options.waitForAnalysis) return;
     if (source.segmentAnalysisStatus === 'failed') throw new Error('social_image_product_analysis_failed');
     try {
-      await analysis;
+      await startAnalysis();
       await waitForMaterialAnalysis(tenantId, String(bound.id || ''), { requestIfMissing: false });
     } catch (error) {
       console.warn('[product-cutout] product analysis incomplete', tenantId, productId,
@@ -156,6 +155,10 @@ export async function ensureProductCutout(tenantId: string, productId: string, o
       return 'ready';
     }
   }
+  // Reusing a verified cutout for one image must not start an unrelated paid
+  // material analysis. New cutout work retains the existing analysis behavior.
+  void startAnalysis().catch(error =>
+    console.warn('[product-cutout] analysis start failed', tenantId, productId, error instanceof Error ? error.message : error));
   const stateKey = keyOf(tenantId, productId);
   const jobKey = jobKeyOf(tenantId, productId, sourceSha256);
   if (queue.has(jobKey)) {

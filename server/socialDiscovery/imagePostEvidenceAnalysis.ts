@@ -17,6 +17,8 @@ export interface CrawledImagePost {
   thumbnailUrl: string;
   caption?: string;
   imageUrls?: string[];
+  /** Original one-based carousel index when resuming a selected reference. */
+  analysisImageIndex?: number;
   views: string;
   tags: string[];
   uploadedAt?: string;
@@ -33,7 +35,20 @@ export interface CrawledImagePost {
 
 type ImageBytes = { base64: string; mimeType: string };
 type EvidenceResult = { status: 'analyzed' | 'failed'; analysis?: ImagePostEvidenceAnalysis; error?: string;
-  provider?: 'qwen' | 'gemini'; providerAttempted?: boolean };
+  provider?: 'qwen' | 'gemini'; providerAttempted?: boolean; providerRejected?: boolean };
+
+/** SDKs wrap local pre-dispatch rejection in a generic connection error. */
+export function imageAnalysisNetworkBlocked(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current = error;
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    const value = current as { code?: string; cause?: unknown };
+    if (value.code === 'ISOLATED_NETWORK_BLOCKED') return true;
+    current = value.cause;
+  }
+  return false;
+}
 
 /** Crawler-owned public image retrieval and existing primary/fallback selection. */
 export function createImagePostEvidenceAnalyzer(input: {
@@ -79,7 +94,12 @@ export function createImagePostEvidenceAnalyzer(input: {
 
   async function analyzeImagePostBestEffort(item: CrawledImagePost, keyword: string, _fallback?: VideoAiAnalysis): Promise<EvidenceResult> {
     const urls = [...new Set((item.imageUrls?.length ? item.imageUrls : [item.thumbnailUrl]).filter(Boolean))].slice(0, 10);
+    if (item.analysisImageIndex !== undefined && (!Number.isInteger(item.analysisImageIndex)
+      || item.analysisImageIndex < 1 || item.analysisImageIndex > urls.length)) {
+      return { status: 'failed', error: 'image_post_analysis_selection_invalid' };
+    }
     const images = (await Promise.all(urls.map(async (url, index) => {
+      if (item.analysisImageIndex !== undefined && item.analysisImageIndex !== index + 1) return null;
       const image = await fetchImageForAnalysis(url, item.tenantId);
       return image ? { ...image, imageIndex: index + 1 } : null;
     }))).filter((image): image is ImageBytes & { imageIndex: number } => Boolean(image));
@@ -88,9 +108,10 @@ export function createImagePostEvidenceAnalyzer(input: {
       images, title: item.title, caption: item.caption, platform: item.platform,
       tags: [...new Set([...item.tags, ...tagsFromKeyword(keyword, item.platform)])],
     };
-    const labelSources = urls.map((_, index) => {
+    const labelSources = urls.flatMap((_, index) => {
+      if (item.analysisImageIndex !== undefined && item.analysisImageIndex !== index + 1) return [];
       const image = images.find(item => item.imageIndex === index + 1);
-      return { imageIndex: index + 1, sourceSha256: image ? createHash('sha256').update(Buffer.from(image.base64, 'base64')).digest('hex') : null };
+      return [{ imageIndex: index + 1, sourceSha256: image ? createHash('sha256').update(Buffer.from(image.base64, 'base64')).digest('hex') : null }];
     });
     const withProductionLabels = (analysis: ImagePostEvidenceAnalysis): ImagePostEvidenceAnalysis => ({ ...analysis,
       productionLabels: normalizeImageReferenceProductionLabels(analysis.productionLabels, labelSources) });
@@ -98,6 +119,15 @@ export function createImagePostEvidenceAnalyzer(input: {
       const analysis = await (input.analyzeQwen || analyzeImagePostEvidenceWithQwen)(evidenceInput);
       return { status: 'analyzed', analysis: withProductionLabels(analysis), provider: 'qwen' };
     } catch (qwenError) {
+      // A proven local denial never reached the supplier. Do not classify it
+      // as an unknown paid result or try a different supplier through the guard.
+      if (imageAnalysisNetworkBlocked(qwenError)) {
+        return { status: 'failed', error: 'image_post_analysis_network_blocked', providerAttempted: false };
+      }
+      if (qwenError && typeof qwenError === 'object' && 'status' in qwenError && qwenError.status === 404) {
+        return { status: 'failed', error: 'image_post_analysis_model_unavailable',
+          provider: 'qwen', providerAttempted: true, providerRejected: true };
+      }
       console.warn('[videos] Qwen image post analysis failed, trying Gemini:', qwenError instanceof Error ? qwenError.message : qwenError);
       try {
         const analysis = await (input.analyzeGemini || analyzeImagePostEvidenceWithGemini)({

@@ -91,3 +91,63 @@ test('unknown provider outcome stays durable and cannot be paid again automatica
   await assert.rejects(reanalyzeStoredImagePost({ ...f.input, record: f.row }), /requires_reconciliation/);
   assert.equal(f.events.filter(event => event === 'analyze').length, 1);
 });
+
+test('a proven blocked request records a failure while a supplier receipt is retained with successful evidence', async () => {
+  const blocked = fixture();
+  await reanalyzeStoredImagePost({ ...blocked.input,
+    analyze: async () => ({ status: 'failed', error: 'image_post_analysis_network_blocked', providerAttempted: false }) });
+  const analysis = JSON.parse(String(blocked.row.aiAnalysis));
+  assert.equal(analysis.imageAnalysisQueueState, 'failed');
+  assert.equal(analysis.imageAnalysisError, 'image_post_analysis_network_blocked');
+  const success = fixture();
+  const receipt = { startedAt: '2026-10-29T00:00:00Z', endpoint: 'https://example.test/chat/completions', status: 200,
+    requestId: 'request-1', completionId: 'completion-1', model: 'vision', usage: { total_tokens: 100 } };
+  await reanalyzeStoredImagePost({ ...success.input,
+    analyze: async () => ({ status: 'analyzed', analysis: evidence, provider: 'qwen', providerAudit: [receipt] }) });
+  assert.deepEqual(JSON.parse(String(success.row.aiAnalysis)).imageAnalysisProviderAudit, [receipt]);
+});
+
+test('one explicitly authorized replacement preserves the unknown attempt and cannot reuse the authorization', async () => {
+  const f = fixture();
+  f.input.record.aiAnalysis = JSON.stringify({ ...JSON.parse(String(f.input.record.aiAnalysis)),
+    imageAnalysisQueueState: 'unknown', imageAnalysisStatus: 'unknown', imageAnalysisAttemptId: 'old-attempt',
+    imageAnalysisError: 'unknown supplier result' });
+  const authorization = { expectedAttemptId: 'old-attempt', authorizedAt: '2026-10-29T01:00:00Z', reason: 'User authorized one replacement' };
+  await assert.rejects(reanalyzeStoredImagePost({ ...f.input, replacementAuthorization: { ...authorization, expectedAttemptId: 'different' } }), /authorization_mismatch/);
+  assert.deepEqual(f.events, []);
+  await reanalyzeStoredImagePost({ ...f.input, replacementAuthorization: authorization });
+  const latest = JSON.parse(String(f.row.aiAnalysis));
+  assert.equal(latest.imageAnalysisPriorAttempts[0].attemptId, 'old-attempt');
+  assert.equal(latest.imageAnalysisPriorAttempts[0].status, 'unknown');
+  assert.equal(latest.imageAnalysisPriorAttempts[0].replacementAuthorization.reason, authorization.reason);
+  await assert.rejects(reanalyzeStoredImagePost({ ...f.input, record: f.row, replacementAuthorization: authorization }), /authorization_mismatch/);
+  assert.equal(f.events.filter(event => event === 'analyze').length, 1);
+});
+
+test('a provider rejection with a receipt stays failed rather than unknown', async () => {
+  const f = fixture();
+  await reanalyzeStoredImagePost({ ...f.input, analyze: async () => ({ status: 'failed',
+    error: 'image_post_analysis_model_unavailable', providerAttempted: true, providerRejected: true }) });
+  assert.equal(JSON.parse(String(f.row.aiAnalysis)).imageAnalysisQueueState, 'failed');
+});
+
+test('selected evidence updates the correct carousel image and preserves other completed images', async () => {
+  const f = fixture();
+  f.input.record.aiAnalysis = JSON.stringify({ ...JSON.parse(String(f.input.record.aiAnalysis)),
+    imageUrls: [0,1,2,3].map(index => `/api/overseas/videos/record-1/image/${index}`),
+    imageEvidence: { ...evidence, productionLabels: [{ imageIndex: 1, evidence: 'existing first image' }] } });
+  await reanalyzeStoredImagePost({ ...f.input, imageIndex: 4, analyze: async item => {
+    assert.equal(item.analysisImageIndex, 4);
+    return { status: 'analyzed', analysis: { ...evidence,
+      observedFacts: [{ ...evidence.observedFacts[0], imageIndex: 4 }],
+      productionLabels: [{ imageIndex: 4, kind: 'product_only', productPresence: 'present', evidence: 'fourth image',
+        confidence: .99, sourceSha256: 'a'.repeat(64), verification: 'unverified' }] } };
+  } });
+  const saved = JSON.parse(String(f.row.aiAnalysis)).imageEvidence;
+  assert.deepEqual(saved.observedFacts.map((item: {imageIndex:number}) => item.imageIndex), [1,4]);
+  assert.deepEqual(saved.productionLabels.map((item: {imageIndex:number}) => item.imageIndex), [1,4]);
+  assert.equal(saved.productionLabels[0].evidence, 'existing first image');
+  const invalid = fixture();
+  await assert.rejects(reanalyzeStoredImagePost({ ...invalid.input, imageIndex: 4 }), /selection_invalid/);
+  assert.deepEqual(invalid.events, []);
+});

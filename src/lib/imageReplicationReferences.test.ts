@@ -29,3 +29,34 @@ test('generated assets, missing provenance, malformed records and unpersisted im
   ];
   assert.deepEqual(collectedImageReferences(invalid), []);
 });
+
+test('completed reanalysis notifies the inspiration card only after its persisted result is returned', async () => {
+  const { reanalyzeCollectedImageReference, INSPIRATION_IMAGE_ANALYSIS_UPDATED_EVENT } = await import('./imageReplicationReferences');
+  const previous = new Map(['window','localStorage','fetch'].map(key => [key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+  const events: unknown[] = []; let calls = 0;
+  const target = new EventTarget();
+  target.addEventListener(INSPIRATION_IMAGE_ANALYSIS_UPDATED_EVENT, event => events.push((event as CustomEvent).detail));
+  Object.defineProperty(globalThis,'window',{configurable:true,value:target});
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:()=>null}});
+  Object.defineProperty(globalThis,'fetch',{configurable:true,value:async (url: string, options: RequestInit) => {
+    calls++;assert.equal(url,'/api/overseas/videos/post-1/reanalyze-image');assert.equal(options.method,'POST');
+    return Response.json({ok:true,record:collected});
+  }});
+  try {
+    await reanalyzeCollectedImageReference('post-1');
+    assert.equal(calls,1);assert.deepEqual(events,[{sourceRecordId:'post-1',record:collected}]);
+    Object.defineProperty(globalThis,'fetch',{configurable:true,value:async(_url: string, options: RequestInit)=>{
+      calls++; assert.deepEqual(JSON.parse(String(options.body)),{imageIndex:4});
+      return Response.json({ok:true,record:collected});
+    }});
+    await reanalyzeCollectedImageReference('post-1','/api/overseas/videos/post-1/image/3');
+    assert.equal(calls,2);
+    await assert.rejects(reanalyzeCollectedImageReference('post-1','/api/overseas/videos/other/image/3'),/不一致/);
+    assert.equal(calls,2,'foreign reference must not submit a supplier request');
+    Object.defineProperty(globalThis,'fetch',{configurable:true,value:async()=>Response.json({ok:false,error:'image_post_analysis_provider_result_unknown'},{status:409})});
+    await assert.rejects(reanalyzeCollectedImageReference('post-1'), error => (error as {payload?:{code?:string}}).payload?.code === 'image_post_analysis_provider_result_unknown');
+    assert.equal(events.length,2,'an uncertain write must not refresh the card as analyzed');
+  } finally {
+    for(const [key,descriptor] of previous) { if(descriptor)Object.defineProperty(globalThis,key,descriptor);else Reflect.deleteProperty(globalThis,key); }
+  }
+});

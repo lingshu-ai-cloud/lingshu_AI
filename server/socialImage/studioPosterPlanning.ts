@@ -47,6 +47,7 @@ export async function planStudioPoster(input: {
     allowPaidCall: () => Promise<boolean>;
     callPlanner?: typeof callLLM;
     beforeProviderCall?: () => Promise<void>;
+    afterProviderResponse?: (text: string) => Promise<void>;
     packagingHint?: string;
     enterpriseProfile?: (tenantId: string) => Promise<EnterpriseProfile>;
 }) {
@@ -218,6 +219,7 @@ Schema:
         try {
             await beforeProviderCall?.();
             const text = await callPlanner(prompt, { backend, systemPrompt: productEnterprise, timeoutMs: boundTask ? 90_000 : 30_000 });
+            await input.afterProviderResponse?.(text);
             const obj = extractJSON<any>(text);
             if (obj?.poster?.headline && obj?.caption) {
                 const normalized = {
@@ -319,6 +321,7 @@ Schema:
                     const frozenCopyAudit = auditCommercialClaims(userFacingPosterText(safeDraft), commercialEvidence);
                     if (frozenCopyAudit.issues.length || frozenCopyAudit.fieldsToConfirm.length) {
                         throw new PosterPlanningError(422, { ok: false, code: 'social_image_buyer_copy_evidence_invalid',
+                            copyAudit: frozenCopyAudit,
                             error: '采购海报文字与企业已确认事实不一致，未保存策划结果。' });
                     }
                 }

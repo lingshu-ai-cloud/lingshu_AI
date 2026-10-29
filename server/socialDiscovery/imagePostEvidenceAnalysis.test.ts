@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { DataStore } from '../storage/datastore.js';
-import { createImagePostEvidenceAnalyzer, type CrawledImagePost } from './imagePostEvidenceAnalysis.js';
+import { createImagePostEvidenceAnalyzer, imageAnalysisNetworkBlocked, type CrawledImagePost } from './imagePostEvidenceAnalysis.js';
 import { serializeImagePostAnalysis, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 
 const item: CrawledImagePost = {
@@ -87,4 +87,54 @@ test('after both providers fail, the caller can retain an unknown-cost state', a
   const result = await analyzer.analyzeImagePostBestEffort(item, 'bottle');
   assert.equal(result.status, 'failed');
   assert.equal(result.providerAttempted, true);
+});
+
+test('proven pre-dispatch isolation denial is retryable after service recovery, without fallback', async () => {
+  let fallbackCalls = 0;
+  const blocked = Object.assign(Error('isolated_test_network_blocked'), { code: 'ISOLATED_NETWORK_BLOCKED' });
+  const wrapped = new Error('Connection error.', { cause: blocked });
+  assert.equal(imageAnalysisNetworkBlocked(wrapped), true);
+  assert.equal(imageAnalysisNetworkBlocked(Error('Connection error.')), false);
+  const analyzer = createImagePostEvidenceAnalyzer({ store, collection: 'trend_videos', mediaDir: '/unused',
+    normalizeThumbnailUrl: url => url, fetcher,
+    analyzeQwen: async () => { throw wrapped; },
+    analyzeGemini: async () => { fallbackCalls++; return evidence; } });
+  const result = await analyzer.analyzeImagePostBestEffort(item, 'bottle');
+  assert.equal(result.error, 'image_post_analysis_network_blocked');
+  assert.equal(result.providerAttempted, false);
+  assert.equal(fallbackCalls, 0);
+});
+
+test('supplier model rejection is a known failure and never silently switches suppliers', async () => {
+  let fallbackCalls = 0;
+  const analyzer = createImagePostEvidenceAnalyzer({ store, collection: 'trend_videos', mediaDir: '/unused',
+    normalizeThumbnailUrl: url => url, fetcher,
+    analyzeQwen: async () => { throw Object.assign(Error('Model not exist.'), { status: 404 }); },
+    analyzeGemini: async () => { fallbackCalls++; return evidence; } });
+  const result = await analyzer.analyzeImagePostBestEffort(item, 'bottle');
+  assert.equal(result.error, 'image_post_analysis_model_unavailable');
+  assert.equal(result.providerRejected, true);
+  assert.equal(result.providerAttempted, true);
+  assert.equal(fallbackCalls, 0);
+});
+
+test('selected carousel analysis reads and submits only the original fourth image and retains index four', async () => {
+  const reads: string[] = [];
+  const analyzer = createImagePostEvidenceAnalyzer({ store, collection: 'trend_videos', mediaDir: '/unused',
+    normalizeThumbnailUrl: url => url, readStoredReference: async (_tenantId, url) => {
+      reads.push(url); return { bytes: Buffer.from('fourth-image'), mimeType: 'image/png' };
+    }, analyzeQwen: async input => {
+      assert.deepEqual(input.images.map(image => image.imageIndex), [4]);
+      return { ...evidence, observedFacts: [{ ...evidence.observedFacts[0], imageIndex: 4 }],
+        productionLabels: [{ imageIndex: 4, kind: 'product_only', productPresence: 'present',
+          evidence: '可见气垫产品', confidence: .99, sourceSha256: null, verification: 'unverified' }] };
+    } });
+  const result = await analyzer.analyzeImagePostBestEffort({ ...item, tenantId: 'tenant-1', analysisImageIndex: 4,
+    imageUrls: [0,1,2,3].map(index => `/api/overseas/videos/post/image/${index}`) }, '');
+  assert.deepEqual(reads, ['/api/overseas/videos/post/image/3']);
+  assert.deepEqual(result.analysis?.productionLabels?.map(label => label.imageIndex), [4]);
+  assert.equal(result.analysis?.productionLabels?.[0]?.productPresence, 'present');
+  const invalid = await analyzer.analyzeImagePostBestEffort({ ...item, analysisImageIndex: 9 }, '');
+  assert.equal(invalid.error, 'image_post_analysis_selection_invalid');
+  assert.equal(reads.length, 1);
 });
