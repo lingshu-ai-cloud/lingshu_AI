@@ -243,7 +243,8 @@ test('industry and daily briefs search diverse sources instead of stopping at a 
   try{
     for (const scene of ['行业资讯','今日资讯']) {
       searchCalls=0;directoryCalls=0;analysisCalls=0;
-      const answer=await qwenSearchAnswer([{role:'user',content:`${scene}：美妆原料，目标市场：欧洲，关注BASF。`}],{backend:'qwen',requireSources:true,searchEvidenceFirst:true,searchDomains:['basf.com'],searchFreshnessDays:30},{originalFetcher:globalThis.fetch});
+      const request=()=>qwenSearchAnswer([{role:'user',content:`${scene}：美妆原料，目标市场：欧洲，关注BASF。`}],{backend:'qwen',requireSources:true,searchEvidenceFirst:true,searchDomains:['basf.com'],searchFreshnessDays:30},{originalFetcher:globalThis.fetch});
+      const answer=await request();
       assert.equal(searchCalls,2,'one bounded supplemental search follows sparse readable evidence');assert.equal(directoryCalls,0);assert.equal(analysisCalls,1,'bounded discovery is followed by exactly one synthesis');assert.match(answer.text,/```industry-insight/);
       assert.equal(answer.sources.length,1);assert.match(answer.sources[0].uri,/cosmeticsdesign-europe/);assert.match(answer.text,/行业媒体报道/);
       const report=JSON.parse(answer.text.split('\n')[1]);assert.equal(report.period,scene==='今日资讯'?'2026-10-28（Asia/Shanghai当天）':'最近30天');assert.equal(report.signals[0].publishedAt,'2026-10-28');
@@ -339,13 +340,13 @@ test('real sparse North America shape uses exactly max then turbo freshness, wit
  const policies:Array<{search_strategy?:string;freshness?:number}>=[];
  globalThis.fetch=async(_input,init)=>{const body=JSON.parse(String(init?.body));assert.equal(body.parameters.enable_search,true);policies.push(body.parameters.search_options);return Response.json({output:{choices:[{finish_reason:'stop',message:{content:'No tool source metadata'}}],search_info:{search_results:[]}}});};
  try{
-  await assert.rejects(qwenSearchAnswer([{role:'user',content:'今日资讯：freshness-repair-regression，目标市场：北美，行业：美妆。'}],{searchEvidenceFirst:true,searchFreshnessDays:30,model:'qwen-plus'},{publicFeedDiscovery:async()=>[]}),{code:'search_originals_unavailable'});
+  await assert.rejects(qwenSearchAnswer([{role:'user',content:'今日资讯：freshness-repair-regression，目标市场：北美，行业：美妆。'}],{searchEvidenceFirst:true,searchFreshnessDays:30,model:'qwen-plus'},{publicFeedDiscovery:async()=>[]}),{code:'search_originals_insufficient'});
   assert.equal(policies.length,2);assert.equal(policies[0].search_strategy,'max');assert.equal(policies[0].freshness,undefined);
   assert.equal(policies[1].search_strategy,'turbo');assert.equal(policies[1].freshness,7);
  }finally{globalThis.fetch=savedFetch;keys.forEach((key,index)=>{if(saved[index]===undefined)delete process.env[key];else process.env[key]=saved[index];});}
 });
 
-test('public RSS candidates enter the same verified-original and single-synthesis flow without another paid call',async(t)=>{
+test('a single verified RSS original generates a brief daily insight',async(t)=>{
  t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-28T12:00:00Z')});
  const savedFetch=globalThis.fetch;const keys=['QWEN_SEARCH_ENDPOINT','DASHSCOPE_API_KEY'] as const,saved=keys.map(key=>process.env[key]);
  process.env.QWEN_SEARCH_ENDPOINT='https://fixture.invalid/rss-candidate-search';process.env.DASHSCOPE_API_KEY='fixture-only';
@@ -362,6 +363,26 @@ test('public RSS candidates enter the same verified-original and single-synthesi
    originalFetcher:async(input)=>{articleReads++;assert.equal(String(input),source.uri);return new Response(`<meta property="article:published_time" content="2026-10-28"><article><h1>${source.title}</h1><p>${'The company announced a North American skincare production partnership. '.repeat(8)}</p></article>`,{headers:{'content-type':'text/html'}});},
   });
   assert.equal(searches,2);assert.equal(syntheses,1);assert.equal(feedCalls,1);assert.equal(articleReads,1);
-  assert.equal(result.sources.length,1);assert.equal(result.sources[0].uri,source.uri);assert.match(result.text,/生产合作/);
+  assert.equal(result.sources.length,1);assert.equal(JSON.parse(result.text.split('\n')[1]).presentation,'brief');
  }finally{globalThis.fetch=savedFetch;keys.forEach((key,index)=>{if(saved[index]===undefined)delete process.env[key];else process.env[key]=saved[index];});}
+});
+
+test('daily report synthesizes once after three independent recent originals pass the evidence gate',async(t)=>{
+ t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-28T23:00:00Z')});
+ const savedFetch=globalThis.fetch, savedKey=process.env.DASHSCOPE_API_KEY, savedEndpoint=process.env.QWEN_SEARCH_ENDPOINT;
+ process.env.DASHSCOPE_API_KEY='fixture-only';process.env.QWEN_SEARCH_ENDPOINT='https://fixture.invalid/daily-three-sources';
+ const sources=[{title:'Skincare production partnership',uri:'https://publisherone.com/news/one'}, {title:'Cosmetic ingredient research',uri:'https://publishertwo.com/news/two'}, {title:'Personal care ingredient development',uri:'https://publisherthree.com/news/three'}];
+ let searches=0,syntheses=0;
+ globalThis.fetch=async(_input,init)=>{
+  const body=JSON.parse(String(init?.body));
+  if(body.parameters?.enable_search){searches++;return Response.json({output:{choices:[{finish_reason:'stop',message:{content:'No metadata'}}],search_info:{search_results:[]}}});}
+  syntheses++;return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({items:[{sourceId:'S25',quoteIds:['S25-Q1'],fact:'企业公布护肤品生产合作安排。',meaning:'可能为生产合作提供调研线索。',action:'建议核对合作对象和生产能力。'},{sourceId:'S26',quoteIds:['S26-Q1'],fact:'企业公布护肤品原料研究。',meaning:'可能为原料研究提供线索。',action:'建议核对原料研究资料。'},{sourceId:'S27',quoteIds:['S27-Q1'],fact:'企业公布护肤品开发项目。',meaning:'可能为产品开发提供线索。',action:'建议核对项目开发范围。'}],conclusion:'公开资料提供护肤品合作和研究观察线索。',conclusionSourceIds:['S25','S26','S27']})}}]});
+ };
+ try{
+  const result=await qwenSearchAnswer([{role:'user',content:'今日资讯：三篇原文生成测试，行业：护肤，目标市场：全球。'}],{searchEvidenceFirst:true},{publicFeedDiscovery:async()=>sources,originalFetcher:async input=>{
+   const source=sources.find(item=>item.uri===String(input))!;const day=source===sources[0]?'2026-10-28T14:00:00Z':'2026-10-28T22:00:00Z';
+   return new Response(`<meta property="article:published_time" content="${day}"><article><h1>${source.title}</h1><p>${(source.title+' announced '+(['a production partnership','new ingredient research','a development project'][sources.indexOf(source)])+' for skincare products. ').repeat(8)}</p></article>`,{headers:{'content-type':'text/html'}});
+  }});
+  assert.equal(searches,2);assert.equal(syntheses,1);assert.match(result.text,/```industry-insight/);assert.equal(result.sources.length,3);
+ }finally{globalThis.fetch=savedFetch;if(savedKey===undefined)delete process.env.DASHSCOPE_API_KEY;else process.env.DASHSCOPE_API_KEY=savedKey;if(savedEndpoint===undefined)delete process.env.QWEN_SEARCH_ENDPOINT;else process.env.QWEN_SEARCH_ENDPOINT=savedEndpoint;}
 });

@@ -20,6 +20,11 @@ test('real provider failure reasons remain specific, with no fabricated success'
   const failure=assistantSearchFailure({content:'搜索服务超时，本次检索失败。',events:[{...events[0],detail:'原文读取超时'}]});
   assert.match(failure!.reason,/超时/); assert.doesNotMatch(failure!.reason,/完成报告|已找到/);
 });
+test('daily evidence shortfall is not presented as zero readable sources',()=>{
+ const content='总体结论：已扩大检索到最近24小时，但可读取且符合条件的资料不足，暂无法生成完整资讯报告。\n\n信息来源：本轮未取得通过核验的资料。';
+ const failure=assistantSearchFailure({content,events:[{...events[0],detail:content}]});
+ assert.match(failure!.reason,/最近24小时.*资料仍不足/);assert.doesNotMatch(failure!.reason,/没有取得可核验原文/);
+});
 test('streaming, successful reports, ordinary questions and company analysis are untouched', () => {
   assert.equal(assistantSearchFailure({content:legacy,events,active:true}),null);
   assert.equal(assistantSearchFailure({content:legacy,events,sources:[{title:'原文',uri:'https://example.com/article'}]}),null);
