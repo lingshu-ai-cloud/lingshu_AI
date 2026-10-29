@@ -3,6 +3,15 @@ import assert from 'node:assert/strict';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import { readLegacyWeeklyPackages } from './legacyWeeklyContext.js';
 import { legacyWeeklyPlanHash } from './legacyWeeklyContentActions.js';
+test('weekly context queries the persisted workflow run timestamp and propagates storage failure', async () => {
+  const failure = new Error('PocketBase unavailable');
+  const store = { async list(collection: string, query: any) {
+    assert.equal(collection, 'workflow_runs');
+    assert.deepEqual(query, { where: { tenant_id: 'tenant' }, sort: '-started_at', perPage: 500 });
+    throw failure;
+  } } as unknown as DataStore;
+  await assert.rejects(readLegacyWeeklyPackages(store, 'tenant'), error => error === failure);
+});
 test('visible weekly context uses real goal, plan, run and immutable plan hash, not a parallel package', async () => {
   const body = { businessPackage: { revision: 2 } };
   const tables: Record<string, Record_[]> = {

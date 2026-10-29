@@ -41,6 +41,7 @@ export function createDigitalEmployeeFactRebuildRoutes(deps: Pick<DigitalEmploye
 
   function registerPostGoalsGoalIdRebuildFromLatestFacts() {
     digitalEmployeesRouter.post('/goals/:goalId/rebuild-from-latest-facts', async (req, res) => {
+      try {
       const { tenantId, userId } = res.locals as AuthLocals;
       const requestId = String(req.body?.requestId || '').trim();
       const expectedGoalVersion = Number(req.body?.expectedGoalVersion);
@@ -88,7 +89,7 @@ export function createDigitalEmployeeFactRebuildRoutes(deps: Pick<DigitalEmploye
           res.status(409).json({ error: 'goal_fact_binding_changed', message: '周目标引用的企业事实版本已变化，请刷新后重试。', factVersion: fromFactsVersion });
           return;
         }
-        const sourceRun = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: source.id });
+        const sourceRun = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: source.id }, '-started_at');
         if (sourceRun) {
           res.status(409).json({ error: 'package_locked', message: '周目标已经产生运行记录，不能自动重建。' });
           return;
@@ -173,7 +174,7 @@ export function createDigitalEmployeeFactRebuildRoutes(deps: Pick<DigitalEmploye
             throw new WeeklyGoalFactRebuildCommitError('weekly_goal_fact_rebuild_target_conflict', '已存在的替代周目标与本次重建不一致。');
           }
           if (target && (target.status !== 'draft' || Number(target.version) !== 1
-            || await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: target.id }))) {
+            || await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: target.id }, '-started_at'))) {
             throw new WeeklyGoalFactRebuildCommitError('weekly_goal_fact_rebuild_target_not_pristine', '替代周目标已被修改或启动，不能替换原草稿。');
           }
           const targetPlan = target ? await tenantRecord<PlanRecord>(COLLECTION.plans, targetPlanId, tenantId) : null;
@@ -260,7 +261,7 @@ export function createDigitalEmployeeFactRebuildRoutes(deps: Pick<DigitalEmploye
             res.status(409).json({ error: 'draft_required', message: '只有尚未启动的过期周目标可以自动重建。' });
             return;
           }
-          if (await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: source.id })) {
+          if (await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: source.id }, '-started_at')) {
             res.status(409).json({ error: 'package_locked', message: '周目标已经产生运行记录，不能自动重建。' });
             return;
           }
@@ -416,6 +417,9 @@ export function createDigitalEmployeeFactRebuildRoutes(deps: Pick<DigitalEmploye
           if (lease) await releaseDurableOperationLease({ dataStore: store, lease }).catch(() => undefined);
         }
       });
+      } catch {
+        if (!res.headersSent) res.status(503).json({ error: 'goal_fact_rebuild_failed', message: '周计划同步服务暂时不可用，请先查看原计划状态，勿重复提交。' });
+      }
     });
   }
 

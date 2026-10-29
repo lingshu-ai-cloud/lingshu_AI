@@ -8,7 +8,7 @@ const object = (value: unknown) => socialObject(socialJson(value)) ?? {};
 
 /** Reads the same goal/plan/run lineage used by the visible business calendar. */
 export async function readLegacyWeeklyPackages(store: DataStore, tenantId: string) {
-  const rows = await store.list<Record_>('workflow_runs', { where: { tenant_id: tenantId }, sort: '-created_at', perPage: 500 });
+  const rows = await store.list<Record_>('workflow_runs', { where: { tenant_id: tenantId }, sort: '-started_at', perPage: 500 });
   if (rows.totalItems !== rows.items.length) throw new Error('legacy_week_context_incomplete');
   const packages: Array<Record<string, unknown>> = [];
   for (const run of rows.items) {

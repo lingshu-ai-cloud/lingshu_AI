@@ -191,7 +191,7 @@ export function createDigitalEmployeePackageRoutes(deps: Pick<DigitalEmployeeApp
           res.status(409).json({ error: 'goal_fact_rebuild_not_committed', message: '最新事实周目标尚未完成安全替换，暂不能修改。' });
           return;
         }
-        const run = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id });
+        const run = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id }, '-started_at');
         if (run) {
           res.status(409).json({ error: 'package_locked', message: '计划已经开始执行，不能重新生成任务预览。' });
           return;
@@ -349,7 +349,7 @@ export function createDigitalEmployeePackageRoutes(deps: Pick<DigitalEmployeeApp
         if (!await weeklyGoalFactRebuildTargetCommitted(tenantId, goal)) {
           res.status(409).json({ error: 'goal_fact_rebuild_not_committed', message: '最新事实周目标尚未完成安全替换，暂不能修改。' }); return;
         }
-        const run = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id });
+        const run = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id }, '-started_at');
         if (goal.status !== 'draft' || run) { res.status(409).json({ error: 'package_locked', message: '计划已启动，请在执行任务中处理调整。' }); return; }
         const plan = await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id });
         if (!plan) { res.status(404).json({ error: 'plan_not_found' }); return; }
@@ -440,7 +440,7 @@ export function createDigitalEmployeePackageRoutes(deps: Pick<DigitalEmployeeApp
       await withLocalQueue(goalApprovalQueues, `${tenantId}:activate`, async () => {
         const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, req.params.goalId, tenantId);
         const plan = goal ? await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }) : null;
-        const run = goal ? await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id }) : null;
+        const run = goal ? await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id }, '-started_at') : null;
         if (!goal || !plan) { res.status(404).json({ error: 'weekly_plan_not_found', message: '没有找到对应的周计划。' }); return; }
         if (goal.status !== 'draft' || plan.status !== 'draft' || run) {
           res.status(409).json({ error: 'production_budget_locked', message: '计划已开工，预算授权不能在生产中途静默变更。' }); return;
@@ -503,7 +503,7 @@ export function createDigitalEmployeePackageRoutes(deps: Pick<DigitalEmployeeApp
         if (publishDate < goal.starts_at || publishDate > goal.ends_at) {
           res.status(400).json({ error: 'publication_schedule_outside_cycle', message: `发布时间必须在本周周期 ${goal.starts_at} 至 ${goal.ends_at} 内。` }); return;
         }
-        const run = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goalId });
+        const run = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goalId }, '-started_at');
         if (run) {
           const workflow = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, page: 1, perPage: 200 });
           const locked = workflow.items.find(task => ['content_release_approval', 'publishing_calendar', 'platform_publish'].includes(task.task_key)
