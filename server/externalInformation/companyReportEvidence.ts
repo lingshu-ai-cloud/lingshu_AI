@@ -1,5 +1,6 @@
 import { assertCompanyIncomeDisclosure } from './companyDisclosureContradictions.js';
 import { assertCompanyFinancialRatioDirection } from './companyFinancialRatioDirection.js';
+import { assertCompanyBusinessClaim } from './companyBusinessClaimQuality.js';
 import { createHash } from 'node:crypto';
 import { companyCoverIdentityMatches } from './companyRegistry.js';
 import { ExternalInformationError } from './http.js';
@@ -115,6 +116,8 @@ export function normalizeReportNumericText(value: string): string {
 /** Selected pages cannot establish exhaustive absence or a comparable multi-period trend. */
 export function assertCompanyClaimScope(prose: string, source: string): void {
   assertCompanyIncomeDisclosure(prose, source);
+  try { assertCompanyBusinessClaim(prose, source); }
+  catch { throw new ExternalInformationError('company_report_claim_unsupported', '所引证据不足以支持该经营因果判断，本次未采用。'); }
   source = compactReportText(source);
   const compactProse = compactReportText(prose);
   const sourceBacked = (claim: string) => source.includes(compactReportText(claim));

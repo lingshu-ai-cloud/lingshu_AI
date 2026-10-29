@@ -44,9 +44,15 @@ assert.match(scenes, /useState<AssistantHomeQuickLauncherId \| null>\(null\)/, '
 assert.match(home, /HOME_GROWTH_TOUR_START_EVENT, \{ detail: \{ restart: true \} \}/, '点击海外增长导览卡片必须从头开始，不能停留在旧进度');
 assert.ok(home.indexOf('<strong>让灵小枢认识我</strong>') < home.indexOf('<strong>灵枢如何助力海外增长</strong>'), '首次引导须先展示企业介绍，再展示海外增长导览');
 assert.match(scenes, /activeLauncher \? <div className="creator-home__quick-panel">[\s\S]{0,1600}activePrompts\.map/, '点击小按钮后才可显示其对应的大卡片');
-assert.match(scenes, /const hasWeeklyPlan = Boolean\(overview\?\.goal && overview\.plan\)[\s\S]{0,500}activeLauncher\?\.id !== 'weekly-plan'[\s\S]{0,200}hasWeeklyPlan[\s\S]{0,500}label: '创建周计划'[\s\S]{0,300}prompt: '请帮我创建本周计划。'/, '周计划快捷卡须根据真实计划状态切换查看或创建提示词');
+assert.match(scenes, /const hasWeeklyPlan = Boolean\(overview\?\.goal && overview\.plan\)/, '周计划状态来自已保存目标与计划');
+assert.match(scenes, /activeLauncher\?\.id !== 'weekly-plan' \|\| !firstRunLoaded\) return prompts/, '非周计划入口保持原样');
+assert.match(scenes, /weeklyIndicator === 'attention'[\s\S]*?label: '解决当前问题'/, '有待处理问题时显示解决入口');
+assert.match(scenes, /if \(hasWeeklyPlan\) return prompts;[\s\S]*?label: '创建周计划'[\s\S]*?prompt: '请帮我创建周计划。'|if \(hasWeeklyPlan\) return prompts;[\s\S]*?label: '创建周计划'[\s\S]*?prompt: '请帮我创建本周计划。'/, '有计划保留查看入口，无计划显示创建入口');
 assert.doesNotMatch(home, /全部快捷任务/, '首页不应增加额外的全部快捷任务层级');
-assert.match(scenes, /entry\.id === 'OP-CALENDAR'\) \{ preparePrompt\(entry\); return; \}/, '周计划入口进入首页对话');
+assert.match(scenes, /entry\.id === 'OP-CALENDAR'\) \{ if \(weeklyIndicator === 'attention'\) void showWeeklyIssueInConversation\(\); else preparePrompt\(entry\); return; \}/, '周计划问题进入对话，其他状态使用原对话入口');
+const resetEffect = scenes.match(/useEffect\(\(\) => \{\s*setActiveLauncherId\(null\); setCompanyReportOpen\(false\);[\s\S]*?\}, \[([^\]]+)\]\);/);
+assert.ok(resetEffect, '会话切换时重置场景状态');
+assert.equal(resetEffect[1].replace(/\s/g, ''), 'sessionScope,agent', '概览对象刷新不能重置正在选择的企业；会话或员工切换仍会重置');
 assert.match(scenes, /entry\.id === 'CO-11'[\s\S]{0,120}openContentGenerationQueue\(\{view:'tasks'\}\)/, '首页内容任务入口必须打开全局统一内容生成队列');
 assert.match(scenes, /className="creator-home__suggestions"/, '自由创作的提示输入须保留在数字员工输入框下方');
 assert.match(scenes, /ASSISTANT_HOME_QUICK_LAUNCHERS\.map\(launcher =>/, '底部须渲染全部小按钮入口');
