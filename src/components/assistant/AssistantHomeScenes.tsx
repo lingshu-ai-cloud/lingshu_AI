@@ -100,6 +100,8 @@ export default function AssistantHomeScenes({ agent, disabled = false, variant =
   const canvasCollapsed = activeLauncher === null;
   useEffect(() => {
     setActiveLauncherId(null); setCompanyReportOpen(false); setHighlightOpen(false); setBusinessSceneId(null); setQueryPrompt(null); setPendingPrompt(null);
+  }, [sessionScope, agent]);
+  useEffect(() => {
     if (suppliedOverview !== undefined) return;
     let active = true; setReadOverview(null); setReadLoaded(false);
     void digitalEmployeeApi.overview().then(value => { if (active) { setReadOverview(value); setReadLoaded(true); } }).catch(() => { if (active) setReadLoaded(true); });
