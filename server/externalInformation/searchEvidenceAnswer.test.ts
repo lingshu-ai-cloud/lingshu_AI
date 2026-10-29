@@ -112,6 +112,8 @@ test('a single source does not turn a product example into an industry-wide dema
  const market={...item,meaning:'提示面膜品类在终端市场具备较高接受度。'};
  const second=await composeSearchEvidenceAnswer('行业资讯：行业：美妆原料，目标市场：全球。',[original],async()=>JSON.stringify({items:[market],conclusion:'公开信息提供原料研究观察。'}));
  assert.equal(JSON.parse(second.text.split('\n')[1]).signals[0].implication,'');
+ const third=await composeSearchEvidenceAnswer('行业资讯：行业：美妆原料，目标市场：全球。',[original],async()=>JSON.stringify({items:[{...item,meaning:'提示绿色溶剂可能用于产品配方，反映行业对降低石化来源溶剂依赖的研发动向。'}],conclusion:'公开信息提供原料研究观察。'}));
+ assert.equal(JSON.parse(third.text.split('\n')[1]).signals[0].implication,'');
 });
 
 test('only selected and deduplicated sources may support a comprehensive report introduction', async () => {

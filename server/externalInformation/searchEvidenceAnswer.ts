@@ -119,7 +119,7 @@ export async function composeSearchEvidenceAnswer(question:string,originals:Sear
   const meaning=qualified && implicationNumbersVerified?item.meaning:'公开发布提供了进一步核对产品应用与客户需求的线索。';
   const action=qualified && implicationNumbersVerified?item.action:'对照原文核对适用对象、限制条件及目标市场要求，再用技术资料或实际业务数据验证，之后决定是否采用。';
   // A single article does not establish a market-wide trend or ongoing industry investment.
-  const broadMarketAssertion = /(?:行业|领域|市场|供应链)(?:.{0,24})(?:兴趣|需求|接受度|热度|投入)(?:.{0,16})(?:上升|增长|提高|较高|持续|加速)|(?:行业|市场|供应链)(?:.{0,24})(?:较高|高)(?:.{0,8})(?:接受度|需求|热度)|(?:行业|市场|供应链)(?:.{0,24})持续投入/u.test(meaning);
+  const broadMarketAssertion = /(?:行业|领域|市场|供应链)(?:.{0,24})(?:兴趣|需求|接受度|热度|投入)(?:.{0,16})(?:上升|增长|提高|较高|持续|加速)|(?:行业|市场|供应链)(?:.{0,24})(?:较高|高)(?:.{0,8})(?:接受度|需求|热度)|(?:行业|市场|供应链)(?:.{0,24})持续投入|(?:反映|显示|表明)(?:行业|领域|市场|供应链)(?:.{0,30})(?:研发|技术|竞争|发展)(?:动向|趋势)/u.test(meaning);
   if (factVerified && !industrySignals.some(signal => signal.sourceUrl === original.source.uri)) {
    industrySignals.push({title:original.source.title, category:industrySignalCategory(`${original.source.title} ${fact}`),
     publishedAt:original.publicationDay ?? original.published[0] ?? '', fact, implication:broadMarketAssertion?'':meaning, action, sourceTitle:original.source.title, sourceUrl:original.source.uri, sourceType:industrySourceType(original.text), quote:chosen[0]!.text});

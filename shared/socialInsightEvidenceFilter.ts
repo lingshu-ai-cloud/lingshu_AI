@@ -6,7 +6,7 @@ const unsupported = /(?:全球|全世界|全网|整个市场|普遍需求|市场
 /** Drop unsupported sentences instead of inventing a substitute finding. */
 export function filterSocialInsightEvidence(value: string): string {
   return value.split(/(?<=[。！？；\n])/u).filter(part => !unsupported.test(part)
-    && !/(?:反映|表明|显示|证明)(?:了)?(?:终端)?(?:消费者|用户|受众)(?:对[^。！？；\n]{0,30})?(?:的)?(?:偏好|需求|倾向)/u.test(part)).join('').trim();
+    && !/(?:反映|表明|显示|证明)(?:了)?(?:终端)?(?:消费者|用户|受众)(?:对[^。！？；\n]{0,30})?(?:的)?(?:偏好|需求|倾向|关注)/u.test(part)).join('').trim();
 }
 /** Non-mutating projection protects both newly generated and historical reports. */
 export function evidenceSafeSocialInsightReport(report: SocialInsightReport): SocialInsightReport {
