@@ -15,6 +15,11 @@ const AssistantHookScene = lazy(() => import('./AssistantHookScene'));
 const AssistantCampaignScene = lazy(() => import('./AssistantCampaignScene'));
 const AssistantScenarioPlanner = lazy(() => import('./AssistantScenarioPlanner'));
 
+export function creationPortalHomeNavigation(value: AssistantCreationPortal) {
+  assistantCreationPortalSchema.parse(value);
+  return { page: 'socialInspiration' as const };
+}
+
 export function creationPortalNavigation(value: AssistantCreationPortal, requestId = Date.now()) {
   const portal = assistantCreationPortalSchema.parse(value);
   const productionPlatforms = portal.platforms.filter(isContentProductionPlatform);
@@ -64,7 +69,7 @@ export default function AssistantCreationPortalCard({ portal }: { portal: Assist
     className="mt-3 flex w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left text-text-primary transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     onClick={() => {
       if (identity.current !== productionNavigationIdentity()) { void message.warning('登录状态已变化，请重新打开当前会话。'); return; }
-      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { ...creationPortalNavigation(item), navigationIdentity: identity.current } }));
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { ...creationPortalHomeNavigation(item), navigationIdentity: identity.current } }));
     }}>
     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-surface-2 text-accent" aria-hidden="true">{item.imageReplication ? <Images size={22}/> : <Clapperboard size={22}/>}</span>
     <span className="min-w-0 flex-1"><strong className="block text-sm font-semibold">{item.imageReplication ? '图文爆款复刻' : '内容创作'}</strong>

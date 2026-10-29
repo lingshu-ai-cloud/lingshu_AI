@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { assistantCreationPortal } from './assistantProductionIntake';
-import AssistantCreationPortalCard, { creationPortalNavigation, AssistantTaskPortalCard, taskPortalNavigation } from './AssistantCreationPortalCard';
+import AssistantCreationPortalCard, { creationPortalNavigation, creationPortalHomeNavigation, AssistantTaskPortalCard, taskPortalNavigation } from './AssistantCreationPortalCard';
 import { assistantScenarioIntake } from '../../lib/assistantScenarioIntake';
 import { confirmedTaskPortal } from '../../../shared/contracts/assistantTaskPortal';
 import { assistantCreationPortalSchema } from '../../../shared/contracts/assistantCreationPortal';
@@ -11,6 +11,14 @@ import { parseMessages } from '../../../server/routes/assistantThreadMessageInpu
 import { sanitizeAssistantThreadForJournal } from '../../lib/assistantThreadJournal';
 import { useAssistantStore } from '../../stores/assistantStore';
 import { mergeConsecutiveAssistant } from './globalAssistantRuntime';
+
+test('generic creation portal opens the content creation home without a task, fixture or creation-workbench handoff', () => {
+  const portal = assistantCreationPortal('请创建云朵泡沫卸妆蜜首条B2B内容任务');
+  assert.ok(portal);
+  assert.deepEqual(creationPortalHomeNavigation(portal), { page: 'socialInspiration' });
+  assert.equal(portal.requestedOutputCount, null);
+  assert.throws(() => creationPortalHomeNavigation({ ...portal, href: 'https://untrusted.example' } as typeof portal));
+});
 
 test('new content/video intents reuse intake, preserve exact counts and leave vague counts unconfirmed', () => {
   for (const [input, count] of [['创建一条新内容', 1], ['我想创建一条新视频', 1], ['帮我制作三条视频', 3], ['新建单条内容', 1], ['创建3条TikTok视频，每条18秒', 3], ['制作二十条视频', 20], ['帮我创建几条新视频', null], ['创建1000条视频', null]] as const) {
