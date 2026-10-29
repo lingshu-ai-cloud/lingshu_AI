@@ -24,7 +24,13 @@ export function assertCompanyFinancialRatioDirection(prose: string, metrics: Com
  // must not hide a contradiction with the available same-period financial rows.
  const revenue = metrics.find(metric => metric.label === '营业收入');
  if (!revenue) return;
- const text = prose.normalize('NFKC').replace(/\s+/gu, '');
+ const netProfit = metrics.find(metric => metric.label === '归属于上市公司股东的净利润');
+ if (/增收不增利/u.test(prose) && netProfit
+   && number(netProfit.current) > number(netProfit.previous)) {
+  throw new ExternalInformationError('company_report_scope_mismatch', '归母净利润增长，不能笼统称增收不增利。');
+ }
+ const text = prose.normalize('NFKC').replace(/\s+/gu, '')
+  .replace(/(销售|管理|研发|财务)费用([^。；;！？，,]{0,16}?)(?:但|而|与)(?:其)?费用率/gu, '$1费用率');
  const labels = [...text.matchAll(ratioLabel)];
  for (let index = 0; index < labels.length; index++) {
   const label = labels[index][0], start = labels[index].index ?? 0;

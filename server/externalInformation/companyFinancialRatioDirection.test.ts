@@ -30,6 +30,8 @@ test('direction validation covers titles, comma-delimited prose and stable ratio
  assert.doesNotThrow(() => assertCompanyFinancialRatioDirection('研发费用率为百分之二，且扣非净利润同比下降。', rows, ['P1']));
  assert.doesNotThrow(() => assertCompanyFinancialRatioDirection('研发费用率保持稳定。', ratio('10', '10'), ['P1']));
  assert.throws(() => assertCompanyFinancialRatioDirection('研发费用率保持稳定。', ratio('20', '10'), ['P1']), /同比方向/);
+ assert.throws(() => assertCompanyFinancialRatioDirection('研发费用绝对值微增但费用率下降', ratio('99429488.73', '95025833.06', ['5374800725.36', '5361890476.66']), ['P23']), /同比方向/);
+ assert.doesNotThrow(() => assertCompanyFinancialRatioDirection('研发费用绝对值微增但费用率提升', ratio('99429488.73', '95025833.06', ['5374800725.36', '5361890476.66']), ['P23']));
 });
 
 test('conditional scenarios, separate legal entities, explicit annual comparisons and missing period evidence are not relabelled', () => {
@@ -47,6 +49,8 @@ test('real Proya evidence rejects the draft micro-decline while retaining the tr
  assert.equal(rows.length, 2);
  assert.doesNotThrow(() => assertCompanyFinancialRatioDirection('研发费用率同比上升至1.85%。', metrics, ['P23']));
  assert.throws(() => assertCompanyFinancialRatioDirection('研发费用率微降至1.85%。', metrics, ['P23']), /同比方向/);
+ assert.throws(() => assertCompanyFinancialRatioDirection('增收不增利下的结构性分化', metrics, ['P6']), /归母净利润增长/);
+ assert.doesNotThrow(() => assertCompanyFinancialRatioDirection('扣非利润承压', metrics, ['P6']));
  const minimal = { headline: '费用与经营变化', conclusion: { text: '研发费用率微降至1.85%。', evidenceIds: ['P23'] }, sections: [], watchpoints: [] };
  assert.throws(() => validateCompanyAnalysis(minimal, saved.evidence, metrics), /同比方向/);
 });

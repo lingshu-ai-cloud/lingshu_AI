@@ -2,6 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { assertCompanyBusinessClaim, attributeCompanyPublicReview } from './companyBusinessClaimQuality.js';
+import { assertCompanyClaimScope } from './companyReportEvidence.js';
+
+test('real report wording cannot infer payment slowdown or supply-chain cost success from financial changes alone', () => {
+ const evidence = '经营活动现金流量净额同比下降26.48%；营业成本同比下降3.31%，毛利率同比提升。';
+ for (const claim of ['经营现金流收缩，提示终端回款节奏放缓。', '营业成本下降且毛利率提升，反映供应链降本成效。']) {
+  assert.throws(() => assertCompanyClaimScope(claim, evidence), /所引证据不足/);
+ }
+ assert.doesNotThrow(() => assertCompanyClaimScope('营业成本同比下降，毛利率提升。', evidence));
+ assert.doesNotThrow(() => assertCompanyClaimScope('反映供应链降本成效。', '公司披露供应链降本成效。'));
+});
 import { generateCompanyBusinessInsights } from './companyBusinessInsights.js';
 import { COMPANY_REPORT_CATALOG } from './companyReportCatalog.js';
 import type { CompanyReport } from '../../shared/contracts/companyReport.js';
