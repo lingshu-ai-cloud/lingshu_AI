@@ -27,7 +27,7 @@ test('explicit replication opens image intake with one uploaded reference, witho
 });
 
 test('questions, negations and video requests keep their existing routes; multiple images require selection', () => {
-  for (const text of ['怎么复刻这张图', '不要复刻这张图', '如果复刻图文会怎样', '分析这个图文爆款', '查看图文复刻任务', '帮我复刻这条视频', '帮我生成产品海报']) {
+  for (const text of ['怎么复刻这张图', '不要复刻这张图', '如果复刻图文会怎样', '分析这个图文爆款', '查看图文复刻任务', '帮我复刻这条视频', '帮我生成产品海报', '不要借鉴这张图创作海报', '如果借鉴图文制作会怎样']) {
     assert.equal(assistantImageReplicationPortal(text), null, text);
   }
   const attachments = ['one', 'two'].map(materialId => ({ kind: 'image' as const, materialId, name: materialId, size: 10 }));
@@ -36,4 +36,13 @@ test('questions, negations and video requests keep their existing routes; multip
   assert.deepEqual(portal.platforms, ['linkedin']);
   assert.equal(assistantCreationPortalSchema.safeParse({ ...portal, outputType: 'video' }).success, false);
   assert.equal(assistantCreationPortalSchema.safeParse({ ...portal, imageReplication: { reference: { materialId: 'x', name: 'x', url: 'https://evil.test' } } }).success, false);
+});
+
+test('borrowing a named reference with product context opens real image intake instead of a text-only answer', () => {
+  const portal = assistantImageReplicationPortal('帮我借鉴灵感集市里已完成拆解的“LUXURY IN EVERY COMPACT”图文，为企业产品“燕窝碎碎洁面凝露”创作一条 Facebook 爆款图文。使用企业知识库里的真实产品信息，只制作 1 张图片。完成后停在验收，不发布。');
+  assert.ok(portal);
+  assert.equal(portal.outputType, 'image');
+  assert.equal(portal.requestedOutputCount, 1);
+  assert.deepEqual(portal.platforms, ['facebook']);
+  assert.ok(portal.imageReplication);
 });

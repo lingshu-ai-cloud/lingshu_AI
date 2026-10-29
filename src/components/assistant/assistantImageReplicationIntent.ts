@@ -4,10 +4,10 @@ import type { UploadedAssistantAttachment } from './assistantChatPrompt';
 /** A navigation draft only. Reference bytes and product identity are resolved after opening it. */
 export function assistantImageReplicationPortal(text: string, attachments: UploadedAssistantAttachment[] = []): AssistantCreationPortal | null {
   const value = text.trim();
-  if (!value || /(?:不要|不想|先别|暂不|取消|如何|怎么|为什么|是否|假如|如果).{0,12}(?:复刻|裂变|仿照|参考|模仿)/u.test(value)
+  if (!value || /(?:不要|不想|先别|暂不|取消|如何|怎么|为什么|是否|假如|如果).{0,12}(?:复刻|裂变|仿照|参考|借鉴|模仿)/u.test(value)
     || /^(?:分析|介绍|查询|查看|解释)/u.test(value)) return null;
   const images = attachments.filter(item => item.kind === 'image');
-  if (!/(?:复刻|裂变|仿照|模仿|照着|参考.{0,30}(?:做|制作|创作|生成))/u.test(value)
+  if (!/(?:复刻|裂变|仿照|模仿|照着|(?:参考|借鉴)[\s\S]{0,120}(?:做|制作|创作|生成))/u.test(value)
     || (!/图文|海报|图片|参考图|这张图|单图/u.test(value) && images.length !== 1)
     || /视频|短片|分镜/u.test(value)) return null;
   const platforms = [
