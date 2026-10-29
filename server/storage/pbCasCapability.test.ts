@@ -75,18 +75,20 @@ test('approved CAS domains turn on only after a live read-only PocketBase schema
   try {
     assert.equal(await runWithDataAuthority('pocketbase', () => pbStore.supportsAtomicCompareAndSwap?.()), false);
     assert.equal(await runWithDataAuthority('pocketbase', () => pbStore.supportsAtomicCompareAndSwapFor?.('studio_projects')), true);
+    assert.equal(await runWithDataAuthority('pocketbase', () => pbStore.supportsAtomicCompareAndSwapFor?.('content_execution_jobs')), true);
     assert.equal(await runWithDataAuthority('pocketbase', () => pbStore.supportsAtomicCompareAndSwapFor?.('enterprise_onboarding_drafts')), true);
     assert.equal(await runWithDataAuthority('pocketbase', () => pbStore.supportsAtomicCompareAndSwapFor?.('tenant_profiles')), true);
     assert.equal(await runWithDataAuthority('pocketbase', () => pbStore.supportsAtomicCompareAndSwapFor?.('digital_employee_configs')), true);
     assert.equal(await runWithDataAuthority('pocketbase', () => pbStore.supportsAtomicCompareAndSwapFor?.('digital_employee_config_versions')), true);
     assert.equal(await runWithDataAuthority('pocketbase', () => pbStore.supportsAtomicCompareAndSwapFor?.('workflow_runs')), false);
-    assert.equal(schemaReads, 5);
+    assert.equal(schemaReads, 6);
     ownersReady = false;
     assert.equal(await runWithDataAuthority('pocketbase', () => pbStore.supportsAtomicCompareAndSwapFor?.('tenant_profiles')), false);
     assert.equal(await runWithDataAuthority('pocketbase', () => pbStore.supportsAtomicCompareAndSwapFor?.('enterprise_onboarding_drafts')), false);
     metadata = { ...valid(), indexes: [] };
     assert.equal(await runWithDataAuthority('pocketbase', () => pocketBaseCasClaimSchemaVerified()), false);
     assert.equal(await runWithDataAuthority('pocketbase', () => pbStore.supportsAtomicCompareAndSwapFor?.('studio_projects')), false);
+    assert.equal(await runWithDataAuthority('pocketbase', () => pbStore.supportsAtomicCompareAndSwapFor?.('content_execution_jobs')), false);
     delete process.env.PB_ADMIN_PASSWORD;
     assert.equal(await runWithDataAuthority('pocketbase', () => pbStore.supportsAtomicCompareAndSwapFor?.('studio_projects')), false);
   } finally {

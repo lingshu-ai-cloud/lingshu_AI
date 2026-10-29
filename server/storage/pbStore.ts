@@ -490,13 +490,14 @@ export const pbStore: DataStore = {
     if (currentDataAuthority() === 'local') return localFallbacksEnabled();
     if (![
       'studio_projects',
+      'content_execution_jobs',
       'enterprise_onboarding_drafts',
       'tenant_profiles',
       'digital_employee_configs',
       'digital_employee_config_versions',
     ].includes(collection)) return false;
     if (!await pocketBaseCasClaimSchemaVerified()) return false;
-    return collection === 'studio_projects' || await pocketBaseUniqueOwnerSchemaVerified(collection);
+    return ['studio_projects', 'content_execution_jobs'].includes(collection) || await pocketBaseUniqueOwnerSchemaVerified(collection);
   },
   // Remote schema verification has not yet been implemented. Static migration
   // presence and disabling fallback do not prove a deployed unique index.

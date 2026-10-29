@@ -19,7 +19,7 @@ assert.ok(compareAndSwap, 'PocketBase store must expose compareAndSwap');
 
 type StoredRecord = Record<string, unknown> & { id: string };
 
-function createPocketBaseHarness(blockFirstRead = false, blockFirstOwnershipRead = false) {
+function createPocketBaseHarness(blockFirstRead = false, blockFirstOwnershipRead = false, targetCollection = 'widgets') {
   const target: StoredRecord = { id: 'record000000001', version: 1, value: 'before' };
   const claims = new Map<string, StoredRecord>();
   let claimAttempts = 0;
@@ -68,7 +68,7 @@ function createPocketBaseHarness(blockFirstRead = false, blockFirstOwnershipRead
       if (!preserveClaims) claims.delete(id);
       return new Response(null, { status: 204 });
     }
-    if (collection === 'widgets' && id === target.id && method === 'GET') {
+    if (collection === targetCollection && id === target.id && method === 'GET') {
       if (targetReadFailures > 0) {
         targetReadFailures -= 1;
         return new Response('target read unavailable', { status: 503 });
@@ -76,7 +76,7 @@ function createPocketBaseHarness(blockFirstRead = false, blockFirstOwnershipRead
       if (blockFirstRead && claimAttempts === 1) await concurrentReadsReady;
       return Response.json(structuredClone(target));
     }
-    if (collection === 'widgets' && id === target.id && method === 'PATCH') {
+    if (collection === targetCollection && id === target.id && method === 'PATCH') {
       targetPatchCount += 1;
       Object.assign(target, JSON.parse(String(init.body ?? '{}')));
       return Response.json(structuredClone(target));
@@ -109,6 +109,20 @@ test('PocketBase CAS elects one cross-instance winner for the same expected stat
   assert.deepEqual([first, second].sort(), [false, true]);
   assert.equal(harness.target.version, 2);
   assert.ok(['first', 'second'].includes(String(harness.target.value)));
+});
+
+test('content execution claims admit only one worker for the same queued job', async () => {
+  const harness = createPocketBaseHarness(true, false, 'content_execution_jobs');
+  Object.assign(harness.target, { status: 'queued', attempts: 0 });
+  globalThis.fetch = harness.fetch;
+  const winners = await runWithDataAuthority('pocketbase', () => Promise.all([
+    compareAndSwap('content_execution_jobs', harness.target.id, { status: 'queued', attempts: 0 }, { status: 'running', attempts: 1, claimed_by: 'worker-a' }),
+    compareAndSwap('content_execution_jobs', harness.target.id, { status: 'queued', attempts: 0 }, { status: 'running', attempts: 1, claimed_by: 'worker-b' }),
+  ]));
+  assert.deepEqual(winners.sort(), [false, true]);
+  assert.equal(harness.targetPatchCount(), 1);
+  assert.equal(harness.target.status, 'running');
+  assert.equal(harness.target.attempts, 1);
 });
 
 test('PocketBase target mutex prevents an ordinary update from interleaving with CAS', async () => {
