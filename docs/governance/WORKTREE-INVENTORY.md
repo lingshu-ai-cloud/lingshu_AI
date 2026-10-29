@@ -1,5 +1,11 @@
 # Git 工作树状态盘点
 
+## 2026-10-29 外观合并 V2 本轮最终代码整合
+
+- 当前功能树仍为 `image-text-baseline-20261028` / `xixi外观合并V2`；本会话原有生图与周计划修改已分别保存为 `dc424172`、`57dcb173`。外部资讯会话在 `external-cards-integrated-20261029` 隔离修复，最新 `b177ef8b` 已合入，源码整合为 `7a7e4f36`。
+- 恢复分支 `backup/appearance-v2-before-final-20261029` 指向 `398388f6`。没有创建、清理、重置或归档其他工作树；隔离验收数据保留原处，未纳入 Git。
+- 最终验证与真实验收缺口见 [本轮统一版本记录](APPEARANCE-V2-FINAL-INTEGRATION-20261029.md)。没有推送、部署或迁移数据库。
+
 ## 2026-10-29 外观合并 V2 周计划集成
 
 - 目标仍为 `image-text-baseline-20261028` / `xixi外观合并V2`；新增隔离候选 `appearance-v2-weekly-20261029` / `integration/appearance-v2-weekly-20261029`，仅软链现有依赖，未复制业务数据或凭据。
