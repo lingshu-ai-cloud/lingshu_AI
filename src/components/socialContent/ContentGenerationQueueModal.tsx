@@ -8,6 +8,7 @@ import {
   type ContentGenerationQueueRequest,
 } from '../../lib/contentGenerationQueue';
 import { digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
+import { readWeeklyQueueOverview } from '../../lib/weeklyQueueOverviewRead';
 import type { DigitalEmployeeOverview } from '../../lib/digitalEmployees';
 import WeeklyTaskPackageView from './WeeklyTaskPackageView';
 import CreationTaskWorkspace from './CreationTaskWorkspace';
@@ -27,9 +28,9 @@ export default function ContentGenerationQueueModal({ embedded = false, onBack }
     return()=>{window.removeEventListener(CONTENT_GENERATION_QUEUE_OPEN_EVENT,show);window.removeEventListener(CONTENT_GENERATION_QUEUE_CLOSE_EVENT,hide);window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,reset);window.removeEventListener('storage',storage);};
   },[embedded]);
   useEffect(()=>{
-    if(!open)return;let active=true;setLoading(true);setError('');
-    void digitalEmployeeApi.overview().then(result=>{if(active)setOverview(result);}).catch(cause=>{if(active)setError(cause instanceof Error?cause.message:'内容生成任务暂时无法读取');}).finally(()=>{if(active)setLoading(false);});
-    return()=>{active=false;};
+    if(!open)return;let active=true;const controller=new AbortController();setLoading(true);setError('');
+    void readWeeklyQueueOverview(signal=>digitalEmployeeApi.overview('',undefined,signal),controller.signal).then(result=>{if(active)setOverview(result);}).catch(cause=>{if(active)setError(cause instanceof Error?cause.message:'内容生成任务暂时无法读取');}).finally(()=>{if(active)setLoading(false);});
+    return()=>{active=false;controller.abort();};
   },[open,revision]);
   const title = <div data-growth-tour="queue-modal" className="flex flex-wrap items-center justify-between gap-3 pr-8"><div className="flex items-center gap-2"><span>{settingsOpen?'Agent 设置':request.source==='weekly'?'周任务包':'内容生成队列'}</span>{!settingsOpen&&<Tag color="blue">{request.source==='weekly'?'本周全部计划任务':'周计划 + 临时单条'}</Tag>}</div><Button icon={<Settings2 size={16}/>} onClick={()=>setSettingsOpen(value=>!value)}>{settingsOpen?(request.source==='weekly'?'返回周任务包':'返回任务列表'):'Agent 设置'}</Button></div>;
   const content = <>
@@ -40,7 +41,7 @@ export default function ContentGenerationQueueModal({ embedded = false, onBack }
         className="mb-4"
         type="warning"
         showIcon
-        title="内容生成队列暂时无法读取"
+        title={request.source==='weekly'?'周任务包暂时无法读取':'内容生成队列暂时无法读取'}
         description={error}
         action={<Button onClick={()=>setRevision(value=>value+1)}>重试</Button>}
       />

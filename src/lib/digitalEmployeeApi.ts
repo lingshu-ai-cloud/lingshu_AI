@@ -134,9 +134,10 @@ export const digitalEmployeeApi = {
     request<{ items: Array<PublishingTarget & { status: "connected" }> }>(
       "/publishing-accounts",
     ),
-  overview: (goalId = "", range?: { startsAt: string; endsAt: string }) =>
+  overview: (goalId = "", range?: { startsAt: string; endsAt: string }, signal?: AbortSignal) =>
     request<DigitalEmployeeOverview>(
       `/overview?${new URLSearchParams({ ...(goalId ? { goalId } : {}), ...(range || {}) }).toString()}`,
+      { signal },
     ),
   completeOnboarding: (config: DigitalEmployeeConfig) =>
     request<DigitalEmployeeOverview>("/onboarding/complete", {
