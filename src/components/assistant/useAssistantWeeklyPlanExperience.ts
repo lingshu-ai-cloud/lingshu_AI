@@ -214,7 +214,8 @@ export function useAssistantWeeklyPlanExperience() {
     const url = new URL(window.location.href);
     url.searchParams.set('view', view);
     window.history.replaceState(window.history.state, '', url);
-    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'socialInspiration', view } }));
+    setModalOpen(false);
+    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'inspirationMarket', view } }));
   }, []);
 
   const collectReferencesNow = useCallback(async () => {
@@ -223,7 +224,7 @@ export function useAssistantWeeklyPlanExperience() {
     try {
       const scope = await socialDiscoveryApi.getScope();
       if (!scope.persisted || scope.needsConfirmation) {
-        setReferenceMessage('首次采集需要先确认采集范围。已打开对标账号设置；确认后点击“立即采集”。');
+        setReferenceMessage('请在对标账号中点击“采集爆款”。已保存的账号可直接使用，无需重新添加。');
         openReferenceLibrary('accounts');
         return;
       }
@@ -261,7 +262,7 @@ export function useAssistantWeeklyPlanExperience() {
         const rebuilt = await synchronizeWeeklyPlanFacts(current.goal, factsRecovery);
         setOverview(rebuilt); setProposal(rebuilt); setFactsRecovery(null); setModalOpen(true);
         setNotice('已按最新企业资料更新周计划。请重新核对并确认；生产尚未开始。');
-        notifyWeeklyWorkUpdated({ source: 'assistant', goalId: rebuilt.goal!.id });
+        notifyWeeklyWorkUpdated({ source: 'assistant', goalId: rebuilt.goal!.id, factsSynchronized: true });
         return;
       }
       const prepared = await prepareWeeklyPlanForLaunch(current, {
@@ -310,7 +311,7 @@ export function useAssistantWeeklyPlanExperience() {
           setFactsRecovery(null);
           setOverBudgetApprovalRevision(null); setOverBudgetApprovalQuoteKey(''); setOverBudgetConfirmationCount(0);
           setNotice('企业资料更新后，已重新整理这份周计划。请核对新版内容，再决定是否开始生产。');
-          notifyWeeklyWorkUpdated({ source: 'assistant', goalId: rebuilt.goal.id });
+          notifyWeeklyWorkUpdated({ source: 'assistant', goalId: rebuilt.goal.id, factsSynchronized: true });
         } catch (rebuildError) {
           setError(rebuildError instanceof Error ? `周计划暂时无法更新：${rebuildError.message}` : '周计划暂时无法更新，请刷新后重试。');
         }

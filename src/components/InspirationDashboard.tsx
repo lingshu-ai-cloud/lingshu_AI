@@ -210,7 +210,8 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   useEffect(() => {
     const receiveReference = (event: Event) => {
       const detail = (event as CustomEvent<Record<string, unknown>>).detail;
-      if (detail?.page !== 'socialInspiration') return;
+      if (detail?.page !== 'socialInspiration' && detail?.page !== 'inspirationMarket') return;
+      if (detail.view === 'accounts' || detail.view === 'inspiration' || detail.view === 'library' || detail.view === 'shooting') setInnerView(detail.view);
       setExactReferenceDetail(detail);
       if (hasExactReferenceReview(detail)) { setRequestedReference(null); setSelectedVideo(null); return; }
       const next = parseInspirationReferenceTarget(detail);

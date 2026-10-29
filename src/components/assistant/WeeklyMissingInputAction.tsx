@@ -133,15 +133,14 @@ export default function WeeklyMissingInputAction({ kind }: { kind: WeeklyMissing
         const latest = await digitalEmployeeApi.overview();
         if (!latest.goal || !latest.plan || latest.run) throw new Error('当前没有可同步的待确认周计划。');
         const readiness = await digitalEmployeeApi.weeklyProductionReadiness(latest.goal.id);
-        if (readiness.ready) {
+        if (!readiness.blockers.some(item => item.code === 'enterprise_facts_mismatch')) {
           setMayConfirm(true);
           setNotice('周计划已是最新资料，请核对后决定是否开始生产。');
           return;
         }
-        if (!readiness.blockers.some(item => item.code === 'enterprise_facts_mismatch') || !readiness.recovery)
-          throw new Error('当前不需要同步企业资料，请按最新提示补齐制作条件。');
+        if (!readiness.recovery) throw new Error('暂时无法读取同步所需的计划版本，请重新读取当前周计划。');
         const rebuilt = await synchronizeWeeklyPlanFacts(latest.goal, readiness.recovery);
-        notifyWeeklyWorkUpdated({ source: 'assistant', goalId: rebuilt.goal.id });
+        notifyWeeklyWorkUpdated({ source: 'assistant', goalId: rebuilt.goal.id, factsSynchronized: true });
         setMayConfirm(true);
         setNotice('已按最新企业资料更新周计划。请重新核对并确认；生产尚未开始。');
         return;
@@ -259,7 +258,7 @@ export default function WeeklyMissingInputAction({ kind }: { kind: WeeklyMissing
       {!materialPreviewLoading && materialPreviewError ? <p role="status" className="my-2 text-xs text-text-secondary">{materialPreviewError}</p> : null}
       {!materialPreviewLoading ? <WeeklyMaterialGapCards gaps={materialGaps} uploadBusy={loading} onUpload={gap => void begin(gap.requirementId)} /> : null}
     </> : null}
-    {kind !== 'materials' ? <Button loading={loading} onClick={() => void begin()} className="!h-auto min-h-9 whitespace-normal">{actionLabel[kind]}</Button> : null}
+    {kind !== 'materials' && !(kind === 'facts' && mayConfirm) ? <Button loading={loading} onClick={() => void begin()} className="!h-auto min-h-9 whitespace-normal">{actionLabel[kind]}</Button> : null}
     {mayRecheck && <Button loading={loading} onClick={() => void recheck()} className="!h-auto min-h-9 whitespace-normal">重新核验周计划</Button>}
     {mayConfirm && <Button onClick={openAssistantWeeklyPlan} className="!h-auto min-h-9 whitespace-normal">查看并确认周计划</Button>}
     {error && !open ? <Alert type="error" showIcon title={error} className="mt-2" /> : null}
