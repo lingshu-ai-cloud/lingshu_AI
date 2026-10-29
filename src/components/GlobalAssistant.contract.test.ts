@@ -79,7 +79,9 @@ assert.doesNotMatch(assistantRootMarkup, /5\.5rem/, '制作页不得通过额外
 assert.match(conversationPanelSource, /assistantUsesMobileClearance[\s\S]{0,240}viewport\.height - \(assistantUsesMobileClearance \? 160 : 96\)/, '移动端抬高入口时必须同步收紧对话高度，不能把面板顶部裁掉');
 assert.match(launcherSource, /const closedLabel = weeklyPlanOperating \? '周计划正在运营中' : '周计划待生成'/, '右下角入口必须根据真实周运行状态给出明确文案');
 assert.match(weeklyPlanHookSource, /function guidanceQuestions[\s\S]{0,1200}missingQuestions\.slice\(0, 2\)[\s\S]{0,120}weeklyObjective/, '缺少资料时最多补充两项资料，并始终保留经营目标确认');
-assert.match(weeklyPlanHookSource, /const prepare[\s\S]{0,2400}setGuidance\([\s\S]{0,280}questions\[0\]/, '没有草稿时打开周计划应进入逐项问答，不能后台创建新计划');
+const weeklyPrepareSource = weeklyPlanHookSource.slice(weeklyPlanHookSource.indexOf('const prepare ='), weeklyPlanHookSource.indexOf('const saveDraft ='));
+assert.match(weeklyPrepareSource, /setGuidance\([\s\S]{0,280}questions\[0\]/, '没有草稿时打开周计划应进入逐项问答，不能后台创建新计划');
+assert.doesNotMatch(weeklyPrepareSource, /createGoal\(/, '读取周计划不得后台创建新计划');
 assert.match(weeklyPlanHookSource, /const answer[\s\S]*setDraft\(candidate\); setGuidance\(nextGuidance\);[\s\S]*saveDraft\(candidate, nextGuidance\)/, '收集完成后必须先核验并绑定爆款参考，再打开方案确认');
 assert.match(weeklyPlanHookSource, /const saveDraft[\s\S]*digitalEmployeeApi\.createGoal\(candidate\)[\s\S]*weekly_reference_shortage/, '缺少可用参考时不能建立周任务');
 const existingPlanPreparation = weeklyPlanHookSource.slice(weeklyPlanHookSource.indexOf('if (next.goal && next.plan)'), weeklyPlanHookSource.indexOf('const questions = guidanceQuestions'));

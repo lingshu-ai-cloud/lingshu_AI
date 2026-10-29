@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { defaultWeeklyGoal, type GoalDraft } from '../../lib/defaultWeeklyGoal';
 import { DigitalEmployeeApiError, digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
 import { socialDiscoveryApi } from '../../lib/socialDiscoveryApi';
@@ -78,6 +78,7 @@ function guidedDraft(config: DigitalEmployeeConfig, answers: Partial<Record<Guid
 }
 
 export function useAssistantWeeklyPlanExperience() {
+  const conversationEpoch = useRef(0);
   const [overview, setOverview] = useState<DigitalEmployeeOverview | null>(null);
   const [proposal, setProposal] = useState<DigitalEmployeeOverview | null>(null);
   const [draft, setDraft] = useState<GoalDraft | null>(null);
@@ -95,6 +96,14 @@ export function useAssistantWeeklyPlanExperience() {
   const [overBudgetApprovalQuoteKey, setOverBudgetApprovalQuoteKey] = useState('');
   const [overBudgetConfirmationOpen, setOverBudgetConfirmationOpen] = useState(false);
   const [overBudgetConfirmationCount, setOverBudgetConfirmationCount] = useState(0);
+  const resetConversation = useCallback(() => {
+    conversationEpoch.current += 1;
+    setProposal(null); setDraft(null); setGuidance(null); setModalOpen(false);
+    setReferenceGap(null); setReferenceMessage(''); setError(''); setNotice('');
+    setFactsRecovery(null); setCelebrating(false);
+    setOverBudgetApprovalRevision(null); setOverBudgetApprovalQuoteKey('');
+    setOverBudgetConfirmationOpen(false); setOverBudgetConfirmationCount(0);
+  }, []);
   const refresh = useCallback(async () => {
     const next = await digitalEmployeeApi.overview();
     setOverview(next);
@@ -109,6 +118,8 @@ export function useAssistantWeeklyPlanExperience() {
   }, [refresh]);
 
   const prepare = useCallback(async () => {
+    const epoch = conversationEpoch.current;
+    try {
     setError('');
     setNotice('');
     setFactsRecovery(null);
@@ -118,12 +129,14 @@ export function useAssistantWeeklyPlanExperience() {
     setOverBudgetConfirmationCount(0);
     setReferenceMessage('');
     let next = await digitalEmployeeApi.overview();
+    if (epoch !== conversationEpoch.current) return '';
     if (!next.config) throw new Error('企业基础档案尚未建立。请先完成首页的新手卡片，之后我会在这里逐项补充周计划信息。');
     setOverview(next); setGuidance(null); setDraft(null);
     if (next.goal && next.plan) {
       const goalId = next.goal.id;
       const productionReadiness = !next.run
         ? await digitalEmployeeApi.weeklyProductionReadiness(goalId).catch(() => null) : null;
+      if (epoch !== conversationEpoch.current) return '';
       if (productionReadiness?.blockers.some(item => item.code === 'enterprise_facts_mismatch')
         && productionReadiness.recovery) {
         setFactsRecovery(productionReadiness.recovery);
@@ -132,13 +145,17 @@ export function useAssistantWeeklyPlanExperience() {
         return '企业资料已更新，这份周计划需要同步。请在当前窗口更新后重新确认。';
       }
       let readiness = await digitalEmployeeApi.weeklyReferenceReadiness(goalId);
+      if (epoch !== conversationEpoch.current) return '';
       if (!readiness.ready && readiness.videoMissingCount === 0 && readiness.imageMissingCount > 0
         && next.plan.status === 'draft') {
         try {
           next = await digitalEmployeeApi.rebindWeeklyImageReferences(goalId);
+          if (epoch !== conversationEpoch.current) return '';
           readiness = await digitalEmployeeApi.weeklyReferenceReadiness(goalId);
+          if (epoch !== conversationEpoch.current) return '';
           setOverview(next);
         } catch (cause) {
+          if (epoch !== conversationEpoch.current) return '';
           setReferenceMessage(cause instanceof Error ? cause.message : '图文参考自动匹配失败');
         }
       }
@@ -156,6 +173,10 @@ export function useAssistantWeeklyPlanExperience() {
     setProposal(null); setModalOpen(false);
     setGuidance({ config: next.config, questions, index: 0, answers: {} });
     return questionPrompt(questions[0]!);
+    } catch (cause) {
+      if (epoch !== conversationEpoch.current) return '';
+      throw cause;
+    }
   }, []);
 
   const saveDraft = useCallback(async (candidate: GoalDraft, current: GuidanceState): Promise<string> => {
@@ -332,7 +353,7 @@ export function useAssistantWeeklyPlanExperience() {
     } finally { setBusy(false); }
   }, [busy, proposal, factsRecovery, overBudgetApprovalRevision, overBudgetApprovalQuoteKey, overBudgetConfirmationOpen]);
 
-  return { proposal, draft, modalOpen, busy, collectingReferences, error, notice, weeklyPlanExecutionLabel: weeklyPlanExecutionLabel(proposal || overview), factsSyncRequired: Boolean(factsRecovery), celebrating, overBudgetApprovalRevision,
+  return { resetConversation, hasConversationContent: Boolean(proposal || draft || guidance || referenceGap || referenceMessage || error || notice), proposal, draft, modalOpen, busy, collectingReferences, error, notice, weeklyPlanExecutionLabel: weeklyPlanExecutionLabel(proposal || overview), factsSyncRequired: Boolean(factsRecovery), celebrating, overBudgetApprovalRevision,
     overBudgetConfirmationOpen, overBudgetConfirmationCount,
     cancelOverBudgetConfirmation: () => { if (busy) return; setOverBudgetConfirmationOpen(false);
       setOverBudgetApprovalRevision(null); setOverBudgetApprovalQuoteKey(''); setOverBudgetConfirmationCount(0); },

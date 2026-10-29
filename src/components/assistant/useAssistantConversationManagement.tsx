@@ -19,10 +19,15 @@ type Input = {
   stop: () => void;
   blocked: boolean;
   ready: boolean;
+  hasTransientContent?: boolean;
 };
 
 export function assistantConversationCanDelete(thread: AgentThreadState): boolean {
   return Boolean(thread.version || thread.messages.length || thread.draftInput || thread.creationDraft);
+}
+
+export function assistantConversationCanClear(thread: AgentThreadState, hasTransientContent = false): boolean {
+  return Boolean(thread.messages.length || thread.draftInput || thread.creationDraft || hasTransientContent);
 }
 
 export function useAssistantConversationManagement(input: Input) {
@@ -189,7 +194,7 @@ export function useAssistantConversationManagement(input: Input) {
       { key: 'new', label: '新建会话', icon: <MessageSquarePlus size={15} /> },
       { key: 'history', label: '历史会话', icon: <History size={15} /> },
       { type: 'divider' },
-      { key: 'clear', label: '清空当前会话', icon: <Eraser size={15} />, disabled: !thread.messages.length && !thread.draftInput && !thread.creationDraft },
+      { key: 'clear', label: '清空当前会话', icon: <Eraser size={15} />, disabled: !assistantConversationCanClear(thread, input.hasTransientContent) },
       { key: 'delete', label: '删除会话', icon: <Trash2 size={15} />, danger: true,
         disabled: !assistantConversationCanDelete(thread) },
     ], onClick: ({ key }) => {

@@ -346,8 +346,8 @@ export default function GlobalAssistant({
     }
     setWelcomeBubbleVisible(!alreadySeen);
   }, [welcomeBubbleStorageKey]);
-
   const resetTransientConversation = useCallback(() => {
+    weeklyPlanExperience.resetConversation();
     setFileGenerating(false); setReplyStreaming(false); setWelcomeBubbleVisible(false);
     pendingMapFileRef.current = false;
     setContentIntakeEpoch(value => value + 1);
@@ -361,7 +361,7 @@ export default function GlobalAssistant({
     setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true);
     setPendingAttachments([]);
     setAttachmentError('');
-  }, [setDraftInput, setFollowingLatest, setMessages, setScrollPosition, setUnreadCount]);
+  }, [setDraftInput, setFollowingLatest, setMessages, setScrollPosition, setUnreadCount, weeklyPlanExperience.resetConversation]);
 
   const openAgent = useCallback((routeAgent: OrbitAgentId, preferredView?: AssistantPanelView) => {
     const agentId = PRIMARY_ASSISTANT_THREAD;
@@ -510,9 +510,9 @@ export default function GlobalAssistant({
   const conversationControls = useAssistantConversationManagement({
     scope: stablePersistenceScope, fence: persistenceFenceRef, pause: assistantAtomicMutationRef,
     queues: assistantThreadSaveQueuesRef, abort: abortRef, wait: waitForInFlightThreadSave,
-    reset: resetTransientConversation, ready: assistantThreadHydrated,
+    reset: resetTransientConversation, ready: assistantThreadHydrated, hasTransientContent: weeklyPlanExperience.hasConversationContent,
     stop: () => { setLoading(false); setReplyStreaming(false); setFileGenerating(false); },
-    blocked: attachmentUploading || contentIntake.busy || weeklyActionBusy || pipelineInFlightRef.current,
+    blocked: attachmentUploading || contentIntake.busy || weeklyActionBusy || weeklyPlanExperience.busy || pipelineInFlightRef.current,
   });
 
   useEffect(() => {
