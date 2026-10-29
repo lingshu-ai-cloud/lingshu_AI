@@ -14,4 +14,6 @@ test('small sample cannot establish demand or prove market potential',()=>{
  assert.equal(filterSocialInsightEvidence('呼吁日常使用防晒，反映终端教育需求旺盛。建议拍摄配方测试。'),'建议拍摄配方测试。');
  assert.equal(filterSocialInsightEvidence('用终端教育热度佐证品类代工市场潜力。'),'');
  assert.equal(filterSocialInsightEvidence('可以借鉴防晒教育选题展示配方研发。'),'可以借鉴防晒教育选题展示配方研发。');
+ assert.equal(filterSocialInsightEvidence('B2C样本关注日常防晒习惯与无白膜肤感体验，反映消费者对轻薄质地的偏好，可作为B2B选品参考。'),'');
+ assert.equal(filterSocialInsightEvidence('配文提及无白膜卖点，可作为选题参考。'),'配文提及无白膜卖点，可作为选题参考。');
 });

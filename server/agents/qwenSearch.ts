@@ -1,5 +1,5 @@
 import { qwenPublicNewsQueries } from './qwenPublicNewsQueries.js';
-import { dailyNewsWindow } from '../externalInformation/dailyNewsWindow.js';
+import { dailyNewsWindow, selectDailyNewsOriginals } from '../externalInformation/dailyNewsWindow.js';
 import { discoverPublicNewsRss } from '../externalInformation/publicNewsRssDiscovery.js';
 import { qwenDiscoveryQuery } from './qwenDiscoveryQuery.js';
 import { collectIndustryOriginals } from './qwenIndustryDiscovery.js';
@@ -116,7 +116,7 @@ export async function qwenSearchAnswer(messages: ChatMessage[], opts: LLMCallOpt
   const dailyWindow = dailyNewsWindow(messages.at(-1)?.content ?? '');
   if (dailyWindow && opts.searchEvidenceFirst) {
     opts = { ...opts, searchFreshnessDays:1 };
-    messages = messages.map((message,index)=>index===messages.length-1 ? {...message,content:message.content+`\n今日资讯发布日期范围：${dailyWindow.day}（Asia/Shanghai当天）；仅当天首次发布的新闻，旧资料与更新日期不得冒充当天新闻。`} : message);
+    messages = messages.map((message,index)=>index===messages.length-1 ? {...message,content:message.content+`\n今日资讯优先当天首次发布的新闻；当天不足时补充截至当前最近24小时首次发布的新闻，标明真实发布日期，不使用更新日期冒充发布日期。`} : message);
   }
   const cacheKey = newsSourceCacheKey(nativeEndpoint().href, messages.at(-1)?.content ?? '', opts) + `:accessible-news-v7:${qwenNewsSearchStrategy(!!opts.searchEvidenceFirst || !!dependencies.discoveryOnly)}:supplement-turbo-freshness-v1:public-rss-global-market-v2`;
   const cached = !dependencies.discoveryOnly && opts.searchEvidenceFirst ? recallNewsSources(cacheKey) : undefined;
@@ -140,7 +140,7 @@ export async function qwenSearchAnswer(messages: ChatMessage[], opts: LLMCallOpt
   if (dependencies.discoveryOnly) return { text: '', sources: sources! };
   if (opts.searchEvidenceFirst) {
     const retrieval = broadIndustry
-      ? await collectIndustryOriginals(sources, { signal: opts.signal, freshnessDays: opts.searchFreshnessDays, publicationDay:dailyWindow?.day, fetcher: dependencies.originalFetcher,
+      ? await collectIndustryOriginals(sources, { signal: opts.signal, freshnessDays: opts.searchFreshnessDays, rollingCutoff:dailyWindow?.cutoff, fetcher: dependencies.originalFetcher,
           shouldSupplement: originals => !cached || !sameNewsOriginals(cached, originals),
           discover: async (instruction, articleRequestBudget) => {
             const queries = qwenPublicNewsQueries(question, opts.searchFreshnessDays, instruction);
@@ -155,7 +155,13 @@ export async function qwenSearchAnswer(messages: ChatMessage[], opts: LLMCallOpt
             return [...publicSources, ...providerSources];
           } })
       : await readSearchOriginals(sources, { signal: opts.signal, freshnessDays: opts.searchFreshnessDays, maxCandidates: 6, fetcher: dependencies.originalFetcher });
-    const { originals, rejected, rejectionReasons } = retrieval;
+    const { rejected, rejectionReasons } = retrieval;
+    let { originals } = retrieval;
+    if (dailyWindow) {
+      const selected = selectDailyNewsOriginals(originals, dailyWindow.day);
+      if (!selected) throw new ExternalInformationError('search_originals_insufficient', '已扩大检索到最近24小时，但可读取且符合条件的资料不足，暂无法生成完整资讯报告。');
+      originals = selected;
+    }
     if ('discovery' in retrieval) console.info('[industry-retrieval]', JSON.stringify({ discovery: retrieval.discovery, readableOriginals: originals.length, rejected, rejectionReasons }));
     if (!originals.length && rejectionReasons.unreadable) throw new ExternalInformationError('search_originals_unreadable', '已检索到候选来源，但原文因网络连接或站点访问限制未能读取；本次未生成资讯报告，不能据此判断行业没有新动态。');
     if (cached && sameNewsOriginals(cached, originals)) {
@@ -167,7 +173,7 @@ export async function qwenSearchAnswer(messages: ChatMessage[], opts: LLMCallOpt
         signal: opts.signal, timeoutMs: opts.timeoutMs ?? 120_000,
         init: { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${dashscopeApiKey()}` },
           body: JSON.stringify({ model: process.env.QWEN_NEWS_ANALYSIS_MODEL ?? opts.model ?? process.env.QWEN_TEXT_MODEL ?? 'qwen-plus',
-            messages: [{ role: 'system', content: `你是中文行业研究分析师，只依据给定原文输出严格JSON。区分官方披露、独立报道、商业研究摘要与评论观点；商业预测、研究摘要和媒体评论保留发布者归属；允许将原文明示的市场规模历史值和预测值输出metrics，明确年份、单位与kind预测标记，禁止虚构或换算。历史数据不冒充近期新变化。正文直接说明事实、业务含义和行动，避免反复保护性表达，底部统一“AI结论仅供参考”。fact、meaning、action、conclusion必须使用简体中文，产品名保留原文；每个字段简短准确，允许一句话，不为凑字数增加判断。事实与推断分开，保留适用范围与豁免。meaning、action和conclusion不重复数字、年份或角标。${dailyWindow ? '今日资讯允许全球同行业当天新闻与目标市场直接新闻。事实保留真实地区；meaning标明【全球行业参考】或【目标市场直接动态】，后者必须有原文地域或实际业务关系证据。不要把中国新闻改写成北美进展；全球行业事件可以作为参考，不因非本地而全部排除。展会预告保留计划语气，不推导销量。' : '优先分析明确发生在用户目标市场的技术与竞争动作；目标市场的展会技术发布是研发动向证据，保留计划语气，不据此推导销量。其他地区的投产或监管消息不得充当目标市场证据。'}每条分析必须限定在对应来源支持的对象和范围；跨来源综合须有多条彼此独立且直接相关的证据支持，并说明证据不足，不能从单篇公告推断整个行业需求、行业共识、竞争门槛或技术壁垒。没有实证的方向省略，不反复增加保护性说明。产品技术类别必须原文明确披露，不从产品名推导。严格按原文主语比较欧美亚洲，不增加第三方之间的比较。历史审批只作为此前背景，禁止称近期获批。总体结论只归纳最终选中来源，不引用被排除来源。` }, { role: 'user', content: prompt }],
+            messages: [{ role: 'system', content: `你是中文行业研究分析师，只依据给定原文输出严格JSON。区分官方披露、独立报道、商业研究摘要与评论观点；商业预测、研究摘要和媒体评论保留发布者归属；允许将原文明示的市场规模历史值和预测值输出metrics，明确年份、单位与kind预测标记，禁止虚构或换算。历史数据不冒充近期新变化。正文直接说明事实、业务含义和行动，避免反复保护性表达，底部统一“AI结论仅供参考”。fact、meaning、action、conclusion必须使用简体中文，产品名保留原文；每个字段简短准确，允许一句话，不为凑字数增加判断。事实与推断分开，保留适用范围与豁免。meaning、action和conclusion不重复数字、年份或角标。${dailyWindow ? '今日资讯允许全球同行业近期新闻与目标市场直接新闻，保留真实发布日期。事实保留真实地区；meaning标明【全球行业参考】或【目标市场直接动态】，后者必须有原文地域或实际业务关系证据。不要把中国新闻改写成北美进展；全球行业事件可以作为参考，不因非本地而全部排除。展会预告保留计划语气，不推导销量。' : '优先分析明确发生在用户目标市场的技术与竞争动作；目标市场的展会技术发布是研发动向证据，保留计划语气，不据此推导销量。其他地区的投产或监管消息不得充当目标市场证据。'}每条分析必须限定在对应来源支持的对象和范围；跨来源综合须有多条彼此独立且直接相关的证据支持，并说明证据不足，不能从单篇公告推断整个行业需求、行业共识、竞争门槛或技术壁垒。没有实证的方向省略，不反复增加保护性说明。产品技术类别必须原文明确披露，不从产品名推导。严格按原文主语比较欧美亚洲，不增加第三方之间的比较。历史审批只作为此前背景，禁止称近期获批。总体结论只归纳最终选中来源，不引用被排除来源。` }, { role: 'user', content: prompt }],
             max_tokens: broadIndustry ? 4500 : 3000, enable_search: false, enable_thinking: false, response_format: { type: 'json_object' } }),
         },
       }));

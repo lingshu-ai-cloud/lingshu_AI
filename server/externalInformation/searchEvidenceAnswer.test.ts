@@ -103,6 +103,16 @@ test('zero selected industry items still return a version-one report empty state
  const report = JSON.parse(answer.text.split('\n')[1]);
  assert.equal(report.version, 1); assert.deepEqual(report.signals, []); assert.deepEqual(answer.sources, []);
 });
+test('a single source does not turn a product example into an industry-wide demand claim',async()=>{
+ const item={...draft.items[0],meaning:'提示美妆原料领域对绿色溶剂的研发兴趣正在上升。',action:'建议核对供应商技术资料。'};
+ const answer=await composeSearchEvidenceAnswer('行业资讯：行业：美妆原料，目标市场：全球。',[original],async()=>JSON.stringify({items:[item],conclusion:'公开信息提供原料研究观察。'}));
+ const report=JSON.parse(answer.text.split('\n')[1]);
+ assert.equal(report.signals.length,1);assert.equal(report.signals[0].implication,'');
+ assert.match(report.signals[0].fact,/./);assert.match(report.signals[0].action,/建议/);
+ const market={...item,meaning:'提示面膜品类在终端市场具备较高接受度。'};
+ const second=await composeSearchEvidenceAnswer('行业资讯：行业：美妆原料，目标市场：全球。',[original],async()=>JSON.stringify({items:[market],conclusion:'公开信息提供原料研究观察。'}));
+ assert.equal(JSON.parse(second.text.split('\n')[1]).signals[0].implication,'');
+});
 
 test('only selected and deduplicated sources may support a comprehensive report introduction', async () => {
  const second: SearchOriginal = { id: 'S2', source: { title: 'Second technical report', uri: 'https://anotherpublisher.com/news/new-research' }, published: ['2026-10-20'], text: 'Another publisher reported a new technical research partnership between companies.' };
@@ -116,6 +126,17 @@ test('only selected and deduplicated sources may support a comprehensive report 
   assert.equal(report.signals.length, 2);
   assert.deepEqual(answer.sources.map(source => source.uri), [original.source.uri, second.source.uri]);
  }
+});
+
+test('a few sources cannot turn a global market claim into a confirmed broad trend', async () => {
+ const second: SearchOriginal = { id: 'S2', source: { title: 'Second technical report', uri: 'https://anotherpublisher.com/news/new-research' }, published: ['2026-10-20'], text: 'Another publisher reported a new technical research partnership between companies.' };
+ const items = [draft.items[0], { ...draft.items[0], sourceId: 'S2', quoteIds: ['S2-Q1'], fact: '企业公布技术研究合作，后续执行情况仍需核对。' }];
+ const conclusion = '综合来看，全球美妆原料市场近期呈现三个明确的研发与竞争动向。';
+ const answer = await composeSearchEvidenceAnswer('行业资讯：行业：美妆原料，目标市场：全球。', [original, second], async () => JSON.stringify({ items, conclusion, conclusionSourceIds: ['S1', 'S2'] }));
+ const report = JSON.parse(answer.text.split('\n')[1]);
+ assert.notEqual(report.summary, conclusion);
+ assert.match(report.summary, /专题观察重点/);
+ assert.equal(report.signals.length, 2);
 });
 
 test('eight genuinely distinct source events remain available after duplicate filtering', async () => {

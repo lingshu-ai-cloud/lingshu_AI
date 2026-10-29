@@ -20,7 +20,9 @@ export function assistantSearchFailure({ content, sources = [], events = [], act
   if (!emptyIndustry && (!explicitFailure || (!receipt.length && !/本轮未取得通过核验的资料|未取得可读取且符合时间范围的原文/u.test(content)))) return null;
   const details = receipt.map(event => event.detail).join(' ') || content;
   let reason = '本次没有取得可读取并可核验的资讯原文。';
-  if (/超时|timed?\s*out/iu.test(details)) reason = '检索或原文读取超时，本次没有取得可核验资料。';
+  if (/最近24小时[^。\n]*资料不足/u.test(details + ' ' + content)) reason = '已补充检索最近24小时，符合条件的资料仍不足以生成报告。';
+  else if (/可用于本次主题的独立资讯不足/u.test(details + ' ' + content)) reason = '已读取候选资料，但与本次主题相关的独立资讯不足以生成报告。';
+  else if (/超时|timed?\s*out/iu.test(details)) reason = '检索或原文读取超时，本次没有取得可核验资料。';
   else if (/未配置|尚未配置/u.test(details)) reason = '搜索服务尚未配置，本次未能执行资料检索。';
   else if (/配额|限额|额度/u.test(details)) reason = '检索服务可用额度不足，本次未能取得资料。';
   else if (/网络|连接|访问失败|读取失败/u.test(details)) reason = '资料页面访问或读取失败，本次没有取得可核验原文。';

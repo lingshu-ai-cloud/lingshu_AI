@@ -11,7 +11,7 @@ interface Signal {
 }
 export interface IndustryReportMetric { label: string; value: number; unit: string; period: string; kind: 'reported' | 'forecast'; sourceUrl: string; sourceTitle: string; quote: string; basis?: string }
 interface Report {
-  version: 1; industry: string; market: string; period: string; generatedAt: string; summary: string; signals: Signal[]; limitations: string[]; metrics?: IndustryReportMetric[];
+  version: 1; presentation?: 'brief'; industry: string; market: string; period: string; generatedAt: string; summary: string; signals: Signal[]; limitations: string[]; metrics?: IndustryReportMetric[];
 }
 const string = (value: unknown) => typeof value === 'string' ? value.trim().slice(0, 3000) : '';
 const text = (item: Record<string, unknown>, key: string) => string(item[key]);
@@ -35,7 +35,7 @@ export function parseIndustryInsight(raw: string): Report | null {
       const metric: IndustryReportMetric = { label:text(item,'label'), value:item.value, unit:text(item,'unit'), period:text(item,'period'), kind:item.kind as 'reported'|'forecast', sourceUrl:text(item,'sourceUrl'), sourceTitle:text(item,'sourceTitle'), quote:text(item,'quote'), basis:text(item,'basis') };
       return metric.label && metric.unit && metric.period && metric.sourceUrl && metric.quote ? [metric] : [];
     }) : [];
-    return { version: 1, industry: text(data, 'industry'), market: text(data, 'market'), period: text(data, 'period'), generatedAt: text(data, 'generatedAt'), summary: text(data, 'summary'), signals, metrics, limitations: Array.isArray(data.limitations) ? data.limitations.map(string).filter(Boolean).slice(0, 8) : [] };
+    return { version: 1, ...(data.presentation === 'brief' ? { presentation: 'brief' as const } : {}), industry: text(data, 'industry'), market: text(data, 'market'), period: text(data, 'period'), generatedAt: text(data, 'generatedAt'), summary: text(data, 'summary'), signals, metrics, limitations: Array.isArray(data.limitations) ? data.limitations.map(string).filter(Boolean).slice(0, 8) : [] };
   } catch { return null; }
 }
 function sourceUrl(value: string, sources: ReplySource[]): string | null {
@@ -103,6 +103,11 @@ export function IndustryInsightReportView({ raw, sources = [] }: { raw: string; 
   if (!report) return <p className="rounded-xl border border-border bg-surface p-3 text-sm text-text-secondary">报告正在整理，或数据格式暂不可用。</p>;
   const coverage = industryInsightCoverage(report, sources);
   const hasContent = coverage.signals.length > 0 || coverage.metricCount > 0;
+  if (report.presentation === 'brief' && coverage.signals.length) return <article className="industry-insight-card" aria-label="精简资讯">
+    <header><Newspaper size={19} aria-hidden="true"/><div><h3>{report.industry || '行业'} · 精简资讯</h3><p>{report.period} · {coverage.signals.length} 条资讯</p></div></header>
+    {coverage.signals.map((signal,index) => <div key={`${signal.sourceUrl}-${index}`} className="industry-insight-card__summary"><strong>{industrySignalHeadline(signal.fact,signal.title)}</strong><p>{signal.publishedAt} · {industryVisibleText(signal.fact)}</p>{industryVisibleText(signal.implication) && <p>{industryVisibleText(signal.implication)}</p>}{industryVisibleText(signal.action) && <p>{industryVisibleText(signal.action)}</p>}<a href={sourceUrl(signal.sourceUrl,sources)!} target="_blank" rel="noopener noreferrer">查看原文 <ExternalLink size={12}/></a></div>)}
+    <footer><span>AI结论仅供参考</span></footer>
+  </article>;
   const title = !hasContent ? '专题观察 · 未形成报告' : '专题观察';
   return <>
     <article className="industry-insight-card" aria-label="行业资讯报告">

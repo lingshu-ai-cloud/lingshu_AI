@@ -5,7 +5,8 @@ import type { SocialInsightReport } from './socialInsightReport.js';
 const unsupported = /(?:全球|全世界|全网|整个市场|普遍需求|市场趋势|市场规模|行业趋势|(?:用户|消费者|终端)(?:教育)?需求(?:强劲|旺盛|增长|稳定)|(?:热度|样本|配文|视频)[^。！？；\n]{0,20}(?:佐证|证明|验证)[^。！？；\n]{0,20}市场潜力|采购(?:商)?(?:的)?(?:备货|采购)?需求(?:稳定|强劲|增长|旺盛)|(?:美国|英国|欧洲|中国|日本|韩国|海外|国内)(?:的)?(?:消费者|受众|用户|客户|市场)(?:群体)?|面向(?:美国|英国|欧洲|中国|日本|韩国|海外|国内)|销量(?:增长|上升|领先)|(?:销售|营收|询盘)(?:增长|提升|增加)|(?:供应链|供应|产能|交付)(?:稳定|充足|可靠)|(?:已具备|拥有|通过)(?:相关|国际|行业)?(?:认证|资质|认证资质))/u;
 /** Drop unsupported sentences instead of inventing a substitute finding. */
 export function filterSocialInsightEvidence(value: string): string {
-  return value.split(/(?<=[。！？；\n])/u).filter(part => !unsupported.test(part)).join('').trim();
+  return value.split(/(?<=[。！？；\n])/u).filter(part => !unsupported.test(part)
+    && !/(?:反映|表明|显示|证明)(?:了)?(?:终端)?(?:消费者|用户|受众)(?:对[^。！？；\n]{0,30})?(?:的)?(?:偏好|需求|倾向)/u.test(part)).join('').trim();
 }
 /** Non-mutating projection protects both newly generated and historical reports. */
 export function evidenceSafeSocialInsightReport(report: SocialInsightReport): SocialInsightReport {

@@ -10,6 +10,12 @@ const raw = JSON.stringify({ version: 1, industry: '美妆原料', market: '欧�
   { title: '原料进展', category: '技术', publishedAt: '2026-10-02', fact: '发布了新技术。', sourceTitle: '未核验', sourceUrl: 'https://example.com/unverified' },
 ], limitations: ['样本不足以代表市场。'] });
 const sources = [{ title: '官方原文', uri: 'https://example.com/official' }];
+test('a brief displays verified facts and original link inline without pretending to be a full report',()=>{
+ const value=JSON.parse(raw);value.presentation='brief';
+ const html=renderToStaticMarkup(<IndustryInsightReportView raw={JSON.stringify(value)} sources={sources}/>);
+ assert.match(html,/精简资讯/);assert.match(html,/官方发布新规则/);assert.match(html,/2026-10-01/);
+ assert.match(html,/href="https:\/\/example.com\/official"/);assert.doesNotMatch(html,/阅读完整行业报告|example.com\/unverified/);
+});
 test('renders evidence and explicitly scoped sample chart without unverified links', () => {
   const html = renderToStaticMarkup(<IndustryInsightReportContents raw={raw} sources={sources}/>);
   assert.match(html, /已报道事实/); assert.match(html, /重点主题/); assert.match(html, /建议行动/);
