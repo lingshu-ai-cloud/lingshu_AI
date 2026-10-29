@@ -1,11 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isConsumerCouponPromotion, regulatoryInterpretationSupported } from './industrySourceQuality.js';
+import { isAffiliateShoppingGuide, isConsumerCouponPromotion, regulatoryInterpretationSupported } from './industrySourceQuality.js';
 import { composeSearchEvidenceAnswer } from './searchEvidenceAnswer.js';
 import type { SearchOriginal } from './searchEvidenceAnswer.js';
 test('coupon and redemption spam filters target promotional mechanics rather than all price news', () => {
  for (const title of ['唯品会红包优惠券领取攻略', '护肤品折扣码', 'Beauty promo code today', 'Claim your coupon']) assert.equal(isConsumerCouponPromotion(title), true, title);
  for (const title of ['原料成本下降与供应链价格调整', '北美零售商降低美妆产品售价', '包材工厂扩产缓解采购成本压力']) assert.equal(isConsumerCouponPromotion(title), false, title);
+});
+test('affiliate shopping guide is excluded without excluding independent industry reporting', () => {
+ assert.equal(isAffiliateShoppingGuide('Skincare fans are obsessed with this €23 collagen mask that helps you look more youthful', 'This article contains affiliate links.'), true);
+ assert.equal(isAffiliateShoppingGuide('New cosmetic ingredient enters commercial production', 'This article contains affiliate links.'), false);
+ assert.equal(isAffiliateShoppingGuide('Skincare fans are obsessed with a new ingredient', 'A scientific study reports a new ingredient.'), false);
 });
 test('closed-book research refuses cached consumer coupon originals before any synthesis', async () => {
  let calls = 0;

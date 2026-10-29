@@ -1,4 +1,4 @@
-import { isConsumerCouponPromotion } from '../externalInformation/industrySourceQuality.js';
+import { isAffiliateShoppingGuide, isConsumerCouponPromotion } from '../externalInformation/industrySourceQuality.js';
 import type { GroundingSource } from './llm.js';
 import { readSearchOriginals, type SearchOriginal } from '../externalInformation/searchEvidenceAnswer.js';
 
@@ -9,7 +9,7 @@ const hostname = (uri: string) => { try { return new URL(uri).hostname.replace(/
 export function uniqueIndustryOriginals(originals: SearchOriginal[]): SearchOriginal[] {
   const urls = new Set<string>(), titles = new Set<string>(), bodies = new Set<string>();
   return originals.filter(original => {
-    if (isConsumerCouponPromotion(original.source.title)) return false;
+    if (isConsumerCouponPromotion(original.source.title) || isAffiliateShoppingGuide(original.source.title, original.text)) return false;
     const url = sourceKey(original.source), title = compact(original.source.title);
     const fullBody = compact(original.text), body = fullBody.replace(title, '');
     if (urls.has(url) || titles.has(title) || bodies.has(fullBody) || bodies.has(body)) return false;

@@ -1,5 +1,5 @@
 import { publicationMatchesDay, type DailyNewsWindow } from './dailyNewsWindow.js';
-import { isConsumerCouponPromotion, regulatoryInterpretationSupported } from './industrySourceQuality.js';
+import { isAffiliateShoppingGuide, isConsumerCouponPromotion, regulatoryInterpretationSupported } from './industrySourceQuality.js';
 import { z } from 'zod';
 import { extractIndustryMetrics, industryMetricCandidateSchema, validateIndustryMetrics } from './industryEvidenceMetrics.js';
 import { industryInsightBlock, industryInsightSummary, industrySourceType, deduplicateIndustrySignals, industrySignalCategory, type IndustrySignal } from './industryInsightReport.js';
@@ -84,7 +84,7 @@ export function searchOriginalExcerpts(original:SearchOriginal, maxChars = 8000)
 /** One closed-book synthesis after retrieval, not a paid retry of a rejected generated answer. */
 export async function composeSearchEvidenceAnswer(question:string,originals:SearchOriginal[],generate:(prompt:string)=>Promise<string>,options:{rejected?:number;freshnessDays?:number;dailyWindow?:DailyNewsWindow}={}){
  const industry = /行业资讯|今日资讯/u.test(question);
- if(industry) originals=originals.filter(original=>!isConsumerCouponPromotion(original.source.title));
+ if(industry) originals=originals.filter(original=>!isConsumerCouponPromotion(original.source.title) && !isAffiliateShoppingGuide(original.source.title, original.text));
  if(!originals.length)throw new ExternalInformationError('search_originals_unavailable','未取得可读取且符合时间范围的原文，暂不能确认近期动态。可补充具体主题，或明确改查历史资料。');
  const geographyPolicy = options.dailyWindow ? '今日资讯取材包括全球同行业当天发布或最近24小时发布的新闻，以及与目标市场直接相关的近期新闻。fact保留原文真实发生地区，不把中国或其他地区的新闻改写成北美/欧洲进展。meaning以可能或提示开头，随后标明【全球行业参考】或【目标市场直接动态】，再说明商户影响；只有原文主体、地区或实际业务关系支持时才标为目标市场直接动态。全球行业参考可以提供竞争、研发或供应链背景，但不能捏造目标市场业务联系。' : '用户目标市场必须由所引原文的事实主语、地域或实际业务关系支持，不得仅在meaning/action里添加北美/欧洲采购商就把中国零售促销或其他地区新闻包装成目标市场信号；同一综合文章混合多个地区时，只选与目标市场相关的原文片段，不夹带无关中国细分赛道。';
  const excerpts=new Map(originals.map(original=>[original.id,searchOriginalExcerpts(original,industry?4000:8000)]));

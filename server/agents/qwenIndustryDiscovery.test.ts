@@ -8,6 +8,16 @@ const source = (index: number, host = `publisher${index}.com`): GroundingSource 
 const original = (source: GroundingSource, index: number): SearchOriginal => ({ id: `S${index}`, source, text: `${source.title}：原始研究证据与主题${index}直接相关。`.repeat(20), published: ['2026-10-20'] });
 const reads = (sources: GroundingSource[]) => ({ originals: sources.map((item, index) => original(item, index + 1)), rejected: 0, rejectionReasons: {} });
 
+test('affiliate shopping guide does not count toward sufficient sources and triggers the bounded supplement', async () => {
+ const guide: GroundingSource = { title: 'Skincare fans are obsessed with this €23 collagen mask', uri: 'https://shopping.example/guide' };
+ let discoveries = 0;
+ const result = await collectIndustryOriginals([source(1), source(2), guide], {
+  discover: async () => { discoveries++; return []; },
+  read: async values => ({ originals: values.map((value, index) => ({ ...original(value, index + 1), text: value === guide ? 'This article contains affiliate links.' : original(value, index + 1).text })), rejected: 0, rejectionReasons: {} }),
+ });
+ assert.equal(discoveries, 1); assert.equal(result.originals.length, 2); assert.equal(result.discovery.supplemented, true);
+});
+
 test('zero initial candidates still receives one bounded discovery and empty evidence stays empty', async () => {
   let discoveries = 0, readCalls = 0;
   const result = await collectIndustryOriginals([], { discover: async () => { discoveries++; return []; }, read: async () => { readCalls++; return reads([]); } });

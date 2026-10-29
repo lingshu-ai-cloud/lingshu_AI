@@ -42,7 +42,7 @@ export function SocialInsightVideoEvidence({ video, material }: { video: SocialI
   const help = reportPresentationText(material?.merchantHelp || '');
   const angle = reportPresentationText(material?.contentAngle || '');
   const evidence = material?.evidenceNeeded.map(reportPresentationText).filter(Boolean) || [];
-  const cover = <div className="min-h-32 bg-surface">
+  const cover = <div className="w-1/3 min-h-32 bg-surface">
       <LsMediaStateFrame state={thumbnail ? state : 'error'} label={!thumbnail || state === 'error' ? '封面暂不可用，可查看原视频' : undefined} className="min-h-32">
         {thumbnail && <LsProgressiveMedia src={thumbnail} alt={video.title} preview={false} width="100%"
           referrerPolicy="no-referrer" loading="lazy" style={{ height: 'auto', objectFit: 'contain' }}
