@@ -9,6 +9,7 @@ import { ASSISTANT_WEEKLY_PLAN_OPEN_EVENT } from '../../lib/assistantWeeklyPlanE
 import { prepareWeeklyPlanForLaunch } from '../../lib/weeklyPlanLaunchPreparation';
 import { finishedFilmBudgetDecision, finishedFilmBudgetQuoteKey } from '../../../shared/contracts/finishedFilmBudget';
 import { showWeeklyReadinessGuidance } from '../../lib/weeklyReadinessGuidance';
+import { weeklyReferenceCollectionFeedback, weeklyPlanExecutionLabel } from '../../lib/weeklyReferenceFeedback';
 import { synchronizeWeeklyPlanFacts } from '../../lib/weeklyFactsSync';
 
 type GuidanceKey = 'companyName' | 'focusProducts' | 'targetMarkets' | 'customerProfile' | 'weeklyObjective';
@@ -83,6 +84,7 @@ export function useAssistantWeeklyPlanExperience() {
   const [guidance, setGuidance] = useState<GuidanceState | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [collectingReferences, setCollectingReferences] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [factsRecovery, setFactsRecovery] = useState<Readonly<Record<string, unknown>> | null>(null);
@@ -217,7 +219,7 @@ export function useAssistantWeeklyPlanExperience() {
 
   const collectReferencesNow = useCallback(async () => {
     if (busy || !referenceGap) return;
-    setBusy(true); setReferenceMessage('');
+    setBusy(true); setCollectingReferences(true); setReferenceMessage('正在核验采集范围并采集参考，请稍候。');
     try {
       const scope = await socialDiscoveryApi.getScope();
       if (!scope.persisted || scope.needsConfirmation) {
@@ -226,12 +228,10 @@ export function useAssistantWeeklyPlanExperience() {
         return;
       }
       const result = await socialDiscoveryApi.run({ triggerType: 'manual' });
-      setReferenceMessage(result.skipped
-        ? `本次采集未启动：${result.reason || '请检查采集范围与运行状态'}。周任务仍未创建。`
-        : '已发起采集。新视频或图文完成相应分析后，返回这里重新匹配周计划；采集入库不等于可用于制作。');
+      setReferenceMessage(weeklyReferenceCollectionFeedback(result));
     } catch (cause) {
       setReferenceMessage(cause instanceof Error ? cause.message : '采集未启动，请检查采集设置。');
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setCollectingReferences(false); }
   }, [busy, referenceGap, openReferenceLibrary]);
 
   useEffect(() => {
@@ -331,7 +331,7 @@ export function useAssistantWeeklyPlanExperience() {
     } finally { setBusy(false); }
   }, [busy, proposal, factsRecovery, overBudgetApprovalRevision, overBudgetApprovalQuoteKey, overBudgetConfirmationOpen]);
 
-  return { proposal, draft, modalOpen, busy, error, notice, factsSyncRequired: Boolean(factsRecovery), celebrating, overBudgetApprovalRevision,
+  return { proposal, draft, modalOpen, busy, collectingReferences, error, notice, weeklyPlanExecutionLabel: weeklyPlanExecutionLabel(proposal || overview), factsSyncRequired: Boolean(factsRecovery), celebrating, overBudgetApprovalRevision,
     overBudgetConfirmationOpen, overBudgetConfirmationCount,
     cancelOverBudgetConfirmation: () => { if (busy) return; setOverBudgetConfirmationOpen(false);
       setOverBudgetApprovalRevision(null); setOverBudgetApprovalQuoteKey(''); setOverBudgetConfirmationCount(0); },
