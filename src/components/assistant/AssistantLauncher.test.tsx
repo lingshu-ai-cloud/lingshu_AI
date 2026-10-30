@@ -50,3 +50,9 @@ test('open chat shows the full launcher even when the stored preference is retra
   assert.match(html, /aria-label="收起灵小枢对话"/);
   assert.doesNotMatch(html, /data-global-assistant="retract-control"/);
 });
+
+test('launcher uses the shared plan state instead of calling every non-running plan ungenerated', () => {
+  const html = renderToStaticMarkup(<AssistantLauncher retracted={false} chatOpen={false} badgeCount={0} reduceMotion weeklyPlanLabel="周计划待确认" launcherButtonRef={launcherButtonRef} edgeLauncherButtonRef={edgeLauncherButtonRef} onLauncherClick={noOp} onRetract={noOp} onRestore={noOp} />);
+  assert.match(html, /aria-label="周计划待确认"/);
+  assert.doesNotMatch(html, /周计划待生成/);
+});

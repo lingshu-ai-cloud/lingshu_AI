@@ -12,6 +12,7 @@ import type { ResolvedDigitalEmployeeConfiguration } from '../digitalEmployees/c
 import type { PublishingOAuthPlatform, PublishingReadinessSnapshot } from '../digitalEmployees/publishingOAuthReadiness.js';
 import type { WorkflowTask } from '../../src/lib/digitalEmployees.js';
 import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
+import { currentOperatingWeek, scopeOverviewQueue, selectOverviewGoal } from '../digitalEmployees/overviewGoalScope.js';
 import { runReviewSummary } from './digitalEmployeeReviewSummary.js';
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, type ApprovalRecord, type ConfigRecord, type EventRecord, type GoalRecord, type HandoffRecord, type PlanRecord, type RunRecord, type StoredRecord, type TaskRecord } from './digitalEmployeeRecords.js';
 
@@ -39,13 +40,12 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     store.list<GoalRecord>(COLLECTION.goals, { where: { tenant_id: tenantId }, sort: '-created_at', page: 1, perPage: 500 }),
   ]);
   const operatingGoals = await committedDigitalEmployeeOperatingGoals(tenantId, goalResult.items);
-  const goal = requestedGoalId
-    ? operatingGoals.find(item => item.id === requestedGoalId) ?? null
-    : operatingGoals.find(item => ['active', 'paused'].includes(item.status)) ?? operatingGoals[0] ?? null;
+  const range = requestedRange || currentOperatingWeek();
+  const goal = selectOverviewGoal(operatingGoals, requestedGoalId, range);
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   if (!goal) {
     const [businessSnapshot, contentQueue, executionRuntime, industryTrends, directorAnalyses] = await Promise.all([
-      buildBusinessSnapshot(tenantId, requestedRange),
+      buildBusinessSnapshot(tenantId, range),
       buildContentQueueProjection({
         tenantId, runId: '', planBody: {}, tasks: [],
         publishingTargets: resolvedConfiguration?.config.publishingTargets || [],
@@ -59,7 +59,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
         .catch(() => traceableIndustryTrends([])),
       liveDirectorAnalysisTasks(store, tenantId, { includeUnscoped: !requestedGoalId }).catch(() => []),
     ]);
-    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue, executionRuntime, industryTrends, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: projectDirectorAnalysisStatus(publicAgentStatuses([]), directorAnalyses), businessSnapshot, publishingReadiness: null };
+    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: operatingGoals.map(publicGoal), goal: null, plan: null, run: null, tasks: [], contentQueue: scopeOverviewQueue(contentQueue, range), executionRuntime, industryTrends, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: projectDirectorAnalysisStatus(publicAgentStatuses([]), directorAnalyses), businessSnapshot, publishingReadiness: null };
   }
   const [plan, run, businessSnapshot] = await Promise.all([
     first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
@@ -134,7 +134,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     run,
     tasks: normalizedTasks.map(task => ({ ...task, depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })),
     ...deliveryData,
-    contentQueue,
+    contentQueue: requestedGoalId ? contentQueue : scopeOverviewQueue(contentQueue, range, goal.id),
     executionRuntime,
     industryTrends,
     events: events?.items.slice().reverse().map(event => ({ ...event, payload: jsonObject(event.payload, {}) })) || [],

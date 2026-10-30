@@ -76,6 +76,7 @@ export function exactAnalysisQuality(video: TrendVideo): AnalysisQualityGate {
   if (progress?.stage === 'paused') return { ready: false, reason: `精确分析已暂停：${progress.currentStep || '进度已保留'}`, requiredFrames, actualFrames: valid.length };
   if (progress?.stage === 'cancelled') return { ready: false, reason: '精确分析已取消，可重新提交', requiredFrames, actualFrames: valid.length };
   if (analysisProgressIsActive(progress)) return { ready: false, reason: progress?.currentStep || '全片精确分析正在进行中', requiredFrames, actualFrames: valid.length };
+  if (video.status === 'failed') return { ready: false, reason: '精确分析失败，请重试', requiredFrames, actualFrames: valid.length };
   if (payload?.videoLevelFailureStatus || payload?.analysisError || ['failed', 'video_failed', 'analysis_retryable', 'paused', 'cancelled'].includes(String(payload?.geminiStatus || ''))) return { ready: false, reason: '精确分析未完成或已失败，请重试', requiredFrames, actualFrames: valid.length };
   if (payload?.requestedAnalysisMode === 'exact' && payload?.geminiStatus !== 'analyzed') return { ready: false, reason: '全片精确分析正在排队或生成中', requiredFrames, actualFrames: valid.length };
   if (payload?.analysisMode !== 'exact') return { ready: false, reason: '当前仅有策略级分析，需先完成全片精确分析', requiredFrames, actualFrames: valid.length };
@@ -121,15 +122,24 @@ export function inspirationDetailStatusLabel(video: TrendVideo, state: {
   const progress = payload?.analysisProgress;
   const queue = imagePostAnalysisQueuePresentation(video);
   if (queue) return queue.label;
+  if (!state.pending && videoAnalysisFailed(video)) return '分析失败，请重试';
   if (progress && (analysisProgressIsActive(progress)
     || ['failed', 'paused', 'cancelled'].includes(progress.stage))) return progress.stageLabel;
   if (state.pending) return '编导 Agent 分析中';
+  if (videoAnalysisFailed(video)) return '分析失败，请重试';
   if (video.contentFormat === 'image' && state.imageAnalysisReady) return '图文证据分析已完成';
   if (state.exactAnalysisReady) return '全片精确分析已完成';
   if (payload?.geminiStatus === 'needs_review') return '逐镜分析待复核';
   if (state.hasStrategyAnalysis) return '策略分析已完成';
   if (payload?.analysisError || video.status === 'failed') return '分析需要重试';
   return '等待编导 Agent 分析';
+}
+
+export function videoAnalysisFailed(video: TrendVideo): boolean {
+  const payload = video.aiAnalysis;
+  if (analysisProgressIsActive(payload?.analysisProgress)) return false;
+  return payload?.analysisProgress?.stage === 'failed' || Boolean(payload?.analysisError || payload?.videoLevelFailureStatus)
+    || video.status === 'failed' || ['failed', 'video_failed', 'analysis_retryable'].includes(String(payload?.geminiStatus || ''));
 }
 
 export function isDisplayableVideoAnalysis(analysis?: VideoAnalysisPayload, status?: TrendVideo['status']): boolean {

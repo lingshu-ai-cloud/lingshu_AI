@@ -17,7 +17,7 @@ import { businessOverviewSample, isBusinessOverviewSampleEnabled } from '../dev/
 import { CalendarRange, ChevronLeft, History, Pause, Play } from 'lucide-react';
 import { digitalEmployeeApi, buildTaskDeepLink, dispatchDigitalEmployeeDeepLink, type BusinessReadinessItem, type DigitalEmployeeOverview } from '../lib/digitalEmployees';
 import type { WeeklyStartConflict } from '../lib/weeklyStartValidation';
-import { weeklyWorkStatus } from '../lib/weeklyWorkStatus';
+import { weeklyPlanExecutionLabel } from '../lib/weeklyReferenceFeedback';
 import { AGENT_SETTINGS_OPEN_EVENT, openContentGenerationQueue } from '../lib/contentGenerationQueue';
 import { openAssistantWeeklyPlan } from '../lib/assistantWeeklyPlanEvents';
 
@@ -32,13 +32,7 @@ export const statusLabel: Record<string, string> = {
   waiting_human: '人工接管', pending: '待执行', handed_off: '已接管',
   approved: '已批准', rejected: '已驳回',
 };
-const weeklyRunHeaderLabel: Record<string, string> = {
-  failed: '执行失败', cancelled: '已取消', paused: '已暂停',
-  waiting_external: '等待业务结果', waiting_approval: '待处理',
-  waiting_human: '待处理', blocked: '待处理', queued: '准备中',
-  planning: '准备中', initializing: '准备中', pending: '准备中',
-  succeeded: '已完成', running: '执行中',
-};
+
 function OnboardingWelcome({ onClose }: { onClose: () => void }) {
   return <Modal open title="准备工作已经完成" onCancel={onClose} width={480} footer={<Button type="primary" onClick={onClose}>开始使用灵枢</Button>}>
     <p className="py-4 text-sm leading-7 text-text-secondary">企业资料、产品表和社媒经营阶段都已保存。接下来可制定周计划，查看四位数字员工的执行进度与交付结果。</p>
@@ -143,22 +137,7 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
     const openPublishingAccountSetup = () => window.dispatchEvent(new CustomEvent("lingshu:navigate", {
       detail: { page: "accountManagement", businessRef: { taskKey: "publishing_account_setup" } },
     }));
-    const projectedWeeklyStatus = weeklyWorkStatus(data);
-    const currentPlanStatusLabel = viewGoalId
-      ? "历史计划"
-      : !goal
-        ? "待创建"
-        : data.run
-        ? projectedWeeklyStatus?.title.includes("自动恢复")
-          ? "自动恢复中"
-          : weeklyRunHeaderLabel[data.run.status] || "状态待确认"
-        : goal?.status === "draft"
-          ? "待确认"
-          : goal?.status === "completed"
-            ? "已完成"
-            : goal?.status === "cancelled"
-              ? "已取消"
-              : "已确认";
+    const currentPlanStatusLabel = viewGoalId ? "历史计划" : weeklyPlanExecutionLabel(data);
     // Recover only the failed production node of this run, never create another
     // weekly run or implicitly approve publishing/human acceptance tasks.
     const recoverableProductionTask = data.run?.goal_id === goal?.id && ["waiting_human", "failed"].includes(data.run?.status || "")

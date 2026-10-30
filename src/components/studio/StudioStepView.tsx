@@ -271,7 +271,7 @@ export function renderStudioStep(input: StudioStepViewInputs) {
                       <ChevronDown size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" />
                     </span>
                   </label>
-                  <label className="block">
+                  {contentMode === 'video' && (                  <label className="block">
                     <span className="mb-1.5 block text-xs font-semibold text-text-secondary">合作路线</span>
                     <span className="relative block">
                       <select
@@ -291,7 +291,7 @@ export function renderStudioStep(input: StudioStepViewInputs) {
                       </select>
                       <ChevronDown size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" />
                     </span>
-                  </label>
+                  </label>)}
                   <label className="block">
                     <span className="mb-1.5 block text-xs font-semibold text-text-secondary">目标客户</span>
                     <input
@@ -373,10 +373,8 @@ export function renderStudioStep(input: StudioStepViewInputs) {
               {frozenAssets?.adoptedAssets && <p className="mt-2 text-xs">已采纳原始视频：{Object.values(frozenAssets.adoptedAssets).filter(asset => asset.url && /^[a-f0-9]{64}$/.test(asset.sha256 || '')).length} 个 · 待整片验收；所选素材统计单独保留。</p>}
               <div className="mt-3 grid grid-cols-2 gap-1.5">
                 {[
-                  ['视频', `${selectedVideoCount} 个`],
                   ['图片', `${selectedImageCount} 张`],
-                  ['有效时长', `${effectiveSelectedDuration.toFixed(1)}s`],
-                  ['时长未知', `${unknownDurationCount} 项`],
+                  ...(contentMode === 'video' ? [['视频', `${selectedVideoCount} 个`], ['有效时长', `${effectiveSelectedDuration.toFixed(1)}s`], ['时长未知', `${unknownDurationCount} 项`]] : []),
                   ['比例适配', `${ratioCompatibleCount}/${selectedVisualClips.length}`],
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-lg bg-surface-2 px-2.5 py-2">
@@ -401,10 +399,10 @@ export function renderStudioStep(input: StudioStepViewInputs) {
                   <Upload size={13} /> 上传素材
                 </button>
                 <span className={`text-[10px] font-semibold ${materialCoverageReady ? 'text-emerald-700' : 'text-amber-700'}`}>
-                  {!selectedVisualClips.length ? (mode === 'material' ? '从素材库选择至少 1 项即可，不强制上传' : '可先生成脚本，成片前再补素材') : materialCoverageReady ? '有效镜头时长可覆盖当前目标' : `建议时长改为 ${recommendedMaterialDuration}s，或再补 ${Math.max(0, duration - effectiveSelectedDuration).toFixed(1)}s 素材`}
+                  {contentMode === 'poster' ? (selectedVisualClips.length ? '已选择图片素材' : '请选择本次制作使用的图片') : !selectedVisualClips.length ? (mode === 'material' ? '从素材库选择至少 1 项即可，不强制上传' : '可先生成脚本，成片前再补素材') : materialCoverageReady ? '有效镜头时长可覆盖当前目标' : `建议时长改为 ${recommendedMaterialDuration}s，或再补 ${Math.max(0, duration - effectiveSelectedDuration).toFixed(1)}s 素材`}
                 </span>
               </div>
-              {mode === 'material' && selectedVisualClips.length > 0 && (
+              {contentMode === 'video' && mode === 'material' && selectedVisualClips.length > 0 && (
                 <div className="mt-3 rounded-lg border border-border bg-surface-2 p-3">
                   <p className="text-[10px] font-semibold text-text-secondary">这批素材怎么用</p>
                   <div className="mt-2 grid grid-cols-2 gap-1.5">
@@ -475,7 +473,7 @@ export function renderStudioStep(input: StudioStepViewInputs) {
                 </div>
               </div>
             )}
-            <section aria-label="输出语言与配乐说明" className="space-y-2 border-t border-border px-4 py-3">
+            {contentMode === 'video' && <section aria-label="输出语言与配乐说明" className="space-y-2 border-t border-border px-4 py-3">
               <p className="text-xs font-semibold text-text-primary">输出语言与配乐</p>
               <label className="block text-[11px] font-bold text-text-secondary">原文语言
                 <select aria-label="原文语言" value={socialViralTask && referenceSourceLanguage ? referenceSourceLanguage : voiceLangs[0] || lang} disabled={Boolean(script.trim()) || Boolean(socialViralTask && referenceSourceLanguage)} onChange={event => { const code = event.target.value; setVoiceLangs(current => [code, ...current.slice(1).filter(item => item !== code)]); setLang(code); setActiveVoiceLang(code); }} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs disabled:opacity-60">
@@ -485,7 +483,7 @@ export function renderStudioStep(input: StudioStepViewInputs) {
               <p className="text-[11px] leading-5 text-text-secondary">原文语言：{LANGS.find(item => item.code === (socialViralTask && referenceSourceLanguage ? referenceSourceLanguage : voiceLangs[0] || lang))?.label || lang}。{socialViralTask ? '按原片 ASR 口播自动识别。' : '在下一步“脚本与声音”添加翻译语种，分别生成配音、字幕和成片。'}</p>
               <p className="text-[11px] leading-5 text-text-secondary">在“脚本与声音 → 配乐”选择音乐和音量；未选音乐时，导出不会自动添加配乐。</p>
               {selectedVisualClips.filter(clip => clip.type === 'video').length > 0 && selectedVisualClips.filter(clip => clip.type === 'video').length < 3 && <p role="status" className="rounded-lg bg-amber-50 p-2 text-[11px] leading-5 text-amber-800">当前只有 {selectedVisualClips.filter(clip => clip.type === 'video').length} 段视频。不同截取时间不代表不同画面；自动选材不会循环使用同一视频。需要更多分镜时，请补充不同角度、动作或场景的素材。</p>}
-            </section>
+            </section>}
             <div className="overflow-hidden border-y border-border bg-surface">
               <button
                 type="button"
@@ -494,7 +492,7 @@ export function renderStudioStep(input: StudioStepViewInputs) {
               >
                 <span>
                   <span className="block text-xs font-semibold text-text-primary">高级设置</span>
-                  <span className="mt-0.5 block text-[10px] text-text-muted">{ratio} · {duration}s · {provider === 'qwen' ? '千问' : 'Gemini'}</span>
+                  <span className="mt-0.5 block text-[10px] text-text-muted">{ratio}{contentMode === 'video' ? ` · ${duration}s` : ''} · {provider === 'qwen' ? '千问' : 'Gemini'}</span>
                 </span>
                 <ChevronDown size={15} className={`text-text-muted transition ${showAdvancedSetup ? 'rotate-180' : ''}`} />
               </button>
@@ -506,10 +504,10 @@ export function renderStudioStep(input: StudioStepViewInputs) {
                       {visibleRatios.map(item => <option key={item} value={item}>{item}</option>)}
                     </select>
                   </label>
-                  <label className="block">
+                  {contentMode === 'video' && (                  <label className="block">
                     <span className="mb-1.5 block text-[10px] font-bold text-text-secondary">目标时长</span>
                     <input type="number" min={5} max={180} value={duration} onChange={event => setDuration(Math.max(5, Number(event.target.value) || 5))} className="h-9 w-full rounded-lg border border-border bg-white px-2 text-xs font-semibold text-text-primary outline-none focus:border-accent" />
-                  </label>
+                  </label>)}
                   <label className="block">
                     <span className="mb-1.5 block text-[10px] font-bold text-text-secondary">生成引擎</span>
                     <select value={provider} onChange={event => setProvider(event.target.value as 'gemini' | 'qwen')} className="h-9 w-full rounded-lg border border-border bg-white px-2 text-xs font-semibold text-text-primary outline-none focus:border-accent">

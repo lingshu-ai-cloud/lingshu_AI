@@ -77,7 +77,7 @@ assert.match(assistantRootMarkup, /launcherRetracted && mode === 'breathing'[\s\
 assert.match(assistantRootMarkup, /bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\][\s\S]*md:bottom-5/, '灵小枢入口必须使用统一安全区基准，桌面端不得留下大块底部空白');
 assert.doesNotMatch(assistantRootMarkup, /5\.5rem/, '制作页不得通过额外抬高灵小枢入口制造底部空白');
 assert.match(conversationPanelSource, /assistantUsesMobileClearance[\s\S]{0,240}viewport\.height - \(assistantUsesMobileClearance \? 160 : 96\)/, '移动端抬高入口时必须同步收紧对话高度，不能把面板顶部裁掉');
-assert.match(launcherSource, /const closedLabel = weeklyPlanOperating \? '周计划正在运营中' : '周计划待生成'/, '右下角入口必须根据真实周运行状态给出明确文案');
+assert.match(launcherSource, /const closedLabel = weeklyPlanLabel \|\|/, '右下角入口必须根据真实周运行状态给出明确文案');
 assert.match(weeklyPlanHookSource, /function guidanceQuestions[\s\S]{0,1200}missingQuestions\.slice\(0, 2\)[\s\S]{0,120}weeklyObjective/, '缺少资料时最多补充两项资料，并始终保留经营目标确认');
 const weeklyPrepareSource = weeklyPlanHookSource.slice(weeklyPlanHookSource.indexOf('const prepare ='), weeklyPlanHookSource.indexOf('const saveDraft ='));
 assert.match(weeklyPrepareSource, /setGuidance\([\s\S]{0,280}questions\[0\]/, '没有草稿时打开周计划应进入逐项问答，不能后台创建新计划');

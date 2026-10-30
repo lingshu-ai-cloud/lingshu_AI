@@ -1,13 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { TrendVideo } from '../../lib/inspirationTypes';
-import { exactAnalysisQuality, getAnalysis, isDisplayableForFormat } from './inspirationAnalysisProjection';
+import { exactAnalysisQuality, getAnalysis, isDisplayableForFormat, inspirationDetailStatusLabel, videoAnalysisFailed } from './inspirationAnalysisProjection';
 
 const video: TrendVideo = {
   id: 'crawl-a', platform: 'youtube', title: '真实视频', thumbnail: 'https://cdn.example/poster.jpg',
   duration: 18, tags: [], views: '100', trend: 'stable', contentFormat: 'video',
   sourceUrl: 'https://www.youtube.com/watch?v=abc',
 };
+
+test('failed analysis overrides stale review and strategy evidence, but a new running attempt overrides old errors', () => {
+  const failed: TrendVideo = { ...video, status: 'analyzed', aiAnalysis: { geminiStatus: 'needs_review', analysisError: 'provider failed' } };
+  const state = { pending: false, imageAnalysisReady: false, exactAnalysisReady: false, hasStrategyAnalysis: true };
+  assert.equal(videoAnalysisFailed(failed), true);
+  assert.match(inspirationDetailStatusLabel(failed, state), /分析失败/);
+  assert.equal(exactAnalysisQuality({ ...video, status: 'failed' }).ready, false);
+  const running = { ...failed, aiAnalysis: { ...failed.aiAnalysis, analysisProgress: { stage: 'analyzing', stageLabel: '正在分析' } } } as TrendVideo;
+  assert.equal(videoAnalysisFailed(running), false);
+  assert.equal(inspirationDetailStatusLabel(running, { ...state, pending: true }), '正在分析');
+});
 
 test('analysis projection keeps uncertain speech out of structured subtitle evidence', () => {
   const gemini = {

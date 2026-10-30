@@ -23,8 +23,17 @@ export function weeklyReferenceCollectionFeedback(result: CollectionResult): str
 }
 
 export function weeklyPlanExecutionLabel(data: DigitalEmployeeOverview | null): string {
+  if (!data) return '周计划状态待确认';
+  if (!data.goal) return '周计划待生成';
+  if (!data.run) {
+    if (data.goal.status === 'completed') return '周计划已完成';
+    if (data.goal.status === 'cancelled') return '周计划已取消';
+    return data.goal.status === 'draft' ? '周计划待确认' : '周计划待启动';
+  }
   if (data?.run?.status === 'succeeded' || data?.run?.status === 'completed') return '周计划已完成';
   if (data?.run?.status === 'cancelled') return '周计划已取消';
+  if (data.run.status === 'failed') return '周计划执行失败';
+  if (data.run.status === 'paused') return '周计划已暂停';
   const indicator = weeklyHomeIndicator(data);
   if (indicator === 'attention') return '周计划需要处理';
   if (indicator === 'producing') return '周计划正在生产';

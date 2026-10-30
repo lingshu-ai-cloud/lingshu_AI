@@ -7,7 +7,7 @@ import VideoAnalysisProgressPanel, { analysisProgressIsActive } from './VideoAna
 import ReferenceSpeechAlignmentPanel from './ReferenceSpeechAlignmentPanel';
 import type { DirectorReviewHandoff } from './DirectorReviewWorkspace';
 import { AuthenticatedVideo } from './InspirationMedia';
-import { exactAnalysisQuality, getAnalysis, inspirationDetailStatusLabel } from './inspirationAnalysisProjection';
+import { exactAnalysisQuality, getAnalysis, inspirationDetailStatusLabel, videoAnalysisFailed } from './inspirationAnalysisProjection';
 import { imagePostAnalysisQueuePresentation } from './imagePostAnalysisPresentation';
 import { PLATFORM_META } from './inspirationVideoProjection';
 import { buildBenchmarkAnalysis } from '../../../shared/benchmarkAnalysis';
@@ -50,6 +50,7 @@ export function DirectorVideoDetailPanel({
   const analysis = getAnalysis(video);
   const exactQuality = exactAnalysisQuality(video);
   const payload = video.aiAnalysis;
+  const analysisFailed = videoAnalysisFailed(video);
   const imageEvidence = payload?.imageEvidence;
   const isImagePost = video.contentFormat === 'image';
   const imageQueue = imagePostAnalysisQueuePresentation(video);
@@ -85,7 +86,7 @@ export function DirectorVideoDetailPanel({
   // A missing review-handoff response must not hide an otherwise valid
   // replication action. The task-creation endpoint owns handoff recovery; the
   // UI only needs verified exact evidence and a non-running analysis.
-  const detailCreationReady = video.id.startsWith('material-') ? true : isImagePost ? imageAnalysisReady : exactQuality.ready && !pending;
+  const detailCreationReady = video.id.startsWith('material-') ? true : isImagePost ? imageAnalysisReady : exactQuality.ready && !pending && !analysisFailed;
   const isReadOnlySnapshot = payload?.analysisSource === 'weekly-plan-snapshot' || video.id.startsWith('weekly-reference-');
   const canRunExactAnalysis = !isReadOnlySnapshot && Boolean(video.recordId || video.id.startsWith('material-'));
   const canRunDetailAnalysis = isImagePost ? Boolean(video.recordId) && !imageQueue : canRunExactAnalysis;
@@ -112,7 +113,7 @@ export function DirectorVideoDetailPanel({
         {isImagePost && (!imageAnalysisReady || legacyImageAnalysis) && !imageQueue && <Button onClick={onReanalyzeImage} loading={analyzing} icon={<Images size={13} />}>{legacyImageAnalysis ? '补充参考图分析' : '重新分析图文'}</Button>}
         <Button onClick={onPreview}>预览原内容</Button>
         <Button type="primary" onClick={detailCreationReady ? onCreate : isImagePost ? onReanalyzeImage : onExactAnalysis} disabled={!detailCreationReady && !canRunDetailAnalysis} className="ml-auto">{video.id.startsWith('material-') ? '开始创作' : '爆款裂变'}</Button>
-        {!detailCreationReady && <p className="w-full text-xs text-text-secondary">{isImagePost ? imageQueue?.detail || '点击“爆款裂变”会先完成图文证据分析。' : pending ? '详细分析完成后会开放复刻，当前任务不会重复提交。' : needsDirectorReview ? '逐镜分析已经完成；需先确认待复核的镜头证据，再进入制作。' : canRunExactAnalysis ? '点击“爆款裂变”会先完成详细分析，再进入制作。' : detailedAnalysisReason}</p>}
+        {!detailCreationReady && <p className="w-full text-xs text-text-secondary">{isImagePost ? imageQueue?.detail || '点击“爆款裂变”会先完成图文证据分析。' : analysisFailed ? '精确分析失败，已有分镜仅供参考；请重试分析，通过后再进入制作。' : pending ? '详细分析完成后会开放复刻，当前任务不会重复提交。' : needsDirectorReview ? '分镜证据仍待复核，尚未通过制作条件检查。' : canRunExactAnalysis ? '点击“爆款裂变”会先完成详细分析，再进入制作。' : detailedAnalysisReason}</p>}
       </div>}
       styles={{ body: { padding: 0 } }}>
       <div className="border-b border-border px-5 py-3">

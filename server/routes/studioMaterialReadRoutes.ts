@@ -34,7 +34,9 @@ export function createStudioMaterialReadRoutes(deps: Pick<StudioApplicationPorts
       const scope = req.query.scope as string | undefined;
       const purpose = String(req.query.purpose || 'library');
       const [inventory, enterpriseProfile] = await Promise.all([
-        readMaterialLibrary(tenantId),
+        // The gallery already projects profile assets below. Byte verification
+        // belongs to production admission, not every paginated inventory read.
+        readMaterialLibrary(tenantId, { includeEnterpriseProductImages: false }),
         readTenantEnterpriseProfile(tenantId),
       ]);
       // Listing the library is read-only. Analysis is started only by an explicit

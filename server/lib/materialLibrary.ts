@@ -303,6 +303,7 @@ async function enterpriseProductImageMaterials(tenantId: string, ownedRecords: M
 /** The UI and worker share this inventory; source failures are never reported as an empty library. */
 export async function readMaterialLibrary(tenantId: string, adapters: {
   local?: typeof readLocalMaterials; cloud?: typeof readCloudMaterialLibrary; dataStore?: DataStore;
+  includeEnterpriseProductImages?: boolean;
 } = {}): Promise<{ items: MaterialRecord[]; status: 'ready' | 'partial' | 'unavailable'; sources: MaterialSourceStatus[] }> {
   // Normal UI and worker reads need the enterprise profile projection too.
   // Focused/injected inventories remain isolated unless their caller supplies
@@ -318,7 +319,7 @@ export async function readMaterialLibrary(tenantId: string, adapters: {
   const cloud = await (adapters.cloud || readCloudMaterialLibrary)(tenantId, undefined, adapters.dataStore);
   const sources = [localStatus, cloud.source];
   let enterpriseProducts: MaterialRecord[] = [];
-  try { enterpriseProducts = await enterpriseProductImageMaterials(tenantId, [...local, ...cloud.items] as MaterialRecord[], profileStore); }
+  try { if (adapters.includeEnterpriseProductImages !== false) enterpriseProducts = await enterpriseProductImageMaterials(tenantId, [...local, ...cloud.items] as MaterialRecord[], profileStore); }
   catch { sources.push({ source: 'database', state: 'unavailable', message: '企业产品图库读取失败，请重试或联系管理员' }); }
   const industry = [...local, ...cloud.items].some(item => item.scope === 'shared')
     ? await readMaterialTenantIndustry(tenantId, profileStore || ((!adapters.local && !adapters.cloud) ? store : undefined)) : '';

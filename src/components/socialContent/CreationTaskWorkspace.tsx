@@ -7,7 +7,7 @@ import { socialContentApi, SocialContentRequestError } from '../../lib/socialCon
 import { SOCIAL_CONTENT_TASK_REFRESH_EVENT } from '../../lib/socialContentTaskRefresh';
 import { SOCIAL_CONTENT_NAVIGATION_EVENT, readSocialContentNavigationQueryTaskId, readSocialContentNavigationTaskId } from '../../lib/socialContentContext';
 import { productionNavigationIdentity, stampProductionHistoryState } from '../../lib/productionNavigation';
-import { creationTaskCalendar, creationTaskRows, type CreationTaskRow, type CreationTaskProduct } from '../../lib/creationTaskWorkspace';
+import { creationTaskCalendar, creationTaskRows, creationTaskRowsInWeek, type CreationTaskRow, type CreationTaskProduct } from '../../lib/creationTaskWorkspace';
 import { studioApi } from '../../lib/studioApi';
 import CreationTaskCover from './CreationTaskCover';
 import { LsCalendar } from '../ui/LsCalendar';
@@ -25,6 +25,7 @@ const selectedMetric = ():ContentGenerationQueueMetric => {
 
 export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalendar = false, request }:{data:DigitalEmployeeOverview;onRefresh:()=>void;embeddedCalendar?:boolean;request?:ContentGenerationQueueRequest}) {
   const queueMode=Boolean(request);
+  const [period, setPeriod] = useState<'week' | 'history'>('week');
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [tasks,setTasks]=useState<SocialContentTaskSummary[]>([]),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
   const [view,setView]=useState<'calendar'|'tasks'>(()=>request?.view ?? (embeddedCalendar?'calendar':selectedTask()||new URLSearchParams(window.location.search).get('view')==='tasks'?'tasks':'calendar'));
@@ -85,7 +86,7 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
     return()=>{active=false;controller.abort();};
   },[taskId,identity]);
   const rows=useMemo(()=>creationTaskRows(loadedIdentity.current===identity?[...tasks,...(exact&&!tasks.some(t=>t.taskId===exact.taskId)?[exact]:[])]:[],(data.contentQueue?.items||[]).filter(item=>item.origin==='weekly_plan'||tasks.some(task=>task.taskId===item.socialContentTaskId)||item.socialContentTaskId===exact?.taskId),products,unavailable),[tasks,exact,data,identity,products,unavailable]);
-  const sourceRows=useMemo(()=>rows.filter(row=>source==='all'||(source==='weekly'?row.sourceLabel==='周任务包':row.sourceLabel!=='周任务包')),[rows,source]);
+  const sourceRows=useMemo(()=>(period === 'week' ? creationTaskRowsInWeek(rows) : rows).filter(row=>source==='all'||(source==='weekly'?row.sourceLabel==='周任务包':row.sourceLabel!=='周任务包')),[rows,source,period]);
   const metricRows=useMemo(()=>sourceRows.filter(row=>metric==='all'||metric==='scheduled'?metric==='all'||Boolean(row.publishAt):metric==='planned'?['planned','queued'].includes(row.weekly?.status||'')||row.statusLabel==='待调度':metric==='producing'?row.weekly?.status==='producing'||row.statusLabel==='创作中':metric==='waiting_review'?row.weekly?.status==='waiting_review'||row.category==='confirmation':row.weekly?.status==='completed'||row.category==='completed'),[sourceRows,metric]);
   const events=useMemo(()=>creationTaskCalendar(metricRows),[metricRows]);
   const selected=rows.find(row=>taskId?row.taskId===taskId:contentId?row.contentId===contentId:row.key===rowKey)||null;
@@ -104,7 +105,7 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
   return <section id="content-creation-calendar" aria-label="内容创作工作区" className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
       {embeddedCalendar?<h3 className="text-sm font-semibold">内容发布排期</h3>:<span data-growth-tour="calendar"><Segmented<'calendar'|'tasks'> aria-label="内容生成队列视图" value={view} options={[{label:'任务列表',value:'tasks'},{label:'发布日历',value:'calendar'}]} onChange={value=>{setView(value);setTaskId(null);setContentId(null);setRowKey(null);updateLocation(value);}}/></span>}
-      <div className="flex items-center gap-3"><Tag>{metricRows.length} 条任务</Tag><Button loading={loading} onClick={refresh}>刷新</Button></div>
+      <div className="flex flex-wrap items-center gap-3"><Segmented aria-label="任务时间范围" value={period} onChange={value => setPeriod(value as 'week' | 'history')} options={[{ label: '本周', value: 'week' }, { label: '全部历史', value: 'history' }]} /><Tag>{period === 'week' ? '本周' : '历史'} {metricRows.length} 条任务</Tag><Button loading={loading} onClick={refresh}>刷新</Button></div>
     </header>
     {error&&<Alert className="m-4" type="warning" showIcon title={error}/>}
     {data.contentQueue?.sourceStatus!=='available'&&<Alert className="m-4" type="warning" title={data.contentQueue?.sourceNote||'周任务包暂时不可用，以下保留已读取的内容任务。'}/>}

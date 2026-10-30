@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { SocialContentTaskSummary } from '../../shared/contracts/socialContentWorkflow';
 import type { ContentQueueItem } from './digitalEmployees';
-import { creationTaskRows, creationTaskState, creationTaskCalendar, creationTaskDetailSource } from './creationTaskWorkspace';
+import { creationTaskRows, creationTaskRowsInWeek, creationTaskState, creationTaskCalendar, creationTaskDetailSource } from './creationTaskWorkspace';
 
 const task={taskId:'t1',status:'draft',runId:null,version:'1',createdAt:'2026-10-26T00:00:00Z',updatedAt:'2026-10-26T00:00:00Z',
   brief:{title:'新内容',productRef:null,languages:[],formats:[],platforms:[],specialRequirements:JSON.stringify({source:'assistant_replication_confirmation',referenceId:'ref-1',plannedPublishAt:'2026-10-29T04:00:00.000Z',products:[{id:'p1',name:'产品甲'},{id:'p2',name:'产品乙'}]})},
@@ -56,4 +56,14 @@ test('a failed exact-task read cannot show a weekly quality blocker as the task 
   assert.equal(creationTaskDetailSource(row,{taskId:task.taskId}),'task');
   assert.equal(creationTaskDetailSource({...row,taskId:undefined},null),'weekly');
   assert.equal(creationTaskDetailSource({...row,readError:'invalid'},null),'unavailable');
+});
+
+
+test('current-week list respects Shanghai dates and leaves history available', () => {
+  const rows = creationTaskRows([task], []);
+  const old = { ...rows[0]!, key: 'old', publishAt: '2026-10-03' };
+  const monday = { ...rows[0]!, key: 'next-week', publishAt: '2026-11-01T16:00:00Z' };
+  const all = [...rows, old, monday];
+  assert.deepEqual(creationTaskRowsInWeek(all, Date.parse('2026-10-30T04:00:00Z')).map(row => row.key), ['task:t1']);
+  assert.equal(all.length, 3);
 });

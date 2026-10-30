@@ -8,6 +8,19 @@ import { readMaterialLibrary } from '../lib/materialLibrary.js';
 
 import type { StudioApplicationPorts } from '../studio/applicationPorts.js';
 
+export async function materialRecordObjectKey(tenantId: string, id: string, kind: 'media' | 'poster', read = readMaterialLibrary): Promise<string> {
+  // Stored library assets need their authorized metadata only. Projecting the
+  // entire enterprise image catalog here re-downloads it for every thumbnail.
+  let inventory = await read(tenantId, { includeEnterpriseProductImages: false });
+  let records = inventory.items.filter(item => item.id === id);
+  if (!records.length) {
+    // Preserve access to profile-only product images and their byte checks.
+    inventory = await read(tenantId);
+    records = inventory.items.filter(item => item.id === id);
+  }
+  return records.length === 1 ? String(records[0]![kind === 'poster' ? 'posterObjectKey' : 'objectKey'] || '') : '';
+}
+
 export function createStudioPrivateAssetRoutes(deps: Pick<StudioApplicationPorts, 'scopedStudioAssetUrl' | 'studioRouter'>) {
   const scopedStudioAssetUrl: StudioApplicationPorts['scopedStudioAssetUrl'] = (...args) => deps.scopedStudioAssetUrl(...args);
   const studioRouter = deps.studioRouter;
@@ -35,9 +48,7 @@ export function createStudioPrivateAssetRoutes(deps: Pick<StudioApplicationPorts
         if (!match) { res.status(404).end(); return; }
         // Resolve the original key from the authorized inventory, never from a
         // client-supplied path or a basename guess across storage namespaces.
-        const inventory = await readMaterialLibrary(tenantId);
-        const records = inventory.items.filter(item => item.id === match[1]);
-        key = records.length === 1 ? String(records[0]![match[2] === 'poster' ? 'posterObjectKey' : 'objectKey'] || '') : '';
+        key = await materialRecordObjectKey(tenantId, match[1]!, match[2] as 'media' | 'poster');
         if (!key) { res.status(404).end(); return; }
       }
       const object = await objectStorageGetObject(key, req.headers.range);

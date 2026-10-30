@@ -9,6 +9,7 @@ interface Props {
   badgeCount: number;
   reduceMotion: boolean;
   weeklyPlanOperating?: boolean;
+  weeklyPlanLabel?: string;
   launcherButtonRef: RefObject<HTMLAnchorElement | HTMLButtonElement | null>;
   edgeLauncherButtonRef: RefObject<HTMLAnchorElement | HTMLButtonElement | null>;
   onLauncherClick: () => void;
@@ -18,10 +19,10 @@ interface Props {
 
 /** The launcher controls only; preference and focus handoff stay in GlobalAssistant. */
 export default function AssistantLauncher({
-  retracted, chatOpen, badgeCount, reduceMotion, weeklyPlanOperating = false, launcherButtonRef, edgeLauncherButtonRef,
+  retracted, chatOpen, badgeCount, reduceMotion, weeklyPlanOperating = false, weeklyPlanLabel, launcherButtonRef, edgeLauncherButtonRef,
   onLauncherClick, onRetract, onRestore,
 }: Props) {
-  const closedLabel = weeklyPlanOperating ? '周计划正在运营中' : '周计划待生成';
+  const closedLabel = weeklyPlanLabel || (weeklyPlanOperating ? '周计划正在运营中' : '周计划状态待确认');
   if (retracted && !chatOpen) {
     return (
       <Badge count={badgeCount} overflowCount={9} size="small">

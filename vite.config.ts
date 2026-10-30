@@ -37,7 +37,9 @@ export default defineConfig(({ mode }) => {
     // Keep each port's optimized dependency graph isolated so a neighboring
     // Vite process cannot invalidate this preview's versioned module URLs.
     cacheDir: path.resolve(import.meta.dirname, 'node_modules', `.vite-main-${devPort}`),
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), { name: 'runtime-build-manifest', generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'build-version.json', source: JSON.stringify({ commitSha: buildSha }) });
+    } }],
     define: { __APP_BUILD_SHA__: JSON.stringify(buildSha) },
     build: {
       rolldownOptions: {

@@ -3,6 +3,7 @@ import type { SocialContentTaskSummary, SocialContentTaskPage } from '../../shar
 import { projectContentProductionTaskCard } from '../../shared/contracts/assistantContentTaskCard';
 import type { ContentQueueItem } from './digitalEmployees';
 import type { LsCalendarEvent } from './calendarModel';
+import { day, week } from '../../shared/mobile-domain.mjs';
 
 const intakeSchema = z.object({
   source: z.enum(['assistant_replication_confirmation', 'assistant_scene_confirmation']),
@@ -23,6 +24,15 @@ export interface CreationTaskRow {
   summary?: SocialContentTaskSummary; weekly?: ContentQueueItem;
   productImages?: string[];
   readError?: string;
+}
+
+export function creationTaskRowsInWeek(rows: CreationTaskRow[], now = Date.now()): CreationTaskRow[] {
+  const range = week(now);
+  return rows.filter(row => {
+    const raw = row.publishAt || row.createdAt;
+    const date = raw?.length === 10 ? raw : raw && Number.isFinite(Date.parse(raw)) ? day(raw) : '';
+    return Boolean(date && date >= range.start && date <= range.end);
+  });
 }
 /** An exact task detail read must never fall back to a different weekly progress source. */
 export function creationTaskDetailSource(row:CreationTaskRow|null,task:{taskId:string}|null):'task'|'weekly'|'unavailable' {

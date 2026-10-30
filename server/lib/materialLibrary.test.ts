@@ -7,7 +7,7 @@ import { hideLocalMaterialFromLibrary, materialLibraryFile, materialVisibleForPu
 import { readCloudMaterialLibrary } from './cloudMaterials.js';
 const ready = { source: 'database' as const, state: 'ready' as const, message: 'ok' };
 const down = { source: 'database' as const, state: 'unavailable' as const, message: 'down' };
-const local = () => [{ id: 'mine', tenantId: 'a' }, { id: 'theirs', tenantId: 'b' }, { id: 'shared', scope: 'shared' }, { id: 'fake', tenantId: 'a', synthetic: true }];
+const local = () => [{ id: 'mine', tenantId: 'a' }, { id: 'theirs', tenantId: 'b' }, { id: 'shared', scope: 'shared', sourceCategory: 'user_generated' }, { id: 'fake', tenantId: 'a', synthetic: true }];
 const good = await readMaterialLibrary('a', {local, cloud: async () => ({ items: [], source: ready })});
 assert.equal(good.status, 'ready'); assert.deepEqual(good.items.map(item => item.id), ['mine']);
 const partial = await readMaterialLibrary('a', {local, cloud: async () => ({ items: [], source: down })});

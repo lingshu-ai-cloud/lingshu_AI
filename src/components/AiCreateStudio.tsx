@@ -6635,7 +6635,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   { id: 'product', label: '焦点产品', value: activeProductLabel, emptyLabel: '待选择' },
                   { id: 'theme', label: '主题', value: activeVideoTheme.title },
                   { id: 'audience', label: '目标受众', value: audience.trim(), emptyLabel: '待填写' },
-                  { id: 'route', label: '合作路线', value: cooperationRoute, emptyLabel: '待选择' },
                   { id: 'materials', label: '本次素材', value: selectedVisualClips.length ? `${selectedVisualClips.length} 项已选择` : '', emptyLabel: '待选择', thumbnailUrl: selectedVisualClips[0]?.poster || (selectedVisualClips[0]?.type === 'image' ? selectedVisualClips[0]?.url : undefined) },
                   ...(mode === 'clone' && videoKickoff ? [{ id: 'reference', label: '参考视频', value: videoKickoff.video?.title || '已带入对标视频', thumbnailUrl: videoKickoff.video?.thumbnail || videoKickoff.video?.aiAnalysis?.materialPoster }] : []),
                 ]}

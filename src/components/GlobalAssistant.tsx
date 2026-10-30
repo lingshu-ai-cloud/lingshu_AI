@@ -787,7 +787,7 @@ export default function GlobalAssistant({
         chatOpen={mode === 'chat'}
         badgeCount={decisionTotal ?? pendingCount}
         reduceMotion={reduceMotion}
-        weeklyPlanOperating={weeklyPlanExperience.weeklyPlanOperating}
+        weeklyPlanOperating={weeklyPlanExperience.weeklyPlanOperating} weeklyPlanLabel={weeklyPlanExperience.weeklyPlanExecutionLabel}
         launcherButtonRef={launcherButtonRef}
         edgeLauncherButtonRef={edgeLauncherButtonRef}
         onLauncherClick={handleLauncherClick}

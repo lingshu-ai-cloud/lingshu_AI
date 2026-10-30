@@ -1,4 +1,4 @@
-import { day as shanghaiDay } from '../../shared/mobile-domain.mjs';
+import { week, day as shanghaiDay } from '../../shared/mobile-domain.mjs';
 import { socialOperatingProfile } from '../../shared/contracts/socialOperatingProfile';
 import { weeklyPublishingPlatforms } from '../../shared/contracts/weeklyPublishingTargets';
 import { isContentProductionPlatform } from '../../shared/contracts/contentProductionPlatforms';
@@ -19,7 +19,7 @@ export const EMPTY_GOAL: GoalDraft = {
   title: '本周内容增长目标',
   objective: '形成一组面向目标市场、证据充分且可进入审批的内容执行包',
   metric: 'approved_content_packages', baseline: 0, target: 5, unit: '项',
-  startsAt: isoDay(0), endsAt: isoDay(6), scope: '', constraints: ['对外发布必须审批'],
+  startsAt: week().start, endsAt: week().end, scope: '', constraints: ['对外发布必须审批'],
 };
 
 export function defaultWeeklyGoal(config: DigitalEmployeeConfig, businessLine: BusinessLine = 'full_funnel', contentPlatform: ContentPlatform = 'all') {
@@ -48,7 +48,7 @@ export function defaultWeeklyGoal(config: DigitalEmployeeConfig, businessLine: B
   const target = ['approved_content_packages', 'published_posts'].includes(preset.metric) ? videoPlans.length : preset.weeklyOutput;
   const draft: GoalDraft = {
     ...EMPTY_GOAL,
-    startsAt: isoDay(0), endsAt: isoDay(6), businessLine,
+    startsAt: week().start, endsAt: week().end, businessLine,
     videoPlans,
     promotionPlans: defaultFacebookPromotionPlans(videoPlans),
     contentPlatforms: businessLine === 'customer_conversion' ? initialPlatforms : platforms,

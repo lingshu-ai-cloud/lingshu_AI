@@ -1,10 +1,11 @@
-import { type Dispatch, type SetStateAction } from 'react';
+import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import { Alert, Button, Input, Tabs, Upload as AntUpload } from 'antd';
 import { ChevronDown, FileSpreadsheet, FileText, Image, Package, Plus, Upload, X } from 'lucide-react';
 import { CATEGORY_OPTIONS, CERTIFICATION_OPTIONS } from './enterpriseProfileNormalization';
 import { productCreativeMaterialCount } from './enterpriseProfileCompleteness';
 import type { ProductItem, Profile } from './enterpriseProfileTypes';
 import { Field, KnowledgeCard, OptionSelector, PaginationControls } from './EnterpriseFormControls';
+import { searchEnterpriseProducts } from './enterpriseProductSearch';
 
 type ProductDeepLink = { productName: string; materialIds: string[]; contentItemId: string };
 
@@ -49,7 +50,7 @@ function formatSize(size: number): string {
 }
 
 export default function EnterpriseProductPanel({
-  profileProducts, products, visibleProducts, completed, assetStats,
+  profileProducts, products, completed, assetStats,
   productsDeepLink, productsDeepLinkResolved, deepLinkedProduct, deepLinkMaterialCount,
   openProductMaterials, openMaterialLibrary, onProductFieldChange,
   productImporting, productImportMessage, productDocumentMessage, productDocumentUploading, importProductSheet, addProduct,
@@ -57,6 +58,9 @@ export default function EnterpriseProductPanel({
   removeProduct, updateProduct, addProductDocuments, removeProductDocument,
   maxProductDocuments, setProductPage,
 }: Props) {
+  const [productSearch, setProductSearch] = useState('');
+  const matches = useMemo(() => searchEnterpriseProducts(products, productSearch), [products, productSearch]);
+  const entries = matches.slice((productPage - 1) * pageSize, productPage * pageSize);
   return (
           <KnowledgeCard
             icon={Package}
@@ -103,9 +107,14 @@ export default function EnterpriseProductPanel({
               {productImportMessage && <span className="text-[11px] font-bold text-emerald-700">{productImportMessage}</span>}
             </div>
             {productDocumentMessage && <Alert className="mt-3" type="warning" showIcon title={productDocumentMessage} />}
+            <div className="mt-4 max-w-md space-y-1">
+              <Input.Search aria-label="搜索产品" placeholder="搜索产品名称、SKU 或品牌" allowClear value={productSearch}
+                onChange={event => { setProductSearch(event.target.value); setProductPage(1); }} />
+              {productSearch.trim() && <p role="status" className="text-xs text-text-secondary">找到 {matches.length} 个产品，共 {products.length} 个</p>}
+            </div>
             <div className="mt-4 space-y-3">
-              {visibleProducts.map((product, pageIndex) => {
-                const index = (productPage - 1) * pageSize + pageIndex;
+              {entries.length === 0 && products.length > 0 && <p className="py-6 text-center text-sm text-text-muted">{productSearch.trim() ? '没有匹配的产品，请调整搜索词或清空搜索。' : '暂无产品，可导入产品表或添加产品。'}</p>}
+              {entries.map(({ product, index }) => {
                 return (
                 <details
                   key={index}
@@ -199,7 +208,7 @@ export default function EnterpriseProductPanel({
               })}
               {!products.length && <p className="rounded-lg bg-surface-2 px-3 py-3 text-xs text-text-muted">还没有产品，先添加一个产品或导入产品表。</p>}
             </div>
-            <PaginationControls page={productPage} total={products.length} pageSize={pageSize} onChange={setProductPage} />
+            <PaginationControls page={productPage} total={matches.length} pageSize={pageSize} onChange={setProductPage} />
           </KnowledgeCard>
   );
 }

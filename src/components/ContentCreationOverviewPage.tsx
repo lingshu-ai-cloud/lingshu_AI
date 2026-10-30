@@ -10,6 +10,7 @@ import { PAGE_REGISTRY } from '../pageRegistry';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import type { ContentGenerationQueueMetric, ContentGenerationQueueRequest } from '../lib/contentGenerationQueue';
 import CreationTaskWorkspace from './socialContent/CreationTaskWorkspace';
+import { weeklyPlanExecutionLabel } from '../lib/weeklyReferenceFeedback';
 
 const statusLabel: Partial<Record<string, { text: string; color: string }>> = {
   running: { text: '执行中', color: 'processing' },
@@ -39,7 +40,7 @@ function countStatuses(data: DigitalEmployeeOverview, statuses: ContentQueueStat
 
 function CreationPlan({ data, onCreate, onOpenMetric }: { data: DigitalEmployeeOverview; onCreate:()=>void; onOpenMetric:(view:'tasks'|'calendar',metric:ContentGenerationQueueMetric)=>void }) {
   const queue = data.contentQueue?.items || [];
-  const displayStatus = statusLabel[data.run?.status || data.goal?.status || ''] || { text: data.goal ? '待启动' : '待创建', color: data.goal ? 'warning' : 'default' };
+  const displayStatus = { text: weeklyPlanExecutionLabel(data), color: statusLabel[data.run?.status || '']?.color || 'default' };
   const metrics = [
     { label: '计划内容', value: `${queue.length} 条`, view: 'tasks', metric: 'all' },
     { label: '待制作', value: `${countStatuses(data, ['planned', 'queued'])} 条`, view: 'tasks', metric: 'planned' },
@@ -52,10 +53,11 @@ function CreationPlan({ data, onCreate, onOpenMetric }: { data: DigitalEmployeeO
     <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-6 pb-4 pt-5">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 id="creation-plan-title" className="ls-type-title-large text-text-primary">创作计划</h2>
+          <h2 id="creation-plan-title" className="ls-type-title-large text-text-primary">本周创作计划</h2>
           <Tag color={displayStatus.color}>{displayStatus.text}</Tag>
           {data.goal && <Tag>{data.goal.startsAt.slice(5)} — {data.goal.endsAt.slice(5)}</Tag>}
         </div>
+        <p className="mt-2 text-xs text-text-secondary">本周内容：周计划 {queue.filter(item => item.origin === 'weekly_plan').length} 条 · 单条任务 {queue.filter(item => item.origin === 'manual').length} 条；下方统计包含两者。</p>
       </div>
       <Button type="primary" icon={<CalendarPlus size={16}/>} onClick={onCreate}>新建单条内容任务</Button>
     </header>
