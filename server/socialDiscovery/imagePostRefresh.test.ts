@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { DataStore } from '../storage/datastore.js';
 import type { CrawledImagePost } from './imagePostEvidenceAnalysis.js';
+import { imagePostSourceHash } from './imagePostReanalysis.js';
 import { refreshExistingImagePost } from './imagePostRefresh.js';
 
 const item: CrawledImagePost = {
@@ -16,7 +17,7 @@ const evidence = { version: 2 as const, status: 'analyzed' as const,
 function fixture(options: { defer?: boolean; analyzedBefore?: boolean; failStage?: boolean; failImages?: boolean } = {}) {
   const events: string[] = [];
   let row: Record<string, unknown> = {
-    id: 'record-1', tenantId: 'tenant-1', thumbnailUrl: 'old.png', status: 'analyzed',
+    id: 'record-1', tenantId: 'tenant-1', sourceUrl: item.sourceUrl, thumbnailUrl: 'old.png', status: 'analyzed',
     aiAnalysis: JSON.stringify({ contentFormat: 'image', caption: 'Old caption',
       imageEvidence: options.analyzedBefore ? evidence : undefined }),
   };
@@ -64,7 +65,10 @@ test('refresh never analyzes or queues if source persistence fails', async () =>
 test('deferred refresh queues only unanalyzed records after source write', async () => {
   const deferred = fixture({ defer: true });
   await refreshExistingImagePost(deferred.input);
-  assert.deepEqual(deferred.events, ['images', 'thumbnail', 'update-1', 'queue']);
+  assert.deepEqual(deferred.events, ['images', 'thumbnail', 'update-1']);
+  const receipt = JSON.parse(String(deferred.row.aiAnalysis));
+  assert.equal(receipt.imageAnalysisQueueState, 'queued');
+  assert.equal(receipt.imageAnalysisQueueInput.sourceHash, imagePostSourceHash(deferred.row));
   const analyzed = fixture({ defer: true, analyzedBefore: true });
   await refreshExistingImagePost(analyzed.input);
   assert.deepEqual(analyzed.events, ['images', 'thumbnail', 'update-1', 'analyze', 'update-2']);

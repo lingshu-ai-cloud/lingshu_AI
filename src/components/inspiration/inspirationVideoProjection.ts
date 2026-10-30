@@ -1,4 +1,4 @@
-import type { AccountSpecialRecommendation, ContentFormat, GeminiVideoAnalysis, Platform, TrendVideo, VideoAnalysisPayload } from '../../lib/inspirationTypes';
+import type { AccountSpecialRecommendation, ContentFormat, Platform, TrendVideo, VideoAnalysisPayload } from '../../lib/inspirationTypes';
 import type { SocialDiscoverySupplyItem } from '../../../shared/contracts/socialContentWorkflow';
 import { trendFromEvidence } from '../../lib/inspirationDataQuality';
 import { scoreSocialInspirationCandidate } from '../../../shared/socialInspirationStrategy';
@@ -69,11 +69,12 @@ export function recordsToVideos(records: CrawlerRecord[]): TrendVideo[] {
       if (!analysis.gemini && analysis.contentFormat !== 'image') {
         analysis = {
           ...analysis,
-          gemini: metadataFallbackAnalysis(title, record.platform, tags, views, Number(record.duration || 0)),
+          gemini: undefined,
           analysisSource: 'metadata-fallback',
           analysisQuality: 'metadata',
         };
       }
+      if (analysis.analysisQuality === 'metadata' || analysis.analysisSource === 'metadata-fallback') analysis = { ...analysis, gemini: undefined };
       return {
         id: `crawl-${record.id}`,
         recordId: record.id,
@@ -84,7 +85,7 @@ export function recordsToVideos(records: CrawlerRecord[]): TrendVideo[] {
         tags,
         views,
         trend,
-        // videoFileId 本身就是 PocketBase 文件存在的权威凭据；不要再依赖可缺失的迁移标记。
+        // videoFileId 是存储引用；实际文件是否存在由播放地址接口核验。
         videoUrl: record.videoFileId ? `/api/overseas/videos/${record.id}/media-url` : undefined,
         sourceUrl: record.sourceUrl,
         status: record.status,
@@ -125,37 +126,15 @@ export function supplyItemsToVideos(items: SocialDiscoverySupplyItem[]): TrendVi
   return recordsToVideos(records).sort((a, b) => (order.get(a.recordId || '') ?? 0) - (order.get(b.recordId || '') ?? 0));
 }
 
-function metadataFallbackAnalysis(
-  title: string,
-  platform: Exclude<Platform, 'all'>,
-  tags: string[],
-  views: string,
-  duration: number,
-): GeminiVideoAnalysis {
-  const topic = tags.length ? tags.slice(0, 3).join(' / ') : title;
-  return {
-    theme: `${PLATFORM_META[platform]?.label ?? platform} 基础分析：${title}`,
-    hooks: [
-      `用标题承诺切入：${title}`,
-      views && views !== 'New' ? `用热度做社会证明：${views}` : '先展示结果或冲突，再解释产品',
-      tags[0] ? `前三秒围绕 ${tags[0]} 放大场景痛点` : '前三秒突出产品效果或反差',
-    ],
-    sellingPoints: tags.length ? tags.map(tag => `可围绕 ${tag} 做卖点展开`) : ['产品演示', '痛点解决', '结果证明', '行动引导'],
-    mood: platform === 'youtube' ? '信息型 / 评测型' : '快节奏 / 社媒感',
-    structure: `标题/封面钩子 → 场景痛点 → ${topic} → 证明细节 → CTA`,
-    recommendedScriptType: duration > 60 ? 'storyboard' : 'voiceover',
-  };
-}
-
 export function metadataPanelFallback(video: TrendVideo): TrendVideo {
   if (video.aiAnalysis?.analysisSource === 'metadata-fallback' && video.aiAnalysis?.analysisQuality === 'metadata') {
-    return video;
+    return { ...video, aiAnalysis: { ...video.aiAnalysis, gemini: undefined } };
   }
   return {
     ...video,
     aiAnalysis: {
       ...(video.aiAnalysis || {}),
-      gemini: metadataFallbackAnalysis(video.title, video.platform, video.tags, video.views, video.duration),
+      gemini: undefined,
       analysisSource: 'metadata-fallback',
       analysisQuality: 'metadata',
       geminiStatus: 'metadata_fallback',

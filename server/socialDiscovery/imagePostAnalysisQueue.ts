@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { imagePostAdmission } from './imagePostAdmission.js';
 import type { DataStore } from '../storage/datastore.js';
 import { dataBackend } from '../storage/index.js';
 import { runWithDataAuthority } from '../storage/dataAuthority.js';
@@ -36,18 +37,9 @@ export function createImagePostAnalysisQueue(input: {
 
   async function queue(recordId: string, item: CrawledImagePost, keyword: string): Promise<void> {
     const record = await store.getById<Record<string, unknown>>(collection, recordId);
-    if (!record || !String(record.tenantId || '') || record.sourceUrl !== item.sourceUrl
-      || record.contentFormat !== 'image') throw Error('image_post_queue_source_invalid');
-    const analysis = videoAnalysisOf(record);
-    if (['processing', 'unknown'].includes(String(analysis[QUEUE_STATE] || ''))) {
-      throw Error('image_post_queue_requires_reconciliation');
-    }
-    const payload: QueuePayload = { item: structuredClone(item), keyword, sourceHash: imagePostSourceHash(record) };
+    if (!record) throw Error('image_post_queue_source_invalid');
     if (!await store.update(collection, recordId, {
-      status: 'pending', aiAnalysis: serializeImagePostAnalysis({ ...analysis,
-        imageAnalysisStatus: 'queued', [QUEUE_STATE]: 'queued', [QUEUE_INPUT]: payload,
-        imageAnalysisQueuedAt: new Date().toISOString(), imageAnalysisError: undefined,
-      }),
+      status: 'pending', aiAnalysis: serializeImagePostAnalysis(imagePostAdmission(record, item, keyword)),
     })) throw Error('image_post_queue_persistence_failed');
   }
 

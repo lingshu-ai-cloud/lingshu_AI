@@ -1,3 +1,4 @@
+import { videoPipelineFailure } from '../../shared/videoPipelineFailure.js';
 import { videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 import { buildVideoAnalysisProgress } from '../lib/videoAnalysisProgress.js';
 import { publicVideoPipelineError } from './videoAnalysisRecovery.js';
@@ -28,6 +29,7 @@ export function publicVideoRecord<T extends Record<string, unknown>>(
   if (!Object.keys(analysis).length) return publicRecord;
   const scrubbed: Record<string, unknown> = {
     ...analysis,
+    pipelineFailure: videoPipelineFailure(analysis.analysisError || analysis.videoLevelFailureStatus || analysis.downloadError),
     analysisProgress: buildVideoAnalysisProgress({
       analysis,
       recordStatus: record.status,

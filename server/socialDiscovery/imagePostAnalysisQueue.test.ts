@@ -54,11 +54,13 @@ function fixture(options: { available?: boolean; throwProvider?: boolean; failed
       return true;
     },
   } as unknown as DataStore;
-  const queue = createImagePostAnalysisQueue({ store, collection: 'trend_videos',
+  const restart = () => createImagePostAnalysisQueue({ store, collection: 'trend_videos',
     leaseAvailable: async () => options.available !== false,
     async analyze(received, keyword) {
       events.push('provider');
       assert.equal(received.sourceUrl, item.sourceUrl);
+      assert.equal(received.tenantId, 'tenant-1');
+      assert.deepEqual(received.imageUrls, ['/api/overseas/videos/record-1/image/0']);
       assert.equal(keyword, 'bottle');
       if (options.changeSource) record = { ...record, sourceUrl: 'https://example.test/post/2' };
       if (options.throwProvider) throw Error('transport_unknown');
@@ -66,7 +68,8 @@ function fixture(options: { available?: boolean; throwProvider?: boolean; failed
       return { status: 'analyzed', analysis: evidence, provider: 'qwen' };
     },
   });
-  return { queue, events, get record() { return record; }, set record(value: Record<string, unknown>) { record = value; } };
+  const queue = restart();
+  return { queue, restart, events, get record() { return record; }, set record(value: Record<string, unknown>) { record = value; } };
 }
 
 test('deferred record is queued durably, then claimed once before provider call', async () => {
@@ -74,7 +77,7 @@ test('deferred record is queued durably, then claimed once before provider call'
   await f.queue.queue('record-1', item, 'bottle');
   assert.deepEqual(f.events, ['update']);
   assert.equal(JSON.parse(String(f.record.aiAnalysis)).imageAnalysisQueueState, 'queued');
-  assert.deepEqual(await f.queue.runOnce(), { available: true, picked: 1, completed: 1, failed: 0, unknown: 0 });
+  assert.deepEqual(await f.restart().runOnce(), { available: true, picked: 1, completed: 1, failed: 0, unknown: 0 });
   assert.deepEqual(f.events, ['update', 'lease', 'update', 'provider', 'update', 'release']);
   assert.equal(f.record.status, 'analyzed');
   assert.equal(JSON.parse(String(f.record.aiAnalysis)).imageEvidence.observedFacts[0].subjects[0], 'bottle');

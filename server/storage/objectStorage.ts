@@ -157,9 +157,9 @@ export async function objectStorageEnsureFile(input: { key: string; filePath: st
   return { head, reused: false };
 }
 async function localContentType(file: string): Promise<string> { try { return String(JSON.parse(await fs.readFile(`${file}.meta.json`, 'utf8')).contentType || 'application/octet-stream'); } catch { return 'application/octet-stream'; } }
-export async function objectStorageHead(key: string): Promise<StoredObjectHead | null> {
+export async function objectStorageHead(key: string, options: { signal?: AbortSignal } = {}): Promise<StoredObjectHead | null> {
   if (driver() === 'local') { try { const file = safeLocalPath(key), stat = await fs.stat(file); return { size: stat.size, contentType: await localContentType(file), etag: `local-${stat.size}-${Math.round(stat.mtimeMs)}` }; } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; } }
-  try { const { client, bucket } = cosClient(), r = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key })); return { size: r.ContentLength ?? 0, contentType: r.ContentType || 'application/octet-stream', etag: r.ETag }; }
+  try { const { client, bucket } = cosClient(), r = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }), { abortSignal: options.signal }); return { size: r.ContentLength ?? 0, contentType: r.ContentType || 'application/octet-stream', etag: r.ETag }; }
   catch (e) { if ((e as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404) return null; throw e; }
 }
 export async function objectStorageDownload(key: string): Promise<{ buf: Buffer; contentType: string } | null> {

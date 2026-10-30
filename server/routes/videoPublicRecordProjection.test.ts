@@ -49,3 +49,11 @@ test('keyword projection matches title, tags and analysis without treating URLs 
   assert.equal(recordMatchesKeyword(record, 'retail'), false);
   assert.equal(recordMatchesKeyword(record, 'https://example.test/source'), true);
 });
+
+test('public failure stage survives sanitization while private provider text is removed', () => {
+  const result = publicVideoRecord({ id: 'quota', aiAnalysis: JSON.stringify({ analysisError: '403 platform-feature-disabled Monthly usage hard limit exceeded private-secret' }) });
+  const analysis = JSON.parse(String(result.aiAnalysis));
+  assert.equal(analysis.pipelineFailure.code, 'collection_quota');
+  assert.equal(analysis.pipelineFailure.stage, 'collection');
+  assert.doesNotMatch(String(result.aiAnalysis), /private-secret/);
+});

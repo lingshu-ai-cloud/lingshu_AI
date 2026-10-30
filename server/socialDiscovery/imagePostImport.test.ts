@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { DataStore } from '../storage/datastore.js';
+import { imagePostSourceHash } from './imagePostReanalysis.js';
 import { importNewImagePost } from './imagePostImport.js';
 import type { CrawledImagePost } from './imagePostEvidenceAnalysis.js';
 
@@ -13,7 +14,7 @@ const evidence = { version: 2 as const, status: 'analyzed' as const,
   observedFacts: [{ imageIndex: 1, subjects: ['bottle'], scene: 'studio', composition: 'center', colors: [], visibleText: [], confidence: .9 }],
   carouselFlow: [], copyEvidence: { hooks: [], sellingPoints: [], cta: [] }, reusableModules: [], uncertainties: [] };
 
-function fixture(options: { failCreate?: boolean; failStageUpdate?: boolean; failImages?: boolean; rejectImage?: boolean; defer?: boolean; failAnalysis?: boolean } = {}) {
+function fixture(options: { failCreate?: boolean; failStageUpdate?: boolean; failImages?: boolean; rejectImage?: boolean; defer?: boolean; failAnalysis?: boolean; throwAnalysis?: boolean; uncertainResult?: boolean } = {}) {
   const events: string[] = [];
   let row: Record<string, unknown> | null = null;
   let updates = 0;
@@ -39,8 +40,8 @@ function fixture(options: { failCreate?: boolean; failStageUpdate?: boolean; fai
     deferImageAnalysis: Boolean(options.defer),
     async persistThumbnail() { events.push('thumbnail'); return '/media/record-1.png'; },
     async persistImages() { events.push('images'); if (options.rejectImage) throw Error('image_post_single_static_image_required'); if (options.failImages) throw Error('image_storage_failed'); return ['/api/overseas/videos/record-1/image/0']; },
-    async analyze() { events.push('analyze'); return options.failAnalysis
-      ? { status: 'failed' as const, error: 'vision_unavailable' }
+    async analyze(received: CrawledImagePost) { events.push('analyze'); assert.equal(received.tenantId, 'tenant-1'); assert.deepEqual(received.imageUrls, ['/api/overseas/videos/record-1/image/0']); if (options.throwAnalysis) throw Error('transport_unknown'); return options.failAnalysis
+      ? { status: 'failed' as const, error: 'vision_unavailable', providerAttempted: options.uncertainResult }
       : { status: 'analyzed' as const, analysis: evidence, provider: 'qwen' as const }; },
     async queue() { events.push('queue'); },
   };
@@ -81,10 +82,32 @@ test('missing record or failed source persistence never reaches vision model', a
 test('deferred analysis queues only after source write and synchronous failures remain visible', async () => {
   const deferred = fixture({ defer: true });
   const staged = await importNewImagePost(deferred.input);
-  assert.deepEqual(deferred.events, ['create', 'images', 'thumbnail', 'update-1', 'queue']);
+  assert.deepEqual(deferred.events, ['create', 'images', 'thumbnail', 'update-1']);
   assert.equal(staged?.status, 'pending');
+  const receipt = JSON.parse(String(staged?.aiAnalysis));
+  assert.equal(receipt.imageAnalysisQueueState, 'queued');
+  assert.equal(receipt.imageAnalysisQueueInput.item.sourceUrl, item.sourceUrl);
+  assert.equal(receipt.imageAnalysisQueueInput.item.tenantId, 'tenant-1');
+  assert.deepEqual(receipt.imageAnalysisQueueInput.item.imageUrls, receipt.imageUrls);
+  assert.equal(receipt.imageAnalysisQueueInput.sourceHash, imagePostSourceHash(deferred.row!));
+  assert.equal(receipt.imageUrls[0], '/api/overseas/videos/record-1/image/0');
   const failed = fixture({ failAnalysis: true });
   const saved = await importNewImagePost(failed.input);
   assert.equal(saved?.status, 'failed');
   assert.equal(JSON.parse(String(saved?.aiAnalysis)).imageAnalysisError, 'vision_unavailable');
+});
+
+test('interrupted inline calls retain an uncertain attempt and are never advertised as unsubmitted', async () => {
+  const f = fixture({ throwAnalysis: true });
+  await assert.rejects(importNewImagePost(f.input), /transport_unknown/);
+  const analysis = JSON.parse(String(f.row?.aiAnalysis));
+  assert.equal(analysis.imageAnalysisQueueState, 'unknown');
+  assert.ok(analysis.imageAnalysisAttemptId && analysis.imageAnalysisStartedAt);
+  assert.equal(analysis.imageAnalysisError, 'image_post_queue_result_unknown');
+});
+
+test('failed transport after a provider attempt is uncertain, not automatically retryable', async () => {
+  const f = fixture({ failAnalysis: true, uncertainResult: true });
+  await assert.rejects(importNewImagePost(f.input), /provider_result_unknown/);
+  assert.equal(JSON.parse(String(f.row?.aiAnalysis)).imageAnalysisQueueState, 'unknown');
 });

@@ -1,3 +1,4 @@
+import { imagePostAdmission, storedImagePostInput, inlineImagePostAttempt, unknownImagePostAttempt } from './imagePostAdmission.js';
 import type { DataStore } from '../storage/datastore.js';
 import type { VideoStatus } from '../types/index.js';
 import { serializeImagePostAnalysis, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
@@ -9,6 +10,7 @@ type ImageAnalysisResult = {
   analysis?: ImagePostEvidenceAnalysis;
   error?: string;
   provider?: 'qwen' | 'gemini';
+  providerAttempted?: boolean;
 };
 
 /** Persist the source identity before any analysis that may later be paid. */
@@ -73,22 +75,30 @@ export async function importNewImagePost(input: {
     imageUrls: storedImageUrls.length ? storedImageUrls : storedAnalysis.imageUrls,
     imageCount: storedImageUrls.length || storedAnalysis.imageCount || 1,
   });
-  if (!await input.store.update(input.collection, recordId, { thumbnailUrl, aiAnalysis: stagedAnalysis })) {
+  const prepared = { ...storedRecord, thumbnailUrl, contentFormat: 'image', aiAnalysis: stagedAnalysis };
+  const admitted = input.deferImageAnalysis
+    ? imagePostAdmission(prepared, item, input.keyword)
+    : inlineImagePostAttempt(videoAnalysisOf(prepared));
+  if (!await input.store.update(input.collection, recordId, { thumbnailUrl, aiAnalysis: serializeImagePostAnalysis(admitted) })) {
     throw Error('image_post_source_persistence_failed');
   }
-  if (input.deferImageAnalysis) {
-    await input.queue(recordId, item, input.keyword);
-    return await input.store.getById<Record<string, unknown>>(input.collection, recordId)
-      || { ...record, thumbnailUrl, aiAnalysis: stagedAnalysis };
+  if (input.deferImageAnalysis) return await input.store.getById(input.collection, recordId) || { ...prepared, aiAnalysis: serializeImagePostAnalysis(admitted) };
+  let output: ImageAnalysisResult;
+  try {
+    output = await input.analyze(storedImagePostInput(prepared, item), input.keyword);
+    if (output.status === 'failed' && output.providerAttempted) throw Error('image_post_queue_provider_result_unknown');
+  } catch (error) {
+    if (!await input.store.update(input.collection, recordId, { aiAnalysis: serializeImagePostAnalysis(unknownImagePostAttempt(admitted)) })) throw Error('image_post_unknown_attempt_persistence_failed');
+    throw error;
   }
-  const output = await input.analyze(item, input.keyword);
   const latest = await input.store.getById<Record<string, unknown>>(input.collection, recordId);
   if (!latest || latest.tenantId !== input.tenantId) throw Error('image_post_record_disappeared_after_analysis');
   const analysis = videoAnalysisOf(latest);
   const status = (output.status === 'analyzed' ? 'analyzed' : 'failed') as VideoStatus;
   const finalAnalysis = serializeImagePostAnalysis({ ...analysis,
     imageEvidence: output.analysis,
-    imageAnalysisStatus: output.status,
+    imageAnalysisStatus: output.status, imageAnalysisQueueState: output.status === 'analyzed' ? 'completed' : 'failed',
+    imageAnalysisCompletedAt: new Date().toISOString(),
     imageAnalysisError: output.error,
     analysisSource: output.status === 'analyzed' ? `${output.provider || 'qwen'}-image-evidence-v2` : 'image-metadata',
     analysisQuality: output.status === 'analyzed' ? 'image' : 'metadata',

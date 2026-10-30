@@ -117,7 +117,7 @@ export function createImagePostCollectionApplication(deps: Pick<VideoApplication
         try {
           const refreshed = await refreshExistingImagePost({
             store, collection: COL, tenantId: input.tenantId, existingRecord, item, keyword,
-            accountMode, accountUrl, deferImageAnalysis: Boolean(input.deferImageAnalysis),
+            accountMode, accountUrl, deferImageAnalysis: input.deferImageAnalysis !== false,
             persistThumbnail: persistImagePostThumbnail, persistImages: persistImagePostImages,
             analyze: analyzeImagePostBestEffort, queue: queueImagePostAnalysis,
           });
@@ -130,7 +130,7 @@ export function createImagePostCollectionApplication(deps: Pick<VideoApplication
 
       const record = await importNewImagePost({
         store, collection: COL, tenantId: input.tenantId, item, keyword, crawlerSource,
-        accountMode, accountUrl, deferImageAnalysis: Boolean(input.deferImageAnalysis),
+        accountMode, accountUrl, deferImageAnalysis: input.deferImageAnalysis !== false,
         persistThumbnail: persistImagePostThumbnail, persistImages: persistImagePostImages,
         analyze: analyzeImagePostBestEffort, queue: queueImagePostAnalysis,
       });

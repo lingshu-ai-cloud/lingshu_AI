@@ -1,3 +1,4 @@
+import { observedVideoAnalysis, failureForVideo } from './inspirationEvidence';
 import { Button, Modal } from 'antd';
 import { ChevronDown, ChevronUp, Loader2, Play } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
@@ -21,7 +22,7 @@ function evidenceText(value: unknown): string {
 }
 
 function briefContentStructure(video: TrendVideo): string[] {
-  const gemini = video.aiAnalysis?.gemini;
+  const gemini = observedVideoAnalysis(video);
   const explicit = evidenceText(gemini?.structure);
   if (explicit) return explicit.split(/\s*(?:→|->|⇒|\n|\|)\s*/).map(item => item.trim()).filter(Boolean).slice(0, 5);
   const coarse = (gemini?.coarseStructure || []).map(item => [item.time, item.label, item.description || item.desc]
@@ -54,6 +55,7 @@ export default function InspirationWatchDialog({ video, videos, onClose, onOpenD
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [useEmbed, setUseEmbed] = useState(false);
+  const [playbackNotice, setPlaybackNotice] = useState('');
   const [boundary, setBoundary] = useState('');
   const [transitionDirection, setTransitionDirection] = useState<-1 | 1>(1);
   const [showSwipeHint, setShowSwipeHint] = useState(() => {
@@ -68,8 +70,10 @@ export default function InspirationWatchDialog({ video, videos, onClose, onOpenD
   const previous = ordered[index - 1];
   const next = ordered[index + 1];
   const embedUrl = sourceEmbedUrl(current);
-  const hooks = (current.aiAnalysis?.gemini?.hooks || []).map(evidenceText).filter(Boolean);
-  const sellingPoints = (current.aiAnalysis?.gemini?.sellingPoints || []).map(evidenceText).filter(Boolean);
+  const verified = observedVideoAnalysis(current);
+  const analysisFailure = failureForVideo(current);
+  const hooks = (verified?.hooks || []).map(evidenceText).filter(Boolean);
+  const sellingPoints = (verified?.sellingPoints || []).map(evidenceText).filter(Boolean);
   const contentStructure = briefContentStructure(current);
 
   useEffect(() => {
@@ -91,6 +95,7 @@ export default function InspirationWatchDialog({ video, videos, onClose, onOpenD
     setAttempt(0);
     setLoading(true);
     setError('');
+    setPlaybackNotice('');
     setUseEmbed(false);
     setBoundary('');
     window.requestAnimationFrame(() => detailsRef.current?.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' }));
@@ -118,14 +123,14 @@ export default function InspirationWatchDialog({ video, videos, onClose, onOpenD
     event.preventDefault();
     changeVideo(event.key === 'ArrowDown' ? 1 : -1);
   };
-  const retry = () => { setAttempt(value => value + 1); setLoading(true); setError(''); setUseEmbed(false); };
+  const retry = () => { setAttempt(value => value + 1); setLoading(true); setError(''); setPlaybackNotice(''); setUseEmbed(false); };
 
   return <Modal open title={<AnimatePresence initial={false} mode="wait"><motion.span key={current.id}
     initial={reduceMotion ? false : { opacity: 0, y: transitionDirection * 5 }} animate={{ opacity: 1, y: 0 }} exit={reduceMotion ? undefined : { opacity: 0, y: transitionDirection * -5 }}
     transition={{ duration: reduceMotion ? 0 : .18 }}>{current.title}</motion.span></AnimatePresence>} className="ls-inspiration-watch-dialog" width={1180} zIndex={2200} footer={null} onCancel={onClose}
-    style={{ maxWidth: 'calc(100vw - 16px)' }} styles={{ body: { padding: 0 } }} destroyOnHidden>
-    <div className="grid max-h-[calc(100dvh-100px)] overflow-y-auto md:grid-cols-[minmax(0,1fr)_320px] md:overflow-hidden">
-      <div className="relative flex min-h-[320px] flex-col bg-black" tabIndex={0} onKeyDown={onKeyDown} onWheel={onWheel}
+    style={{ top: 16, paddingBottom: 0, maxWidth: 'calc(100vw - 16px)' }} styles={{ body: { padding: 0 } }} destroyOnHidden>
+    <div className="grid h-[calc(100dvh-110px)] max-h-[760px] grid-rows-[minmax(240px,1fr)_minmax(0,0.6fr)] overflow-hidden md:grid-cols-[minmax(0,1fr)_320px] md:grid-rows-1">
+      <div className="relative flex min-h-0 flex-col bg-black" tabIndex={0} onKeyDown={onKeyDown} onWheel={onWheel}
         aria-label="内容预览，向上滑动、滚轮或按方向键切换">
         <div className="relative min-h-0 flex-1 overflow-hidden">
           <AnimatePresence initial={false} custom={transitionDirection} mode="popLayout">
@@ -143,11 +148,11 @@ export default function InspirationWatchDialog({ video, videos, onClose, onOpenD
               <div className="absolute inset-0 flex items-center justify-center bg-black">
                 {isImage ? <InspirationImagePreview key={current.id} video={current} onSwipePost={swipe}/>
                   : current.videoUrl && !useEmbed ? <AuthenticatedVideo key={`${current.id}:${attempt}`} apiUrl={current.videoUrl} poster={current.thumbnail}
-                  controls autoPlay className="max-h-[68dvh] w-full bg-black object-contain" onReady={() => { setLoading(false); setError(''); }}
-                  onLoadingChange={setLoading} onError={message => { setLoading(false); if (embedUrl) setUseEmbed(true); else setError(message || '视频预览失败'); }} />
+                  controls autoPlay className="h-full max-h-full w-full bg-black object-contain" onReady={() => { setLoading(false); setError(''); }}
+                  onLoadingChange={setLoading} onError={message => { setLoading(false); setPlaybackNotice(message || '视频文件无法读取'); if (embedUrl) setUseEmbed(true); else setError(message || '视频预览失败'); }} />
                   : embedUrl ? <iframe key={current.id} src={embedUrl} title={`${current.title} 站内播放器`}
                     allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen referrerPolicy="strict-origin-when-cross-origin"
-                    className="aspect-video w-full border-0 bg-black" />
+                    className="h-full w-full border-0 bg-black" />
                     : <div className="flex min-h-64 flex-col items-center justify-center gap-3 px-6 text-center text-white/70"><Play size={28}/><p>当前没有可播放的媒体，可从来源查看原视频。</p></div>}
                 {current.contentFormat !== 'image' && current.aiAnalysis?.contentFormat !== 'image' && loading && current.videoUrl && !useEmbed && !error && <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 text-white"><Loader2 size={20} className="animate-spin"/><span className="ml-2">正在准备视频…</span></div>}
                 {error && <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/85 px-6 text-center text-white"><p>{error}</p><Button onClick={retry}>重新获取播放地址</Button></div>}
@@ -163,13 +168,15 @@ export default function InspirationWatchDialog({ video, videos, onClose, onOpenD
             </div>
           </motion.div> : null}</AnimatePresence>
         </div>
-        <div className="flex items-center justify-between gap-3 border-t border-white/15 px-4 py-2 text-xs text-white/80">
+        <div className="relative z-20 flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-white/15 px-4 py-2 text-xs text-white/80">
           <span>{index + 1} / {ordered.length}</span>
-          <span role="status" aria-live="polite">{boundary || '向上滑动查看下一条，详情区可独立滚动'}</span>
+          <span role="status" aria-live="polite">{boundary || (useEmbed ? '嵌入播放器请使用上下条按钮切换' : '向上滑动查看下一条，详情区可独立滚动')}</span>
           <div className="flex gap-1"><Button size="small" icon={<ChevronUp size={14}/>} onClick={() => changeVideo(-1)} aria-label="上一条内容"/><Button size="small" icon={<ChevronDown size={14}/>} onClick={() => changeVideo(1)} aria-label="下一条内容"/></div>
         </div>
       </div>
-      <aside ref={detailsRef} data-preview-details className="max-h-[42dvh] overflow-y-auto border-t border-border bg-surface p-5 text-text-primary md:max-h-[calc(100dvh-100px)] md:border-l md:border-t-0" aria-label="内容详情">
+      <aside ref={detailsRef} data-preview-details className="min-h-0 overflow-y-auto border-t border-border bg-surface p-5 text-text-primary md:border-l md:border-t-0" aria-label="内容详情">
+        {playbackNotice && <p role="status" className="mb-3 rounded-lg border border-border bg-surface-2 p-3 text-xs">{playbackNotice}{useEmbed ? ' 已切换到原站嵌入播放器；也可从原站打开。' : ''}</p>}
+        {analysisFailure.code !== 'none' && <p role="alert" className="mb-3 border-l-2 border-warning bg-surface-2 p-3 text-xs">{analysisFailure.message} {analysisFailure.action}</p>}
         <AnimatePresence initial={false} mode="wait"><motion.div key={current.id}
           initial={reduceMotion ? false : { opacity: 0, x: transitionDirection * 12 }} animate={{ opacity: 1, x: 0 }} exit={reduceMotion ? undefined : { opacity: 0, x: transitionDirection * -8 }}
           transition={{ duration: reduceMotion ? 0 : .2 }}>
@@ -177,13 +184,12 @@ export default function InspirationWatchDialog({ video, videos, onClose, onOpenD
         <h3 className="mt-4 text-base font-semibold leading-6">{current.title}</h3>
         <dl className="mt-5 space-y-3 text-sm"><div><dt className="text-text-muted">{current.contentFormat === 'image' || current.aiAnalysis?.contentFormat === 'image' ? '互动' : '播放量'}</dt><dd>{current.views || '待获取'}</dd></div>
           <div><dt className="text-text-muted">来源账号</dt><dd>{current.aiAnalysis?.author || current.aiAnalysis?.sourceAccountName || '未抓取'}</dd></div>
-          {current.aiAnalysis?.gemini?.theme && <div><dt className="text-text-muted">内容主题</dt><dd>{current.aiAnalysis.gemini.theme}</dd></div>}
+          {verified?.theme && <div><dt className="text-text-muted">内容主题</dt><dd>{verified.theme}</dd></div>}
         </dl>
-        {current.aiAnalysis?.analysisError && <p role="alert" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">分析未完成：{current.aiAnalysis.analysisError}</p>}
         {contentStructure.length ? <section className="mt-5 border-t border-border pt-4"><h4 className="text-sm font-semibold">内容结构</h4><ol className="mt-2 space-y-2 text-xs leading-5 text-text-secondary">{contentStructure.map((item, itemIndex) => <li key={`${item}-${itemIndex}`} className="grid grid-cols-[24px_minmax(0,1fr)] gap-2"><span className="text-text-muted">{String(itemIndex + 1).padStart(2, '0')}</span><span>{item}</span></li>)}</ol></section> : null}
         {hooks.length ? <section className="mt-5 border-t border-border pt-4"><h4 className="text-sm font-semibold">开场钩子</h4><ul className="mt-2 space-y-2 text-xs leading-5 text-text-secondary">{hooks.slice(0, 3).map((hook, hookIndex) => <li key={`${hook}-${hookIndex}`}>{hook}</li>)}</ul></section> : null}
         {sellingPoints.length ? <section className="mt-5 border-t border-border pt-4"><h4 className="text-sm font-semibold">已提取卖点</h4><ul className="mt-2 list-inside list-disc space-y-1 text-xs leading-5 text-text-secondary">{sellingPoints.slice(0, 4).map((point, pointIndex) => <li key={`${point}-${pointIndex}`}>{point}</li>)}</ul></section> : null}
-        {!current.aiAnalysis?.gemini?.theme && !contentStructure.length && !hooks.length && <p className="mt-5 rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">当前尚无可展示的分析结论；来源信息和原内容仍可查看。</p>}
+        {!verified?.theme && !contentStructure.length && !hooks.length && <p className="mt-5 rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">当前尚无可展示的分析结论；来源信息和原内容仍可查看。</p>}
         <div className="mt-6 flex flex-wrap gap-2">{onOpenDetails && <Button type="primary" onClick={() => onOpenDetails(current)}>查看完整拆解</Button>}
           {current.sourceUrl && <Button href={current.sourceUrl} target="_blank" rel="noopener noreferrer">原站打开</Button>}</div>
         </motion.div></AnimatePresence>

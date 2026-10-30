@@ -1,3 +1,4 @@
+import type { VideoPipelineFailure } from '../../shared/videoPipelineFailure';
 import type { Material, MaterialSegment } from './studioApi';
 import type { SocialBusinessModel, SocialDiscoveryCandidateScore } from '../../shared/contracts/socialContentWorkflow';
 export type Platform = 'all' | 'tiktok' | 'instagram' | 'youtube' | 'facebook' | 'linkedin';
@@ -111,6 +112,7 @@ export interface VideoAnalysisPayload {
   requestedAnalysisMode?: 'strategy' | 'exact';
   analysisProgress?: VideoAnalysisProgress;
   analysisError?: string;
+  pipelineFailure?: VideoPipelineFailure;
   videoLevelFailureStatus?: string;
   manualRequiredReason?: string;
   videoStorage?: string;

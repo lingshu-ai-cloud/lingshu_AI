@@ -1,3 +1,4 @@
+import { storedVideoAvailability } from './storedVideoAvailability.js';
 import { isPublicTestTenantVideo } from './videoRecordVisibility.js';
 import { fetchThumbnailBuffer, publicSourceThumbnail } from './videoThumbnailPersistence.js';
 import { type Request } from 'express';
@@ -46,7 +47,7 @@ export function createVideoAssetRoutes(deps: Pick<VideoApplicationPorts, 'videos
       const cosKey = String(analysis.videoObjectKey || '');
       if (cosKey) {
         try {
-          if (!await streamCrawlerCosObject(res, cosKey, req.headers.range)) res.status(404).json({ error: 'COS video not found' });
+          if (!await streamCrawlerCosObject(res, cosKey, req.headers.range)) res.status(404).json({ error: 'video_media_missing', message: '视频文件缺失，请重新上传原视频或联系管理员核对存储。' });
         } catch (error) {
           console.warn('[videos] object storage preview unavailable:', error instanceof Error ? error.message : error);
           if (!res.headersSent) res.status(502).json({ error: 'video_storage_temporarily_unavailable' });
@@ -168,6 +169,13 @@ export function createVideoAssetRoutes(deps: Pick<VideoApplicationPorts, 'videos
         && fs.statSync(localPath).isFile()) {
         res.json({ url: signAssetUrl(`/media/${normalizedLocalFile}`, tenantId) });
         return;
+      }
+      if (analysis.videoObjectKey) {
+        const availability = await storedVideoAvailability(String(analysis.videoObjectKey));
+        if (availability === 'missing') { res.status(404).json({ error: 'video_media_missing', message: '视频文件缺失，请重新上传原视频或联系管理员核对存储。' }); return; }
+        if (availability === 'unavailable') { res.status(503).json({ error: 'video_storage_temporarily_unavailable', message: '视频存储暂时无法连接，请稍后再试。' }); return; }
+      } else if (normalizedLocalFile.startsWith(expectedPrefix)) {
+        res.status(404).json({ error: 'video_media_missing', message: '视频文件缺失，请重新上传原视频或联系管理员核对存储。' }); return;
       }
       res.json({ url: signAssetUrl(`/api/overseas/videos/${encodeURIComponent(req.params.id)}/media`, tenantId) });
     });

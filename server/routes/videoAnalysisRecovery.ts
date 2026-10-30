@@ -1,3 +1,4 @@
+import { videoPipelineFailure } from '../../shared/videoPipelineFailure.js';
 import { hasCompletedExactVideoEvidence, isVideoLevelAnalysis } from '../lib/videoAnalysisCodec.js';
 
 /** A failed exact reanalysis must not erase the last completed video evidence. */
@@ -98,6 +99,8 @@ export function compactVideoPipelineError(message: unknown, max = 900): string {
 export function publicVideoPipelineError(message: unknown): string {
   const text = compactVideoPipelineError(message, 500);
   if (!text) return '视频分析失败，请稍后重试。';
+  const classified = videoPipelineFailure(text);
+  if (['media_missing', 'collection_quota', 'content_rejected', 'queue_admission'].includes(classified.code)) return `${classified.message}${classified.action}`;
   if (/video_downloader_not_installed|No module named yt_dlp/i.test(text)) return '视频读取组件未安装，请管理员补齐 yt-dlp 后重新分析。';
   if (/GEMINI_API_KEY\s+is\s+not\s+set|gemini[^\n]*(?:not configured|missing api)/i.test(text)) return 'Gemini 未配置，请联系管理员配置后重新分析，或切换到已配置的 Qwen。';
   if (/video_analysis_hard_timeout|exact_chunk_timeout|qwen[^\n]*(?:timeout|timed out|超时)/i.test(text)) return 'Qwen 分析超时，可点击重新分析；连续超时时请改用策略分析或缩短视频。';

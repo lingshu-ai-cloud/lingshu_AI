@@ -1,3 +1,4 @@
+import { failureForVideo, imageAnalysisNeedsSubmission } from './inspirationEvidence';
 import { buildBenchmarkAnalysis } from '../../../shared/benchmarkAnalysis';
 import { productionReferenceAdmission } from '../../../shared/productionReferenceAdmission';
 import { analysisProgressIsActive } from './VideoAnalysisProgressPanel';
@@ -122,6 +123,9 @@ export function inspirationDetailStatusLabel(video: TrendVideo, state: {
   const progress = payload?.analysisProgress;
   const queue = imagePostAnalysisQueuePresentation(video);
   if (queue) return queue.label;
+  if (imageAnalysisNeedsSubmission(video)) return '图文分析待提交';
+  const failure = failureForVideo(video);
+  if (!state.pending && failure.code !== 'none' && !failure.retryable) return failure.stage === 'collection' ? '采集未完成' : failure.stage === 'media' ? '原视频文件缺失' : '分析未完成，需人工核对';
   if (!state.pending && videoAnalysisFailed(video)) return '分析失败，请重试';
   if (progress && (analysisProgressIsActive(progress)
     || ['failed', 'paused', 'cancelled'].includes(progress.stage))) return progress.stageLabel;

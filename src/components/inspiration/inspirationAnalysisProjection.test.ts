@@ -38,3 +38,10 @@ test('image gallery requires a concrete source', () => {
   assert.equal(isDisplayableForFormat({ ...video, contentFormat: 'image', sourceUrl: 'https://www.instagram.com/search' }, 'image'), false);
   assert.equal(isDisplayableForFormat({ ...video, contentFormat: 'image', platform: 'instagram', sourceUrl: 'https://www.instagram.com/p/abc' }, 'image'), true);
 });
+
+test('unsubmitted images and permanent failures do not claim analysis is running or offer blind retry', () => {
+  const state = { pending: false, imageAnalysisReady: false, exactAnalysisReady: false, hasStrategyAnalysis: false };
+  assert.equal(inspirationDetailStatusLabel({ ...video, contentFormat: 'image', status: 'pending', aiAnalysis: { imageAnalysisStatus: 'pending' } }, { ...state, pending: true }), '图文分析待提交');
+  assert.equal(inspirationDetailStatusLabel({ ...video, status: 'failed', aiAnalysis: { analysisError: 'Monthly usage hard limit exceeded' } }, state), '采集未完成');
+  assert.equal(inspirationDetailStatusLabel({ ...video, status: 'failed', aiAnalysis: { analysisError: 'DataInspectionFailed' } }, state), '分析未完成，需人工核对');
+});

@@ -1,3 +1,4 @@
+import { imagePostAdmission, storedImagePostInput, inlineImagePostAttempt, unknownImagePostAttempt } from './imagePostAdmission.js';
 import type { DataStore } from '../storage/datastore.js';
 import type { VideoAiAnalysis, VideoStatus } from '../types/index.js';
 import { serializeImagePostAnalysis, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
@@ -9,6 +10,7 @@ type EvidenceResult = {
   analysis?: ImagePostEvidenceAnalysis;
   error?: string;
   provider?: 'qwen' | 'gemini';
+  providerAttempted?: boolean;
 };
 
 /** Refresh source evidence before re-running the existing visual analyzer. */
@@ -66,14 +68,21 @@ export async function refreshExistingImagePost(input: {
     imageAnalysisStatus: 'pending',
     importedAt: existingAnalysis.importedAt || new Date().toISOString(),
   });
+  const prepared = { ...storedRecord, contentFormat: 'image', thumbnailUrl, aiAnalysis: stagedAnalysis };
+  const deferred = input.deferImageAnalysis && !previouslyAnalyzed;
+  const admitted = deferred ? imagePostAdmission(prepared, item, input.keyword) : inlineImagePostAttempt(videoAnalysisOf(prepared));
   if (!await input.store.update(input.collection, recordId, {
-    contentFormat: 'image', thumbnailUrl, status: 'pending' as VideoStatus, aiAnalysis: stagedAnalysis,
+    contentFormat: 'image', thumbnailUrl, status: 'pending' as VideoStatus, aiAnalysis: serializeImagePostAnalysis(admitted),
   })) throw Error('image_post_source_persistence_failed');
-  if (input.deferImageAnalysis && !previouslyAnalyzed) {
-    await input.queue(recordId, item, input.keyword);
-    return { ...existingRecord, thumbnailUrl };
+  if (deferred) return { ...prepared, status: 'pending', aiAnalysis: serializeImagePostAnalysis(admitted) };
+  let output: EvidenceResult;
+  try {
+    output = await input.analyze(storedImagePostInput(prepared, item), input.keyword, existingAnalysis.gemini as VideoAiAnalysis | undefined);
+    if (output.status === 'failed' && output.providerAttempted) throw Error('image_post_queue_provider_result_unknown');
+  } catch (error) {
+    if (!await input.store.update(input.collection, recordId, { aiAnalysis: serializeImagePostAnalysis(unknownImagePostAttempt(admitted)) })) throw Error('image_post_unknown_attempt_persistence_failed');
+    throw error;
   }
-  const output = await input.analyze(item, input.keyword, existingAnalysis.gemini as VideoAiAnalysis | undefined);
   const latest = await input.store.getById<Record<string, unknown>>(input.collection, recordId);
   if (!latest || latest.tenantId !== input.tenantId) throw Error('image_post_record_disappeared_after_analysis');
   const currentAnalysis = videoAnalysisOf(latest);
@@ -82,6 +91,7 @@ export async function refreshExistingImagePost(input: {
     imageEvidence: output.analysis || existingAnalysis.imageEvidence,
     imageAnalysisStatus: output.status === 'analyzed' ? 'analyzed' : (existingAnalysis.imageAnalysisStatus || 'failed'),
     imageAnalysisError: output.status === 'analyzed' ? undefined : output.error,
+    imageAnalysisQueueState: output.status === 'analyzed' ? 'completed' : 'failed', imageAnalysisCompletedAt: new Date().toISOString(),
     analysisSource: output.status === 'analyzed' ? `${output.provider || 'qwen'}-image-evidence-v2` : (existingAnalysis.analysisSource || 'image-metadata'),
     analysisQuality: output.status === 'analyzed' ? 'image' : (existingAnalysis.analysisQuality || 'metadata'),
   });
