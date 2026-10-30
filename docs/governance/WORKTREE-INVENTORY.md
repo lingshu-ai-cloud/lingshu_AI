@@ -1,5 +1,10 @@
 # Git 工作树状态盘点
 
+## 2026-10-30 前台审计修复隔离树
+
+- `/Users/julia1/Documents/ChatGPT/基线管理/frontend-audit-fix-20261030`，分支 `fix/frontend-audit-20261030`：从线上前端 92757222 构建经用户确认的修复候选，功能提交 836816d9，验证记录见 BASELINE.md。
+- 原 `image-text-baseline-20261028` / `xixi外观合并V2` 的四个素材源文件脏改动及未跟踪测试保持原样；以冻结补丁导入候选，没有 stash/reset/clean。未搬移数据或凭据；临时组件验收入口已删除。
+
 ## 2026-10-29 外观合并 V2 本轮最终代码整合
 
 - 当前功能树仍为 `image-text-baseline-20261028` / `xixi外观合并V2`；本会话原有生图与周计划修改已分别保存为 `dc424172`、`57dcb173`。外部资讯会话在 `external-cards-integrated-20261029` 隔离修复，最新 `b177ef8b` 已合入，源码整合为 `7a7e4f36`。
