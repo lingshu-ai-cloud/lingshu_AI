@@ -3,7 +3,7 @@
 ## 2026-10-30 失败原因重复投影补丁（本地验收记录）
 
 - 线上 860fbd57 真实验收确认缺失文件提示、原站回退、644 高窗口翻页和实际 TikTok 播放通过；app/worker 各 3704 个 server/shared 文件与提交一致，外网 ready/前端/worker 均为 860fbd57。
-- 发现列表链路先经 videoTenantListing、再经 videoListingRoutes，两次调用 publicVideoRecord；第二次从已清理私有错误的记录重新分类，覆盖为 none，导致模型超时/内容检查仍泛化提示。新增回归在旧代码实际复现 none != timeout，补丁保留稳定公开错误码并重建固定文案，不信任传入的 message/action；私有错误继续剔除，更新的原始错误优先。
+- 发现列表链路先经 videoTenantListing、再经 videoListingRoutes，两次调用 publicVideoRecord；第二次从已清理私有错误的记录重新分类，覆盖为 none，导致模型超时/内容检查仍泛化提示。新增回归在旧代码实际复现 none != timeout，补丁保留稳定公开错误码并重建固定文案，不信任传入的 message/action；私有错误继续剔除，更新的原始错误优先。进度中的可重试标记与公开原因一致，并保留明确禁止重试的约束。
 - 补丁本地验证：83 项相关回归通过，3161 个生产文件架构预算（相对 860fbd57）、生产构建、chunk 预算和 git diff --check 通过；迁移未变，208 项完整性证据沿用本轮；未运行全量 TypeScript 检查。
 - 本补丁不修改生产素材或发起供应商调用；继续遵守先本地回归、架构预算及构建通过，再推送和 deploy/update.sh 部署的流程。具体命令沿用下节测试组合并覆盖 shared 安全文案与重复投影回归。
 

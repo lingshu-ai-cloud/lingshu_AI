@@ -60,12 +60,13 @@ test('public failure stage survives sanitization while private provider text is 
 
 test('repeated listing projections preserve the sanitized failure reason and progress copy', () => {
   for (const [error, code] of [['Request timed out.', 'timeout'], ['DataInspectionFailed', 'content_rejected'], ['Monthly usage hard limit exceeded', 'collection_quota']]) {
-    const record = { id: 'legacy-failure', status: 'analyzed', aiAnalysis: JSON.stringify({ geminiStatus: 'video_failed', analysisError: error }) };
+    const record = { id: 'legacy-failure', status: 'analyzed', aiAnalysis: JSON.stringify({ geminiStatus: 'failed', analysisError: error }) };
     const once = publicVideoRecord(record);
     const twice = publicVideoRecord(once);
     const analysis = JSON.parse(String(twice.aiAnalysis));
     assert.equal(analysis.pipelineFailure.code, code);
     assert.equal(analysis.analysisProgress.currentStep, JSON.parse(String(once.aiAnalysis)).analysisProgress.currentStep);
+    assert.equal(analysis.analysisProgress.retryable, analysis.pipelineFailure.retryable);
     assert.equal(analysis.analysisError, undefined);
   }
 });

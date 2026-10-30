@@ -28,19 +28,17 @@ export function publicVideoRecord<T extends Record<string, unknown>>(
     : record;
   if (!Object.keys(analysis).length) return publicRecord;
   const failure = videoPipelineFailureForAnalysis(analysis);
-  const scrubbed: Record<string, unknown> = {
-    ...analysis,
-    pipelineFailure: failure,
-    analysisProgress: buildVideoAnalysisProgress({
-      analysis,
-      recordStatus: record.status,
-      recordUpdatedAt: record.updated || record.updatedAt || record.crawledAt,
-      duration: record.duration,
-      queuePosition: progressOptions.queuePosition,
-      failureMessage: failure.code !== 'none' ? `${failure.message} ${failure.action}` : publicVideoPipelineError(analysis.analysisError || analysis.videoLevelFailureStatus || analysis.downloadError),
-      nowMs: progressOptions.nowMs,
-    }),
-  };
+  const progress = buildVideoAnalysisProgress({
+    analysis,
+    recordStatus: record.status,
+    recordUpdatedAt: record.updated || record.updatedAt || record.crawledAt,
+    duration: record.duration,
+    queuePosition: progressOptions.queuePosition,
+    failureMessage: failure.code !== 'none' ? `${failure.message} ${failure.action}` : publicVideoPipelineError(analysis.analysisError || analysis.videoLevelFailureStatus || analysis.downloadError),
+    nowMs: progressOptions.nowMs,
+  });
+  if (progress.stage === 'failed' && failure.code !== 'none') progress.retryable = failure.retryable && analysis.analysisRetryable !== false;
+  const scrubbed: Record<string, unknown> = { ...analysis, pipelineFailure: failure, analysisProgress: progress };
   const gemini = evidenceRecord(analysis.gemini);
   if (Array.isArray(gemini.scriptDetails15s)) {
     scrubbed.gemini = {
