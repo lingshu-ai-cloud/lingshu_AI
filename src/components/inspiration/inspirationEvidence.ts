@@ -13,7 +13,8 @@ export function observedVideoAnalysis(video: TrendVideo) {
 export function failureForVideo(video: TrendVideo) {
   if (analysisProgressIsActive(video.aiAnalysis?.analysisProgress)) return videoPipelineFailure('');
   const failure = videoPipelineFailureForAnalysis(video.aiAnalysis || {});
-  if (failure.code !== 'none') return failure;
+  if (failure.code !== 'none') return video.aiAnalysis?.analysisProgress?.stage === 'failed'
+    && video.aiAnalysis.analysisProgress.retryable === false ? { ...failure, retryable: false } : failure;
   const failed = video.status === 'failed' || video.aiAnalysis?.analysisProgress?.stage === 'failed'
     || ['video_failed', 'analysis_retryable', 'failed'].includes(video.aiAnalysis?.geminiStatus || '');
   return videoPipelineFailure(failed ? 'analysis_failed' : '');

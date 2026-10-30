@@ -29,6 +29,8 @@ test('verified prior evidence remains visible after a failed subsequent attempt'
 test('failure and unsubmitted image states are explicit while queued or uncertain attempts are not resubmitted', () => {
   assert.equal(failureForVideo({ ...base, status: 'failed', aiAnalysis: { pipelineFailure: videoPipelineFailure('') } }).code, 'analysis_failed');
   assert.equal(failureForVideo({ ...base, aiAnalysis: { analysisError: 'DataInspectionFailed' } }).retryable, false);
+  const locked = { ...base, aiAnalysis: { pipelineFailure: videoPipelineFailure('timeout'), analysisProgress: { stage: 'failed', retryable: false } } } as TrendVideo;
+  assert.equal(failureForVideo(locked).retryable, false, 'an explicit backend no-retry state must not expose a new paid attempt');
   const image = { ...base, contentFormat: 'image' as const, aiAnalysis: { imageAnalysisStatus: 'pending' as const } };
   assert.equal(imageAnalysisNeedsSubmission(image), true);
   for (const state of ['queued', 'processing', 'unknown'] as const) {

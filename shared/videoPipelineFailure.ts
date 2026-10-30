@@ -32,7 +32,7 @@ export function videoPipelineFailure(error: unknown): VideoPipelineFailure {
 }
 
 /** Re-projecting an already public record must preserve its safe classification. */
-export function videoPipelineFailureForAnalysis(analysis: Record<string, unknown>): VideoPipelineFailure {
+export function videoPipelineFailureForAnalysis(analysis: { analysisError?: unknown; videoLevelFailureStatus?: unknown; downloadError?: unknown; pipelineFailure?: unknown }): VideoPipelineFailure {
   const raw = analysis.analysisError || analysis.videoLevelFailureStatus || analysis.downloadError;
   if (raw) return videoPipelineFailure(raw);
   const previous = analysis.pipelineFailure;
