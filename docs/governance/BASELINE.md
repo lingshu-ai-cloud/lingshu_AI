@@ -1,6 +1,24 @@
 # 工程基线（阶段二集成）
 
-## 2026-10-30 前台审计修复候选（待部署验收）
+## 2026-10-30 播放与素材分析候选（本地验收完成，待部署）
+
+- 工作树 `frontend-audit-fix-20261030`，分支 `fix/frontend-audit-20261030`，功能提交 `c987680b`，从已部署的 `5c1820f8bc19cd03d5321c6b82ce564b571188fd` 开发。部署前再次只读核实 `/opt/lingshu_AI` HEAD 为 5c1820f8、origin 为 canonical GitHub HTTPS、跟踪文件无改动；磁盘可用约 9.7 GB。
+- 真实 Chrome 当前账号 38 条记录的分阶段审计：18 条原视频获取失败（17 条历史 Apify 月度限额回执、1 条 yt-dlp）；4 条下载后模型失败（3 超时、1 内容检查拒绝）；8 条图片可读取但没有分析队列/开始/完成回执；8 条已有结果。不能据历史回执断言当前额度仍不足，也没有证据将上述失败归因为前端隐藏成功结果。
+- 播放地址接口只读核验实际存储对象，缺失返回 `video_media_missing`，存储连接异常返回 503；HEAD 检查设置 6 秒中止信号，不触发采集或分析。播放窗口适配短窗口、保留可见翻页按钮，原文件不可读时说明回退到原站播放器；跨域播放器使用上下条按钮切换。
+- 新图文的最终图片地址与可恢复分析回执在同一次记录更新中保存，默认走已有持久队列；队列使用租户已保存图片而非采集临时 URL。保留已有租约、来源哈希、调用前尝试记录和未知结果不重放规则；不扫描补排历史记录。显式同步调用同样写尝试标记，调用结果不明进入 unknown。
+- 失败详情分辨采集额度、文件缺失、内容检查、超时及入队失败；无法直接重试的原因不提供盲重分析。未提交图文显示“待提交”，不显示“分析中”。元数据模板不再冒充真实主题、钩子或卖点，失败重试前的已验证分析仍保留。
+- 本地命令 `pnpm exec tsx --test shared/videoPipelineFailure.test.ts server/routes/storedVideoAvailability.test.ts server/routes/videoAssetAvailability.integration.test.ts server/routes/videoPublicRecordProjection.test.ts server/routes/videoAnalysisRecovery.test.ts server/socialDiscovery/imagePost*.test.ts server/videos/applicationBoundaries.test.ts src/components/inspiration/inspirationEvidence.test.ts src/components/inspiration/inspirationVideoProjection.test.ts src/components/inspiration/inspirationAnalysisProjection.test.ts src/components/inspiration/imagePostAnalysisPresentation.test.ts src/lib/inspirationVideoPlayback.test.ts src/lib/weeklyWorkStatus.test.ts src/lib/weeklyContentProgress.test.ts server/routes/studioPrivateAssetRoutes.test.ts`：81 项通过；包括真实本地 HTTP 404/200、租户隔离、原文件读取不得发起供应商调用、队列重建后执行一次、来源变更与未知结果不重放。
+- `ARCHITECTURE_BASE_REF=5c1820f8 pnpm run check:architecture`：3161 个生产文件及预算递减通过；`pnpm run check:digital-employee-migrations`：208 项只读完整性通过；`pnpm run build`、chunk 预算与 `git diff --check` 通过。遵守 AGENTS，未运行全量 TypeScript 检查。
+- Chrome 对本地实际组件、隔离数据点击验收：本地生成的视频 readyState=4 且 currentTime 递增；1312×644 的翻页按钮 bottom=592（旧线上按钮超出视口）；390×700 翻页按钮可见；原站嵌入回退后仍可翻页；元数据模板隐藏；未提交图文状态、提交按钮及回调验证通过。临时测试入口已删除。该结果不替代真实供应商分析验收。
+- 尚待：按现有交互 SSH → GitHub HTTPS `pull --ff-only` → `deploy/update.sh` 部署并核实前端、app、worker SHA 和 ready。历史源文件缺失、采集限额和模型失败不会因源码部署自动修复；批量重新采集/付费分析需另行确认。
+
+## 2026-10-30 上一轮前台修复部署回执
+
+- 已部署治理提交 `5c1820f8bc19cd03d5321c6b82ce564b571188fd`，前端 build-version、web ready 与 worker 心跳均为该 SHA；app/worker 各 3697 个受版本管理的 server/shared 文件逐字节匹配 Git 提交。
+- compose 的 app、worker、pocketbase、redis 为 running/healthy，caddy 为 running；`/api/overseas/ready` 返回 `status: ready`、`issues: []`、worker ready。仍有原有可选能力未启用，不声明供应商链路全部验收。
+- 用户授权清理较早未引用恢复镜像后，保留当时运行镜像、pre-audit-20261030-339191fa 及 pre-weekly-sync-20261029-8aa67fca app/worker 回退镜像。随后按用户请求只清理 Docker 构建缓存，磁盘恢复至约 9.7 GB 可用；未删除卷、数据库、备份或运行容器。
+
+## 2026-10-30 前台审计修复候选（历史本地验收记录）
 
 - 用户确认差异合并策略后，从线上前端 `927572220dd33bf64044a1fc197f013f60030279` 建立 `fix/frontend-audit-20261030`；保留 CAS 修复 `dd72e069`，以及原 V2 未提交的素材分类、读取和封面访问优化。功能候选提交 `836816d9d13cb202982e650454a18051ee790b6d`。
 - 核实线上后端和 worker 为 `339191fa96f6a69b3536c4eb5b1dfbeab6c1dd70`：两者各 3695 个受版本管理的 server/shared 文件与该提交逐字节一致；`339191fa..92757222` 后端、shared、依赖与迁移无差异。前端 index 与主 JS 和保留的 92757222 部署包哈希一致；本机重建未复现部署包逐字节一致性，不将“源码相同”写成可复现构建证明。
