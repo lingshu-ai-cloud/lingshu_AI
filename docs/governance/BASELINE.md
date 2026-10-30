@@ -1,5 +1,12 @@
 # 工程基线（阶段二集成）
 
+## 2026-10-30 失败原因重复投影补丁（本地验收记录）
+
+- 线上 860fbd57 真实验收确认缺失文件提示、原站回退、644 高窗口翻页和实际 TikTok 播放通过；app/worker 各 3704 个 server/shared 文件与提交一致，外网 ready/前端/worker 均为 860fbd57。
+- 发现列表链路先经 videoTenantListing、再经 videoListingRoutes，两次调用 publicVideoRecord；第二次从已清理私有错误的记录重新分类，覆盖为 none，导致模型超时/内容检查仍泛化提示。新增回归在旧代码实际复现 none != timeout，补丁保留稳定公开错误码并重建固定文案，不信任传入的 message/action；私有错误继续剔除，更新的原始错误优先。
+- 补丁本地验证：83 项相关回归通过，3161 个生产文件架构预算（相对 860fbd57）、生产构建、chunk 预算和 git diff --check 通过；迁移未变，208 项完整性证据沿用本轮；未运行全量 TypeScript 检查。
+- 本补丁不修改生产素材或发起供应商调用；继续遵守先本地回归、架构预算及构建通过，再推送和 deploy/update.sh 部署的流程。具体命令沿用下节测试组合并覆盖 shared 安全文案与重复投影回归。
+
 ## 2026-10-30 播放与素材分析候选（本地验收完成，待部署）
 
 - 工作树 `frontend-audit-fix-20261030`，分支 `fix/frontend-audit-20261030`，功能提交 `c987680b`，从已部署的 `5c1820f8bc19cd03d5321c6b82ce564b571188fd` 开发。部署前再次只读核实 `/opt/lingshu_AI` HEAD 为 5c1820f8、origin 为 canonical GitHub HTTPS、跟踪文件无改动；磁盘可用约 9.7 GB。

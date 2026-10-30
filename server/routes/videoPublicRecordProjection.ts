@@ -1,4 +1,4 @@
-import { videoPipelineFailure } from '../../shared/videoPipelineFailure.js';
+import { videoPipelineFailureForAnalysis } from '../../shared/videoPipelineFailure.js';
 import { videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 import { buildVideoAnalysisProgress } from '../lib/videoAnalysisProgress.js';
 import { publicVideoPipelineError } from './videoAnalysisRecovery.js';
@@ -27,16 +27,17 @@ export function publicVideoRecord<T extends Record<string, unknown>>(
     ? { ...record, thumbnailUrl } as T
     : record;
   if (!Object.keys(analysis).length) return publicRecord;
+  const failure = videoPipelineFailureForAnalysis(analysis);
   const scrubbed: Record<string, unknown> = {
     ...analysis,
-    pipelineFailure: videoPipelineFailure(analysis.analysisError || analysis.videoLevelFailureStatus || analysis.downloadError),
+    pipelineFailure: failure,
     analysisProgress: buildVideoAnalysisProgress({
       analysis,
       recordStatus: record.status,
       recordUpdatedAt: record.updated || record.updatedAt || record.crawledAt,
       duration: record.duration,
       queuePosition: progressOptions.queuePosition,
-      failureMessage: publicVideoPipelineError(analysis.analysisError || analysis.videoLevelFailureStatus || analysis.downloadError),
+      failureMessage: failure.code !== 'none' ? `${failure.message} ${failure.action}` : publicVideoPipelineError(analysis.analysisError || analysis.videoLevelFailureStatus || analysis.downloadError),
       nowMs: progressOptions.nowMs,
     }),
   };

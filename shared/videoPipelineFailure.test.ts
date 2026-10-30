@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { videoPipelineFailure } from './videoPipelineFailure.js';
+import { videoPipelineFailure, videoPipelineFailureForAnalysis } from './videoPipelineFailure.js';
 
 test('failures distinguish collection, media, admission and analysis without exposing provider payloads', () => {
   const cases = [
@@ -20,4 +20,14 @@ test('failures distinguish collection, media, admission and analysis without exp
     assert.ok(result.message && result.action);
   }
   assert.equal(videoPipelineFailure('').code, 'none');
+});
+
+test('safe classifications survive re-projection without trusting supplied messages or replacing newer raw errors', () => {
+  const previous = { code: 'content_rejected', message: 'private-secret', action: 'unsafe-action', retryable: true };
+  const safe = videoPipelineFailureForAnalysis({ pipelineFailure: previous });
+  assert.equal(safe.code, 'content_rejected');
+  assert.equal(safe.retryable, false);
+  assert.doesNotMatch(JSON.stringify(safe), /private-secret|unsafe-action/);
+  assert.equal(videoPipelineFailureForAnalysis({ pipelineFailure: previous, analysisError: 'Request timed out' }).code, 'timeout');
+  assert.equal(videoPipelineFailureForAnalysis({ pipelineFailure: { code: 'unknown-private-code' } }).code, 'none');
 });
