@@ -103,7 +103,7 @@ export function AuthenticatedImage({ src, alt, className, onReady, onError, onNa
     : <div className={`${className} bg-surface-2`} aria-label={alt} />;
 }
 
-export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, loadOnMount = autoPlay, hoverPlay = false, previewActive, previewFrame = false, preload = previewFrame ? 'auto' : 'metadata', onReady, onError, onLoadingChange, onMetadata }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; loadOnMount?: boolean; hoverPlay?: boolean; previewActive?: boolean; previewFrame?: boolean; preload?: 'none' | 'metadata' | 'auto'; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void; onMetadata?: (metadata: { width: number; height: number; duration: number }) => void }) {
+export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, loadOnMount = autoPlay || controls, hoverPlay = false, previewActive, previewFrame = false, preload = previewFrame ? 'auto' : 'metadata', onReady, onError, onLoadingChange, onMetadata }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; loadOnMount?: boolean; hoverPlay?: boolean; previewActive?: boolean; previewFrame?: boolean; preload?: 'none' | 'metadata' | 'auto'; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void; onMetadata?: (metadata: { width: number; height: number; duration: number }) => void }) {
   const [playbackUrl, setPlaybackUrl] = useState('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const requestRef = useRef<Promise<string> | null>(null);

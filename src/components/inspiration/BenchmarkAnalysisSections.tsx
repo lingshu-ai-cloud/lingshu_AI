@@ -23,6 +23,7 @@ function ShotFrame({ shot }: { shot: BenchmarkShot }) {
   </div>;
 }
 function ShotCard({ shot, renderClip }: { shot: BenchmarkShot; renderClip?: (url: string) => ReactNode }) {
+  const [clipOpen, setClipOpen] = useState(false);
   return <article className="min-w-0 rounded-lg border border-border bg-[#fbfcfa] p-3" aria-label={`第 ${shot.index} 镜`}>
     <div className="flex items-start gap-3"><ShotFrame shot={shot} /><div className="min-w-0 flex-1 break-words">
       <div className="flex flex-wrap items-center gap-2"><strong className="rounded bg-accent px-2 py-1 text-xs text-white">{shot.index}</strong><span className="text-xs font-semibold text-text-muted">{shot.time || '时间待确认'}</span></div>
@@ -38,7 +39,7 @@ function ShotCard({ shot, renderClip }: { shot: BenchmarkShot; renderClip?: (url
       {shot.effectivenessHypothesis && <p className="mt-1 leading-5 text-amber-800">有效性判断：{shot.effectivenessHypothesis}</p>}
       {shot.authenticity && <p className="mt-1 leading-5 text-text-muted">真实性要求：{shot.authenticity}</p>}
     </details>
-    {shot.clipRef && renderClip && <details className="mt-2 text-[11px]"><summary className="cursor-pointer font-semibold text-accent">核对原片切片</summary><div className="mt-2">{renderClip(shot.clipRef)}</div></details>}
+    {shot.clipRef && renderClip && <details className="mt-2 text-[11px]" onToggle={event => setClipOpen(event.currentTarget.open)}><summary className="cursor-pointer font-semibold text-accent">核对原片切片</summary>{clipOpen && <div className="mt-2">{renderClip(shot.clipRef)}</div>}</details>}
   </article>;
 }
 export default function BenchmarkAnalysisSections({ analysis, pending = false, renderClip, mode = 'all' }: {
