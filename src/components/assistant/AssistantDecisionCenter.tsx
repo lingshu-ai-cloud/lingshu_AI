@@ -141,7 +141,9 @@ export function assistantDecisionExecutionFeedback(
     return { kind: 'warning', title: '本周任务已启动，目前已暂停', detail: `已创建${taskLabel}；恢复后会从当前进度继续。` };
   }
   if (execution.status.startsWith('waiting_')) {
-    return { kind: 'info', title: '本周任务已启动，正在等待下一条件', detail: `已创建${taskLabel}；可在智能经营查看当前等待事项。` };
+    return { kind: execution.status === 'waiting_human' ? 'warning' : 'info',
+      title: execution.status === 'waiting_human' ? '本周任务已启动，有内容待处理' : '本周任务已启动，正在等待下一条件',
+      detail: execution.pauseReason || `已创建${taskLabel}；系统会继续推进其他可执行任务。` };
   }
   if (['initializing', 'planning', 'queued'].includes(execution.status)) {
     return { kind: 'info', title: '本周任务已启动，正在排队准备', detail: `已创建${taskLabel}，数字员工会按计划进入生产。` };

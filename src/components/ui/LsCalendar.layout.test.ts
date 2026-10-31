@@ -161,6 +161,7 @@ const event = { allDay: false, extendedProps: { item: { title: '新品短视频�
 
   const plannedPublishItem = { ...item, eventType: 'publish', status: 'planned', statusLabel: '已计划' };
   const plannedPublish = renderCompact({ event: { ...event, allDay: true, extendedProps: { item: plannedPublishItem } }, view: { type: 'dayGridWeek' }, timeText: '' }) as RenderNode;
+  assert.equal(plannedPublish.props?.className, 'ls-calendar-event-content ls-calendar-publish-card', 'publishing events use a dated media card instead of an hourly slot');
   assert.equal(nodes(plannedPublish).some(node => node.type === 'span' && node.children.includes('已计划')), false, 'compact publishing cards omit the redundant planned status');
   const blockedPublishItem = { ...plannedPublishItem, status: 'needs_action', statusLabel: '需要处理' };
   const blockedPublish = renderCompact({ event: { ...event, allDay: true, extendedProps: { item: blockedPublishItem } }, view: { type: 'dayGridWeek' }, timeText: '' }) as RenderNode;

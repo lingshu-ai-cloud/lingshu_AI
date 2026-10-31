@@ -51,6 +51,7 @@ import {
   registerPocketBaseInviteOwner,
 } from '../auth/inviteRegistration.js';
 import { issueVerifiedLocalIdentityToken } from '../auth/localIdentity.js';
+import { isConfiguredPlatformAdminEmail } from '../auth/platformAdminConfig.js';
 import { bindDataAuthority, currentDataAuthority } from '../storage/dataAuthority.js';
 import { resolveServerProductProfile } from '../starter198/productProfile.js';
 import { localId, localPasswordMatches, localPreviewRequestRejection, parseLocalToken, passwordHash, pbLogin, readLocalAccounts, writeLocalAccounts, type LocalAccount, type PbUser } from '../auth/authIdentityHelpers.js';
@@ -87,12 +88,10 @@ function localLogin(email: string, password: string): LocalLoginResult | null {
     return { token: issueVerifiedLocalIdentityToken({ userId: record.id, tenantId: record.tenantId! }), record, accountType: 'customer' };
   }
 
-  const configuredAdminEmail = String(process.env.LOCAL_ADMIN_EMAIL ?? '').trim().toLowerCase();
   const configuredAdminPassword = process.env.LOCAL_ADMIN_PASSWORD;
   const explicitAdmin = Boolean(
-    configuredAdminEmail &&
     configuredAdminPassword &&
-    normalizedEmail === configuredAdminEmail &&
+    isConfiguredPlatformAdminEmail(normalizedEmail) &&
     password === configuredAdminPassword
   );
 

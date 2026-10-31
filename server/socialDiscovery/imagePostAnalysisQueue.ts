@@ -34,7 +34,8 @@ export function createImagePostAnalysisQueue(input: {
   const { store, collection } = input;
   const leaseAvailable = input.leaseAvailable || (() => imagePostAtomicLeaseAvailable(store));
 
-  async function queue(recordId: string, item: CrawledImagePost, keyword: string): Promise<void> {
+  async function queue(recordId: string, item: CrawledImagePost, keyword: string,
+    options?: { weeklyPlanId?: string }): Promise<void> {
     const record = await store.getById<Record<string, unknown>>(collection, recordId);
     if (!record || !String(record.tenantId || '') || record.sourceUrl !== item.sourceUrl
       || record.contentFormat !== 'image') throw Error('image_post_queue_source_invalid');
@@ -46,6 +47,7 @@ export function createImagePostAnalysisQueue(input: {
     if (!await store.update(collection, recordId, {
       status: 'pending', aiAnalysis: serializeImagePostAnalysis({ ...analysis,
         imageAnalysisStatus: 'queued', [QUEUE_STATE]: 'queued', [QUEUE_INPUT]: payload,
+        ...(options?.weeklyPlanId ? { weeklyImageAnalysisRequestedPlanId: options.weeklyPlanId } : {}),
         imageAnalysisQueuedAt: new Date().toISOString(), imageAnalysisError: undefined,
       }),
     })) throw Error('image_post_queue_persistence_failed');

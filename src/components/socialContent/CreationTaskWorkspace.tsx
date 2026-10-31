@@ -14,6 +14,7 @@ import { LsCalendar } from '../ui/LsCalendar';
 import CreateContentPlanModal from './CreateContentPlanModal';
 import CreationTaskDetailDrawer, { creationLocalTime } from './CreationTaskDetailDrawer';
 import { beijingDay } from '../../lib/assistantScheduleProjection';
+import { WeeklyPublishingCalendar } from '../SmartBusinessDashboard';
 import type { ContentGenerationQueueMetric, ContentGenerationQueueRequest, ContentGenerationQueueSource } from '../../lib/contentGenerationQueue';
 
 const selectedTask = () => readSocialContentNavigationQueryTaskId('socialInspiration',window.location.search)
@@ -88,6 +89,10 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
   const sourceRows=useMemo(()=>rows.filter(row=>source==='all'||(source==='weekly'?row.sourceLabel==='周任务包':row.sourceLabel!=='周任务包')),[rows,source]);
   const metricRows=useMemo(()=>sourceRows.filter(row=>metric==='all'||metric==='scheduled'?metric==='all'||Boolean(row.publishAt):metric==='planned'?['planned','queued'].includes(row.weekly?.status||'')||row.statusLabel==='待调度':metric==='producing'?row.weekly?.status==='producing'||row.statusLabel==='创作中':metric==='waiting_review'?row.weekly?.status==='waiting_review'||row.category==='confirmation':row.weekly?.status==='completed'||row.category==='completed'),[sourceRows,metric]);
   const events=useMemo(()=>creationTaskCalendar(metricRows),[metricRows]);
+  const standaloneEvents=useMemo(()=>events.filter(event=>{
+    const row=metricRows.find(item=>item.key===event.id);
+    return row?.sourceLabel!=='周任务包';
+  }).map(event=>({...event,id:`manual-${event.id}`})),[events,metricRows]);
   const selected=rows.find(row=>taskId?row.taskId===taskId:contentId?row.contentId===contentId:row.key===rowKey)||null;
   const updateLocation=(next:'calendar'|'tasks',row?:CreationTaskRow)=>{
     if(embeddedCalendar||queueMode)return;
@@ -121,7 +126,7 @@ export default function CreationTaskWorkspace({ data, onRefresh, embeddedCalenda
         {title:'创建时间',key:'created',width:180,render:(_,row)=>creationLocalTime(row.createdAt)},
       ]}/>
     </>:<>
-      <LsCalendar key={calendarPortalRevision} label="发布日历" events={events} initialView="timeGridWeek" initialDate={calendarPortalRevision||new URLSearchParams(window.location.search).get('view')==='calendar'?beijingDay():data.goal?.startsAt?.slice(0,10)} timeZone="Asia/Shanghai" showAllEvents showAllHours fixedHeight="auto" workspaceMode="expanded" onEventClick={event=>{const row=rows.find(item=>item.key===event.id);if(row)open(row);return true;}}/>
+      {data.goal ? <WeeklyPublishingCalendar data={data} onRefresh={refresh} additionalEvents={standaloneEvents} onAdditionalEventClick={event=>{const row=rows.find(item=>`manual-${item.key}`===event.id);if(row)open(row);}}/> : <LsCalendar key={calendarPortalRevision} label="发布日历" events={events} initialView="dayGridWeek" initialDate={beijingDay()} timeZone="Asia/Shanghai" eventCardMode="media" dateOnly showAllEvents fixedHeight="auto" workspaceMode="expanded" onEventClick={event=>{const row=rows.find(item=>item.key===event.id);if(row)open(row);return true;}}/>}
       {metricRows.length>events.length&&<p className="px-5 py-3 text-xs text-text-muted">{metricRows.length-events.length} 条任务尚未安排发布时间，可在任务列表中查看。</p>}
       {!metricRows.length&&!loading&&<Empty description="暂无内容生成任务"/>}
     </>}</>}

@@ -6,16 +6,14 @@ import { repairCollapsedWeeklyVideoProduction, validatePackageForStart, compileP
 import { type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { store } from '../storage/index.js';
 import { newContentGenerationAuthorization, type ContentGenerationAuthorization } from '../../shared/contracts/contentGenerationAuthorization.js';
-import { type EnterpriseProfile } from '../routes/enterprise.js';
-import { readServerProductionOnboardingReadiness } from './productionOnboardingPreflight.js';
-import { configurationSnapshot, enterpriseProfileFromKnowledgeBinding } from './configuration.js';
+import { configurationSnapshot } from './configuration.js';
 import { isDigitalEmployeeOperatingGoal } from './overviewGoalScope.js';
 import { configSnapshotForPlan, goalInput, publicConfig } from './overviewProjection.js';
 import { buildWeeklyPlan } from './domain.js';
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, withLocalQueue, type GoalRecord, type PlanRecord, type RunRecord, type StoredRecord, type TaskRecord } from './records.js';
 import type { DigitalEmployeeApplicationPorts } from './applicationPorts.js';
 import { finishedFilmBudgetDecision, finishedFilmBudgetQuoteKey } from '../../shared/contracts/finishedFilmBudget.js';
-import { ensureWeeklyImageQueue, preflightWeeklyImageQueue, weeklyImageQueueFailure } from './weeklyImageQueueBridge.js';
+import { ensureWeeklyImageQueue } from './weeklyImageQueueBridge.js';
 
 export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplicationPorts, 'requiredCreate' | 'goalApprovalQueues' | 'tenantRecord' | 'weeklyGoalFactRebuildTargetCommitted' | 'first' | 'advanceRun' | 'buildOverview' | 'configForTenant' | 'resolveCurrentConfiguration' | 'weeklyGoalFactRebuildRecovery' | 'frozenEnterpriseProfileForPlan' | 'executionConfigForPlan' | 'appendEvent' | 'appendAudit'>) {
   function requiredCreate<T extends StoredRecord>(collection: string, payload: Record<string, unknown>): Promise<T> {
@@ -93,6 +91,33 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
     }
   }
 
+  async function startIndependentImages(tenantId: string, userId: string, plan: PlanRecord, run: RunRecord) {
+    try {
+      const imageReceipts = await ensureWeeklyImageQueue({ store, tenantId, userId, plan, run,
+        onIssue: async (slotId, code) => {
+          const pack = jsonObject<Record<string, unknown>>(plan.plan, {}).businessPackage as WeeklyPackage | undefined;
+          const position = (pack?.mixedContentSlots || []).filter(slot => slot.kind === 'image' && slot.productionRole === 'original')
+            .findIndex(slot => slot.slotId === slotId) + 1;
+          const reason = code === 'weekly_image_reference_changed' ? '参考图片已变化，请重新选择'
+            : code === 'weekly_image_scope_incomplete' ? '还缺产品或参考图片'
+              : code === 'weekly_image_reference_unusable' ? '参考图片无法用于制作，请更换'
+                : code.includes('analysis_') ? '参考图片分析尚未完成，系统会保留任务'
+                  : '该图片暂需单独处理';
+          await appendEvent({ tenantId, runId: run.id, type: 'weekly.image.needs_attention', level: 'warning',
+            summary: `第 ${position || 1} 张图片：${reason}。其他任务继续。`, payload: { slotId, code } });
+        },
+      });
+      if (imageReceipts.length) await appendEvent({ tenantId, runId: run.id, type: 'weekly.images.queued', level: 'success',
+        summary: '本周图片任务已逐张进入制作队列', payload: { imageReceipts } });
+      return imageReceipts;
+    } catch (error) {
+      await appendEvent({ tenantId, runId: run.id, type: 'weekly.images.admission_waiting', level: 'warning',
+        summary: '本周图片队列暂未继续，其他任务照常进行',
+        payload: { code: error instanceof Error ? error.message : 'weekly_image_queue_unavailable' } });
+      return [];
+    }
+  }
+
   async function approveGoalForReview(tenantId: string, userId: string, goalId: string, packageRevision: number | undefined, members: Array<{id: string}>, authorization?: ContentGenerationAuthorization, overBudgetQuoteKey = '') {
     return withLocalQueue(goalApprovalQueues, `${tenantId}:activate`, async () => {
       if (!store.compareAndSwap) return { status: 503, body: { error: 'goal_atomic_store_required', message: '当前存储不支持安全启动周目标。' } };
@@ -112,12 +137,8 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
           const saved = jsonObject<ReturnType<typeof compilePackage>>(savedPlan.plan, {} as ReturnType<typeof compilePackage>);
           if (!saved.tasks?.length) throw Error('初始化任务清单不可用');
           await ensureReviewRunTasks(tenantId, goal, savedPlan, existingRun, saved.tasks, saved.businessPackage);
-          let imageReceipts: Awaited<ReturnType<typeof ensureWeeklyImageQueue>>;
-          try { imageReceipts = await ensureWeeklyImageQueue({ store, tenantId, userId, plan: savedPlan, run: existingRun }); }
-          catch (error) { return weeklyImageQueueFailure(error); }
           if (!await store.update(COLLECTION.runs, existingRun.id, { status: 'planning' })) throw Error('任务初始化状态保存失败');
-          if (imageReceipts.length) await appendEvent({ tenantId, runId: existingRun.id, type: 'weekly.images.queued', level: 'success',
-            summary: `${imageReceipts.length} 条本周图片已进入制作队列`, payload: { imageReceipts } });
+          await startIndependentImages(tenantId, userId, savedPlan, { ...existingRun, status: 'planning' });
           await advanceRun(tenantId, existingRun.id);
         }
         return { status: 200, body: await buildOverview(tenantId, goal.id) };
@@ -217,50 +238,8 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
         if (overBudgetFilms.length && overBudgetQuoteKey !== currentQuoteKey) return { status: 409, body: {
           error: 'finished_film_budget_confirmation_required', message: `有 ${overBudgetFilms.length} 条成片预计超过 ¥0.70/秒，未启动生产。请查看逐条费用并确认是否继续。`, films: overBudgetFilms,
         } };
-        if (masterPlans.length && (pack.detailGeneration?.status !== 'ready'
-          || masterPlans.some(item => !item.preproduction?.readiness.canStart))) {
-          const blockers = [...new Set([
-            ...(pack.detailGeneration?.blockers || []),
-            ...masterPlans.flatMap(item => item.preproduction?.readiness.blockers || ['制作详情尚未生成']),
-          ].filter(Boolean))];
-          return { status: 409, body: {
-              error: 'package_details_blocked',
-              message: `制作条件尚未全部满足：${blockers.join('；') || '请先生成并确认每条内容的制作详情'}`,
-              blockers,
-            } };
-        }
-        if (masterPlans.length) {
-          const productionProfile = frozenEnterpriseProfileForPlan(existingPlan, false)
-            || enterpriseProfileFromKnowledgeBinding(resolvedConfiguration.knowledgeBinding) as EnterpriseProfile | null;
-          if (!productionProfile) {
-            return { status: 409, body: { error: 'enterprise_fact_snapshot_missing', message: '企业事实快照缺失，请重新确认企业与产品资料后再开工。' } };
-          }
-          try {
-            const readiness = await readServerProductionOnboardingReadiness({
-              store,
-              tenantId,
-              profile: productionProfile,
-              preferences: config.productionOnboarding,
-              plans: masterPlans,
-              budgetConfirmed: true,
-            });
-            if (!readiness.ready) return { status: 409, body: {
-                error: 'production_onboarding_preflight_blocked',
-                message: `周任务未启动：${readiness.blockers.map(item => item.message).join('；')}`,
-                blockers: readiness.blockers,
-                requiredArchetypes: readiness.requiredArchetypes,
-              } };
-          } catch (error) {
-            return { status: 503, body: {
-                error: 'production_onboarding_preflight_unavailable',
-                message: `${error instanceof Error ? error.message : '生产资料预检暂时不可用'}；本次未创建运行，请稍后重试。`,
-              } };
-          }
-        }
         const issues = validatePackageForStart(pack, goalInput(goal), configSnapshotForPlan(existingPlan, currentConfig));
         if (issues.length) { return { status: 400, body: { error: 'package_invalid', message: issues.join('；') } }; }
-        try { await preflightWeeklyImageQueue(store, tenantId, pack); }
-        catch (error) { return weeklyImageQueueFailure(error); }
       }
       const planDraft = pack ? compilePackage(pack, goalInput(goal), config) : buildWeeklyPlan(goalInput(goal), config);
       const now = new Date().toISOString();
@@ -314,14 +293,11 @@ export function createGoalActivationApplication(deps: Pick<DigitalEmployeeApplic
         completed_at: '',
       });
       await ensureReviewRunTasks(tenantId, goal, plan, run, planDraft.tasks, pack);
-      let imageReceipts: Awaited<ReturnType<typeof ensureWeeklyImageQueue>>;
-      try { imageReceipts = await ensureWeeklyImageQueue({ store, tenantId, userId, plan, run }); }
-      catch (error) { return weeklyImageQueueFailure(error); }
       if (!await store.update(COLLECTION.runs, run.id, { status: 'planning' })) throw Error('任务初始化状态保存失败');
-      if (imageReceipts.length) await appendEvent({ tenantId, runId: run.id, type: 'weekly.images.queued', level: 'success',
-        summary: `${imageReceipts.length} 条本周图片已进入制作队列`, payload: { imageReceipts } });
+      await startIndependentImages(tenantId, userId, plan, { ...run, status: 'planning' });
       await appendEvent({ tenantId, runId: run.id, type: 'plan.generated', level: 'success', summary: `计划 Agent 已生成 ${planDraft.tasks.length} 个任务`, payload: { strategy: planDraft.strategy } });
-      const contentCount = (pack?.tasks.find(task => task.templateId === 'production')?.videoPlans?.length || 0) + imageReceipts.length;
+      const contentCount = (pack?.tasks.find(task => task.templateId === 'production')?.videoPlans?.length || 0)
+        + (pack?.mixedContentSlots || []).filter(slot => slot.kind === 'image' && slot.productionRole === 'original').length;
       await appendEvent({
         tenantId,
         runId: run.id,

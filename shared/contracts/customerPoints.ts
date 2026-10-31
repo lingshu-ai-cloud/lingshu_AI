@@ -37,6 +37,8 @@ export interface CustomerPointsWallet {
   plan: {
     id: string;
     label: string;
+    /** Missing on legacy wallets and therefore interpreted as the v1 price book. */
+    priceBookVersion?: string;
     cycleStartsAt: string;
     cycleEndsAt: string;
     allocations: Record<ProductPointSection, number>;

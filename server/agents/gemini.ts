@@ -4,6 +4,7 @@ import type { ImagePostEvidenceAnalysis } from './qwen.js';
 import { GEMINI_ANALYSIS_DIRECTOR_CONTRACT, GEMINI_STORYBOARD_DIRECTOR_CONTRACT } from '../prompts/geminiVideoScriptDirector.js';
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
 import { benchmarkMaterialType, benchmarkShotRole } from '../../shared/benchmarkAnalysis.js';
+import { IMAGE_POST_VISUAL_STYLE_RUBRIC } from './imagePostVisualStyleRubric.js';
 
 const MODEL = () => (process.env.GEMINI_MODEL ?? 'gemini-2.5-flash').trim();
 
@@ -129,7 +130,8 @@ ${metadataEvidence}
 
 Schema:
 {"version":2,"status":"analyzed","observedFacts":[{"imageIndex":1,"subjects":[],"scene":"","composition":"","colors":[],"visibleText":[],"confidence":0}],"carouselFlow":[{"imageIndex":1,"role":"attention|product|detail|proof|process|cta|unknown","evidence":"","confidence":0}],"copyEvidence":{"hooks":[{"text":"","source":"caption|ocr","evidence":""}],"sellingPoints":[{"text":"","source":"caption|ocr","evidence":""}],"cta":[]},"reusableModules":[{"module":"","evidence":"","preserve":"","replace":"","confidence":0}],"productionLabels":[{"imageIndex":1,"kind":"product_only|shoot_required|unknown","productPresence":"present|absent|unknown","evidence":"实际可见依据","confidence":0,"style":{"kind":"advertising|imitable|unknown","confidence":0,"evidence":"实际可见依据","elements":["soft_light|hard_light|high_key|low_key|centered|asymmetric|close_up|minimal|layered"]}}],"uncertainties":[]}
-每张图必须标记：productPresence 只判断画面里是否实际可见产品，与是否需要实拍分开；看不清就标 unknown。仅产品和非事实性普通背景才是 product_only；人物、真实工厂、实拍过程、实际场景或其他非产品事实画面是 shoot_required；无法确定则 unknown。style 独立判断广告产品图、可辨认的非广告风格或未知。产品置于设计过的背景、台面、光影或色块中，就是 advertising；没有前缀文字、标题、CTA 或品牌文案也仍可判为 advertising，不得仅因无文字标 unknown。elements 只选实际可见的光线、明暗、构图与层次，不确定则 unknown。标签仅供复核，不是授权。`;
+每张图必须标记：productPresence 只判断画面里是否实际可见产品，与是否需要实拍分开；看不清就标 unknown。仅产品和非事实性普通背景才是 product_only；人物、真实工厂、实拍过程、实际场景或其他非产品事实画面是 shoot_required；无法确定则 unknown。标签仅供复核，不是授权。
+${IMAGE_POST_VISUAL_STYLE_RUBRIC}`;
   const contents: Content[] = [{
     role: 'user',
     parts: [

@@ -3,7 +3,9 @@ import { test } from 'node:test';
 import {
   assertAddonPremium,
   evaluateUnitEconomics,
+  internalCostPointsFromCny,
   providerCostCny,
+  providerCostPoints,
 } from './privateUnitEconomics.js';
 
 const plan = {
@@ -35,6 +37,11 @@ test('provider currency cost and gross margin stay in a private calculation', ()
     fxSource: 'audited-daily-rate', fxQuotedAt: '2026-10-20T00:00:00.000Z',
   });
   assert.equal(cost, 14.2);
+  assert.equal(internalCostPointsFromCny(cost), 14_200);
+  assert.equal(providerCostPoints({
+    amount: 2, currency: 'USD', cnyPerCurrencyUnit: 7.1,
+    fxSource: 'audited-daily-rate', fxQuotedAt: '2026-10-20T00:00:00.000Z',
+  }), 14_200);
   assert.deepEqual(evaluateUnitEconomics({ deliveredPoints: 1_000, sellingCnyPerPoint: 0.02, providerCostCny: cost }), {
     recognizedRevenueCny: 20,
     providerCostCny: 14.2,

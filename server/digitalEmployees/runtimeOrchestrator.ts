@@ -5,6 +5,8 @@ import { normalizeDigitalEmployeeConfig, type DigitalEmployeeConfig } from './do
 import { beijingDate, latestDueReviewSlot, reviewScheduleFromCadence } from './runtimeSchedule.js';
 import { readTenantPublishingReadiness } from './publishingRuntimeReadiness.js';
 import { allocateReviewTodos, continueManagedOperatingCycle, generateScheduledRunReview, reconcileDigitalEmployeeRun } from '../routes/digitalEmployees.js';
+import { ensureWeeklyImageQueue, weeklyImageProgress } from './weeklyImageQueueBridge.js';
+import type { PlanRecord, RunRecord } from './records.js';
 
 type StoredRecord = { id: string; [key: string]: unknown };
 type RuntimeRun = StoredRecord & {
@@ -15,8 +17,8 @@ type RuntimeRun = StoredRecord & {
   started_at: string;
   product_profile?: unknown;
 };
-type RuntimeGoal = StoredRecord & { tenant_id: string; starts_at: string; ends_at: string };
-type RuntimePlan = StoredRecord & { tenant_id: string; plan: unknown };
+type RuntimeGoal = StoredRecord & { tenant_id: string; status: string; starts_at: string; ends_at: string };
+type RuntimePlan = StoredRecord & { tenant_id: string; status: string; plan: unknown };
 type RuntimeConfig = StoredRecord & { tenant_id: string; config: unknown };
 type RuntimeTask = StoredRecord & {
   tenant_id: string;
@@ -112,6 +114,30 @@ async function waitingHumanExternalRecoveryDue(run: RuntimeRun, now: Date): Prom
   return projects.items.some(project => externalContentProjectRecoveryDue(project, run.id, productionTaskIds, now));
 }
 
+async function weeklyImagesOutstanding(run: RuntimeRun): Promise<boolean> {
+  const goal = await tenantRecord<RuntimeGoal>('weekly_goals', run.goal_id, run.tenant_id);
+  if (goal?.status !== 'active') return false;
+  const plan = await tenantRecord<RuntimePlan>('weekly_plans', run.plan_id, run.tenant_id);
+  if (!plan || plan.status !== 'approved') return false;
+  const progress = await weeklyImageProgress(store, run.tenant_id, plan as unknown as PlanRecord);
+  return progress.total > progress.succeeded + progress.blocked
+    || String(run.pause_reason || '').startsWith('图片任务待处理：');
+}
+
+async function advanceWeeklyImages(run: RuntimeRun): Promise<void> {
+  if (!['planning', 'running', 'waiting_external', 'waiting_approval', 'waiting_human'].includes(run.status)) return;
+  const goal = await tenantRecord<RuntimeGoal>('weekly_goals', run.goal_id, run.tenant_id);
+  if (goal?.status !== 'active') return;
+  const plan = await tenantRecord<RuntimePlan>('weekly_plans', run.plan_id, run.tenant_id);
+  if (!plan || plan.status !== 'approved') return;
+  const body = jsonValue<Record<string, unknown>>(plan.plan, {});
+  const grant = jsonValue<Record<string, unknown>>(body.contentGenerationAuthorization, {});
+  const userId = String(grant.authorizedBy || '');
+  if (!userId) return;
+  await ensureWeeklyImageQueue({ store, tenantId: run.tenant_id, userId,
+    plan: plan as unknown as PlanRecord, run: run as unknown as RunRecord });
+}
+
 async function listRuns(limit: number, now: Date): Promise<RuntimeRun[]> {
   const byId = new Map<string, RuntimeRun>();
   // Active work is queried explicitly so a large history of completed runs can
@@ -147,7 +173,8 @@ async function listRuns(limit: number, now: Date): Promise<RuntimeRun[]> {
         const slot = schedule ? latestDueReviewSlot(schedule, now) : null;
         const reviewCandidate = slot && slot.getTime() >= Date.parse(run.started_at || '') && reviewSlotIsInGoal(slot, goal);
         const externalRecoveryCandidate = status === 'waiting_human' && await waitingHumanExternalRecoveryDue(run, now);
-        if (!reopenCandidate && !reviewCandidate && !externalRecoveryCandidate) continue;
+        const imageCandidate = status === 'waiting_human' && await weeklyImagesOutstanding(run);
+        if (!reopenCandidate && !reviewCandidate && !externalRecoveryCandidate && !imageCandidate) continue;
         byId.set(run.id, run);
         if (byId.size >= limit) break;
       }
@@ -234,9 +261,19 @@ export async function runDigitalEmployeeRuntimeCycle(now = new Date()): Promise<
   const result: RuntimeCycleResult = { scanned: runs.length, reconciled: 0, reviewsGenerated: 0, errors: [] };
   for (const run of runs) {
     try {
+      // Image admission has its own progress; a human wait in the video branch
+      // must not freeze other image slots.
+      try { await advanceWeeklyImages(run); }
+      catch (error) {
+        if (error instanceof Error && error.message === 'local_store_reconciliation_required') throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        result.errors.push({ runId: run.id, tenantId: run.tenant_id, message: `weekly_image: ${message}` });
+        console.error(`[digital-employee-runtime] weekly images for ${run.id} need attention:`, message);
+      }
       const canReopen = run.status === 'succeeded' && normalizeContinuationPolicy((await runConfig(run))?.continuationPolicy).newCustomers === 'reopen' && await (async () => { const goal = await tenantRecord<RuntimeGoal>('weekly_goals', run.goal_id, run.tenant_id); return goal ? reviewSlotIsInGoal(now, goal) : false; })();
       const canRecoverExternalWait = run.status === 'waiting_human' && await waitingHumanExternalRecoveryDue(run, now);
-      if (RECONCILABLE_STATUSES.has(run.status) || canReopen || canRecoverExternalWait) {
+      const canRecoverImages = run.status === 'waiting_human' && String(run.pause_reason || '').startsWith('图片任务待处理：');
+      if (RECONCILABLE_STATUSES.has(run.status) || canReopen || canRecoverExternalWait || canRecoverImages) {
         await reconcileDigitalEmployeeRun(run.tenant_id, run.id);
         result.reconciled += 1;
       }

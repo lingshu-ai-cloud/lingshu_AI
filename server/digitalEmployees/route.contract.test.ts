@@ -138,14 +138,9 @@ assert.doesNotMatch(approveGoal, /missingGoalResources/, 'missing delivery resou
 assert.doesNotMatch(approveGoal, /missing_required_resources|publishing_accounts_invalid/, 'delivery checks belong to runtime tasks, not whole-plan activation');
 assert.match(approveGoal, /active_goal_exists/, 'a tenant must not start overlapping active weekly goals');
 assert.match(approveGoal, /validatePackageForStart/, 'activation must retain structural plan validation');
-assert.match(approveGoal, /preproduction\?\.readiness\.canStart[\s\S]{0,600}package_details_blocked/, 'every independently produced video must pass persisted preparation before the run exists');
-assert.match(approveGoal, /readServerProductionOnboardingReadiness/, 'activation must recompute readiness from authoritative server records');
-assert.match(approveGoal, /production_onboarding_preflight_blocked/, 'activation must return exact remediation without creating a run');
-assert.match(approveGoal, /preflightWeeklyImageQueue/, 'image references and products must be checked before approval writes');
-assert.ok(approveGoal.indexOf('preflightWeeklyImageQueue') < approveGoal.indexOf('compareAndSwap?.(COLLECTION.plans'), 'image preflight must precede approval writes');
-assert.match(approveGoal, /ensureWeeklyImageQueue/, 'approval must admit the frozen image slots to the durable image queue');
-assert.ok(approveGoal.indexOf('ensureWeeklyImageQueue') < approveGoal.indexOf("status: 'planning'"), 'the weekly run must remain initializing until all image receipts exist');
-assert.ok(approveGoal.indexOf('readServerProductionOnboardingReadiness') < approveGoal.indexOf('compareAndSwap?.(COLLECTION.plans'), 'zero-cost readiness must run before plan, goal or run mutations');
+assert.doesNotMatch(approveGoal, /package_details_blocked|production_onboarding_preflight_blocked|preflightWeeklyImageQueue/, 'item-level preparation and image analysis must not block whole-plan activation');
+assert.match(approveGoal, /startIndependentImages/, 'approval starts independently admitted image work');
+assert.ok(approveGoal.indexOf("status: 'planning'") < approveGoal.lastIndexOf('startIndependentImages'), 'the formal run must start before image checks');
 assert.match(source, /const activeProjects = projectAutomationStates\.filter/, 'content observation must distinguish runnable siblings from item-local blockers');
 assert.match(source, /const blocker = activeProjects\.length \? ''/, 'one blocked content item must not pause other runnable content');
 assert.match(approveGoal, /savedFactsVersion !== canonicalFactsVersion/, 'a new run must compare the draft fact label with the canonical enterprise fact version');

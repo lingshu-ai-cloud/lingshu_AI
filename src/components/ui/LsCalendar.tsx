@@ -346,6 +346,7 @@ return <div className={`ls-calendar ls-calendar-view-${view}${taskBoard ? ' ls-c
         if (pendingId && day) { event.preventDefault(); onExternalDrop(pendingId, day); }
       }}>
       <FullCalendar ref={calendarRef} plugins={[themePlugin, dayGridPlugin, timeGridPlugin, listPlugin, multiMonthPlugin, interactionPlugin]} locale={zhLocale} timeZone={timeZone} firstDay={firstDay} initialView={view} initialDate={initialDate || undefined}
+        titleFormat={view === 'dayGridWeek' ? { year: 'numeric', month: 'numeric', day: 'numeric' } : undefined}
         // Every view shares a bounded FullCalendar content window. FullCalendar
         // owns the sole internal scroller; the surrounding page stays stable.
 headerToolbar={false} contentHeight={fixedHeight === 'auto' && showAllEvents && !['dayGridWeek', 'dayGridDay'].includes(view) ? timeGridHeight : fixedHeight ?? timeGridHeight} events={inputs} eventOrder={taskBoard ? 'taskOrder' : 'start,id'} eventOrderStrict slotEventOverlap={false} editable={Boolean(onMoveEvent)} eventDurationEditable={false} eventInteractive dayMaxEvents={taskBoard || (showAllEvents || eventCardMode === 'media') && ['dayGridWeek', 'dayGridDay'].includes(view) ? false : 3} nowIndicator expandRows={!taskBoard} tableHeaderSticky
@@ -385,6 +386,13 @@ headerToolbar={false} contentHeight={fixedHeight === 'auto' && showAllEvents && 
             </div>;
           }
           if (eventCardMode === 'media' && !['dayGridMonth', 'multiMonthYear', 'listWeek'].includes(info.view.type)) {
+            if (item.eventType === 'publish') return <div className="ls-calendar-event-content ls-calendar-publish-card">
+              <div className="ls-calendar-publish-card-head"><time dateTime={item.start}>{item.allDay ? '时刻待定' : info.timeText}</time>{item.status !== 'planned' && <span>{item.statusLabel || calendarStatusLabels[item.status]}</span>}</div>
+              <div className="ls-calendar-publish-card-account">{item.platform && <SocialPlatformIcon platform={item.platform} size={16}/>}<strong title={item.accountName || '待绑定账号'}>{item.accountName || '待绑定账号'}</strong></div>
+              <p className="ls-calendar-publish-card-title" title={item.title}>{item.title}</p>
+              <CalendarThumbnail src={item.thumbnailUrl} title={item.title} card/>
+              <div className="ls-calendar-publish-card-foot"><span>{item.platform || '发布位'}</span><span>查看详情 →</span></div>
+            </div>;
             return <div className="ls-calendar-event-content ls-calendar-event-content-media">
               <div className="ls-calendar-event-poster">
                 <CalendarThumbnail src={item.thumbnailUrl} title={item.title} card/>

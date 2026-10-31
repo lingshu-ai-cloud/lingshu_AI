@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react';
 import type { DigitalEmployeeOverview } from '../../lib/digitalEmployees';
 import type { Page } from '../../pageRegistry';
 import DigitalEmployeeHomeWork from '../DigitalEmployeeHomeWork';
@@ -12,7 +11,6 @@ type Props = {
   onNavigate?: (page: Page) => void;
   onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void;
   onOpenAgentSettings?: () => void;
-  publishingCalendar?: ReactNode;
 };
 
 export default function DigitalEmployeeWorkspace({ data, onNavigate }: Props) {

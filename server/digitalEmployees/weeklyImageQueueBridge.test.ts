@@ -4,7 +4,7 @@ import type { DataStore } from '../storage/datastore.js';
 import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
 import { newContentGenerationAuthorization } from '../../shared/contracts/contentGenerationAuthorization.js';
-import { preflightWeeklyImageQueue, weeklyImageQueueFailure } from './weeklyImageQueueBridge.js';
+import { ensureWeeklyImageQueue, preflightWeeklyImageQueue, weeklyImageProgress, weeklyImageQueueFailure, weeklyImageScope } from './weeklyImageQueueBridge.js';
 import { assertWeeklyImageAuthority, weeklyImageTaskId } from './weeklyImageAuthority.js';
 
 const tenantId = 'tenant-one';
@@ -43,7 +43,7 @@ function fixture(): DataStore {
   } as DataStore;
 }
 
-test('four weekly image slots bind distinct analyzed single-image references before approval', async () => {
+test('strict image reference diagnostic recognizes four frozen single-image references', async () => {
   const checked = await preflightWeeklyImageQueue(fixture(), tenantId, pack);
   assert.equal(checked.length, 4);
   assert.deepEqual(checked.map(item => item.imageUrl), ['a', 'b', 'c', 'd']
@@ -56,6 +56,11 @@ test('four weekly image slots bind distinct analyzed single-image references bef
     imageUrls: ['/api/overseas/videos/a/images/0'], imageEvidence: { status: 'analyzed', observedFacts: ['product'] } }) };
   await assert.rejects(preflightWeeklyImageQueue(fixture(), tenantId, pack), { code: 'weekly_image_reference_analysis_incomplete' });
   records.a = saved!;
+  const missingOneProduct = { ...pack, mixedContentSlots: pack.mixedContentSlots!.map((item, index) =>
+    index === 0 ? { ...item, productId: undefined } : item) };
+  assert.equal(weeklyImageScope(missingOneProduct).length, 4, 'a missing product is an item-level wait after activation');
+  await assert.rejects(preflightWeeklyImageQueue(fixture(), tenantId, missingOneProduct),
+    { code: 'weekly_image_scope_incomplete' });
   assert.equal(weeklyImageTaskId(tenantId, planId, 'a'), weeklyImageTaskId(tenantId, planId, 'a'));
   assert.notEqual(weeklyImageTaskId(tenantId, planId, 'a'), weeklyImageTaskId(tenantId, planId, 'b'));
 });
@@ -75,4 +80,45 @@ test('paid weekly image admission requires the exact approved product and refere
     code: 'weekly_image_approval_missing',
   });
   assert.equal(weeklyImageQueueFailure(new Error('hidden storage failure')).body.error, 'weekly_image_queue_unavailable');
+});
+
+test('an active weekly image prevents admitting another; a blocked sibling does not freeze the next', async () => {
+  let lease: Record<string, unknown> | null = null;
+  const jobs = (statuses: Array<[string, string]>) => statuses.map(([slotId, status], index) => ({
+    id: `job-${index}`, tenant_id: tenantId, job_key: `job-key-${index}`,
+    task_id: weeklyImageTaskId(tenantId, planId, slotId), run_id: `image-run-${index}`,
+    user_id: 'user-one', account_id: 'account', task_type: 'social_image_replication', status,
+    provider_receipts: [], checkpoints: {},
+  }));
+  let executionJobs = jobs([['a', 'queued']]);
+  const store = {
+    ...fixture(),
+    async getById<T>(collection: string, id: string) {
+      if (collection === 'durable_operation_leases') return (lease?.id === id ? lease : null) as T | null;
+      return fixture().getById<T>(collection, id);
+    },
+    async list<T>(collection: string, query: { where?: Record<string, unknown> } = {}) {
+      const source = collection === 'content_execution_jobs' ? executionJobs
+        : collection === 'durable_operation_leases' ? (lease ? [lease] : []) : [];
+      const items = source.filter(row => Object.entries(query.where || {}).every(([key, value]) => row[key] === value));
+      return { items: items as T[], totalItems: items.length, totalPages: 1, page: 1, perPage: 500 };
+    },
+    async create<T>(collection: string, value: Record<string, unknown>) {
+      assert.equal(collection, 'durable_operation_leases');
+      lease = { id: 'lease-1', ...value };
+      return lease as T;
+    },
+    async delete(collection: string) { assert.equal(collection, 'durable_operation_leases'); lease = null; return true; },
+  } as unknown as DataStore;
+  const run = { id: 'weekly-run', tenant_id: tenantId, plan_id: planId, status: 'planning' };
+  const queued = await ensureWeeklyImageQueue({ store, tenantId, userId: 'user-one', plan: plan as never, run: run as never });
+  assert.deepEqual(queued.map(item => item.slotId), ['a']);
+  assert.equal((await weeklyImageProgress(store, tenantId, plan as never)).active, 1);
+  executionJobs = jobs([['a', 'blocked'], ['b', 'running']]);
+  const next = await ensureWeeklyImageQueue({ store, tenantId, userId: 'user-one', plan: plan as never, run: run as never });
+  assert.deepEqual(next.map(item => item.slotId), ['b']);
+  assert.equal((await weeklyImageProgress(store, tenantId, plan as never)).blocked, 1);
+  executionJobs = jobs([['a', 'queued'], ['b', 'running']]);
+  await assert.rejects(ensureWeeklyImageQueue({ store, tenantId, userId: 'user-one', plan: plan as never, run: run as never }),
+    { code: 'weekly_image_parallel_jobs_require_reconciliation' });
 });

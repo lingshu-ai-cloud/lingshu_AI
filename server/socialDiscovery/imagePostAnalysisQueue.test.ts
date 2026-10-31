@@ -71,13 +71,15 @@ function fixture(options: { available?: boolean; throwProvider?: boolean; failed
 
 test('deferred record is queued durably, then claimed once before provider call', async () => {
   const f = fixture();
-  await f.queue.queue('record-1', item, 'bottle');
+  await f.queue.queue('record-1', item, 'bottle', { weeklyPlanId: 'plan-1' });
   assert.deepEqual(f.events, ['update']);
   assert.equal(JSON.parse(String(f.record.aiAnalysis)).imageAnalysisQueueState, 'queued');
+  assert.equal(JSON.parse(String(f.record.aiAnalysis)).weeklyImageAnalysisRequestedPlanId, 'plan-1');
   assert.deepEqual(await f.queue.runOnce(), { available: true, picked: 1, completed: 1, failed: 0, unknown: 0 });
   assert.deepEqual(f.events, ['update', 'lease', 'update', 'provider', 'update', 'release']);
   assert.equal(f.record.status, 'analyzed');
   assert.equal(JSON.parse(String(f.record.aiAnalysis)).imageEvidence.observedFacts[0].subjects[0], 'bottle');
+  assert.equal(JSON.parse(String(f.record.aiAnalysis)).weeklyImageAnalysisRequestedPlanId, 'plan-1');
   assert.equal((await f.queue.runOnce()).picked, 0);
 });
 

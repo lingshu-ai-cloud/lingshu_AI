@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Input, Modal } from 'antd';
+import { Alert, Button, Input, Modal, Segmented } from 'antd';
 import LsPageHeader from './ui/LsPageHeader';
 import { LsGradientProgress } from './ui/LsExperiencePrimitives';
 import { Loader2, LogIn, RefreshCcw, Settings2, UserCheck } from 'lucide-react';
+import DeveloperApiEconomicsCenter from './admin/DeveloperApiEconomicsCenter';
 import {
   authApi,
   authHeader,
@@ -86,6 +87,7 @@ const credentialStateLabel = (value: string) => ({
 }[value] || '需要密码重置');
 
 export default function AdminDashboard({ onSupportSessionStarted }: { onSupportSessionStarted: (session: AuthSession) => void }) {
+  const [adminView, setAdminView] = useState<'accounts' | 'api-economics'>(() => new URLSearchParams(window.location.search).get('adminView') === 'api-economics' ? 'api-economics' : 'accounts');
   const [trialAccounts, setTrialAccounts] = useState<AdminAccount[]>([]);
   const [customerAccounts, setCustomerAccounts] = useState<CustomerAccount[]>([]);
   const [styleTrends, setStyleTrends] = useState<StyleAdoptionTrend[]>([]);
@@ -293,13 +295,23 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
     }
   };
 
+  const switchAdminView = (value: string | number) => {
+    const next = value === 'api-economics' ? 'api-economics' : 'accounts';
+    setAdminView(next);
+    const url = new URL(window.location.href);
+    if (next === 'api-economics') url.searchParams.set('adminView', next);
+    else url.searchParams.delete('adminView');
+    window.history.replaceState({}, '', url);
+  };
+
   return (
     <div className="h-full flex flex-col bg-ink">
-      <LsPageHeader title="账号总控" description="管理试用、客户与行业账号" extra={
-        <Button onClick={() => void load()} loading={loading} icon={<RefreshCcw size={16} />}>刷新</Button>
+      <LsPageHeader title={adminView === 'api-economics' ? 'API 与积分' : '账号总控'} description={adminView === 'api-economics' ? '开发者成本、付费 API 与积分规则' : '管理试用、客户与行业账号'} extra={
+        <div className="flex items-center gap-2"><Segmented value={adminView} onChange={switchAdminView} options={[{ label: '账号总控', value: 'accounts' }, { label: 'API 与积分', value: 'api-economics' }]} />{adminView === 'accounts' && <Button onClick={() => void load()} loading={loading} icon={<RefreshCcw size={16} />}>刷新</Button>}</div>
       } />
 
       <div className="flex-1 min-h-0 overflow-auto p-5">
+        {adminView === 'api-economics' ? <DeveloperApiEconomicsCenter /> : <>
         {error && <Alert className="mb-3" type="error" showIcon title={error} />}
         {notice && <Alert className="mb-3" type="success" showIcon title={notice} />}
 
@@ -470,6 +482,7 @@ export default function AdminDashboard({ onSupportSessionStarted }: { onSupportS
           <div className="mb-2 flex items-center justify-between"><div><h2 className="text-sm font-semibold text-text-primary">行业账号表</h2><p className="mt-0.5 text-xs text-text-muted">按客户所属行业汇总客户覆盖和登录账号规模。</p></div><span className="text-xs text-text-muted">{industryAccounts.length} 个行业</span></div>
           <div className="overflow-auto border border-border rounded-lg"><table className="min-w-[840px] w-full text-xs"><thead className="bg-surface-2 text-text-muted"><tr className="text-left"><th className="px-3 py-2 font-semibold">行业</th><th className="px-3 py-2 font-semibold">客户数</th><th className="px-3 py-2 font-semibold">登录账号数</th><th className="px-3 py-2 font-semibold">已开通客户</th><th className="px-3 py-2 font-semibold">客户主体</th></tr></thead><tbody className="divide-y divide-border">{loading ? <tr><td colSpan={5} className="px-3 py-8 text-center text-text-muted">读取中...</td></tr> : industryAccounts.map(account => <tr key={account.industry} className="hover:bg-surface-2/60"><td className="px-3 py-2 font-semibold text-text-primary whitespace-nowrap">{account.industry}</td><td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.customerCount}</td><td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.accountCount}</td><td className="px-3 py-2 text-text-secondary whitespace-nowrap">{account.activeCount}</td><td className="px-3 py-2 text-text-secondary">{account.customers.join('、')}</td></tr>)}{!loading && !industryAccounts.length && <tr><td colSpan={5} className="px-3 py-8 text-center text-text-muted">暂无客户行业资料</td></tr>}</tbody></table></div>
         </section>
+        </>}
       </div>
 
       {limitTenant && (

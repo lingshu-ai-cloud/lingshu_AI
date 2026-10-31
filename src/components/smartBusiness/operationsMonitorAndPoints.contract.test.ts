@@ -7,8 +7,8 @@ const productionBoard = readFileSync(new URL('./AgentVideoProductionBoard.tsx', 
 const pointsDrawer = readFileSync(new URL('../PointsManagementDrawer.tsx', import.meta.url), 'utf8');
 const pointsPolicy = readFileSync(new URL('../../../shared/pointsPolicy.ts', import.meta.url), 'utf8');
 
-test('digital employees retain only the requested three-column work surface', () => {
-  assert.match(workspace, /<DigitalEmployeeHomeWork data=\{data\} onNavigate=\{onNavigate\}/);
+test('digital employees expose the weekly views without duplicating business panels', () => {
+  assert.match(workspace, /<DigitalEmployeeHomeWork data=\{data\} onNavigate=\{onNavigate\} publishingCalendar=\{publishingCalendar\}/);
   assert.doesNotMatch(workspace, /数字员工生产指挥舱|数字员工本周运营指标|发布与投流|客服承接|展开发布日历|InitialPreparationStatusPanel|\bSegmented\b/);
 });
 

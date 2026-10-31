@@ -9,6 +9,8 @@ import {
 } from '../../shared/contracts/customerPoints.js';
 import {
   CURRENT_PRODUCT_POINT_RATES,
+  CUSTOMER_PRODUCT_POINT_SCALE,
+  LEGACY_PRODUCT_POINT_PRICE_BOOK_VERSION,
   PRODUCT_POINT_PRICE_BOOK_VERSION,
   PRODUCT_POINT_SECTIONS,
   pointsForQuantity,
@@ -63,6 +65,9 @@ const digest = (value: unknown): string => createHash('sha256').update(canonical
 const sectionRecord = (value = 0): Record<ProductPointSection, number> => Object.fromEntries(
   PRODUCT_POINT_SECTIONS.map(section => [section.id, value]),
 ) as Record<ProductPointSection, number>;
+const walletPriceBookVersion = (wallet: CustomerPointsWallet): string => (
+  wallet.plan.priceBookVersion || LEGACY_PRODUCT_POINT_PRICE_BOOK_VERSION
+);
 
 function exactWalletResult(items: WalletRow[], totalItems: number): WalletRow | null {
   if (totalItems > 1 || items.length > 1) throw new CustomerPointsError('customer_points_wallet_integrity_violation', 503);
@@ -162,18 +167,21 @@ async function casWallet(store: DataStore, row: WalletRow, wallet: CustomerPoint
 }
 
 export function summarizeCustomerPoints(wallet: CustomerPointsWallet | null): CustomerPointsSummary {
+  const displayScale = wallet && walletPriceBookVersion(wallet) === LEGACY_PRODUCT_POINT_PRICE_BOOK_VERSION
+    ? CUSTOMER_PRODUCT_POINT_SCALE
+    : 1;
   const sections = PRODUCT_POINT_SECTIONS.map(section => {
-    const totalPoints = wallet?.plan.allocations[section.id] ?? 0;
-    const usedPoints = wallet?.plan.spent[section.id] ?? 0;
-    const reservedPoints = wallet?.plan.reserved[section.id] ?? 0;
+    const totalPoints = (wallet?.plan.allocations[section.id] ?? 0) * displayScale;
+    const usedPoints = (wallet?.plan.spent[section.id] ?? 0) * displayScale;
+    const reservedPoints = (wallet?.plan.reserved[section.id] ?? 0) * displayScale;
     return { id: section.id, totalPoints, usedPoints, reservedPoints, remainingPoints: Math.max(0, totalPoints - usedPoints - reservedPoints) };
   });
   const planTotal = sections.reduce((sum, section) => sum + section.totalPoints, 0);
   const planUsed = sections.reduce((sum, section) => sum + section.usedPoints, 0);
   const planReserved = sections.reduce((sum, section) => sum + section.reservedPoints, 0);
-  const addonGranted = wallet?.addon.granted ?? 0;
-  const addonUsed = wallet?.addon.spent ?? 0;
-  const addonReserved = wallet?.addon.reserved ?? 0;
+  const addonGranted = (wallet?.addon.granted ?? 0) * displayScale;
+  const addonUsed = (wallet?.addon.spent ?? 0) * displayScale;
+  const addonReserved = (wallet?.addon.reserved ?? 0) * displayScale;
   const addonRemaining = Math.max(0, addonGranted - addonUsed - addonReserved);
   return {
     configured: Boolean(wallet),
@@ -268,8 +276,14 @@ export function createCustomerPointsLedger(store: DataStore, clock: () => Date =
             renewed.revision += 1;
             renewed.plan = {
               id: planId, label: input.planLabel.trim() || planId, cycleStartsAt, cycleEndsAt,
+              priceBookVersion: PRODUCT_POINT_PRICE_BOOK_VERSION,
               allocations, spent: sectionRecord(), reserved: sectionRecord(),
             };
+            if (walletPriceBookVersion(existing.wallet) === LEGACY_PRODUCT_POINT_PRICE_BOOK_VERSION) {
+              renewed.addon.granted *= CUSTOMER_PRODUCT_POINT_SCALE;
+              renewed.addon.spent *= CUSTOMER_PRODUCT_POINT_SCALE;
+              renewed.addon.reserved *= CUSTOMER_PRODUCT_POINT_SCALE;
+            }
             renewed.updatedAt = now;
             if (!await casWallet(store, existing.row, renewed)) continue;
             await appendEvent(store, event(now));
@@ -280,7 +294,7 @@ export function createCustomerPointsLedger(store: DataStore, clock: () => Date =
             schemaVersion: CUSTOMER_POINTS_WALLET_SCHEMA,
             tenantId,
             revision: 1,
-            plan: { id: planId, label: input.planLabel.trim() || planId, cycleStartsAt, cycleEndsAt, allocations, spent: sectionRecord(), reserved: sectionRecord() },
+            plan: { id: planId, label: input.planLabel.trim() || planId, priceBookVersion: PRODUCT_POINT_PRICE_BOOK_VERSION, cycleStartsAt, cycleEndsAt, allocations, spent: sectionRecord(), reserved: sectionRecord() },
             addon: { granted: 0, spent: 0, reserved: 0 },
             reservations: {},
             updatedAt: now,
@@ -314,7 +328,7 @@ export function createCustomerPointsLedger(store: DataStore, clock: () => Date =
         const now = clock().toISOString();
         const reservation: CustomerPointsReservation = {
           schemaVersion: CUSTOMER_POINTS_RESERVATION_SCHEMA, id: `addon:${idempotencyKey}`, idempotencyKey,
-          operationId: purchaseId, requestHash: digest({ purchaseId, amount }), featureRateId: 'addon-grant', priceBookVersion: PRODUCT_POINT_PRICE_BOOK_VERSION,
+          operationId: purchaseId, requestHash: digest({ purchaseId, amount }), featureRateId: 'addon-grant', priceBookVersion: walletPriceBookVersion(wallet),
           section: 'business_operations', quantity: 1, quotedPoints: amount, allocation: { planPoints: 0, addonPoints: 0 },
           state: 'settled', actualQuantity: 1, settledPoints: amount, releasedPoints: 0, createdAt: now, updatedAt: now,
         };
@@ -327,12 +341,14 @@ export function createCustomerPointsLedger(store: DataStore, clock: () => Date =
     async reserve(input: { tenantId: string; operationId: string; idempotencyKey: string; featureRateId: string; quantity: number }): Promise<CustomerPointsReservation> {
       const operationId = safeId(input.operationId, 'operation');
       const idempotencyKey = safeId(input.idempotencyKey, 'idempotency_key');
-      const rate = productPointRate(input.featureRateId);
+      const currentRate = productPointRate(input.featureRateId);
       const quantity = Number(input.quantity);
-      const quotedPoints = pointsForQuantity(rate, quantity);
-      const requestHash = digest({ operationId, featureRateId: rate.id, quantity, priceBookVersion: PRODUCT_POINT_PRICE_BOOK_VERSION });
       return mutate(input.tenantId, wallet => {
         assertCycleOpen(wallet, clock());
+        const priceBookVersion = walletPriceBookVersion(wallet);
+        const rate = productPointRate(currentRate.id, priceBookVersion);
+        const quotedPoints = pointsForQuantity(rate, quantity);
+        const requestHash = digest({ operationId, featureRateId: rate.id, quantity, priceBookVersion });
         const prior = wallet.reservations[idempotencyKey];
         if (prior) {
           if (prior.requestHash !== requestHash) throw new CustomerPointsError('customer_points_idempotency_conflict', 409);
@@ -348,7 +364,7 @@ export function createCustomerPointsLedger(store: DataStore, clock: () => Date =
         const reservation: CustomerPointsReservation = {
           schemaVersion: CUSTOMER_POINTS_RESERVATION_SCHEMA,
           id: `points-${randomUUID()}`, idempotencyKey, operationId, requestHash, featureRateId: rate.id,
-          priceBookVersion: PRODUCT_POINT_PRICE_BOOK_VERSION, section: rate.section, quantity, quotedPoints,
+          priceBookVersion, section: rate.section, quantity, quotedPoints,
           allocation: { planPoints, addonPoints }, state: 'reserved', actualQuantity: null, settledPoints: 0,
           releasedPoints: 0, createdAt: now, updatedAt: now,
         };
@@ -367,7 +383,7 @@ export function createCustomerPointsLedger(store: DataStore, clock: () => Date =
       return mutate(input.tenantId, wallet => {
         const current = wallet.reservations[idempotencyKey];
         if (!current) throw new CustomerPointsError('customer_points_reservation_not_found', 404);
-        const rate = productPointRate(current.featureRateId);
+        const rate = productPointRate(current.featureRateId, current.priceBookVersion);
         const actualQuantity = Number(input.actualQuantity);
         const settledPoints = pointsForQuantity(rate, actualQuantity);
         if (current.state === 'settled') {

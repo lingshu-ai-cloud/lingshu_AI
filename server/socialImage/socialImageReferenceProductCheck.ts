@@ -6,6 +6,7 @@ import { listContentExecutionJobs } from '../contentExecution/durableQueue.js';
 import { acquireDurableOperationLease, assertDurableOperationLease, releaseDurableOperationLease } from '../runtime/durableLease.js';
 import { readSocialImageReferenceBytes } from './socialImageReferenceBytes.js';
 import { videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
+import { readReferenceStyle } from './socialImageReferenceStyle.js';
 import { readSocialImageTask, SOCIAL_IMAGE_TASKS_COLLECTION, updateSocialImageTask } from './socialImageTask.js';
 import { assertSocialImageCurrentContentTask, SocialImageProductionRunError } from './socialImageProductionRun.js';
 export { referenceProductCheckIssue } from './socialImageReferenceProductPolicy.js';
@@ -41,23 +42,29 @@ export async function confirmReferenceProduct(input: {
       const sourceId = task.referenceSnapshot?.sourceRecordId;
       const row = sourceId ? await store.getById<Record<string, unknown>>('trend_videos', sourceId) : null;
       const analysis = row && String(row.tenantId || row.tenant_id || '') === tenantId ? videoAnalysisOf(row) : null;
+      if (sourceId && !analysis) throw new SocialImageProductionRunError('social_image_reference_source_unverified', 422);
       const evidence = analysis?.contentFormat === 'image' ? analysis.imageEvidence as Record<string, unknown> | undefined : undefined;
       if (sourceId && !Array.isArray(evidence?.productionLabels)) {
         const state = String(analysis?.imageAnalysisQueueState || '');
         if (state === 'queued' || state === 'processing') throw new SocialImageProductionRunError('social_image_reference_analysis_in_progress', 409);
         if (state === 'unknown') throw new SocialImageProductionRunError('social_image_reference_analysis_reconciliation_required', 409);
         if (analysis?.imageAnalysisStatus === 'failed') throw new SocialImageProductionRunError('social_image_reference_analysis_failed', 422);
-        if (evidence?.status === 'analyzed') throw new SocialImageProductionRunError('social_image_reference_analysis_outdated', 422);
+        throw new SocialImageProductionRunError('social_image_reference_analysis_outdated', 422);
       }
       const labels = evidence?.version === 2 && evidence.status === 'analyzed' && Array.isArray(evidence.productionLabels)
         ? evidence.productionLabels.filter((raw: unknown) => raw && typeof raw === 'object' && (raw as Record<string, unknown>).sourceSha256 === sourceSha256)
         : [];
+      if (sourceId && !labels.length) throw new SocialImageProductionRunError('social_image_reference_analysis_outdated', 422);
       const label = labels.length === 1 ? labels[0] as Record<string, unknown> : null;
       if ((label?.productPresence !== 'present' && label?.productPresence !== 'absent' && label?.kind !== 'product_only')
         || (label?.kind === 'product_only' && label.productPresence === 'absent')
         || typeof label.confidence !== 'number' || label.confidence < .8
         || typeof label.evidence !== 'string' || !label.evidence.trim()) {
         throw new SocialImageProductionRunError('social_image_reference_product_uncertain', 422);
+      }
+      if (!label.style) throw new SocialImageProductionRunError('social_image_reference_analysis_outdated', 422);
+      if (!await readReferenceStyle({ store, tenantId, sourceRecordId: sourceId, sourceSha256 })) {
+        throw new SocialImageProductionRunError('social_image_reference_style_uncertain', 422);
       }
       decision = label.productPresence === 'absent' ? 'absent' : 'present';
       confirmedBy = 'agent:image-post-evidence.v2';

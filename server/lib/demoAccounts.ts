@@ -7,6 +7,7 @@ import { auth } from '../storage/index.js';
 import type { Identity } from '../storage/datastore.js';
 import { pbGetStrict, pbPatch } from '../storage/pb.js';
 import { isLocalDemoAuthorization, verifyLocalIdentity } from '../auth/localIdentity.js';
+import { isConfiguredPlatformAdminEmail } from '../auth/platformAdminConfig.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REGISTRY_FILE = process.env.NODE_ENV === 'test' && process.env.DEMO_ACCOUNT_REGISTRY_FILE
@@ -514,22 +515,10 @@ export async function rotateExpiredTrialPassword(user: { id?: string; email?: st
   void reason;
 }
 
-function isConfiguredAdminEmail(normalized: string): boolean {
-  const localAdminEmail = norm(process.env.LOCAL_ADMIN_EMAIL ?? '');
-  if (localAdminEmail && normalized === localAdminEmail) return true;
-  const workbenchAdminEmail = norm(process.env.WORKBENCH_ADMIN_EMAIL ?? '');
-  if (workbenchAdminEmail && normalized === workbenchAdminEmail) return true;
-  const allowed = String(process.env.ADMIN_DASHBOARD_EMAILS ?? '')
-    .split(/[\s,;]+/)
-    .map(norm)
-    .filter(Boolean);
-  return allowed.includes(normalized);
-}
-
 export function isAdminEmail(email?: string): boolean {
   const normalized = norm(email ?? '');
   if (!normalized) return false;
-  return isConfiguredAdminEmail(normalized) || readDemoAccountRegistry()[normalized]?.status === 'admin';
+  return isConfiguredPlatformAdminEmail(normalized) || readDemoAccountRegistry()[normalized]?.status === 'admin';
 }
 
 function hasPlatformAdminClaim(user: Record<string, unknown>): boolean {
@@ -631,7 +620,7 @@ async function resolveAdminUser(req: Request, verifiedIdentity?: Identity): Prom
     && local.tenantId === `local_tenant_admin_${localId(email)}`);
   const allowed = Boolean(adminUserEntries.length || emailEntries.some(entry => entry.status === 'admin')
     || (user && hasPlatformAdminClaim(user) && (!local || local.accountType === 'admin'))
-    || (isConfiguredAdminEmail(email) && (local ? explicitLocalAdmin : Boolean(user))));
+    || (isConfiguredPlatformAdminEmail(email) && (local ? explicitLocalAdmin : Boolean(user))));
   if (!allowed) return null;
   return { userId, tenantId, email };
 }

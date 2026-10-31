@@ -10,6 +10,7 @@ test('implicit exact vision binding uses the available plus model, never the mis
 
   assert.equal(QWEN_EXACT_VL_DEFAULT_MODEL, 'qwen3-vl-plus');
   assert.equal(binding.materialModel, 'qwen3-vl-plus');
+  assert.equal(binding.imageModel, 'qwen3-vl-plus');
 });
 
 test('an explicit exact vision model remains authoritative', () => {

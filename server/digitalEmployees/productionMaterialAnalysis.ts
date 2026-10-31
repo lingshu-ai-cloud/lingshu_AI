@@ -123,7 +123,7 @@ export async function analyzeProductionMaterial(asset: AssetCandidate, tenantId:
     const mimeType = /\.png$/i.test(asset.localPath || asset.name) ? 'image/png' : /\.webp$/i.test(asset.localPath || asset.name) ? 'image/webp' : 'image/jpeg';
     const analyze = (process.env.VIDEO_ANALYSIS_PROVIDER || 'qwen').toLowerCase() === 'qwen' ? analyzeImagePostEvidenceWithQwen : analyzeImagePostEvidenceWithGemini;
     const result = await analyze({ images: [{ base64: bytes.toString('base64'), mimeType, imageIndex: 1 }],
-      paidOperation:await paid('material_image_analysis',0,(process.env.QWEN_VL_MODEL??'qwen-vl-max').trim()) });
+      paidOperation:await paid('material_image_analysis',0,(process.env.QWEN_VL_MODEL??'qwen3-vl-plus').trim()) });
     const observations = result.observedFacts
       .filter(fact => Number(fact.confidence) >= .65)
       .flatMap(fact => [

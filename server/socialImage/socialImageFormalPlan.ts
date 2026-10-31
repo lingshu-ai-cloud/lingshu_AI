@@ -8,6 +8,8 @@ import { socialImageV3PaidPrerequisiteIssue, socialImageV3RenderSpecInputHash } 
 import { assertSocialImageCurrentContentTask, recordSocialImageNodeOutput, SocialImageProductionRunError } from './socialImageProductionRun.js';
 import { readSocialImageTask } from './socialImageTask.js';
 import { isSocialImageBuyerPoster } from './socialImageBuyerOverlay.js';
+import { socialImageReferencePalette, socialImageReferenceRenderRecipe, socialImageReferenceUsesImitableStyle,
+  socialImageSceneDirection, socialImageSceneVariant } from './socialImageReferenceRendering.js';
 
 type PlannerPoster = NonNullable<SocialImageCreationTask['renderBrief']>;
 export interface SocialImageFormalPlannerResult {
@@ -71,7 +73,9 @@ export async function recordSocialImageV3DirectorBrief(input: {
   if (!['social_image_director_brief_required', 'social_image_director_brief_stale'].includes(prerequisite || '')) {
     throw new SocialImageProductionRunError(prerequisite || 'social_image_director_brief_already_completed', 422);
   }
-  const { poster } = input.result;
+  const poster = socialImageReferenceUsesImitableStyle(task)
+    ? { ...input.result.poster, originBadge: '', trustBadges: [], sellingPoints: [], process: [],
+        categories: [], bottomBar: [], cta: '' } : input.result.poster;
   if (!poster?.headline?.trim() || !input.result.caption?.trim()
     || !Array.isArray(input.result.hashtags) || !Array.isArray(input.result.fieldsToConfirm)) {
     throw new SocialImageProductionRunError('social_image_director_planner_result_invalid', 422);
@@ -142,6 +146,9 @@ export async function compileSocialImageV3PaidPlan(input: {
   const manifest = completed(task, 'asset_manifest').value as SocialImageNodeValueMap['asset_manifest'];
   const referenceStyle = task.creationPath === 'viral_replication'
     ? (completed(task, 'reference_snapshot').value as SocialImageNodeValueMap['reference_snapshot']).styleObservation : null;
+  if (task.creationPath === 'viral_replication' && !referenceStyle) {
+    throw new SocialImageProductionRunError('social_image_reference_style_analysis_required', 422);
+  }
   const styleStrategy = referenceStyle?.kind === 'imitable' ? 'reference_emulation.v1'
     : referenceStyle?.kind === 'advertising' ? 'advertising.v1' : 'advertising_fallback.v1';
   const selectedAssetRefs: SocialImageVersionedRef[] = task.enterpriseAssets.filter(asset => asset.required).map(asset => {
@@ -177,6 +184,9 @@ export async function compileSocialImageV3PaidPlan(input: {
     : `${task.id}:render:${director.contentHash.slice(0, 24)}${pendingRepairs.length
       ? `:repair:${createHash('sha256').update(JSON.stringify(pendingRepairs)).digest('hex').slice(0, 24)}` : ''}`;
   const poster = task.renderBrief!;
+  const inventory = task.creationPath === 'viral_replication'
+    ? completed(task, 'element_inventory').value as SocialImageNodeValueMap['element_inventory'] : null;
+  const referenceRenderRecipe = inventory ? socialImageReferenceRenderRecipe(task, inventory, styleStrategy) : null;
   const renderSpec: SocialImageNodeValueMap['render_spec'] = {
     width: canvas.width, height: canvas.height, aspectRatio: task.deliverySpec.aspectRatio,
     assetInputs: selectedAssetRefs.map(assetRef => ({ ...assetRef,
@@ -186,7 +196,10 @@ export async function compileSocialImageV3PaidPlan(input: {
       ...(task.creationPath === 'viral_replication' ? { referenceStyleStrategy: styleStrategy,
         referenceStyleReason: referenceStyle ? 'byte_bound_prior_observation' : 'style_not_verified',
         referenceStyleSourceSha256: referenceStyle?.sourceSha256 || null, referenceStyleAnalysisVersion: referenceStyle?.analysisVersion || null,
-        referenceStyleElements: referenceStyle?.kind === 'imitable' ? referenceStyle.elements : [] } : {}),
+        referenceStyleElements: referenceStyle?.kind === 'imitable' ? referenceStyle.elements : [],
+        referenceRenderRecipe, referencePalette: socialImageReferencePalette(inventory),
+        sceneDirection: styleStrategy === 'reference_emulation.v1' ? null : socialImageSceneDirection(task.id),
+        sceneVariant: styleStrategy === 'reference_emulation.v1' ? null : socialImageSceneVariant(task.id) } : {}),
       frozenPlanVersion: task.renderPlan?.version || null, frozenPlanSourceHash: task.renderPlan?.sourceHash || null,
       quality: task.deliverySpec.imageGeneration?.quality || 'low', pendingRepairs },
     textLayers: [{ role: 'headline', text: poster.headline, region: 'headline' },

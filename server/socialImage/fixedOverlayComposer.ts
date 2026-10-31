@@ -4,7 +4,8 @@ import { socialImageRectOverlapRatio } from '../../shared/contracts/socialImageL
 import { connectedBorderToAlpha } from './layerRenderer.js';
 import { isVerifiedTransparentProductCutout } from '../lib/productIdentityPreparation.js';
 import { normalizeSocialImageReferenceLayerBlueprints } from './socialImageTask.js';
-import { isSocialImageBuyerPoster, socialImageBuyerLayout, socialImageBuyerOverlaySvg } from './socialImageBuyerOverlay.js';
+import { isSocialImageBuyerPoster, socialImageBuyerLayout, socialImageBuyerProductStage,
+  socialImageBuyerOverlaySvg } from './socialImageBuyerOverlay.js';
 import type { BuyerCopyBacking, BuyerPosterTone } from './socialImageBuyerOverlay.js';
 
 /** Pick a broad color family from the selected product pixels, not from the benchmark brand. */
@@ -219,6 +220,7 @@ export async function composeFixedSocialLayers(input: {
   productTreatment?: 'cutout' | 'framed_source' | 'integrated_scene';
   referenceTextRegion?: ReferenceTextRegion;
   repairContrast?: boolean;
+  sceneVariant?: number;
 }): Promise<Buffer> {
   const { width, height } = input;
   // A caller selecting the cutout route must supply an already separated
@@ -243,16 +245,17 @@ export async function composeFixedSocialLayers(input: {
     const scene = await sharp(input.background).rotate().resize(width, height,
       { fit: 'cover', position: 'attention' }).png().toBuffer();
     const layout = socialImageBuyerLayout(input.poster);
-    const heroWidth = Math.round(width * Math.min(.55, .97 - layout.copyRight - .01));
-    const heroHeight = Math.round(height * .58);
+    const stage = socialImageBuyerProductStage(input.poster, input.sceneVariant);
+    const heroWidth = Math.round(width * stage.maxWidth);
+    const heroHeight = Math.round(height * stage.maxHeight);
     const fitted = await sharp(source).rotate().resize(heroWidth, heroHeight, { fit: 'inside' }).png().toBuffer();
     const hero = input.productTreatment === 'cutout' || await hasTransparentPixels(source)
       ? fitted : await featherBuyerPhotoEdges(fitted);
     const size = await sharp(hero).metadata();
     const left = Math.max(Math.round(width * (layout.copyRight + .01)),
       Math.min(width - (size.width || heroWidth),
-        Math.round(width * layout.heroCenter - (size.width || heroWidth) / 2)));
-    const top = Math.round(height * .53 - (size.height || heroHeight) / 2);
+        Math.round(width * stage.centerX - (size.width || heroWidth) / 2)));
+    const top = Math.round(height * stage.centerY - (size.height || heroHeight) / 2);
     const withProduct = await sharp(scene).composite([{ input: hero, left, top }]).png().toBuffer();
     const backing = await buyerCopyBacking(scene, width, height, Boolean(input.repairContrast));
     const overlay = socialImageBuyerOverlaySvg(width, height, input.poster,

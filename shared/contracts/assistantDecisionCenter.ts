@@ -102,6 +102,7 @@ export type AssistantDecisionExecutionReceipt = {
   status: string;
   taskCount: number;
   startedAt: string;
+  pauseReason?: string;
 };
 
 export function normalizeAssistantDecisionExecutionReceipt(value: unknown): AssistantDecisionExecutionReceipt | undefined {
@@ -116,6 +117,8 @@ export function normalizeAssistantDecisionExecutionReceipt(value: unknown): Assi
   return {
     goalId: source.goalId.trim(), runId: source.runId.trim(), status: source.status,
     taskCount: source.taskCount, startedAt: source.startedAt,
+    ...(typeof source.pauseReason === 'string' && source.pauseReason.trim()
+      ? { pauseReason: source.pauseReason.trim().slice(0, 500) } : {}),
   };
 }
 

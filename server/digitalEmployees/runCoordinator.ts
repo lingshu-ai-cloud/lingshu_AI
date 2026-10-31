@@ -11,6 +11,7 @@ import { store } from '../storage/index.js';
 import { type BusinessSnapshot } from './businessSnapshot.js';
 import { getTenantFollowupDispatchStatus } from './followupDispatchWorker.js';
 import { publishingTargetPlatforms } from './publishingTargets.js';
+import { weeklyImageProgress } from './weeklyImageQueueBridge.js';
 
 import { mustInvalidateContentDownstream } from './dependencyInvalidation.js';
 import { mustReobserveSucceededCollection, scheduledCollectionFailureCanRetry } from './scheduledCollectionProof.js';
@@ -198,7 +199,8 @@ export function createDigitalEmployeeRunCoordinator(deps: Pick<DigitalEmployeeAp
     const reobservableUserInputWait = taskResult.items.some(task => ['waiting_external', 'waiting_human'].includes(task.status)
       && ['input', 'manual'].includes(String(jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(task.output, {}).waitState, {}).kind || '')));
     await restoreExecutionOnlyInvalidatedAuthorization(tenantId, goal, run, plan);
-    if (run.status === 'waiting_human' && !recoverableApprovalFailure && !reobservableUserInputWait) return;
+    const weeklyImageOnlyWait = String(run.pause_reason || '').startsWith('图片任务待处理：');
+    if (run.status === 'waiting_human' && !recoverableApprovalFailure && !reobservableUserInputWait && !weeklyImageOnlyWait) return;
     await migrateLegacyPublishingBindingsForRun(tenantId, run, plan, taskResult.items);
     const config = executionConfigForPlan(plan, tenantConfig);
     const packageBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
@@ -650,6 +652,18 @@ export function createDigitalEmployeeRunCoordinator(deps: Pick<DigitalEmployeeAp
         status,
         current_controller: handedOff || failedTask || needsHumanInput || waitingApproval ? 'human' : 'agent',
         pause_reason: reasons.slice(0, 6).join('；'),
+      });
+      return;
+    }
+    const imageProgress = await weeklyImageProgress(store, tenantId, plan);
+    if (imageProgress.total > imageProgress.succeeded) {
+      const allSettled = imageProgress.total === imageProgress.succeeded + imageProgress.blocked;
+      await store.update(COLLECTION.runs, run.id, {
+        status: allSettled ? 'waiting_human' : 'waiting_external',
+        current_controller: allSettled ? 'human' : 'agent',
+        pause_reason: allSettled
+          ? `图片任务待处理：${imageProgress.firstIssue || `${imageProgress.blocked} 张图片需要单独处理。`} 其他已完成图片保留。`
+          : `${imageProgress.firstIssue || '图片正在逐张制作。'} 已完成 ${imageProgress.succeeded}/${imageProgress.total}；其他任务继续运行。`,
       });
       return;
     }

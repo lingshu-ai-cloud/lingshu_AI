@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  LEGACY_PRODUCT_POINT_PRICE_BOOK_VERSION,
   PRODUCT_FEATURE_POINT_RATES,
   PRODUCT_POINT_SECTIONS,
   pointsForQuantity,
@@ -9,16 +10,21 @@ import {
 } from './pointsPolicy.js';
 
 test('product feature seconds use stable user-facing rates', () => {
-  assert.equal(pointsForSeconds(productPointRate('digital-human-video'), 8), 432);
-  assert.equal(pointsForSeconds(productPointRate('aigc-video-generation'), 5), 400);
+  assert.equal(pointsForSeconds(productPointRate('digital-human-video'), 8), 43_200);
+  assert.equal(pointsForSeconds(productPointRate('aigc-video-generation'), 5), 40_000);
   assert.equal(pointsForSeconds(productPointRate('material-library-reuse'), 17), 0);
 });
 
 test('non-video functions settle by successful product output instead of model calls', () => {
-  assert.equal(pointsForQuantity(productPointRate('weekly-operating-plan'), 1), 30);
-  assert.equal(pointsForQuantity(productPointRate('reply-draft-generation'), 3), 9);
-  assert.equal(pointsForQuantity(productPointRate('knowledge-document-structuring'), 2), 20);
+  assert.equal(pointsForQuantity(productPointRate('weekly-operating-plan'), 1), 3_000);
+  assert.equal(pointsForQuantity(productPointRate('reply-draft-generation'), 3), 900);
+  assert.equal(pointsForQuantity(productPointRate('knowledge-document-structuring'), 2), 2_000);
   assert.throws(() => pointsForQuantity(productPointRate('business-diagnosis'), -1), /invalid_points_quantity/);
+});
+
+test('legacy reservations remain pinned to the v1 price book', () => {
+  assert.equal(pointsForQuantity(productPointRate('weekly-operating-plan', LEGACY_PRODUCT_POINT_PRICE_BOOK_VERSION), 1), 30);
+  assert.equal(pointsForSeconds(productPointRate('digital-human-video', LEGACY_PRODUCT_POINT_PRICE_BOOK_VERSION), 8), 432);
 });
 
 test('visible pricing is organized by product section and contains no provider dimension', () => {

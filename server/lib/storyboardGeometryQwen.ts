@@ -18,7 +18,7 @@ export function createStoryboardGeometryQwenObserver(options: StoryboardGeometry
     if (!apiKey) throw new Error('DASHSCOPE_API_KEY is not configured');
     const baseUrl = String(options.baseUrl ?? qwenCompatibleBaseUrl()).trim().replace(/\/+$/, '');
     if (!/^https:\/\/[^/?#]+(?:\/[^?#]*)?$/i.test(baseUrl)) throw new Error('Qwen geometry endpoint must be HTTPS');
-    const model = String(options.model ?? process.env.QWEN_VL_MODEL ?? 'qwen-vl-max').trim();
+    const model = String(options.model ?? process.env.QWEN_VL_MODEL ?? 'qwen3-vl-plus').trim();
     if (!model) throw new Error('Qwen geometry model is not configured');
     const fetcher = options.fetcher || fetch;
     const prompt = storyboardGeometryObservationPrompt({ shotId: request.shotId,

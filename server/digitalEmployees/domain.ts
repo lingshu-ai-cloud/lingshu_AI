@@ -263,7 +263,7 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
       : ['scheduled_social', 'viral_clone', 'product_content', 'content_publish', 'customer_segmentation', 'batch_followup'],
     socialCadence,
     followupCadence: text(input.followupCadence, 500) || '每周五 09:00 生成分层跟进草稿；17:00 前审批；仅在客户当地工作日 09:00–18:00 发送；同一客户 7 天最多 1 次',
-    reviewSchedule: text(input.reviewSchedule, 300) || '周五 17:30（北京时间）；数据截止 17:00；通知审批负责人；仅生成复盘和下周任务草稿',
+    reviewSchedule: text(input.reviewSchedule, 300) || '周日 16:00（北京时间）；数据截止 15:30；通知审批负责人；仅生成复盘和下周任务草稿',
     publishingTargets,
     ...(confirmedOperatingPlan ? { confirmedOperatingPlan } : {}),
     allowRealPublishing: input.allowRealPublishing === true,

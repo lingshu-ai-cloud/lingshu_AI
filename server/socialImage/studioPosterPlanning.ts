@@ -12,6 +12,7 @@ import { socialImageV3PaidPrerequisiteIssue } from '../socialImage/socialImagePa
 import { recordSocialImageV3DirectorBrief, socialImageV3TrustedPlanningRequest, type SocialImageFormalPlannerResult } from '../socialImage/socialImageFormalPlan.js';
 import { socialImageEnglishTitleMatchesPackaging } from './socialImagePackagingLabel.js';
 import { socialImageBuyerCopy } from './socialImageBuyerCopy.js';
+import { socialImageReferenceUsesImitableStyle } from './socialImageReferenceRendering.js';
 import type { EnterpriseProfile } from '../routes/enterpriseProfileContracts.js';
 import { assertSocialImageCurrentContentTask, SocialImageProductionRunError } from '../socialImage/socialImageProductionRun.js';
 export interface PosterPlanningInput {
@@ -88,6 +89,7 @@ export async function planStudioPoster(input: {
         }
     };
     const planningRequest: PosterPlanningInput = boundTask ? socialImageV3TrustedPlanningRequest(boundTask) : body;
+    const imitableReference = boundTask ? socialImageReferenceUsesImitableStyle(boundTask) : false;
     const { deliverableType: rawDeliverableType = 'social_poster', productionStrategy: rawProductionStrategy = 'reference_generate', productInfo = '', platform = 'facebook', ratio = '1:1', posterStyle = 'oem-factory', language: rawLanguage = 'en', provider, materials = [], referenceNotes = '', referenceCaption = '', brandName = '', categoryTerms = [], targetMarket = '', confirmedFields = {}, } = planningRequest;
     const parsedLanguage = imageLanguageSchema.safeParse(normalizeImageLanguage(rawLanguage));
     if (!parsedLanguage.success) {
@@ -118,7 +120,7 @@ export async function planStudioPoster(input: {
         });
     }
     const productEnterprise = confirmedEnterpriseContextForProduct(productInfo, enterprise);
-    const buyerProfile = boundTask?.imageType === 'product_poster' && input.enterpriseProfile
+    const buyerProfile = boundTask?.imageType === 'product_poster' && !imitableReference && input.enterpriseProfile
         ? await input.enterpriseProfile(tenantId) : null;
     if (buyerProfile?.factVersion?.id && buyerProfile.factVersion.id
         !== boundTask?.productionRuntime?.binding?.taskContextSnapshot?.factVersionId) {
@@ -151,7 +153,7 @@ export async function planStudioPoster(input: {
         reference_generate: 'Lock product appearance to the exact enterprise product reference. Style references may guide layout and rhythm only; rebuild all brand, product and text content.',
         generate_supporting: 'Generate only neutral supporting visuals that do not carry product identity, certification or commercial proof.',
     };
-    const prompt = `You are a senior B2B social media creative director. Never assume that the company is a factory, exporter, OEM/ODM supplier, private-label provider, or certified business unless the authenticated enterprise profile explicitly says so.
+    const prompt = `You are a senior ${imitableReference ? 'reference-led social image' : 'B2B social media'} creative director. Never assume that the company is a factory, exporter, OEM/ODM supplier, private-label provider, or certified business unless the authenticated enterprise profile explicitly says so.
 Create a structured poster brief and ${platform} caption in ${lang}.
 All newly authored poster headlines, subheadlines, CTA and caption must use ${lang}, with its correct script and reading direction. Preserve original brand names and physical product-label text; do not translate or redraw packaging labels.
 
@@ -178,10 +180,11 @@ Hard rules:
 - AI may optimize expression, but must not invent commercial promises.
 - MOQ, certifications, lead time, price, export countries, factory qualifications must come from the authenticated profile or explicit user-confirmed task facts; otherwise place them in fieldsToConfirm.
 - If inspiration notes exist, output a module-level deconstruction and local asset matching plan. The final image must be a new composition using our product/materials, not a copy of the reference.
-- Shape the composition for the requested finished image (${deliverableType}); do not silently change it into another asset type.- Poster text should be concise enough for a dense B2B product-information poster.
+- Shape the composition for the requested finished image (${deliverableType}); do not silently change it into another asset type.
+- Poster text should be concise enough for ${imitableReference ? 'a reference-led image with a short headline; put details in the caption' : 'a dense B2B product-information poster'}.
 - Use exact English text for poster fields when language is English.
 - If the package has a readable English product name, keep its product-type word exactly; do not rename Honey to Mousse, or introduce another variant.
-- Make the visible headline at most ${buyerCopy ? 20 : 42} characters, supporting text at most 60 characters and CTA at most 42 characters. For a B2B product poster, keep the verified product-type word and use a short title that fits beside the product. Put longer explanations in the caption, not the image.
+- Make the visible headline at most ${buyerCopy ? 20 : 42} characters, supporting text at most 60 characters and CTA at most 42 characters. ${imitableReference ? 'Keep the image focused on the reference\'s transferable visual rhythm; do not add a badge, information card or CTA merely to make an advertisement. Put longer explanations in the caption.' : 'For a B2B product poster, keep the verified product-type word and use a short title that fits beside the product. Put longer explanations in the caption, not the image.'}
 - Return ONLY valid JSON. No markdown.
 
 Schema:
@@ -210,7 +213,7 @@ Schema:
   "commentCta": "string",
   "dmOpening": "string",
   "fieldsToConfirm": ["every desired but missing commercial field; do not put its value elsewhere"],
-  "imagePrompt": "detailed prompt for a no-extra-text B2B product poster image model; include layoutModules as composition guidance, include all poster text exactly as above, mention product replacement, background/style reuse, verified local material roles, sections, and layout"
+  "imagePrompt": "detailed prompt for a no-extra-text ${imitableReference ? 'reference-led product image' : 'B2B product poster'} image model; include layoutModules as composition guidance, mention product replacement, background/style reuse, verified local material roles, sections, and layout"
 }`;
     const backends = [providerOpt] as const;
     const failures: string[] = [];
@@ -305,12 +308,15 @@ Schema:
                     // per-task claim contract and verifier are available.
                     safeDraft = {
                         ...safeDraft,
-                        poster: normalizePosterBrief({ headline: buyerCopy?.poster.headline || safeDraft.poster.headline,
-                            subheadline: buyerCopy ? buyerCopy.poster.subheadline : neutral.subheadline,
-                            originBadge: buyerCopy?.poster.originBadge || '',
-                            sellingPoints: buyerCopy?.poster.sellingPoints || [],
-                            bottomBar: buyerCopy?.poster.bottomBar || [],
-                            cta: buyerCopy?.poster.cta || neutral.cta }),
+                        poster: imitableReference
+                            ? normalizePosterBrief({ headline: safeDraft.poster.headline,
+                                subheadline: safeDraft.poster.subheadline })
+                            : normalizePosterBrief({ headline: buyerCopy?.poster.headline || safeDraft.poster.headline,
+                                subheadline: buyerCopy ? buyerCopy.poster.subheadline : neutral.subheadline,
+                                originBadge: buyerCopy?.poster.originBadge || '',
+                                sellingPoints: buyerCopy?.poster.sellingPoints || [],
+                                bottomBar: buyerCopy?.poster.bottomBar || [],
+                                cta: buyerCopy?.poster.cta || neutral.cta }),
                         caption: neutral.caption,
                         hashtags: [],
                         commentCta: '',

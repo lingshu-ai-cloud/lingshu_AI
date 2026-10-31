@@ -12,6 +12,7 @@ import { Suspense, useEffect, useState, type Dispatch, type SetStateAction } fro
 import { SmartBusinessDashboard, WeeklyCommandCenter, BusinessInterpretation, deferredWorkspaceFallback } from './digitalEmployeeDeferredViews';
 import BusinessOverviewLanding from './smartBusiness/BusinessOverviewLanding';
 import BusinessOverviewDetailDrawer from './smartBusiness/BusinessOverviewDetailDrawer';
+import DigitalEmployeeHomeWork from './DigitalEmployeeHomeWork';
 import { BusinessOverviewSampleInterpretation } from './smartBusiness/BusinessOverviewSampleWork';
 import { businessOverviewSample, isBusinessOverviewSampleEnabled } from '../dev/businessOverviewSample';
 import { CalendarRange, ChevronLeft, History, Pause, Play } from 'lucide-react';
@@ -100,6 +101,7 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
   const [healthDialogOpen, setHealthDialogOpen] = useState(false);
   const [accountConfigurationOpen, setAccountConfigurationOpen] = useState(false);
   const [sampleWeeklyPlanOpen, setSampleWeeklyPlanOpen] = useState(false);
+  const [weeklyLaneOpen, setWeeklyLaneOpen] = useState(false);
   const openAccountConfiguration = () => { setHealthDialogOpen(false); setAccountConfigurationOpen(true); };
   const {
     active, data, busy, error, activeRun, canCreateNextGoal, viewGoalId, workspaceView,
@@ -133,11 +135,6 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
         : workspaceView === "live"
           ? selectedContentItemId ? "production" : "review"
           : workspaceView === "review" ? "review" : "home";
-    const currentVideoPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || goal?.videoPlans || [];
-    const currentMasterPlans = currentVideoPlans.filter(plan => plan.productionRole !== "platform_adaptation");
-    const missingReferenceMasters = currentMasterPlans.filter(plan => !plan.referenceId);
-    const missingProductMasters = currentMasterPlans.filter(plan => !plan.productName);
-    const detailGeneration = data.plan?.businessPackage?.detailGeneration;
     const publishingReadiness = data.publishingReadiness;
     const publishingSetupRequired = !activeRun && !viewGoalId && Boolean(publishingReadiness?.required && !publishingReadiness.ready);
     const openPublishingAccountSetup = () => window.dispatchEvent(new CustomEvent("lingshu:navigate", {
@@ -204,7 +201,7 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
           ? "制定周计划"
           : canCreateNextGoal
             ? "制定下一周计划"
-            : "确认并开始生产";
+            : "确认周计划并开始运营";
     const openContentProduction = (taskId?: string, socialContentTaskId?: string, projectId?: string) => {
       if (projectId) {
         const contentProductionTask = data.tasks.find(item => item.run_id === data.run?.id && item.task_key === "content_production")
@@ -240,6 +237,7 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
       openContentGenerationQueue({view:'tasks',taskId:item?.socialContentTaskId||undefined,contentId:item?.contentId||contentItemId||undefined});
     };
     const weeklyPlanControls = <>
+      {goal && <Button onClick={() => setWeeklyLaneOpen(true)} icon={<CalendarRange size={15}/>}>查看周任务</Button>}
       <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>
       <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={!activeRun && (!goal || canCreateNextGoal) ? <CalendarRange size={15}/> : activeRun && !recoverableProductionTask && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
     </>;
@@ -256,12 +254,8 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
         if (metric === "settled_cost") { setWorkspaceView("review"); return; }
         openAssistantWeeklyPlan();
       } : undefined}
-      notice={!activeRun && !viewGoalId && missingReferenceMasters.length > 0
-        ? <><p className="mr-auto text-xs leading-5 text-text-secondary"><strong className="text-warning">参考不足：</strong>本周 {missingReferenceMasters.length} 条复刻视频尚未绑定通过逐镜精确分析的爆款参考，当前不能开始生产。先完成参考分析，再重新匹配计划。</p><Button size="small" onClick={() => onNavigate?.('inspirationMarket')}>查看爆款参考</Button></>
-        : publishingSetupRequired
-        ? <><p className="mr-auto text-xs leading-5 text-text-secondary"><strong className="text-warning">发布准备待完成：</strong>{publishingReadiness?.summary}。内容生产可以继续，系统不会把未连接账号当成已就绪。</p><Button size="small" onClick={openPublishingAccountSetup}>配置发布账号</Button></>
-        : !activeRun && !viewGoalId && (missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
-        ? <p className="mr-auto text-xs leading-5 text-text-secondary">本周计划尚有制作条件未通过，请先查看计划与任务详情，补齐后再开始生产；系统不会把缺失证据视为已就绪。</p>
+      notice={publishingSetupRequired
+        ? <><p className="mr-auto text-sm text-text-secondary"><strong className="text-warning">发布账号待配置：</strong>{publishingReadiness?.summary}</p><Button size="small" onClick={openPublishingAccountSetup}>配置发布账号</Button></>
         : undefined}
     /></Suspense>;
     const sampleWeeklyPlan = sampleWeekly && <Suspense fallback={deferredWorkspaceFallback}><WeeklyCommandCenter data={data} statusLabel="执行中" actions={<>
@@ -282,7 +276,7 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
       <>
       {weeklyStudioContentId && <WeeklyProductionStudioEntry data={data} contentId={weeklyStudioContentId} autoOpen onOpened={() => setWeeklyStudioContentId("")} onUnavailable={() => setWeeklyStudioContentId("")} />}
       {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-surface">
-        <div className="mx-auto w-full px-2 py-3 sm:px-3">
+        <div className="mx-auto w-full px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
           <h1 className="sr-only">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
           {workspaceView === "today" ? <BusinessOverviewLanding data={data} onRefresh={() => void load()} onNavigate={onNavigate} onOpenAccountHealth={() => setHealthDialogOpen(true)} weeklyPlan={sampleWeeklyPlan || weeklyCommandCenter} interpretation={sampleEnabled ? <BusinessOverviewSampleInterpretation/> : <Suspense fallback={deferredWorkspaceFallback}><BusinessInterpretation data={data} onViewReview={() => setWorkspaceView("review")}/></Suspense>}/> : <div className="grid grid-cols-1 overflow-hidden rounded-2xl border border-border bg-surface xl:grid-cols-[minmax(0,1.7fr)_minmax(360px,1fr)]"><div aria-label="当前周计划" className="min-w-0">{weeklyCommandCenter}</div>
             <aside aria-label="企业经营分" className="min-w-0 border-t border-border xl:border-l xl:border-t-0 [&_section]:rounded-none [&_section]:border-0"><BusinessHealthOverview summaryOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange} onOpenAccountHealth={() => setHealthDialogOpen(true)}/></aside><Suspense fallback={deferredWorkspaceFallback}><BusinessInterpretation data={data} onViewReview={() => setWorkspaceView("review")}/></Suspense></div>}
@@ -293,6 +287,9 @@ export function ConfiguredDigitalEmployeeWorkspace(props: ConfiguredDigitalEmplo
           </div>
         </div>
       </div>}
+      <Modal open={weeklyLaneOpen} title="本周任务" width="min(1280px, calc(100vw - 32px))" footer={null} destroyOnHidden styles={{ body: { maxHeight: '75vh', overflowY: 'auto' } }} onCancel={() => setWeeklyLaneOpen(false)}>
+        <DigitalEmployeeHomeWork data={data} onNavigate={page => { setWeeklyLaneOpen(false); onNavigate?.(page); }}/>
+      </Modal>
       <Modal open={healthDialogOpen} title="账号健康与阶段目标" width={960} footer={null} destroyOnHidden onCancel={() => setHealthDialogOpen(false)}>
         <BusinessHealthOverview accountOnly data={data} selectedAccountId={selectedAccountId} onNavigate={page => {
           setHealthDialogOpen(false);

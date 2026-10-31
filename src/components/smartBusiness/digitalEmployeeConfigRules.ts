@@ -33,7 +33,7 @@ export const EMPTY_CONFIG: DigitalEmployeeConfig = {
   socialCadence: "YouTube、TikTok、Instagram、Facebook；公开行业关键词与已确认对标账号；近 7 天；每天 09:00；每次最多 20 条；按链接与标题去重 30 天；每周生成 5 条发布草稿，发布前人工审批",
   continuationPolicy: recommendedContinuationPolicy,
   followupCadence: "每周五 09:00 生成分层跟进草稿；17:00 前审批；仅在客户当地工作日 09:00–18:00 发送；同一客户 7 天最多 1 次",
-  reviewSchedule: "周五 17:30（北京时间）；数据截止 17:00；通知审批负责人；仅生成复盘和下周任务草稿",
+  reviewSchedule: "周日 16:00（北京时间）；数据截止 15:30；通知审批负责人；仅生成复盘和下周任务草稿",
   publishingTargets: [],
   allowGeneratedVisuals: false,
   allowRealPublishing: false,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Segmented, Skeleton, Tag } from 'antd';
+import { Alert, Button, Drawer, Segmented, Skeleton, Tag } from 'antd';
 import { Headphones, Megaphone, Sparkles } from 'lucide-react';
 import type { Page } from '../pageRegistry';
 import type { DigitalEmployeeOverview } from '../lib/digitalEmployees';
@@ -20,6 +20,8 @@ import { dispatchDigitalEmployeeDeepLink } from '../lib/digitalEmployeeNavigatio
 import CreationTaskCover from './socialContent/CreationTaskCover';
 import AdPlanMetricsCell from './AdPlanMetricsCell';
 import LsIllustratedEmpty from './ui/LsIllustratedEmpty';
+import WeeklyBusinessSwimlane from './smartBusiness/WeeklyBusinessSwimlane';
+import { projectWeeklyBusinessSwimlane, type WeeklyBusinessLane } from '../lib/weeklyBusinessSwimlane';
 
 const columns = [
   { kind: 'content', label: '内容创作', page: 'socialInspiration', Icon: Sparkles },
@@ -42,6 +44,7 @@ export default function DigitalEmployeeHomeWork(props: { data: DigitalEmployeeOv
 }
 function BusinessWork({ data, onNavigate, identity }: { data: DigitalEmployeeOverview | null; onNavigate?: (page: Page) => void; identity: string }) {
   const [revision, setRevision] = useState(0), [mine, setMine] = useState(false);
+  const [selectedLane, setSelectedLane] = useState<WeeklyBusinessLane | null>(null);
   const [content, setContent] = useState<SocialContentTaskSummary[] | null>(null), [products, setProducts] = useState<CreationTaskProduct[]>([]);
   const [unavailable, setUnavailable] = useState<NonNullable<SocialContentTaskPage['unavailableItems']>>([]);
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [productError, setProductError] = useState('');
@@ -82,6 +85,7 @@ function BusinessWork({ data, onNavigate, identity }: { data: DigitalEmployeeOve
   const initialPlans = useMemo(() => projectAdWork(plans.items || [], {}).slice(0, 3).flatMap(item => item.kind === 'traffic' ? [item.task] : []), [plans.items]);
   const operating = useAdPlanOperatingData(initialPlans, revision, false);
   const all: Record<BusinessWorkKind, BusinessWorkItem[]> = { content: contentItems, traffic: projectAdWork(plans.items || [], operating.items), customer: customers };
+  const weekly = data ? projectWeeklyBusinessSwimlane(data, all.traffic, all.customer) : null;
   const errors = { content: [error, productError].filter(Boolean).join('；'), traffic: plans.error, customer: customerList.error };
   const busy = { content: loading, traffic: plans.loading, customer: customerList.loading };
   const available = { content: content !== null, traffic: plans.items !== null, customer: !customerList.loading && !customerList.error };
@@ -100,8 +104,10 @@ function BusinessWork({ data, onNavigate, identity }: { data: DigitalEmployeeOve
     window.dispatchEvent(new PopStateEvent('popstate', { state: window.history.state }));
   };
   return <section className="creator-home__canvas business-work" aria-label="数字员工正在进行的工作">
-    <header className="business-work__header"><div><h2>正在推进的工作</h2><p>按业务对象展示，需要处理的优先</p></div><div className="business-work__controls"><Segmented aria-label="进行中工作筛选" value={mine ? 'mine' : 'all'} options={[{ label: '全部进行中', value: 'all' }, { label: '只看待我处理', value: 'mine' }]} onChange={value => setMine(value === 'mine')}/><Button onClick={refresh} loading={loading || plans.loading}>刷新</Button></div></header>
-    <div className="business-work__grid">{columns.map(({ kind, label, page, Icon }) => {
+    <header className="business-work__header"><div>{!weekly && <h2>正在推进的工作</h2>}</div><div className="business-work__controls"><Button onClick={refresh} loading={loading || plans.loading}>刷新</Button></div></header>
+    {weekly && <WeeklyBusinessSwimlane projection={weekly} onOpenLane={setSelectedLane} onOpenContent={taskId => openContentGenerationQueue({ view: 'tasks', ...(taskId ? { taskId } : {}) })}/>}
+    {!weekly && <><div className="mb-3 flex flex-wrap items-center justify-between gap-3"><Segmented aria-label="进行中工作筛选" value={mine ? 'mine' : 'all'} options={[{ label: '全部进行中', value: 'all' }, { label: '只看待我处理', value: 'mine' }]} onChange={value => setMine(value === 'mine')}/></div>
+    <div className="business-work__grid">{columns.filter(column => !weekly || column.kind === 'content').map(({ kind, label, page, Icon }) => {
       const items = all[kind].filter(item => !mine || item.needsAction);
       return <section className="business-work__column" aria-label={`${label}进行中工作`} key={kind}>
         <header className="business-work__column-title"><h3><Icon size={17} aria-hidden="true"/>{label}</h3><span>{available[kind] || all[kind].length ? `${items.length} 项 · ${all[kind].filter(item => item.needsAction).length} 项待处理` : '尚未读取'}</span></header>
@@ -115,6 +121,13 @@ function BusinessWork({ data, onNavigate, identity }: { data: DigitalEmployeeOve
         </article>)}</div> : available[kind] && !errors[kind] ? <LsIllustratedEmpty icon={Icon} title={mine ? '暂无需要你处理的记录' : '暂无进行中的业务记录'} detail={`${label}的真实任务出现后，会在这里显示当前状态与下一步。`}/> : null}
         <Button type="text" className="business-work__all" onClick={() => kind === 'content' ? openContentGenerationQueue({ view: 'tasks' }) : onNavigate?.(page)}>查看全部{label}</Button>
       </section>;
-    })}</div>
+    })}</div></>}
+    <Drawer open={Boolean(selectedLane)} onClose={() => setSelectedLane(null)} title={selectedLane ? `${selectedLane.label} · 本周状态` : ''} size={480}>
+      {selectedLane && <div className="space-y-4 text-sm"><Tag color={selectedLane.needsAttention ? 'error' : 'default'}>{selectedLane.status}</Tag><p className="leading-6 text-text-primary">{selectedLane.current}</p><p className="leading-6 text-text-secondary">下一步：{selectedLane.next}</p><p className="text-xs text-text-muted">最近更新：{selectedLane.updatedAt ? time(selectedLane.updatedAt) : '尚未取得'}</p>
+        {selectedLane.key === 'content' && <Button onClick={() => openContentGenerationQueue({ view: 'tasks' })}>查看原内容任务</Button>}
+        {selectedLane.key === 'traffic' && all.traffic.filter(item => item.kind === 'traffic' && item.task.sourceContext?.goalId === data?.goal?.id).map(item => <Button key={item.id} block onClick={() => open(item)}>{item.title} · {item.status}</Button>)}
+        {selectedLane.key === 'customer' && all.customer.slice(0, 5).map(item => <Button key={item.id} block onClick={() => open(item)}>{item.title} · {item.status}</Button>)}
+      </div>}
+    </Drawer>
   </section>;
 }

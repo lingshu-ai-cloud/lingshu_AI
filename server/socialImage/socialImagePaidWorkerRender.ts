@@ -18,7 +18,7 @@ import { readSocialImageTask, updateSocialImageTask } from './socialImageTask.js
 import { socialImageBuyerCopy } from './socialImageBuyerCopy.js';
 import { isSocialImageBuyerPoster } from './socialImageBuyerOverlay.js';
 import { buyerPosterTone } from './fixedOverlayComposer.js';
-import type { SocialImageCreationTask } from '../../shared/contracts/socialImageCreation.js';
+import type { SocialImageCreationTask, SocialImageReplicationRecipe } from '../../shared/contracts/socialImageCreation.js';
 import type { SocialImageAspectRatio } from './referenceCanvas.js';
 import type { ImageReferenceStyleElement } from '../../shared/contracts/imageReferenceProductionLabel.js';
 import { imageLanguageSchema, normalizeImageLanguage } from '../../shared/contracts/imageLanguages.js';
@@ -129,9 +129,20 @@ export async function renderSocialImagePaidWorker(input: {
   const frozenStyle = renderConstraints?.layoutConstraints?.referenceStyleStrategy;
   const styleElements = renderConstraints?.layoutConstraints?.referenceStyleStrategy === 'reference_emulation.v1'
     && Array.isArray(renderConstraints.layoutConstraints.referenceStyleElements) ? renderConstraints.layoutConstraints.referenceStyleElements as ImageReferenceStyleElement[] : [];
-  const prompt = buildSocialImagePosterPlatePrompt({ ratio: frozen.ratio, recipe: frozenStyle ? undefined : task.replicationRecipe,
+  const renderRecipe = frozenStyle === 'reference_emulation.v1'
+    ? renderConstraints?.layoutConstraints?.referenceRenderRecipe as SocialImageReplicationRecipe | undefined
+    : frozenStyle ? undefined : task.replicationRecipe;
+  const styleStrategy = frozenStyle === 'reference_emulation.v1' || frozenStyle === 'advertising.v1'
+    || frozenStyle === 'advertising_fallback.v1' ? frozenStyle : undefined;
+  const sceneVariant = typeof renderConstraints?.layoutConstraints?.sceneVariant === 'number'
+    ? renderConstraints.layoutConstraints.sceneVariant : undefined;
+  const prompt = buildSocialImagePosterPlatePrompt({ ratio: frozen.ratio, recipe: renderRecipe,
     buyerPoster: isSocialImageBuyerPoster(frozen.poster) ? frozen.poster : undefined,
-    tone: await buyerPosterTone(product.bytes), transferableStyle: styleElements });
+    tone: await buyerPosterTone(product.bytes), transferableStyle: styleElements, styleStrategy,
+    referencePalette: Array.isArray(renderConstraints?.layoutConstraints?.referencePalette)
+      ? renderConstraints.layoutConstraints.referencePalette as string[] : [],
+    sceneDirection: typeof renderConstraints?.layoutConstraints?.sceneDirection === 'string'
+      ? renderConstraints.layoutConstraints.sceneDirection : undefined, sceneVariant });
   const ratio = frozen.ratio as SocialImageAspectRatio;
   const quality = normalizeImageGenerationQuality(frozen.imageQuality);
   const inputHash = createHash('sha256').update(JSON.stringify({ prompt, ratio, quality,
@@ -140,6 +151,7 @@ export async function renderSocialImagePaidWorker(input: {
     productCutoutSha256: cutout.contentSha256, benchmarkSha256: referenceHash,
     requestedProductIds: [productId], materialIds: task.materialIds,
     imageTaskId: task.id, imageJobId: job.id, plannedInputHash: null,
+    compositionRecipe: renderRecipe, compositionPoster: frozen.poster, sceneVariant,
     renderSpecInputHash: socialImageV3RenderSpecInputHash(task) })).digest('hex');
   if (!task.generationJobs.some(item => item.id === job.id)) {
     const patch = await admitSocialImageV3QueuedJob(store, tenantId, task, { status: 'generating', step: 'generate',
@@ -159,8 +171,8 @@ export async function renderSocialImagePaidWorker(input: {
       prompt, ratio, quality, references, idempotencyKey, productId,
       materialIds: task.materialIds, benchmarkReferenceCount: reference?.bytes.length ? 1 : 0,
       composition: { productBytes: cutout.bytes, productCutoutId: cutout.materialId,
-        poster: frozen.poster, recipe: frozenStyle ? undefined : task.replicationRecipe,
-        referenceTextRegion: task.hookFactorSpec?.factors.some(factor => factor.factorId === 'reference-text-hierarchy'
+        poster: frozen.poster, recipe: renderRecipe, sceneVariant,
+        referenceTextRegion: !renderRecipe && task.hookFactorSpec?.factors.some(factor => factor.factorId === 'reference-text-hierarchy'
           && factor.validator.observableTarget === 'top_left') ? 'top_left' : undefined } })).task;
   } catch (error) {
     if (providerMayHaveStarted && !(error instanceof ImageProviderConfigurationError)) {

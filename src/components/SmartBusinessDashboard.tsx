@@ -219,7 +219,6 @@ export function BusinessInterpretation({ data, onViewReview }: { data: DigitalEm
         {summary?.highlights.slice(0, 3).map((highlight, index) => <li key={index}>{highlight}</li>)}
         {summary?.nextGoalSuggestion && <li><strong>建议：</strong>{summary.nextGoalSuggestion}</li>}
       </ul>
-      {!summary && <p className="text-xs text-text-muted">本周复盘尚未生成；暂不提供涨跌趋势或经营效果判断。</p>}
     </div>}
   </section>;
 }
@@ -235,14 +234,17 @@ function HomeView({ data, onNavigate, selectedAccountId = "", overviewRangeBusy 
   </div>;
 }
 
-export function WeeklyPublishingCalendar({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefresh?: () => void }) {
+export function WeeklyPublishingCalendar({ data, onRefresh, additionalEvents = [], onAdditionalEventClick }: { data: DigitalEmployeeOverview; onRefresh?: () => void; additionalEvents?: LsCalendarEvent[]; onAdditionalEventClick?: (event: LsCalendarEvent) => void }) {
+  const [selectedUndatedContent, setSelectedUndatedContent] = useState<UnifiedPlanContent | null>(null);
   const display = buildSmartBusinessDisplayModel(data);
+  const plannedVideoTimes = new Map((data.plan?.businessPackage?.tasks.find(task => task.templateId === 'production')?.videoPlans || [])
+    .flatMap(plan => plan.contentId ? [[plan.contentId, plan.plannedPublishAt || plan.plannedPublishDate || ''] as const] : []));
   const calendarStatus: Record<ContentQueueItem["status"], LsCalendarEvent["status"]> = {
     planned: "planned",
     queued: "queued",
     producing: "working",
     waiting_review: "needs_action",
-    completed: "done",
+    completed: "planned",
     blocked: "needs_action",
   };
   const calendarStatusLabel: Record<ContentQueueItem["status"], string> = {
@@ -250,37 +252,46 @@ export function WeeklyPublishingCalendar({ data, onRefresh }: { data: DigitalEmp
     queued: "待制作",
     producing: "制作中",
     waiting_review: "待验收",
-    completed: "已完成",
+    completed: "成片完成，发布待核验",
     blocked: "需要处理",
   };
-  const calendarEvents: LsCalendarEvent[] = display.contents.map((item): LsCalendarEvent => ({
+  const calendarEvents: LsCalendarEvent[] = display.contents.flatMap((item): LsCalendarEvent[] => {
+    const scheduledAt = item.queueItem?.contentPlan?.publishAt || plannedVideoTimes.get(item.contentId)
+      || item.queueItem?.plannedPublishDate || '';
+    if (!/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(scheduledAt)) return [];
+    const allDay = scheduledAt.length === 10;
+    return [{
     id: `weekly-publish-${item.id}`,
     title: item.title,
-    start: item.plannedPublishAt || (item.plannedPublishDate ? `${item.plannedPublishDate}T18:00:00+08:00` : `${display.startsAt}T18:00:00+08:00`),
+    start: scheduledAt,
     timeZone: "Asia/Shanghai",
-    allDay: false,
+    allDay,
     editable: Boolean(data.goal?.id && item.contentId && item.plannedPublishDate),
     status: calendarStatus[item.status],
-    statusLabel: calendarStatusLabel[item.status],
+    statusLabel: allDay ? `${calendarStatusLabel[item.status]} · 时刻待定` : calendarStatusLabel[item.status],
     eventType: "publish",
     platform: item.platform,
     accountId: item.accountId,
-    accountName: item.accountLabel,
+    accountName: item.accountLabel?.startsWith('planned:') ? '账号待绑定' : item.accountLabel,
     thumbnailUrl: item.thumbnailUrl,
     identity: { kind: "platform", platform: item.platform },
     sourceId: item.inspirationReference?.referenceId || item.contentId,
     description: `${item.productName} · ${item.caption || "发布文案待完善"}`,
     data: item,
-  })).filter(event => Boolean(event.start));
+  }];
+  });
+  const allEvents = [...calendarEvents, ...additionalEvents];
+  const datedContentIds = new Set(calendarEvents.map(event => (event.data as UnifiedPlanContent).id));
+  const undatedContents = display.contents.filter(item => !datedContentIds.has(item.id));
 
   return <section aria-label="发布日历" className="overflow-hidden rounded-lg border border-border bg-surface">
     <div className="border-b border-border px-5 py-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="ls-type-title-large text-text-primary">发布日历</h3>
-        <Tag>{calendarEvents.length} 项发布</Tag>
+        <Tag>{calendarEvents.length} / {display.contents.length} 个周计划发布位已排期{additionalEvents.length ? ` · ${additionalEvents.length} 条单独任务` : ''}</Tag>
       </div>
     </div>
-    <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="timeGridWeek" showAllEvents fixedHeight="auto" workspaceMode="expanded" firstDay={display.startsAt ? calendarWeekday(display.startsAt) : 1} onMoveEvent={async (event, scheduledAt) => {
+    <div className="ls-publishing-week-board"><LsCalendar events={allEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="dayGridWeek" eventCardMode="media" dateOnly showAllEvents fixedHeight="auto" workspaceMode="expanded" firstDay={display.startsAt ? calendarWeekday(display.startsAt) : 1} onEventClick={event => { if (!event.id.startsWith('manual-')) return false; onAdditionalEventClick?.(event); return true; }} onMoveEvent={async (event, scheduledAt) => {
       const item = event.data as UnifiedPlanContent;
       if (!data.goal?.id || !item.contentId) throw new Error("当前内容缺少可调整的排期标识");
       await digitalEmployeeApi.reschedulePublication(data.goal.id, item.contentId, scheduledAt);
@@ -293,7 +304,19 @@ export function WeeklyPublishingCalendar({ data, onRefresh }: { data: DigitalEmp
           closeDetails();
           window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: inspirationReferenceNavigationDetail(item.inspirationReference!, item.contentId) }));
         } : undefined}/>;
-    }}/>
+    }}/></div>
+    {undatedContents.length > 0 && <div className="border-t border-border px-5 py-5">
+      <h4 className="mb-3 text-base font-semibold text-text-primary">待排期 · {undatedContents.length} 条</h4>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {undatedContents.map(item => <button key={item.id} type="button" onClick={() => setSelectedUndatedContent(item)} className="min-w-0 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
+          <span className="block truncate font-medium text-text-primary">{item.title}</span>
+          <span className="mt-1 block text-sm text-text-secondary">{item.platform} · {calendarStatusLabel[item.status]}</span>
+        </button>)}
+      </div>
+    </div>}
+    <Drawer open={Boolean(selectedUndatedContent)} title="内容制作进度" size={560} onClose={() => setSelectedUndatedContent(null)}>
+      {selectedUndatedContent?.contentId && <WeeklyContentProgressPanel data={data} contentId={selectedUndatedContent.contentId} onRefresh={onRefresh} onOpenWorkbench={() => setSelectedUndatedContent(null)}/>}
+    </Drawer>
   </section>;
 }
 
@@ -352,7 +375,7 @@ const matrixScheduleStages = [
 
 
 function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onNavigate, onOpenContent, onOpenAgentSettings }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string, projectId?: string) => void; onOpenAgentSettings?: () => void; onOpenProductionProgress?: (taskId: string, contentItemId: string, projectId?: string) => void; onRetryTask?: (taskId: string) => Promise<boolean> }) {
-  return <DigitalEmployeeWorkspace data={data} calendarTasks={calendarTasks} calendarDemo={calendarDemo} onRefresh={onRefresh} onNavigate={onNavigate} onOpenContent={onOpenContent} onOpenAgentSettings={onOpenAgentSettings} publishingCalendar={<WeeklyPublishingCalendar data={data} onRefresh={onRefresh}/>}/>;
+  return <DigitalEmployeeWorkspace data={data} calendarTasks={calendarTasks} calendarDemo={calendarDemo} onRefresh={onRefresh} onNavigate={onNavigate} onOpenContent={onOpenContent} onOpenAgentSettings={onOpenAgentSettings}/>;
 }
 
 

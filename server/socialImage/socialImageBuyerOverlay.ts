@@ -53,6 +53,22 @@ export function socialImageBuyerLayout(poster: BuyerPosterCopy): {
   return { copyRight, sealLeft, heroCenter: (copyRight + sealLeft) / 2 + .03 };
 }
 
+/** Keep every ad variant inside the established copy, badge and footer safe zones. */
+export function socialImageBuyerProductStage(poster: BuyerPosterCopy, variant = 1): {
+  centerX: number; centerY: number; maxWidth: number; maxHeight: number;
+} {
+  const layout = socialImageBuyerLayout(poster);
+  const variants = [
+    { dx: -.035, centerY: .49, maxHeight: .48, width: .47 },
+    { dx: 0, centerY: .53, maxHeight: .58, width: .55 },
+    { dx: .025, centerY: .56, maxHeight: .54, width: .48 },
+    { dx: -.015, centerY: .52, maxHeight: .54, width: .52 },
+  ];
+  const chosen = variants[Number.isInteger(variant) ? Math.max(0, Math.min(3, variant)) : 1]!;
+  return { centerX: layout.heroCenter + chosen.dx, centerY: chosen.centerY,
+    maxWidth: Math.min(chosen.width, .97 - layout.copyRight - .01), maxHeight: chosen.maxHeight };
+}
+
 function productSeal(width: number, height: number, poster: BuyerPosterCopy, scale: number,
   font: (size: number) => number, tone: BuyerPosterTone): string {
   const net = poster.bottomBar?.[0] || '';

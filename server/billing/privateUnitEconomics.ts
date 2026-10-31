@@ -1,5 +1,8 @@
 import type { ProductPointSection } from '../../shared/pointsPolicy.js';
 
+/** Internal cost accounting only. Customer point prices remain product-based. */
+export const INTERNAL_COST_POINTS_PER_CNY = 1_000;
+
 /** Internal-only commercial terms. Never serialize this type from a customer route. */
 export interface MonthlyPlanCommercialTerms {
   planId: string;
@@ -68,6 +71,16 @@ export function providerCostCny(receipt: ProviderCostReceipt): number {
     finitePositive(receipt.amount, 'provider_amount')
       * finitePositive(receipt.cnyPerCurrencyUnit, 'fx_rate'),
   );
+}
+
+export function internalCostPointsFromCny(costCny: number): number {
+  if (!Number.isFinite(costCny) || costCny < 0) throw new Error('private_unit_economics_provider_cost_invalid');
+  return Math.ceil((costCny * INTERNAL_COST_POINTS_PER_CNY) - Number.EPSILON);
+}
+
+/** USD/foreign currency receipt -> audited CNY -> private internal cost points. */
+export function providerCostPoints(receipt: ProviderCostReceipt): number {
+  return internalCostPointsFromCny(providerCostCny(receipt));
 }
 
 /** Private profitability signal used for route/model optimization, never for customer deduction. */

@@ -201,7 +201,7 @@ export default function ImageReplicationConversation({ request, onShowCreations,
       const code = (cause as { payload?: { code?: string } })?.payload?.code;
       if (code === 'social_image_reference_analysis_outdated' && pendingTask?.referenceSnapshot?.sourceRecordId) {
         setAwaitingReference(pendingTask);
-        setAnalysisMessage('旧版参考图分析缺少产品判断，正在对原图补充分析；原任务已保留。');
+        setAnalysisMessage('正在补充识别参考图中的产品和画面风格，原任务已保留。');
         try {
           await reanalyzeCollectedImageReference(pendingTask.referenceSnapshot.sourceRecordId);
           if (isCurrent()) { setAnalysisMessage(''); await confirmAndQueue(pendingTask); }
@@ -211,6 +211,8 @@ export default function ImageReplicationConversation({ request, onShowCreations,
             setAnalysisMessage(''); setSubmitted(false);
             setError(nextCode === 'social_image_reference_product_uncertain'
               ? '补充分析已完成，但仍无法可靠判断图中产品；原任务已保留，请更换参考图。'
+              : nextCode === 'social_image_reference_style_uncertain'
+              ? '补充分析已完成，但画面风格仍不明确；原任务已保留，请更换清晰的参考图。'
               : `参考图补充分析未完成，原任务已保留；${analysisError instanceof Error ? analysisError.message : '请在灵感中心查看分析状态。'}`);
           }
         }
@@ -222,11 +224,13 @@ export default function ImageReplicationConversation({ request, onShowCreations,
         if (pendingTask) setAwaitingReference(pendingTask);
         setSubmitted(false);
         setError('参考图分析结果待核对，原任务已保留；不会自动重复分析。');
-      } else if (code === 'social_image_reference_product_uncertain' || code === 'social_image_reference_analysis_failed') {
+      } else if (code === 'social_image_reference_product_uncertain' || code === 'social_image_reference_style_uncertain' || code === 'social_image_reference_analysis_failed') {
         if (pendingTask) setAwaitingReference(pendingTask);
         setSubmitted(false);
         setError(code === 'social_image_reference_analysis_failed'
           ? '参考图补充分析失败，原任务已保留；请在灵感中心查看原因或更换参考图。'
+          : code === 'social_image_reference_style_uncertain'
+          ? '参考图画面风格尚不明确，原任务已保留；请更换清晰的参考图。'
           : '参考图分析结果不足以可靠判断是否有产品，原任务已保留；请更换参考图。');
       } else setError(cause instanceof Error ? cause.message : '复刻任务保存失败，请重试');
     } }

@@ -25,11 +25,10 @@ const sourceLink = (value: string) => {
   catch { return ''; }
 };
 
-function Metric({ label, value, note, onOpen }: { label: string; value: number | null | undefined; note?: string; onOpen?: () => void }) {
+function Metric({ label, value, onOpen }: { label: string; value: number | null | undefined; note?: string; onOpen?: () => void }) {
   return <div className={`relative min-w-0 rounded-xl border border-border bg-surface px-4 py-3 ${onOpen ? 'transition-colors hover:border-accent/40 hover:bg-surface-2' : ''}`}>
     <dt className="text-xs text-text-secondary">{label}</dt>
     <dd className="mt-2 text-2xl font-semibold tabular-nums text-text-primary">{number(value)}</dd>
-    {note && <p className="mt-1 text-xs text-text-muted">{note}</p>}
     {onOpen && <button type="button" aria-label={`查看${label}明细`} aria-haspopup="dialog" onClick={onOpen} className="absolute inset-0 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-accent"><ArrowUpRight size={15} className="absolute right-3 top-3 text-text-muted" aria-hidden="true"/></button>}
   </div>;
 }
@@ -101,7 +100,7 @@ function OverviewContent({ data, onRefresh, onNavigate, onOpenAccountHealth, wee
       <div className="grid min-w-0 border-t border-border xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.72fr)]">
       <section className="business-overview-today min-w-0 p-4 sm:p-6" aria-labelledby="today-business-title">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><div className="flex items-center gap-2"><h2 id="today-business-title" className="text-lg font-semibold text-text-primary">今日实时数据</h2>{sample && <Tag color="processing">界面预览</Tag>}</div><p className="mt-1 text-xs text-text-secondary">北京时间 {day} · {sample ? '预览时间' : '最近同步'} {stamp(snapshot?.generatedAt)} · {sample ? '仅用于查看界面布局' : '社媒为日级回传，非秒级实时'}</p></div>
+          <div><div className="flex items-center gap-2"><h2 id="today-business-title" className="text-lg font-semibold text-text-primary">今日实时数据</h2>{sample && <Tag color="processing">界面预览</Tag>}</div><p className="mt-2 text-sm text-text-secondary">北京时间 {day} · {sample ? '预览时间' : '最近同步'} {stamp(snapshot?.generatedAt)}</p></div>
           <Button icon={<RefreshCcw size={14}/>} onClick={refresh}>{sample ? '更新预览' : '刷新'}</Button>
         </div>
         <dl className="mt-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
@@ -111,8 +110,8 @@ function OverviewContent({ data, onRefresh, onNavigate, onOpenAccountHealth, wee
           <Metric label="今日主动触达" value={customerReady ? today.outreach : null} note="发送已有回执" onOpen={() => showMetric('今日主动触达', customerReady ? today.outreach : null, '查看主动触达在客户承接流程中的位置。', [['承接环节人数', number(customerReady ? customer.funnel[1] : null)], ['二次触达人数', number(customerReady ? customer.funnel[4] : null)]], 'conversion')}/>
         </dl>
         <div className="mt-5 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(230px,0.85fr)]">
-          <div className="min-w-0">{hasTrend ? <><LsDataChart title="近 7 日播放与互动" description={sample ? '界面预览 · 最近 7 日' : '已有日级回传 · 缺失日期不补零'} kind="line" labels={trends.map(item => item.date)} series={[{ label: '播放', values: trends.map(item => item.views) }, { label: '互动', values: trends.map(item => item.interactions) }]} unit="次" height={160} showDataTable={false}/><Button type="link" size="small" onClick={() => setDetail({ title: '近 7 日播放与互动', summary: '每日播放与互动完整数值。', rows: trends.flatMap(item => [[`${item.date} · 播放`, `${number(item.views)} 次`], [`${item.date} · 互动`, `${number(item.interactions)} 次`]]), preview: Boolean(sample), page: sample ? undefined : 'socialMonitoring' })}>查看每日数据</Button></> : <><h3 className="mb-2 text-sm font-semibold text-text-primary">近 7 日播放与互动</h3><LsIllustratedEmpty icon={ChartNoAxesCombined} title="趋势等待回传" detail="连接社媒账号后，真实日级播放与互动将在这里形成折线。"/></>}</div>
-          <div className="min-w-0">{platforms.length ? <><LsDataChart title="平台播放分布" description={sample ? '界面预览 · 四个平台' : '当前快照中已回传的平台'} kind="bar" horizontal labels={platforms.map(item => item.platform)} series={[{ label: '播放', values: platforms.map(item => item.views) }]} unit="次" height={160} showDataTable={false}/><Button type="link" size="small" onClick={() => setDetail({ title: '平台播放分布', summary: '按已展示的平台逐一比较播放贡献。', rows: platforms.map(item => [item.platform, `${number(item.views)} 次`]), preview: Boolean(sample), page: sample ? undefined : 'socialMonitoring' })}>查看平台明细</Button></> : <><h3 className="mb-2 text-sm font-semibold text-text-primary">平台播放分布</h3><LsIllustratedEmpty icon={Megaphone} title="平台表现待读取" detail="有平台播放回传后，在这里比较各平台贡献。"/></>}</div>
+          <div className="min-w-0">{hasTrend ? <><LsDataChart title="近 7 日播放与互动" description={sample ? '界面预览 · 最近 7 日' : '最近 7 日'} kind="line" labels={trends.map(item => item.date)} series={[{ label: '播放', values: trends.map(item => item.views) }, { label: '互动', values: trends.map(item => item.interactions) }]} unit="次" height={160} showDataTable={false}/><Button type="link" size="small" onClick={() => setDetail({ title: '近 7 日播放与互动', summary: '每日播放与互动完整数值。', rows: trends.flatMap(item => [[`${item.date} · 播放`, `${number(item.views)} 次`], [`${item.date} · 互动`, `${number(item.interactions)} 次`]]), preview: Boolean(sample), page: sample ? undefined : 'socialMonitoring' })}>查看每日数据</Button></> : <><h3 className="mb-2 text-sm font-semibold text-text-primary">近 7 日播放与互动</h3><LsIllustratedEmpty icon={ChartNoAxesCombined} title="趋势等待回传" detail="连接社媒账号后显示趋势"/></>}</div>
+          <div className="min-w-0">{platforms.length ? <><LsDataChart title="平台播放分布" description={sample ? '界面预览 · 四个平台' : '各平台播放'} kind="bar" horizontal labels={platforms.map(item => item.platform)} series={[{ label: '播放', values: platforms.map(item => item.views) }]} unit="次" height={160} showDataTable={false}/><Button type="link" size="small" onClick={() => setDetail({ title: '平台播放分布', summary: '按已展示的平台逐一比较播放贡献。', rows: platforms.map(item => [item.platform, `${number(item.views)} 次`]), preview: Boolean(sample), page: sample ? undefined : 'socialMonitoring' })}>查看平台明细</Button></> : <><h3 className="mb-2 text-sm font-semibold text-text-primary">平台播放分布</h3><LsIllustratedEmpty icon={Megaphone} title="平台表现待读取" detail="账号数据同步后显示分布"/></>}</div>
         </div>
         <div className="mt-5" aria-label="今日数据经营解读">{localLibrary && !data.goal ? <LocalBusinessInterpretation library={localLibrary}/> : interpretation}</div>
       </section>

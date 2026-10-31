@@ -241,6 +241,7 @@ export function createDigitalEmployeeAssistantDecisionRoutes(deps: Pick<DigitalE
                 goalId: goal.id, runId: run.id, status: run.status,
                 taskCount: started.tasks.filter(task => task.run_id === run.id).length,
                 startedAt: run.started_at,
+                pauseReason: run.pause_reason,
               }) : undefined;
               if (!execution) throw new AssistantDecisionCommandError('plan_start_unconfirmed', 409, {
                 message: '启动结果尚未确认，请刷新查看真实运行状态；不会重复创建同一周任务。',

@@ -68,6 +68,7 @@ export interface ImageWorkflowInput {
         mimeType: string;
     } | null>;
     allowPaidCall: () => Promise<boolean>;
+    readReference?: typeof readSocialImageReferenceBytes;
 }
 export const imageRenderRoot = (tenantId: string) => path.resolve(process.cwd(), 'data', 'social-image-renders', enterpriseAssetTenantKey(tenantId));
 export async function prepareImageEvidence(input: ImageWorkflowInput) {
@@ -140,7 +141,7 @@ export async function prepareImageEvidence(input: ImageWorkflowInput) {
         return { ok: true, task, snapshot: projectSocialImageProductionSnapshot(task), manifest };
     }
     const referenceUrl = task.referenceSnapshot?.imageUrls[0] || task.referenceUrls[0] || task.referenceSnapshot?.sourceUrl || '';
-    const reference = referenceUrl ? await readSocialImageReferenceBytes(tenantId, referenceUrl) : null;
+    const reference = referenceUrl ? await (input.readReference || readSocialImageReferenceBytes)(tenantId, referenceUrl) : null;
     let inventory: Awaited<ReturnType<typeof analyzeSocialImageReference>> | null = null;
     if (reference) {
         try {
@@ -154,7 +155,10 @@ export async function prepareImageEvidence(input: ImageWorkflowInput) {
     const referenceReadable = Boolean(reference && inventory);
     const referenceHash = reference?.bytes.length ? createHash('sha256').update(reference.bytes).digest('hex')
         : createHash('sha256').update(referenceUrl || 'missing-reference').digest('hex');
-    const styleObservation = referenceReadable ? await readReferenceStyle({ store, tenantId, sourceRecordId: task.referenceSnapshot?.sourceRecordId, sourceSha256: referenceHash }).catch(() => null) : null;
+    const styleObservation = referenceReadable && task.creationPath === 'viral_replication'
+        ? await readReferenceStyle({ store, tenantId, sourceRecordId: task.referenceSnapshot?.sourceRecordId,
+            sourceSha256: referenceHash }) : null;
+    const styleMissing = referenceReadable && task.creationPath === 'viral_replication' && !styleObservation;
     const imageAssetRef = { objectType: 'social-image-reference', id: task.referenceSnapshot?.sourceRecordId || task.id,
         version: 1, contentHash: referenceHash };
     const referenceValue = {
@@ -166,13 +170,19 @@ export async function prepareImageEvidence(input: ImageWorkflowInput) {
         fingerprint: task.referenceSnapshot?.fingerprint || referenceHash, styleObservation,
     };
     task = await recordSocialImageNodeOutput({ store, tenantId, taskId: task.id, expectedVersion: task.version,
-        nodeId: 'reference_snapshot', status: referenceReadable ? 'completed' : 'blocked', value: referenceValue,
+        nodeId: 'reference_snapshot', status: referenceReadable && !styleMissing ? 'completed' : 'blocked', value: referenceValue,
         inputRefs: [], evidenceRefs: referenceReadable ? [imageAssetRef] : [],
         createdBy: { kind: 'worker', id: 'social_image_reference_probe' },
-        blockingReasons: referenceReadable ? [] : ['social_image_reference_bytes_unreadable'] });
+        blockingReasons: !referenceReadable ? ['social_image_reference_bytes_unreadable']
+            : styleMissing ? ['social_image_reference_style_uncertain'] : [] });
     if (!referenceReadable || !inventory) {
         throw imageCommandFailure(422, { ok: false, code: 'social_image_reference_bytes_unreadable', error: '参考图不可读取，不能执行爆点拆解',
             task, snapshot: projectSocialImageProductionSnapshot(task) });
+    }
+    if (styleMissing) {
+        throw imageCommandFailure(422, { ok: false, code: 'social_image_reference_style_uncertain',
+            error: '参考图视觉类型尚未可靠识别，原任务已保留。', task,
+            snapshot: projectSocialImageProductionSnapshot(task) });
     }
     const snapshotEnvelope = task.productionRuntime!.nodeOutputs.filter(output => output.nodeId === 'reference_snapshot').at(-1)!;
     task = await recordSocialImageNodeOutput({ store, tenantId, taskId: task.id, expectedVersion: task.version,

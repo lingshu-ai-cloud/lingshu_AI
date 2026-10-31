@@ -128,7 +128,7 @@ test('agent product observation admits only a same-tenant exact-byte analyzed re
  const {store,task,readReference}=await setup();
  const source=(await readReference('tenant-a'))!;
  const hash=createHash('sha256').update(source.bytes).digest('hex');
- await store.create('trend_videos',{id:'post-a',tenant_id:'tenant-a',aiAnalysis:JSON.stringify({contentFormat:'image',imageEvidence:{version:2,status:'analyzed',productionLabels:[{sourceSha256:hash,kind:'product_only',confidence:.94,evidence:'仅可见产品与纯色背景'}]}})});
+ await store.create('trend_videos',{id:'post-a',tenant_id:'tenant-a',aiAnalysis:JSON.stringify({contentFormat:'image',imageEvidence:{version:2,status:'analyzed',productionLabels:[{sourceSha256:hash,kind:'product_only',confidence:.94,evidence:'仅可见产品与纯色背景',style:{kind:'advertising',confidence:.92,evidence:'单独产品陈列于设计背景',elements:['centered']}}]}})});
  const changed=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{referenceSnapshot:{sourceRecordId:'post-a',imageUrls:['/reference.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
  assert.equal(changed.kind,'updated');if(changed.kind!=='updated')throw Error('fixture');
  const checked=await confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:changed.task.version,decision:'auto',readReference});
@@ -137,7 +137,7 @@ test('agent product observation admits only a same-tenant exact-byte analyzed re
  const noSource=await updateSocialImageTask(store,'tenant-a',task.id,checked.version,{referenceSnapshot:{imageUrls:['/reference.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
  assert.equal(noSource.kind,'updated');if(noSource.kind!=='updated')throw Error('fixture');
  await assert.rejects(confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:noSource.task.version,decision:'auto',readReference}),/social_image_reference_product_uncertain/);
- await store.create('trend_videos',{id:'post-b',tenant_id:'tenant-a',aiAnalysis:JSON.stringify({contentFormat:'image',imageEvidence:{version:2,status:'analyzed',productionLabels:[{sourceSha256:hash,kind:'shoot_required',productPresence:'absent',confidence:.91,evidence:'仅可见人物，没有产品'}]}})});
+ await store.create('trend_videos',{id:'post-b',tenant_id:'tenant-a',aiAnalysis:JSON.stringify({contentFormat:'image',imageEvidence:{version:2,status:'analyzed',productionLabels:[{sourceSha256:hash,kind:'shoot_required',productPresence:'absent',confidence:.91,evidence:'仅可见人物，没有产品',style:{kind:'imitable',confidence:.91,evidence:'人物纪实构图',elements:['asymmetric']}}]}})});
  const withoutProduct=await updateSocialImageTask(store,'tenant-a',task.id,noSource.task.version,{referenceSnapshot:{sourceRecordId:'post-b',imageUrls:['/reference.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
  assert.equal(withoutProduct.kind,'updated');if(withoutProduct.kind!=='updated')throw Error('fixture');
  const blocked=await confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:withoutProduct.task.version,decision:'auto',readReference});
@@ -151,6 +151,33 @@ test('old analyzed reference without byte-bound labels requests reanalysis witho
  const changed=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{referenceSnapshot:{sourceRecordId:'old-post',imageUrls:['/reference.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
  assert.equal(changed.kind,'updated');if(changed.kind!=='updated')throw Error('fixture');
  await assert.rejects(confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:changed.task.version,decision:'auto',readReference}),/social_image_reference_analysis_outdated/);
+ assert.equal((await store.list('content_execution_jobs')).totalItems,0);
+});
+test('legacy image reference without an image evidence record requests reanalysis',async()=>{
+ const {store,task,readReference}=await setup();
+ await store.create('trend_videos',{id:'legacy-post',tenant_id:'tenant-a',aiAnalysis:JSON.stringify({contentFormat:'image',imageAnalysisStatus:'analyzed'})});
+ const changed=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{referenceSnapshot:{sourceRecordId:'legacy-post',imageUrls:['/reference.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
+ assert.equal(changed.kind,'updated');if(changed.kind!=='updated')throw Error('fixture');
+ await assert.rejects(confirmReferenceProduct({store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:changed.task.version,decision:'auto',readReference}),/social_image_reference_analysis_outdated/);
+ assert.equal((await store.list('content_execution_jobs')).totalItems,0);
+});
+test('a product label without a visual style reuses the existing reanalysis path; uncertain style cannot queue',async()=>{
+ const {store,task,readReference}=await setup();
+ const source=(await readReference('tenant-a'))!;
+ const hash=createHash('sha256').update(source.bytes).digest('hex');
+ const label={sourceSha256:hash,kind:'product_only',productPresence:'present',confidence:.94,evidence:'产品可见'};
+ await store.create('trend_videos',{id:'style-old',tenant_id:'tenant-a',aiAnalysis:JSON.stringify({contentFormat:'image',
+   imageEvidence:{version:2,status:'analyzed',productionLabels:[label]}})});
+ const changed=await updateSocialImageTask(store,'tenant-a',task.id,task.version,{referenceSnapshot:{sourceRecordId:'style-old',
+   imageUrls:['/reference.png'],collectedAt:new Date().toISOString(),fingerprint:''}});
+ assert.equal(changed.kind,'updated');if(changed.kind!=='updated')throw Error('fixture');
+ const input={store,tenantId:'tenant-a',userId:'owner',taskId:task.id,expectedVersion:changed.task.version,
+   decision:'auto' as const,readReference};
+ await assert.rejects(confirmReferenceProduct(input),/social_image_reference_analysis_outdated/);
+ await store.update('trend_videos','style-old',{aiAnalysis:JSON.stringify({contentFormat:'image',
+   imageEvidence:{version:2,status:'analyzed',productionLabels:[{...label,
+     style:{kind:'unknown',confidence:0,evidence:'',elements:[]}}]}})});
+ await assert.rejects(confirmReferenceProduct(input),/social_image_reference_style_uncertain/);
  assert.equal((await store.list('content_execution_jobs')).totalItems,0);
 });
 test('legacy timed-out planning receipt identifies the unknown provider outcome without replaying it',async()=>{
@@ -302,7 +329,7 @@ async function inventoryFor(bytes: Buffer, focal: 'top_left' | 'bottom_right') {
     ocr: async () => [{ text: 'OLD BRAND', bbox: textBox(focal), confidence: .94 }] });
 }
 
-async function preparedViralTask(imageType: 'product_poster' | 'carousel' = 'product_poster', route: 'local' | 'paid' = 'local', language: 'zh' | 'en' = 'zh', style?:'advertising'|'imitable') {
+async function preparedViralTask(imageType: 'product_poster' | 'carousel' = 'product_poster', route: 'local' | 'paid' = 'local', language: 'zh' | 'en' = 'zh', style:'advertising'|'imitable'|null='advertising') {
   const referenceBytes = await referenceImage('top_left', '#123358');
   const inventory = await inventoryFor(referenceBytes, 'top_left');
   const productBytes = await sharp({ create: { width: 180, height: 260, channels: 3, background: '#ffffff' } }).png().toBuffer();
@@ -358,7 +385,7 @@ async function preparedViralTask(imageType: 'product_poster' | 'carousel' = 'pro
 }
 
 test('viral image task freezes the existing GPT Image 2 route without sending a paid request', async () => {
-  const {store,task}=await preparedViralTask('product_poster','paid');
+  const {store,task}=await preparedViralTask('product_poster','paid','zh','advertising');
   const director=await recordSocialImageV3DirectorBrief({store,tenantId:'tenant-a',taskId:task.id,
     expectedVersion:task.version,result:{poster:{headline:'产品 A',subheadline:'简明产品展示',originBadge:'',
       trustBadges:[],sellingPoints:[],process:[],categories:[],bottomBar:[],cta:'联系了解'},
@@ -369,9 +396,9 @@ test('viral image task freezes the existing GPT Image 2 route without sending a 
   assert.equal(planned.layerGraph,undefined);
   const execution=planned.productionRuntime!.nodeOutputs.filter(node=>node.nodeId==='execution_plan').at(-1)!.value as {renderRoute:string;fallbackRoutes:string[]};
   assert.equal(execution.renderRoute,'/api/overseas/studio/fb-poster/render');
-  assert.ok(execution.fallbackRoutes.includes('reference_style_unverified_ad_fallback'));
+  assert.equal(execution.fallbackRoutes.length,0);
   const renderNode=planned.productionRuntime!.nodeOutputs.filter(node=>node.nodeId==='render_spec').at(-1)!.value as {layoutConstraints:Record<string,unknown>};
-  assert.equal(renderNode.layoutConstraints.referenceStyleStrategy,'advertising_fallback.v1');
+  assert.equal(renderNode.layoutConstraints.referenceStyleStrategy,'advertising.v1');
   const spec=planned.productionRuntime!.nodeOutputs.filter(node=>node.nodeId==='render_spec').at(-1)!.value as {idempotencyKey:string};
   const now=new Date().toISOString();
   const patch=await admitSocialImageV3QueuedJob(store,'tenant-a',planned,{status:'generating',step:'generate',
@@ -386,6 +413,16 @@ test('viral image task freezes the existing GPT Image 2 route without sending a 
   }
 });
 
+test('an unclassified reference cannot silently enter the advertising generator', async () => {
+  const {store,task}=await preparedViralTask('product_poster','paid','zh',null);
+  const director=await recordSocialImageV3DirectorBrief({store,tenantId:'tenant-a',taskId:task.id,
+    expectedVersion:task.version,result:{poster:{headline:'产品 A',subheadline:'产品展示',originBadge:'',
+      trustBadges:[],sellingPoints:[],process:[],categories:[],bottomBar:[],cta:'联系了解'},
+      caption:'产品 A 简介',hashtags:[],fieldsToConfirm:[],provenance:'ai'}});
+  await assert.rejects(compileSocialImageV3PaidPlan({store,tenantId:'tenant-a',taskId:director.id,
+    expectedVersion:director.version}),/social_image_reference_style_analysis_required/);
+});
+
 test('frozen plan distinguishes byte-bound imitable style from advertising style',async()=>{
  for(const [style,expected] of [['imitable','reference_emulation.v1'],['advertising','advertising.v1']] as const){
   const {store,task}=await preparedViralTask('product_poster','paid','zh',style);
@@ -394,7 +431,48 @@ test('frozen plan distinguishes byte-bound imitable style from advertising style
   const spec=plan.productionRuntime!.nodeOutputs.filter(node=>node.nodeId==='render_spec').at(-1)!.value as {layoutConstraints:Record<string,unknown>};
   assert.equal(spec.layoutConstraints.referenceStyleStrategy,expected);
   assert.deepEqual(spec.layoutConstraints.referenceStyleElements,style==='imitable'?['soft_light','asymmetric']:[]);
+  if(style==='imitable'){
+   const recipe=spec.layoutConstraints.referenceRenderRecipe as SocialImageCreationTask['replicationRecipe'];
+   assert.ok(recipe?.layoutRegions.some(region=>region.id==='product-stage'));
+   assert.ok(recipe?.layoutRegions.some(region=>region.id==='headline-zone'));
+   assert.equal(plan.renderBrief?.cta,'');
+   assert.equal(plan.renderBrief?.originBadge,'');
+  }else assert.equal(spec.layoutConstraints.referenceRenderRecipe,null);
  }
+});
+
+test('paid worker sends the frozen imitable layout to the scene model and local compositor',async()=>{
+  const {store,task,productBytes,referenceBytes}=await preparedViralTask('product_poster','paid','zh','imitable');
+  const cutoutBytes=await sharp({create:{width:40,height:80,channels:4,background:'#00000000'}})
+    .composite([{input:await sharp({create:{width:20,height:60,channels:4,background:'#00aabbff'}})
+      .png().toBuffer(),left:10,top:10}]).png().toBuffer();
+  const director=await recordSocialImageV3DirectorBrief({store,tenantId:'tenant-a',taskId:task.id,
+    expectedVersion:task.version,result:{poster:{headline:'产品 A',subheadline:'产品展示',originBadge:'示例品牌',
+      trustBadges:[],sellingPoints:['SKU: 1'],process:[],categories:[],bottomBar:['50g'],cta:'联系了解'},
+      caption:'产品 A 简介',hashtags:[],fieldsToConfirm:[],provenance:'ai'}});
+  const plan=await compileSocialImageV3PaidPlan({store,tenantId:'tenant-a',taskId:director.id,
+    expectedVersion:director.version});
+  let submitted=false;
+  await renderSocialImagePaidWorker({store,tenantId:'tenant-a',taskId:plan.id,expectedVersion:plan.version,
+    enterpriseProductAsset:async()=>({name:'产品 A',bytes:productBytes}),allowPaidCall:async()=>true,
+    ports:{enterpriseContext:async()=>`公司名称：示例企业\n产品1：${plan.contentBrief.productNames[0]}`,
+      productCutout:async()=>({bytes:cutoutBytes,materialId:'verified-cutout',contentSha256:digest(cutoutBytes)}),
+      referenceBytes:async()=>({bytes:referenceBytes,mimeType:'image/png'}),
+      submit:async(request:Parameters<typeof import('./socialImagePaidSingleRender.js').submitClaimedSocialImageSingleRender>[0])=>{
+        submitted=true;
+        assert.equal(request.references.length,0);
+        assert.match(request.prompt,/reference-inspired editorial or lifestyle/);
+        assert.match(request.prompt,/measured reference composition/);
+        assert.ok(request.composition?.recipe?.layoutRegions.some(region=>region.id==='product-stage'));
+        assert.equal(request.composition?.poster.cta,'');
+        assert.equal(request.composition?.poster.originBadge,'');
+        const saved=await completeSocialImagePaidJob({store,tenantId:'tenant-a',taskId:request.task.id,
+          jobId:request.jobId,inputHash:request.inputHash,provider:'openai',output:{id:'imitable-candidate',
+            role:'single',label:'主视觉',state:'quality_checking',version:1,materialId:'material-owned',
+            mediaUrl:'/media/fixture.png',contentHash:'a'.repeat(64),qualityChecks:[]}});
+        return {task:saved};
+      }}});
+  assert.equal(submitted,true);
 });
 
 test('structure-only benchmark copy is excluded from the paid planning request', async () => {
@@ -462,6 +540,31 @@ test('bound B2B planning freezes only selected product facts and inquiry copy',a
   assert.doesNotMatch(JSON.stringify(response?.poster),/OEM|100g/);
   const saved=await readSocialImageTask(store,'tenant-a',task.id);
   assert.deepEqual(saved?.renderBrief?.sellingPoints,response?.poster.sellingPoints);
+});
+
+test('imitable reference keeps an editorial image contract even when buyer copy exists',async()=>{
+  const {store,task}=await preparedViralTask('product_poster','paid','zh','imitable');
+  const response=await planStudioPoster({store,tenantId:'tenant-a',
+    body:{imageTaskId:task.id,expectedImageTaskVersion:task.version},
+    enterpriseCtx:async()=>`公司名称：示例企业\n产品1：${task.contentBrief.productNames[0]}`,
+    enterpriseProfile:async()=>({factVersion:{id:'enterprise-facts-v1'},
+      products:{items:[{id:'product-a',sku:'SKU-1',name:'产品 A',brand:'示例品牌',
+        attributes:{净含量:'50g'}}]}} as any),
+    allowPaidCall:async()=>true,
+    callPlanner:async(prompt)=>{
+      assert.match(prompt,/reference-led social image creative director/);
+      assert.match(prompt,/do not add a badge, information card or CTA/);
+      return JSON.stringify({poster:{headline:'产品 A',subheadline:'温和日常',cta:'立即咨询'},
+      caption:'产品 A',hashtags:[]});
+    },
+  });
+  assert.equal(response?.poster.headline,'产品 A');
+  assert.equal(response?.poster.cta,'');
+  assert.equal(response?.poster.originBadge,'');
+  assert.deepEqual(response?.poster.sellingPoints,[]);
+  const saved=await readSocialImageTask(store,'tenant-a',task.id);
+  assert.equal(saved?.renderBrief?.cta,'');
+  assert.equal(saved?.imageTextContract.cta,'');
 });
 
 test('a bound task does not turn broad model marketing claims into confirmed image copy',async()=>{

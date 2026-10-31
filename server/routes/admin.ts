@@ -44,9 +44,33 @@ import {
   setContentExecutionLimit,
   type ContentExecutionLimitScope,
 } from '../contentExecution/durableQueue.js';
+import { developerApiEconomicsSnapshot } from '../billing/paidApiRegistry.js';
+import {
+  adminUsageMonitorSnapshot,
+  AdminUsageMonitorError,
+  type AdminUsageRange,
+} from '../billing/adminUsageMonitor.js';
 
 export const adminRouter = Router();
 adminRouter.use(requireInternalAdmin);
+
+adminRouter.get('/api-economics', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(developerApiEconomicsSnapshot());
+});
+
+adminRouter.get('/api-economics/usage', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const tenantId = String(req.query.tenantId ?? '').trim();
+    const range = String(req.query.range ?? '7d').trim() as AdminUsageRange;
+    res.json(await adminUsageMonitorSnapshot({ tenantId, range }));
+  } catch (error) {
+    const status = error instanceof AdminUsageMonitorError ? error.status : 503;
+    const code = error instanceof AdminUsageMonitorError ? error.code : 'usage_monitor_unavailable';
+    res.status(status).json({ error: code });
+  }
+});
 
 import { cachedAdminInspirationVideos, reconcileStoredVideoAlerts, enrichVideoAlerts, bodyText, type InspirationContentFormat } from './adminAlertSupport.js';
 
