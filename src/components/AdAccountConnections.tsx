@@ -162,12 +162,20 @@ export default function AdAccountConnections({ onTaskImported, onContinue, initi
   };
   const syncAndView = (connection: AdConnection) => run(async current => {
     setResources(null); setCampaigns(null); setLastSync(null);
-    const result = await platformAdsRequest<{ items: Campaign[]; hasMore?: boolean }>(`/connections/${encodeURIComponent(connection.id)}/campaigns`);
+    let checkedConnection = connection;
+    if (connection.provider === 'meta' && connection.authorization?.status !== 'healthy') {
+      const checked = await platformAdsRequest<{ connection: AdConnection }>(`/connections/${encodeURIComponent(connection.id)}/authorization/check`, { method: 'POST' });
+      if (current !== generation.current) return;
+      checkedConnection = checked.connection;
+      setData(value => ({ ...value, items: value.items.map(item => item.id === connection.id ? checked.connection : item) }));
+      directory?.refresh();
+    }
+    const result = await platformAdsRequest<{ items: Campaign[]; hasMore?: boolean }>(`/connections/${encodeURIComponent(checkedConnection.id)}/campaigns`);
     if (current !== generation.current) return;
-    setCampaigns({ connection, ...result });
-    if (connection.provider === 'meta') {
-      if (connection.status !== 'connected' || !connection.timezoneName) throw new Error('平台计划已读取；账户受限或时区未核验，暂无法同步广告组和广告。');
-      await syncResources(connection);
+    setCampaigns({ connection: checkedConnection, ...result });
+    if (checkedConnection.provider === 'meta') {
+      if (checkedConnection.status !== 'connected' || !checkedConnection.timezoneName) throw new Error('平台计划已读取；账户受限或时区未核验，暂无法同步广告组和广告。');
+      await syncResources(checkedConnection);
     }
   });
   const checkAuthorization = (account: AdConnection) => run(async () => {
