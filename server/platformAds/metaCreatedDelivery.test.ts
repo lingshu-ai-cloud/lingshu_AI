@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'meta-created-delivery-'));
+Object.assign(process.env, { LOCAL_STORE_DIR: directory, PB_URL: 'http://127.0.0.1:1', NODE_ENV: 'test', ENABLE_LOCAL_DEV_FALLBACK: 'true', META_ADS_API_VERSION: 'v99.0' });
+const originalFetch = globalThis.fetch;
+try {
+  const { store } = await import('../storage/index.js');
+  const { encryptSecret } = await import('../lib/tenantPlatformApps.js');
+  const { createPlatformAdTask } = await import('./tasks.js');
+  const { getCreatedMetaDelivery } = await import('./metaCreatedDelivery.js');
+  const task = await createPlatformAdTask('tenant', 'user', { name: 'test', video: 'video', market: 'US', budget: 100, goal: '提升网站访问', channels: ['Facebook'] });
+  const connection = await store.create<any>('platform_ad_connections', { tenant_id: 'tenant', provider: 'meta', accountId: '1', currency: 'USD', tokenCipher: encryptSecret('fixture-token'), status: 'connected' });
+  await store.create('platform_ad_executions', { tenant_id: 'tenant', taskId: task.id, connectionId: connection.id, action: 'create', status: 'VERIFIED', resourceId: '101', result: { campaignId: '101', adsetId: '102', adId: '104' }, createdAt: new Date().toISOString() });
+  let wrongParent = false, accountStatus: number | undefined = 1, campaignStatus: string | undefined = 'ACTIVE', adIssues: unknown = [{ error_summary: '付款异常' }];
+  const calls: string[] = [];
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const parsed = new URL(String(url));
+    if (parsed.hostname !== 'graph.facebook.com') return originalFetch(url, init);
+    assert.equal(init?.method, 'GET'); calls.push(parsed.pathname);
+    if (parsed.pathname.endsWith('/act_1')) return Response.json({ id: 'act_1', currency: 'USD', account_status: accountStatus });
+    if (parsed.pathname.endsWith('/101')) return Response.json({ id: '101', account_id: '1', effective_status: campaignStatus });
+    if (parsed.pathname.endsWith('/102')) return Response.json({ id: '102', account_id: '1', campaign_id: wrongParent ? '999' : '101', effective_status: 'ACTIVE' });
+    if (parsed.pathname.endsWith('/104')) return Response.json({ id: '104', account_id: '1', adset_id: '102', effective_status: 'ACTIVE', issues_info: adIssues });
+    throw Error('unexpected provider request');
+  }) as typeof fetch;
+  const result = await getCreatedMetaDelivery('tenant', task.id);
+  assert.equal(result.adIssues, true); assert.deepEqual(result.issueMessages, ['付款异常']);
+  assert.ok(!calls.some(p => p.endsWith('/103')), 'creative is not required to detect delivery issues');
+  await assert.rejects(getCreatedMetaDelivery('foreign', task.id), /未找到/);
+  accountStatus = 9; assert.equal((await getCreatedMetaDelivery('tenant', task.id)).accountStatus, 9, 'provider restriction code is retained');
+  accountStatus = undefined; await assert.rejects(getCreatedMetaDelivery('tenant', task.id), /状态未返回/);
+  accountStatus = 1; campaignStatus = undefined; adIssues = undefined;
+  const missing = await getCreatedMetaDelivery('tenant', task.id);
+  assert.equal(missing.effectiveStatus, 'UNKNOWN'); assert.equal(missing.adIssues, null, 'omitted fields cannot imply healthy delivery');
+  campaignStatus = 'PAUSED'; adIssues = [];
+  const paused = await getCreatedMetaDelivery('tenant', task.id);
+  assert.equal(paused.effectiveStatus, 'PAUSED'); assert.equal(paused.adIssues, false);
+  campaignStatus = 'ACTIVE'; adIssues = [{ error_summary: '付款异常' }];
+  wrongParent = true; await assert.rejects(getCreatedMetaDelivery('tenant', task.id), /层级不匹配/);
+  await store.create('platform_ad_executions', { tenant_id: 'tenant', taskId: task.id, connectionId: connection.id, action: 'pause', status: 'UNKNOWN', createdAt: new Date().toISOString() });
+  await assert.rejects(getCreatedMetaDelivery('tenant', task.id), (error: any) => error.code === 'RECONCILIATION_REQUIRED' && /待核对/.test(error.message));
+  console.log('Created Meta delivery fallback checks hierarchy without creative access');
+} finally { globalThis.fetch = originalFetch; fs.rmSync(directory, { recursive: true, force: true }); }

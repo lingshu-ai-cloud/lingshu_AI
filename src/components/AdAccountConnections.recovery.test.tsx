@@ -6,12 +6,14 @@ const source = readFileSync(new URL('./AdAccountConnections.tsx', import.meta.ur
 const exports: any = {}, cells: any[] = [], effects: (() => void)[] = [], requests: string[] = [];
 let cursor = 0;
 const listeners = new Map<string, () => void>(), responders = new Map<string, () => Promise<any>>();
-const connection = { id: 'saved', accountId: 'act_1', provider: 'meta', name: 'Original', currency: 'USD', timezoneName: 'UTC', status: 'connected', authorization: { status: 'healthy', reasonCode: 'VERIFIED', checkedAt: '2026-10-24T01:00:00.000Z' } };
+const documentListeners = new Map<string, () => void>();
+const connection = { id: 'saved', accountId: 'act_1', provider: 'meta', name: 'Original', currency: 'USD', timezoneName: 'UTC', updatedAt: new Date().toISOString(), status: 'connected', authorization: { status: 'healthy', reasonCode: 'VERIFIED', checkedAt: new Date().toISOString() } };
 const jsx = (type: any, props: any) => ({ type, props });
 const cell = () => cells[cursor++] ?? (cells[cursor - 1] = {});
 vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText, {
   exports, module: { exports }, Error,
-  window: { addEventListener: (name: string, fn: () => void) => listeners.set(name, fn), removeEventListener: (name: string) => listeners.delete(name) },
+  document: { visibilityState: 'visible', addEventListener: (name: string, fn: () => void) => documentListeners.set(name, fn), removeEventListener: (name: string) => documentListeners.delete(name) },
+  window: { setInterval: () => 1, clearInterval() {}, addEventListener: (name: string, fn: () => void) => listeners.set(name, fn), removeEventListener: (name: string) => listeners.delete(name) },
   require(name: string) {
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
     if (name === 'react') return {
@@ -24,6 +26,7 @@ vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.Sc
       requests.push(path);
       if (responders.has(path)) return responders.get(path)!();
       if (path === '/connections') return { items: [connection], capabilities: [{ provider: 'meta', oauthConfigured: true }, { provider: 'tiktok', configured: true }] };
+      if (path.endsWith('/live-status')) return { accountStatus: 1, checkedAt: new Date().toISOString() };
       if (path.endsWith('/authorization/check')) throw new Error('服务暂时无法连接');
       throw new Error(`Unexpected endpoint: ${path}`);
     } };
@@ -44,12 +47,24 @@ let tree = render(); await flush(); tree = render();
 assert.ok(!nodes(tree).some(node => node.type === 'input'), 'regular Meta customers never paste tokens');
 await nodes(tree).find(node => node.type === 'button' && content(node) === '检查连接是否可用').props.onClick(); await flush(); tree = render();
 assert.match(content(tree), /本次授权检查未完成，保留上次检查结果/);
-assert.equal(nodes(tree).find(node => node.type === './AdAuthorizationHealth').props.authorization.checkedAt, connection.authorization.checkedAt);
+assert.match(content(tree), /账户余额暂不可获取/);
+assert.match(content(tree), /账户提醒付款待核验/);
+assert.ok(!content(tree).includes('账户余额0'), 'unknown balance is never represented as zero');
+const priorChecks = requests.filter(path => path.endsWith('/live-status')).length;
+documentListeners.get('visibilitychange')!(); await flush(); tree = render();
+assert.equal(requests.filter(path => path.endsWith('/live-status')).length, priorChecks + 1, 'visible account dialog refreshes status immediately');
+Object.assign(connection.authorization, { expiresAt: new Date(Date.now() + 86400_000).toISOString() });
+documentListeners.get('visibilitychange')!(); await flush(); tree = render();
+assert.match(content(tree), /账户提醒授权即将到期/, 'a long-open dialog updates an approaching expiration');
+Object.assign(connection.authorization, { expiresAt: new Date(Date.now() - 1000).toISOString() });
+documentListeners.get('visibilitychange')!(); await flush(); tree = render();
+assert.match(content(tree), /账户提醒授权已到期/, 'an expired grant cannot keep its earlier healthy label');
+delete (connection.authorization as any).expiresAt;
 assert.ok(!content(tree).includes('广告账户已连接'), 'failed manual check does not show connection success');
 nodes(tree).find(node => node.type === 'button' && content(node) === '重新登录 Meta').props.onClick(); tree = render();
 const guide = nodes(tree).find(node => node.type === './AdMetaConnectionGuide');
 assert.equal(guide.props.targetAccountId, 'act_1');
-assert.equal(requests.length, 2, 'reauthorize opens the guide without starting OAuth or execution');
+assert.ok(!requests.some(path => path.endsWith('/oauth/meta/start')), 'reauthorize opens the guide without starting OAuth or execution');
 console.log('Ad account journey: no Meta token input, failed check preserves timestamp, renewal targets original account passed');
 
 async function switchUser() { listeners.get('auth-changed')!(); tree = render(); await flush(); tree = render(); }
@@ -64,7 +79,7 @@ oldGuide.props.onConnected({ ...connection, name: 'Late OAuth identity' }); tree
 assert.ok(!content(tree).includes('Late OAuth identity'));
 for (const [label, path, reply] of [
   ['更新账户名称、币种和时区', '/connections/saved/verify', { connection: { ...connection, name: 'Late verified identity' } }],
-  ['查看平台已有计划', '/connections/saved/campaigns', { items: [{ id: 'late', name: 'Late campaign identity' }] }],
+  ['同步并查看平台计划', '/connections/saved/campaigns', { items: [{ id: 'late', name: 'Late campaign identity' }] }],
 ] as const) {
   const complete = deferred(path);
   nodes(tree).find(node => node.type === 'button' && content(node) === label).props.onClick();
@@ -77,26 +92,26 @@ nodes(tree).find(node => node.type === 'button' && content(node) === '检查连�
 await switchUser(); completeHealth({ connection: { ...connection, name: 'Late health identity' } }); await flush(); tree = render();
 assert.ok(!content(tree).includes('Late health identity'));
 const completeSync = deferred('sync');
+responders.set('/connections/saved/campaigns', async () => ({ items: [] }));
 let resourceReads = 0;
 responders.set('resources', async () => { resourceReads++; return { items: [], hasMore: false }; });
-nodes(tree).find(node => node.type === 'button' && content(node) === '同步计划、广告组和广告').props.onClick();
+nodes(tree).find(node => node.type === 'button' && content(node) === '同步并查看平台计划').props.onClick(); await flush();
 await switchUser(); completeSync({ counts: { campaign: 1, adset: 1, ad: 1 } }); await flush(); tree = render();
 assert.equal(resourceReads, 0, 'late sync must not fetch old account resources as the new user');
 assert.ok(!content(tree).includes('同步完成'));
 responders.set('sync', async () => ({ counts: { campaign: 0, adset: 0, ad: 0 } }));
-nodes(tree).find(node => node.type === 'button' && content(node) === '同步计划、广告组和广告').props.onClick(); await flush(); await flush(); tree = render();
+nodes(tree).find(node => node.type === 'button' && content(node) === '同步并查看平台计划').props.onClick(); await flush(); await flush(); await flush(); tree = render();
 assert.equal(resourceReads, 1);
+assert.ok(content(tree).includes('平台计划'), 'single action retains campaign list and import access');
+assert.match(content(tree), /要在计划管理中查看已有计划的消耗/);
+await flush(); tree = render();
 const completeResources = deferred('resources');
 nodes(tree).find(node => node.type === 'button' && content(node) === '广告组').props.onClick();
 await switchUser(); completeResources({ items: [{ id: 'late', name: 'Late resource identity' }], hasMore: false }); await flush(); tree = render();
 assert.ok(!content(tree).includes('Late resource identity'));
-// Manual token entry is isolated to the existing non-Meta adapter; a late success must also be discarded.
-nodes(tree).find(node => node.type === 'button' && content(node).includes('TikTok')).props.onClick(); tree = render();
-for (const input of nodes(tree).filter(node => node.type === 'input')) input.props.onChange({ target: { value: input.props.type === 'password' ? 'test-token' : '1234' } });
-tree = render();
-const completeConnect = deferred('/connections');
-nodes(tree).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} });
-responders.delete('/connections'); await switchUser();
-completeConnect({ connection: { ...connection, provider: 'tiktok', name: 'Late manual identity' } }); await flush(); tree = render();
-assert.ok(!content(tree).includes('Late manual identity'));
+for (const name of ['TikTok', 'Google Ads']) {
+  const platform = nodes(tree).find(node => node.type === 'button' && content(node).includes(name));
+  assert.equal(platform.props.disabled, true);
+  assert.match(content(platform), /未开放/);
+}
 console.log('Ad account isolation: late OAuth, verify, campaign, health, sync, resource and manual connection responses discarded passed');

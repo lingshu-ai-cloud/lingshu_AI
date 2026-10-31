@@ -37,7 +37,7 @@ try {
   assert.equal((await fetch(base + '/creative-history-sources', { headers: auth() })).status, 200);
   assert.equal((await fetch(base + '/creative-history?origin=studio&sourceId=ungranted', { headers: auth() })).status, 404);
   assert.equal((await fetch(base + '/creative-sources', { headers: auth() })).status, 200);
-  for (const route of ['/creative-history?origin=studio', '/creative-lifecycle?origin=studio&projectId=missing', '/creative-library', '/creative-library/missing/report', '/creatives/missing/platform-preview', '/creatives/missing/media', '/connections/missing/meta-setup', '/tasks/missing/meta-audit', '/connections/missing/overview/123?days=7']) {
+  for (const route of ['/creative-history?origin=studio', '/creative-lifecycle?origin=studio&projectId=missing', '/creative-library', '/creative-library/missing/report', '/creatives/missing/platform-preview', '/creatives/missing/media', '/connections/missing/meta-setup', '/tasks/missing/meta-audit', '/tasks/missing/imported-delivery', '/tasks/missing/created-delivery', '/connections/missing/overview/123?days=7', '/connections/missing/spend/123?days=7']) {
     assert.equal((await fetch(base + route)).status, 401);
   }
   assert.equal((await fetch(base + '/creative-library', { headers: auth() })).status, 200);
@@ -59,6 +59,8 @@ try {
   await store.create('platform_ad_connections', { id: 'foreign-connection', tenant_id: 'tenant-b', provider: 'meta', accountId: '123', tokenCipher: 'private' });
   assert.equal((await fetch(base + '/connections/foreign-connection/history', { headers: auth() })).status, 404);
   assert.equal((await fetch(base + '/connections/foreign-connection/overview/123?days=7', { headers: auth() })).status, 404);
+  assert.equal((await fetch(base + '/connections/foreign-connection/spend/123?days=7', { headers: auth() })).status, 404);
+  assert.equal((await fetch(base + '/connections/foreign-connection/spend/123?days=365', { headers: auth() })).status, 400);
   assert.equal((await fetch(base + '/connections/foreign-connection/overview/123?days=365', { headers: auth() })).status, 400);
   assert.equal((await fetch(base + '/connections/foreign-connection/history-accounts', { headers: auth() })).status, 404);
   assert.equal((await fetch(base + '/connections/foreign-connection/history/123', { headers: auth() })).status, 404);

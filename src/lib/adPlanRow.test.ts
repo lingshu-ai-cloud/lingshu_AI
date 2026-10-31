@@ -52,3 +52,25 @@ test('query failure preserves last data semantics and maps actionable causes wit
   assert.equal(metricQueryError(Object.assign(new Error('login'), { status: 401 })).summary, '登录状态需要更新');
   assert.equal(metricQueryError(new TypeError('Failed to fetch')).code, 'NETWORK_ERROR');
 });
+
+test('a campaign issue overrides an active ad so blocked delivery is not shown as running', () => {
+  assert.equal(planStatusText(task, { ...data, audit: { ...data.audit!, entries: [{ ...entry, campaignEffectiveStatus: 'WITH_ISSUES', adEffectiveStatus: 'ACTIVE' }] } }), '投放异常');
+});
+
+test('account restriction and uncertain active delivery do not appear as running', () => {
+  assert.equal(planStatusText(task, { ...data, audit: { ...data.audit!, entries: [{ ...entry, accountStatus: 9, adEffectiveStatus: 'ACTIVE' }] } }), '账户受限');
+  assert.equal(planStatusText(task, { ...data, audit: { ...data.audit!, entries: [{ ...entry, accountStatus: 1, adEffectiveStatus: 'ACTIVE' }] } }), '已启用 · 投放待核验');
+});
+
+test('an imported campaign with ad-level issues is not shown as merely enabled', () => {
+  const imported = { ...task, creationSource: 'platform_import' } as typeof task;
+  const delivery = { effectiveStatus: 'ACTIVE', accountStatus: 1, adIssues: true, issueMessages: [] };
+  assert.equal(planStatusText(imported, { ...data, audit: undefined, delivery }), '投放异常');
+  assert.equal(planStatusText(imported, { ...data, audit: undefined, delivery: { ...delivery, adIssues: null } }), '已启用 · 投放待核验');
+});
+test('imported campaign uses verified provider status and never stale data', () => {
+  const imported = { ...task, creationSource: 'platform_import' } as PlatformAdTask;
+  const delivery = { accountStatus: 9, effectiveStatus: 'ACTIVE', adIssues: null, issueMessages: [] };
+  assert.equal(planStatusText(imported, { errors: [], delivery }), '账户受限');
+  assert.equal(planStatusText(imported, { errors: [], delivery, deliveryError: true }), '平台状态读取失败');
+});

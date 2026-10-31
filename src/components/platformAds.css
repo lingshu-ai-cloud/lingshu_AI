@@ -1532,7 +1532,8 @@
 .ads-plan-reports { margin-bottom: var(--ls-space-24); }
 .ads-plan-filter-scroll { min-width: 0; overflow-x: auto; padding-block: 2px; }
 .ads-plan-filter-scroll:focus-visible { outline: 2px solid var(--ant-color-primary); outline-offset: 2px; }
-.ads-plan-filters { display: grid; grid-template-columns: minmax(176px, 1.6fr) repeat(4, minmax(108px, 1fr)) max-content; align-items: center; gap: var(--ls-space-8); width: max(100%, 760px); }
+.ads-plan-filters { display: grid; grid-template-columns: minmax(176px, 1.6fr) repeat(5, minmax(108px, 1fr)) max-content; align-items: center; gap: var(--ls-space-8); width: max(100%, 880px); }
+.ads-plan-filters.has-date { grid-template-columns: minmax(176px, 1.6fr) repeat(5, minmax(108px, 1fr)) minmax(140px, 1fr) max-content; width: max(100%, 1030px); }
 .ads-plan-filters .ant-input-search, .ads-plan-filters .ant-select { width: 100%; min-width: 0; }
 .ads-plan-filters > .ant-btn, .ads-plan-filters .ant-select { height: 36px; }
 .ads-plan-filters .ant-input-affix-wrapper, .ads-plan-filters .ant-input-group-addon .ant-btn { height: 36px; }
@@ -1575,7 +1576,8 @@
 .ads-compact-plan-table .ads-history-media { display: block; padding: 0; }
 .ads-compact-plan-table .ads-history-thumbnail, .ads-compact-plan-table .ls-media-state-frame { width: 64px; height: 40px; min-height: 40px; }
 .ads-plan-thumbnail-empty { display: grid; place-items: center; width: 64px; height: 40px; background: var(--ant-color-fill-secondary); color: var(--ant-color-text-secondary); font-size: 12px; }
-.ads-plan-advice-summary { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; }
+.ads-plan-advice-summary { white-space: normal; overflow-wrap: break-word; line-height: 1.5; }
+.ads-compact-plan-table .ads-plan-advice-summary + small { white-space: normal; overflow: visible; overflow-wrap: break-word; }
 .ads-plan-row-panel { padding: 8px 12px; display: grid; gap: 12px; }
 .ads-plan-row-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ads-inline-budget { display: grid; gap: 12px; }
@@ -1604,3 +1606,5 @@
 .ads-metric-query-details { max-width: 340px; display: grid; gap: 6px; }
 .ads-metric-query-details p { margin: 0; }
 .ads-metric-query-details small { display: block; color: var(--ant-color-text-secondary); }
+
+.ads-account-spend { margin: 8px 0 12px; color: var(--ant-color-text-secondary); font-size: 12px; line-height: 1.6; overflow-wrap: break-word; }
