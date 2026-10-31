@@ -34,6 +34,9 @@ assert.equal(tree.props.action, undefined, 'the banner does not duplicate the pa
 const beforeVisibility = statusCalls; onVisible!(); await flush(); tree = render();
 assert.equal(statusCalls, beforeVisibility + 1, 'returning to the page refreshes status immediately');
 assert.equal(tree.props.title, '测试账户：账户或授权需要处理，广告可能无法投放');
+response = Promise.resolve({ accountStatus: 1 });
+scope = 'user-healthy'; onChange!(); tree = render(); await flush(); tree = render();
+assert.equal(tree, null, 'an unchecked authorization record does not turn a healthy live account status into a query failure');
 response = new Promise(resolve => { resolveStatus = resolve; });
 scope = 'user-two'; onChange!(); tree = render(); assert.equal(tree, null);
 const resolveOld = resolveStatus; response = new Promise(() => {});

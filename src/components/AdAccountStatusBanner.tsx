@@ -23,9 +23,8 @@ export default function AdAccountStatusBanner({ accounts }: { accounts: AdDirect
     const check = async () => {
       const current = ++run;
       let grants: Array<{ id: string; authorization?: { status: string; checkedAt?: string } }> = [];
-      let grantReadFailed = false;
       try { grants = (await platformAdsRequest<{ items: typeof grants }>('/connections', { signal: abort.signal })).items; }
-      catch { grantReadFailed = true; }
+      catch { /* Live account status remains authoritative for this banner. */ }
       const outcomes = await Promise.all(connections.map(async item => {
         try {
           const result = await platformAdsRequest<{ accountStatus: number }>(`/connections/${encodeURIComponent(item.localConnectionId!)}/live-status`, { signal: abort.signal });
@@ -34,10 +33,11 @@ export default function AdAccountStatusBanner({ accounts }: { accounts: AdDirect
         } catch { return { name: item.name, status: null, auth: grants.find(grant => grant.id === item.localConnectionId)?.authorization }; }
       }));
       if (stopped || abort.signal.aborted || run !== current || authHeader().Authorization !== identity) return;
-      setState({ scope, restricted: outcomes.filter(item => item.status != null && item.status !== 1 || ['expiring', 'expired', 'revoked', 'missing_permissions'].includes(item.auth?.status || '')).map(item => item.name), failed: outcomes.filter(item => {
-        const checked = Date.parse(item.auth?.checkedAt || '');
-        return item.status == null || !item.auth || item.auth.status === 'unknown' || item.auth.status === 'healthy' && (!Number.isFinite(checked) || Date.now() - checked > 24 * 3600_000);
-      }).length + (grantReadFailed ? 1 : 0) });
+      setState({
+        scope,
+        restricted: outcomes.filter(item => item.status != null && item.status !== 1 || ['expiring', 'expired', 'revoked', 'missing_permissions'].includes(item.auth?.status || '')).map(item => item.name),
+        failed: outcomes.filter(item => item.status == null).length,
+      });
     };
     void check();
     const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void check(); }, 5 * 60_000);
