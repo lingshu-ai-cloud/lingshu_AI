@@ -1,4 +1,6 @@
 .ad-connect { color: var(--ant-color-text); display: grid; gap: 20px; min-width: 0; }
+.ad-account-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: center; gap: 12px; }
+.ad-account-toolbar .ant-select { width: 100%; min-width: 0; }
 .ad-connect p { line-height: 1.65; }
 .ad-connect-platforms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .ad-connect-platforms button { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 16px 12px; border: 1px solid var(--ant-color-border); border-radius: 6px; background: var(--ant-color-bg-container); text-align: left; cursor: pointer; min-width: 0; }
@@ -21,7 +23,7 @@
 .ad-connect-manual-toggle { justify-self: start; margin-top: 4px; }
 .ad-connect-success { border: 1px solid var(--ant-color-border-secondary); border-radius: 8px; background: var(--ant-color-bg-container); display: grid; gap: 12px; padding: 24px; }
 .ad-connect-success > svg { color: var(--ant-color-success); }
-.ad-connected-accounts { border-top: 1px solid var(--ant-color-border-secondary); padding-top: 24px; }
+.ad-connected-accounts { min-width: 0; }
 .ad-connected-accounts h3 { display: flex; align-items: center; gap: 7px; margin-bottom: 12px; }
 .ad-connected-accounts h3 span { font-size: 12px; color: var(--ant-color-text-secondary); }
 .ad-connect .ads-account-option { padding: 13px; flex-wrap: wrap; }
@@ -45,4 +47,4 @@
 .ad-saved-account-maintenance { border-top: 1px solid var(--ant-color-border-secondary); padding-top: 12px; }
 .ad-saved-account-maintenance-items { display: grid; gap: 12px; padding-top: 12px; }
 .ad-saved-account-maintenance-items p { margin: 4px 0 0; color: var(--ant-color-text-secondary); font-size: 12px; }
-@media (max-width: 480px) { .ad-saved-account { padding: 16px; } .ad-saved-account-actions > button { width: 100%; justify-content: center; } }
+@media (max-width: 480px) { .ad-account-toolbar { grid-template-columns: 1fr; } .ad-account-toolbar > .ant-btn { width: 100%; } .ad-saved-account { padding: 16px; } .ad-saved-account-actions > button { width: 100%; justify-content: center; } }

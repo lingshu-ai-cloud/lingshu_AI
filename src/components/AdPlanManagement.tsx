@@ -29,7 +29,7 @@ export default function AdPlanManagement({ tasks, loading, error, onOpen, onUpda
   useEffect(() => { const timer = window.setInterval(() => { if (document.visibilityState === 'visible' && !busy && !budgetBusy) setRefresh(v => v + 1); }, 60_000); return () => window.clearInterval(timer); }, [busy, budgetBusy]);
   const filter = (setter: (value: string) => void) => (value: string) => { if (budgetBusy) return; setter(value); setPage(1); setSelectedId(null); };
   return <section className="ads-plan-management" aria-label="投放计划管理">
-    {!previewMode && onOpenAccounts && <AdAccountStatusBanner accounts={directory.items} onOpen={onOpenAccounts}/>}
+    {!previewMode && onOpenAccounts && <AdAccountStatusBanner accounts={directory.items}/>}
     <div className="ads-plan-filter-scroll" role="group" aria-label="计划筛选工具栏" tabIndex={0}><div className={`ads-plan-filters${periodMode === 'date' ? ' has-date' : ''}`}>
       <Input.Search disabled={budgetBusy} aria-label="搜索投放计划" placeholder="搜索计划" value={search} allowClear onChange={e => filter(setSearch)(e.target.value)}/>
       <Select disabled={budgetBusy} aria-label="筛选计划目标" value={goal} onChange={filter(setGoal)} options={[{ value: '', label: '全部目标' }, ...[...new Set(tasks.map(t => t.goal))].map(value => ({ value, label: value }))]}/>

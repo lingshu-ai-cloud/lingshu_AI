@@ -33,6 +33,7 @@ vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.Sc
     } };
     if (name === '../lib/auth') return { authHeader: () => ({ Authorization: 'user' }), AUTH_TOKEN_CHANGED_EVENT: 'auth-changed' };
     if (name === 'lucide-react') return { CheckCircle2: 'CheckCircle2', Link2: 'Link2' };
+    if (name === 'antd') return { Button: 'Button', Select: 'Select' };
     if (name === './SocialPlatformIcon') return { SocialPlatformIcon: 'SocialPlatformIcon' };
     if (name === '../lib/adAccountDirectoryContext') return { AdAccountDirectoryContext: {} };
     if (name.endsWith('.css')) return {};
@@ -45,6 +46,9 @@ const nodes = (node: any): any[] => Array.isArray(node) ? node.flatMap(nodes) : 
 const content = (node: any): string => Array.isArray(node) ? node.map(content).join('') : node?.props ? content(node.props.children) : typeof node === 'string' ? node : '';
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 let tree = render(); await flush(); tree = render();
+assert.ok(nodes(tree).some(node => node.type === 'Select' && node.props['aria-label'] === '选择已保存广告账户'));
+assert.ok(nodes(tree).some(node => node.type === 'Button' && content(node) === '绑定账户'));
+assert.ok(!content(tree).includes('登录 Facebook 并授权'), 'binding flow stays collapsed by default');
 assert.ok(!nodes(tree).some(node => node.type === 'input'), 'regular Meta customers never paste tokens');
 await nodes(tree).find(node => node.type === 'button' && content(node) === '检查连接是否可用').props.onClick(); await flush(); tree = render();
 assert.match(content(tree), /本次授权检查未完成，保留上次检查结果/);
@@ -67,6 +71,7 @@ assert.match(content(tree), /账户提醒授权已到期/, 'an expired grant can
 delete (connection.authorization as any).expiresAt;
 assert.ok(!content(tree).includes('广告账户已连接'), 'failed manual check does not show connection success');
 nodes(tree).find(node => node.type === 'button' && content(node) === '重新登录 Meta').props.onClick(); tree = render();
+assert.ok(content(tree).includes('收起绑定'));
 const guide = nodes(tree).find(node => node.type === './AdMetaConnectionGuide');
 assert.equal(guide.props.targetAccountId, 'act_1');
 assert.ok(!requests.some(path => path.endsWith('/oauth/meta/start')), 'reauthorize opens the guide without starting OAuth or execution');
@@ -114,6 +119,7 @@ const completeResources = deferred('resources');
 nodes(tree).find(node => node.type === 'button' && content(node) === '广告组').props.onClick();
 await switchUser(); completeResources({ items: [{ id: 'late', name: 'Late resource identity' }], hasMore: false }); await flush(); tree = render();
 assert.ok(!content(tree).includes('Late resource identity'));
+nodes(tree).find(node => node.type === 'Button' && content(node) === '绑定账户').props.onClick(); tree = render();
 for (const name of ['TikTok', 'Google Ads']) {
   const platform = nodes(tree).find(node => node.type === 'button' && content(node).includes(name));
   assert.equal(platform.props.disabled, true);

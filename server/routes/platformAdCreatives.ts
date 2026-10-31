@@ -17,6 +17,7 @@ import { getAdSourceLifecycle, listAdSourceCatalog, parseAdSourceIdentity } from
 import { listExternalHistorySources, openExternalHistoryVideo } from '../platformAds/externalHistory.js';
 import { listMaterialDirectory } from '../platformAds/materialDirectory.js';
 import { readSelectableAdMaterial } from '../platformAds/creativeSelection.js';
+import { cachedVideoThumbnail } from '../platformAds/videoThumbnail.js';
 export const platformAdCreativesRouter = Router();
 platformAdCreativesRouter.use(requireAuth, requireAdWriteAccess);
 platformAdCreativesRouter.get('/connections/:id/meta-targeting-options', async (req, res) => {
@@ -34,6 +35,14 @@ platformAdCreativesRouter.get('/creative-selection', async (req, res) => {
 platformAdCreativesRouter.get('/creative-selection/media', async (req, res) => {
   try { const { bytes } = await readSelectableAdMaterial((res.locals as AuthLocals).tenantId, req.query); res.setHeader('Cache-Control', 'private, no-store'); res.setHeader('X-Content-Type-Options', 'nosniff'); res.type('video/mp4').send(bytes); } catch (error) { failure(res, error); }
 });
+platformAdCreativesRouter.get('/creative-selection/thumbnail', async (req, res) => {
+  try {
+    const tenantId = (res.locals as AuthLocals).tenantId, { version, ...identityQuery } = req.query;
+    const key = `${tenantId}:selection:${String(version || '')}:${JSON.stringify(identityQuery)}`;
+    const bytes = await cachedVideoThumbnail(key, async () => (await readSelectableAdMaterial(tenantId, identityQuery)).bytes);
+    res.setHeader('Cache-Control', 'private, max-age=86400'); res.setHeader('X-Content-Type-Options', 'nosniff'); res.type('image/jpeg').send(bytes);
+  } catch (error) { failure(res, error); }
+});
 platformAdCreativesRouter.get('/creative-history', async (req, res) => {
   try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await listAdSourceCatalog((res.locals as AuthLocals).tenantId, req.query)); } catch (error) { failure(res, error); }
 });
@@ -44,6 +53,15 @@ platformAdCreativesRouter.get('/creative-history/media', async (req, res) => {
     const bytes = await openExternalHistoryVideo((res.locals as AuthLocals).tenantId, identity.sourceId, identity.projectId);
     res.setHeader('Cache-Control', 'private, no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
     res.type('video/mp4').send(bytes);
+  } catch (error) { failure(res, error); }
+});
+platformAdCreativesRouter.get('/creative-history/thumbnail', async (req, res) => {
+  try {
+    const tenantId = (res.locals as AuthLocals).tenantId, { version, ...identityQuery } = req.query, identity = parseAdSourceIdentity(identityQuery);
+    if (!identity.sourceId || !identity.projectId || identity.origin !== 'studio') throw new PlatformAdCreativeError('请选择原企业素材', 400);
+    const key = `${tenantId}:history:${identity.sourceId}:${identity.projectId}:${String(version || '')}`;
+    const bytes = await cachedVideoThumbnail(key, () => openExternalHistoryVideo(tenantId, identity.sourceId!, identity.projectId!));
+    res.setHeader('Cache-Control', 'private, max-age=86400'); res.setHeader('X-Content-Type-Options', 'nosniff'); res.type('image/jpeg').send(bytes);
   } catch (error) { failure(res, error); }
 });
 platformAdCreativesRouter.get('/creative-lifecycle', async (req, res) => {

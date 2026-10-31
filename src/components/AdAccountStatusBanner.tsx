@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button } from 'antd';
+import { Alert } from 'antd';
 import { AUTH_TOKEN_CHANGED_EVENT, authHeader } from '../lib/auth';
 import { platformAdsRequest } from '../lib/platformAds';
 import type { AdDirectoryAccount } from '../../shared/adAccountDirectory';
 
 type State = { scope: string; restricted: string[]; failed: number };
 /** Read-only account status check while the plans view is visible. */
-export default function AdAccountStatusBanner({ accounts, onOpen }: { accounts: AdDirectoryAccount[]; onOpen: () => void }) {
+export default function AdAccountStatusBanner({ accounts }: { accounts: AdDirectoryAccount[] }) {
   const [identity, setIdentity] = useState(authHeader().Authorization || '');
   const [state, setState] = useState<State>({ scope: '', restricted: [], failed: 0 });
   const connections = accounts.filter(a => a.provider === 'meta' && a.localConnectionId);
@@ -47,5 +47,5 @@ export default function AdAccountStatusBanner({ accounts, onOpen }: { accounts: 
   }, [scope]);
   if (state.scope !== scope || !connections.length || !state.restricted.length && !state.failed) return null;
   const message = state.restricted.length ? `${state.restricted.join('、')}：账户或授权需要处理，广告可能无法投放` : '暂时无法检查广告账户状态';
-  return <Alert type="warning" showIcon title={message} description={state.failed && state.restricted.length ? '部分账户状态暂未读到。' : undefined} action={<Button size="small" onClick={onOpen}>查看账户</Button>}/>;
+  return <Alert type="warning" showIcon title={message} description={state.failed && state.restricted.length ? '部分账户状态暂未读到。' : undefined}/>;
 }

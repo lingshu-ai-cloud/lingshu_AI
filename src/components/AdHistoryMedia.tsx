@@ -18,16 +18,24 @@ export default function AdHistoryMedia({ source, refresh, onSelect, blockedReaso
   const [url, setUrl] = useState(''), [cover, setCover] = useState(''), [previewError, setPreviewError] = useState(false), [retry, setRetry] = useState(0);
   const query = historyQuery(source);
   useEffect(() => {
+    if (thumbnailOnly) return;
     if (mediaOnly && !source.sourceId) return;
     const c = new AbortController(); setData(null); setFailed(false);
     platformAdsRequest<AdSourceLifecycle>(`/creative-lifecycle?${query}`, { signal: c.signal }).then(r => { if (!c.signal.aborted) setData(r); })
       .catch(() => { if (!c.signal.aborted) setFailed(true); });
     return () => c.abort();
-  }, [query, refresh, mediaOnly]);
-  const available = source.verifiedSource && (!!source.sourceId ? !!data?.fileEvidence?.length && data.fileEvidence.every(f => f.state === 'verified') : true);
+  }, [query, refresh, mediaOnly, thumbnailOnly]);
+  const available = source.verifiedSource && (thumbnailOnly || !!source.sourceId ? thumbnailOnly || !!data?.fileEvidence?.length && data.fileEvidence.every(f => f.state === 'verified') : true);
   useEffect(() => {
     const c = new AbortController(); let blobUrl = ''; setUrl(''); setCover(''); setPreviewError(false); setSelection(null); setSelectionError('');
     if (available) void (async () => {
+      if (thumbnailOnly) {
+        const thumbnailQuery = `${query}&version=${encodeURIComponent(source.sha256)}`;
+        const r = await fetch(`/api/overseas/platform-ads/${source.sourceId ? 'creative-history' : 'creative-selection'}/thumbnail?${thumbnailQuery}`, { headers: authHeader(), signal: c.signal });
+        if (!r.ok || !r.headers.get('content-type')?.startsWith('image/jpeg')) throw new Error('preview unavailable');
+        const blob = await r.blob(); if (c.signal.aborted) return;
+        blobUrl = URL.createObjectURL(blob); setCover(blobUrl); return;
+      }
       if (!source.sourceId) {
         try {
           const choice = await platformAdsRequest<AdMaterialSelection>(`/creative-selection?${query}`, { signal: c.signal });
@@ -41,9 +49,9 @@ export default function AdHistoryMedia({ source, refresh, onSelect, blockedReaso
       blobUrl = URL.createObjectURL(blob); setUrl(blobUrl);
     })().catch(e => { if (!c.signal.aborted) { setPreviewError(true); setSelectionError(e instanceof Error ? e.message : '素材暂不可用'); } });
     return () => { c.abort(); if (blobUrl) URL.revokeObjectURL(blobUrl); };
-  }, [query, available, refresh, retry]);
+  }, [query, available, refresh, retry, thumbnailOnly, source.sourceId, source.sha256]);
   const missing = data?.fileEvidence?.some(f => f.state === 'missing');
-  const fileLabel = missing ? '原始文件缺失' : failed ? '素材状态暂不可用' : previewError ? '封面暂不可用' : available ? '读取真实首帧' : data ? '尚无可预览成片' : '核对素材';
+  const fileLabel = missing ? '原始文件缺失' : failed ? '素材状态暂不可用' : previewError ? '封面暂不可用' : available ? '读取封面' : data ? '尚无可预览成片' : '核对素材';
   const adLabel = !data ? (failed ? '投放关联待核对' : '核对投放关联') : !data.ads.length ? '未关联广告（本系统）' : data.ads.some(a => a.error || !a.report) ? '投放数据暂不可用'
     : data.ads.every(a => !a.report?.totals) ? '平台暂无数据' : '已有投放数据';
   const metaStatuses = [...new Set((data?.ads || []).flatMap(ad => ad.report ? [ad.report.adEffectiveStatus] : []))];

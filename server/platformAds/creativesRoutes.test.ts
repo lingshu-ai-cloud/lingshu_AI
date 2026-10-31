@@ -26,12 +26,13 @@ const auth = (role = 'admin') => ({ Authorization: `Bearer ${issueLocalIdentityT
 try {
   assert.equal((await fetch(base + '/creative-sources')).status, 401);
   assert.equal((await fetch(base + '/creative-history-sources')).status, 401);
-  for (const route of ['/creative-selection', '/creative-selection/media']) {
+  for (const route of ['/creative-selection', '/creative-selection/media', '/creative-selection/thumbnail']) {
     assert.equal((await fetch(base + route + '?origin=social&sourceTaskId=missing&artifactId=missing')).status, 401);
     assert.equal((await fetch(base + route + '?origin=social&sourceTaskId=missing&artifactId=missing&path=private', { headers: auth() })).status, 400);
     assert.equal((await fetch(base + route + '?origin=studio&sourceId=ungranted&projectId=missing', { headers: auth() })).status, 409);
   }
   assert.equal((await fetch(base + '/creative-history/media?origin=studio&sourceId=ungranted&projectId=missing')).status, 401);
+  assert.equal((await fetch(base + '/creative-history/thumbnail?origin=studio&sourceId=ungranted&projectId=missing')).status, 401);
   assert.equal((await fetch(base + '/creative-history/media?origin=studio&sourceId=ungranted&projectId=missing', { headers: auth() })).status, 404);
   assert.equal((await fetch(base + '/creative-history/media?origin=studio&sourceId=ungranted&projectId=missing&path=private', { headers: auth() })).status, 400);
   assert.equal((await fetch(base + '/creative-history-sources', { headers: auth() })).status, 200);

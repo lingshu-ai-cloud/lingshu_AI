@@ -54,6 +54,9 @@ const period = nodes(tree).find(n => n.type === 'Select' && n.props['aria-label'
 period.props.onChange('date'); tree = render();
 assert.ok(nodes(tree).some(n => n.type === 'DatePicker'));
 table = nodes(tree).find(n => n.type === 'Table');
+const advice = table.props.columns.find((c: any) => c.key === 'advice').render(null, task);
+assert.equal(nodes(advice).find(n => n.props?.className === 'ads-plan-advice-summary').props.children, '建议');
+assert.match(advice.props.title, /建议/, 'the compact cell preserves the complete advice for inspection');
 assert.equal(table.props.columns.find((c: any) => c.key === 'metrics').render(null, task), '请选择统计日期');
 assert.ok(nodes(table.props.columns.find((c: any) => c.key === 'budget').render(null, task)).some(n => n.type === 'small' && n.props.children === '请选择统计日期'));
 console.log('Plan row opens and closes its right-hand details without expanding the table');
