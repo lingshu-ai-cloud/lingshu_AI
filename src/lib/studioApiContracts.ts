@@ -504,4 +504,3 @@ export interface MaterialSegment {
   needsReview: boolean;
   manualConfirmed?: boolean;
 }
-

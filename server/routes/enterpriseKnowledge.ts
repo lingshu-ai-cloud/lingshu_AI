@@ -389,4 +389,3 @@ export function allPackPreviews(profile: EnterpriseProfile) {
   const scenarios = Object.keys(SCENARIO_LABELS) as PackScenario[];
   return industries.flatMap(industry => scenarios.map(scenario => buildPackPreview(profile, industry, scenario)));
 }
-

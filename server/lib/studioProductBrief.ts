@@ -66,4 +66,3 @@ function conservativeClaim(value: string): string {
     .replace(/最耐用|最便宜|全网|保证/g, '可按需求确认')
     .trim();
 }
-

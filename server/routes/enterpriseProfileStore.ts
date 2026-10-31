@@ -618,4 +618,3 @@ export function readEnterpriseProfile(): EnterpriseProfile {
 export function text(value: unknown): string {
   return value == null ? '' : String(value).trim();
 }
-

@@ -214,4 +214,3 @@ export async function listAll<T extends { id: string }>(dataStore: DataStore, co
   }
   return rows;
 }
-

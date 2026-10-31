@@ -52,4 +52,3 @@ export const SYSTEM_THEME_SCENES: Record<SocialContentThemeId, ReadonlyArray<{
     { nodeId: 'system-closing', shotFunction: '案例收束', subject: '真实案例证据', action: '提醒以授权资料为准' },
   ],
 };
-

@@ -158,4 +158,3 @@ export async function collectProductionAssets(tenantId: string, profile: Enterpr
   const byId = new Map([...localMaterials(tenantId, inventory.items.filter(item => !item.id.startsWith('pb-')), products), ...cloudAssets, ...enterpriseAssets(profile, tenantId)].map(asset => [asset.id, asset]));
   return [...byId.values()].filter(assetEligible);
 }
-

@@ -57,5 +57,3 @@ export function runReviewSummary(run: RunRecord, tasks: TaskRecord[], businessSn
     sourceStatus: 'real_business_aggregation',
   };
 }
-
-

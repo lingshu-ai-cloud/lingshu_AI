@@ -28,4 +28,3 @@ export function planSocialImageRenderUnits(input: {
     idempotencyKey: count === 1 ? input.idempotencyKey : `${input.idempotencyKey}:unit:${index + 1}`,
   }));
 }
-

@@ -382,4 +382,3 @@ export function WeeklyPlanDetailsDrawer({
     </Modal>
   </>;
 }
-

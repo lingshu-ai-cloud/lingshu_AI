@@ -150,4 +150,3 @@ export interface SocialReplicationJob {
 }
 /** Product-language alias used by the PRD and API documentation. */
 export type ReplicationJob = SocialReplicationJob;
-
