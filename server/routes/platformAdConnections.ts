@@ -90,6 +90,21 @@ platformAdConnectionsRouter.get('/connections/:id/campaigns', async (req, res) =
     res.json({ items, hasMore: Boolean(data.paging?.next || data.nextPageToken || data.page_info?.total_page > 1) });
   } catch (error) { failure(res, error); }
 });
+// Read-only live account status; never modifies authorization or billing.
+platformAdConnectionsRouter.get('/connections/:id/live-status', async (req, res) => {
+  try {
+    const tenantId = (res.locals as AuthLocals).tenantId;
+    const { connection, accessToken } = await getConnectionCredential(tenantId, req.params.id);
+    if (connection.provider !== 'meta') throw new AdProviderError('该平台暂不支持账户状态读取', 'NOT_SUPPORTED');
+    const account = await new MetaAdsAdapter(accessToken).account(connection.accountId);
+    const id = String(account.account_id || account.id || '').replace(/^act_/, '');
+    if (id !== connection.accountId.replace(/^act_/, '') || account.currency !== connection.currency || !Number.isInteger(account.account_status)) throw new AdProviderError('平台账户状态未核验', 'INVALID_RESPONSE');
+    const current = (await getConnectionCredential(tenantId, req.params.id)).connection;
+    const fingerprint = (value: typeof connection) => JSON.stringify([value.provider, value.accountId, value.currency, value.status, value.tokenCipher, value.updatedAt, value.authorization]);
+    if (fingerprint(current) !== fingerprint(connection)) throw new AdProviderError('广告账户授权已变化，请重新查询', 'AUTH_CHECK_STALE');
+    res.json({ accountStatus: account.account_status, checkedAt: new Date().toISOString() });
+  } catch (error) { failure(res, error); }
+});
 platformAdConnectionsRouter.post('/connections/:id/authorization/check', async (req, res) => {
   try { res.json({ connection: await checkConnectionAuthorization((res.locals as AuthLocals).tenantId, req.params.id) }); }
   catch (error) { failure(res, error); }

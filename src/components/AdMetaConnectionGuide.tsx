@@ -44,10 +44,10 @@ export default function AdMetaConnectionGuide({ configured, targetAccountId, onC
     return () => abort.abort();
   }, [scope, configured, restoreAttempt]);
   useEffect(() => {
-    if (targetAccountId && session?.status === 'ready') {
-      const target = session.accounts.find(a => a.id.replace(/^act_/, '') === targetAccountId.replace(/^act_/, '') && a.accountStatus === 1);
-      setAccount(target?.id || ''); setPage('');
-    }
+    if (session?.status !== 'ready') return;
+    const eligible = session.accounts.filter(a => a.accountStatus === 1 && (!targetAccountId || a.id.replace(/^act_/, '') === targetAccountId.replace(/^act_/, '')));
+    if (eligible.length === 1) { setAccount(eligible[0].id); setPage(''); setStep(2); }
+    else { setAccount(''); setPage(''); }
   }, [targetAccountId, session?.sessionId, session?.status]);
   const cancel = async () => {
     if (!session || busy) return;
@@ -94,7 +94,7 @@ export default function AdMetaConnectionGuide({ configured, targetAccountId, onC
     if (!accountId || session?.status !== 'ready') return;
     const abort = new AbortController(), run = generation.current; setBusy(true);
     platformAdsRequest<{ items: Page[] }>(`/oauth/meta/${session.sessionId}/pages?accountId=${encodeURIComponent(accountId)}`, { signal: abort.signal })
-      .then(result => { if (!abort.signal.aborted && authHeader().Authorization === scope && generation.current === run) { setPages(result.items); setPagesLoaded(true); setPage(id => result.items.some(p => p.id === id) ? id : ''); } })
+      .then(result => { if (!abort.signal.aborted && authHeader().Authorization === scope && generation.current === run) { setPages(result.items); setPagesLoaded(true); setPage(id => result.items.some(p => p.id === id) ? id : result.items.length === 1 ? result.items[0].id : ''); if (result.items.length === 1) setStep(3); } })
       .catch(e => { if (!abort.signal.aborted && authHeader().Authorization === scope && generation.current === run) setError(message(e)); })
       .finally(() => { if (!abort.signal.aborted) setBusy(false); });
     return () => abort.abort();
@@ -116,9 +116,9 @@ export default function AdMetaConnectionGuide({ configured, targetAccountId, onC
       {error && !session && <Button disabled={restoring} onClick={() => setRestoreAttempt(v => v + 1)}>重新读取授权进度</Button>}
       {!restoring && step === 0 && <>
         <h3>{configured ? '用谁的 Facebook 账号授权？' : 'Meta 账户连接'}</h3>
-        {!configured ? <><p role="status">官方授权暂不可用，请联系管理员恢复配置。已保存账户和历史数据仍可查看。</p><Button type="primary" disabled title="官方授权未配置，请联系管理员">前往 Meta 官方授权</Button></> : <>
+        {!configured ? <><p role="status">官方授权暂不可用，请联系管理员恢复配置。已保存账户和历史数据仍可查看。</p><Button type="primary" disabled title="官方授权未配置，请联系管理员">登录 Facebook 并授权</Button></> : <>
           {session && ['pending', 'exchanging'].includes(session.status) ? <><Alert type="info" showIcon title="等待你在 Meta 页面完成授权" description="完成后返回这里，系统会自动读取账户。授权窗口已关闭时可重新开始。"/>{popupBlocked && <Alert type="warning" title="浏览器拦截了弹窗，请点击下方打开授权页。"/>}<Space wrap>{session.url && officialUrl(session.url) && <Button href={session.url} target="_blank" rel="noopener noreferrer">打开 Meta 授权页</Button>}<Button disabled={busy} onClick={() => void start()}>重新开始授权</Button></Space></>
-            : <><Button type="primary" loading={busy} onClick={() => void start()}>前往 Meta 官方授权</Button>{session?.status === 'failed' && <Button onClick={() => { setError(''); setSession(s => s ? { ...s, status: 'pending' } : s); }}>重试检查授权结果</Button>}{session?.status === 'cancelled' && <Alert type="info" title="你已取消授权，可以重新开始。"/>}</>}
+            : <><Button type="primary" loading={busy} onClick={() => void start()}>登录 Facebook 并授权</Button>{session?.status === 'failed' && <Button onClick={() => { setError(''); setSession(s => s ? { ...s, status: 'pending' } : s); }}>重试检查授权结果</Button>}{session?.status === 'cancelled' && <Alert type="info" title="你已取消授权，可以重新开始。"/>}</>}
         </>}
       </>}
       {step === 1 && <>
@@ -134,7 +134,7 @@ export default function AdMetaConnectionGuide({ configured, targetAccountId, onC
         <Space wrap><Button disabled={busy} onClick={() => setStep(1)}>上一步</Button><Button disabled={busy} onClick={() => setRefresh(v => v + 1)}>重新读取主页</Button><Button type="primary" disabled={!page || busy} onClick={() => setStep(3)}>下一步：确认连接</Button></Space>
       </>}
       {step === 3 && <>
-        <h3>确认账户与主页</h3><Descriptions column={1} items={[{ key: 'account', label: '广告账户', children: account?.name }, { key: 'currency', label: '币种 / 时区', children: `${account?.currency} / ${account?.timezoneName || '未返回'}` }, { key: 'page', label: 'Facebook 主页', children: page?.name || '正在重新核对主页，请稍候' }]}/>
+        <h3>确认要连接的账户</h3><p>请核对以下账户和主页，然后完成连接。</p><Descriptions column={1} items={[{ key: 'account', label: '广告账户', children: account?.name }, { key: 'currency', label: '币种 / 时区', children: `${account?.currency} / ${account?.timezoneName || '未返回'}` }, { key: 'page', label: 'Facebook 主页', children: page?.name || '正在重新核对主页，请稍候' }]}/>
         <Alert type="info" showIcon title="只保存连接，不进行投放" description="系统会再次核对权限并加密保存凭证和主页选择，不上传素材、不创建广告、不修改预算或账单。"/>
         <Space><Button disabled={busy} onClick={() => setStep(2)}>上一步</Button><Button type="primary" disabled={!page || !account} loading={busy} onClick={() => void connect()}>确认连接账户与主页</Button></Space>
       </>}

@@ -54,3 +54,15 @@ test('default recovery wait is abortable and sends no retry after unmount', asyn
   const timer = setTimeout(() => controller.abort(), 10);
   try { await assert.rejects(pending, { name: 'AbortError' }); assert.equal(calls, 1); } finally { clearTimeout(timer); }
 });
+
+test('30-day selection requests the matching report window', async () => {
+  let requested = '';
+  await readAdPlanMetrics('a', new AbortController().signal, async (path) => { requested = path; return ready; }, immediate, 30);
+  assert.equal(requested, '/tasks/a/metrics?days=30');
+});
+
+test('a selected date requests the same account-local calendar date', async () => {
+  let requested = '';
+  await readAdPlanMetrics('a', new AbortController().signal, async (path) => { requested = path; return ready; }, immediate, '2026-10-27');
+  assert.equal(requested, '/tasks/a/metrics?date=2026-10-27');
+});

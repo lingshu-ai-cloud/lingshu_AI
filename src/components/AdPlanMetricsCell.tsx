@@ -8,7 +8,7 @@ export default function AdPlanMetricsCell({ task, data, onRetry, disabled }: { t
   const content = <div className="ads-metric-query-details">
     <p>{error ? error.summary : view.note}</p>{error && <><p>{error.message}</p><small>错误标识：{error.code}{error.status ? ` · HTTP ${error.status}` : ''}</small>{error.requestId && <small>查询编号：{error.requestId}</small>}<small>最近尝试：{time(error.attemptedAt)}</small></>}
     <small>最近成功查询：{time(data?.metricsReceivedAt)}</small>{m?.reportedAt && <small>平台采集：{time(m.reportedAt)}</small>}
-    {m?.dataNote && <p>{m.dataNote}</p>}{error && <p>这是数据查询状态，不代表广告执行失败；重试仅重新读取成效。</p>}
+    {m?.window && <small>报告范围：{m.window.since} 至 {m.window.until}</small>}{m?.dataNote && <p>{m.dataNote}</p>}{error && <p>这是数据查询状态，不代表广告执行失败；重试仅重新读取成效。</p>}
   </div>;
   return <div className="ads-plan-metric-cell" data-state={error ? (m ? 'stale' : 'error') : view.state} onClick={event => event.stopPropagation()}>
     <div className="ads-plan-metric-title" title={view.title}>{view.title}</div>

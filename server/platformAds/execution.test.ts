@@ -159,10 +159,8 @@ try {
     return Response.json({ code: 0, data: { list: [{ advertiser_id: '10', campaign_id: '1', adgroup_id: '2', ad_id: '3', operation_status: 'DISABLE' }] } });
   }) as typeof fetch;
   const tikInput = { requestId: 'tiktok_req_1', expectedVersion: tikTask.version, connectionId: tikConnection.id, action: 'create', tiktok: { identityId: '12', tiktokItemId: '13', locationIds: ['6252001'], adText: 'Test' } };
-  assert.equal((await executeAdAction('t1', tikTask.id, tikInput)).status, 'VERIFIED');
-  assert.equal(tikWrites, 3);
-  await executeAdAction('t1', tikTask.id, tikInput);
-  assert.equal(tikWrites, 3);
+  await assert.rejects(executeAdAction('t1', tikTask.id, tikInput), (error: any) => error.code === 'RELEASE_RESTRICTED');
+  assert.equal(tikWrites, 0, 'unavailable TikTok cannot create platform ads');
   process.env.GOOGLE_ADS_API_VERSION = 'v25';
   const googleTask = await createPlatformAdTask('t1', 'u1', { name: 'Google', video: 'video', market: 'US', budget: 200, goal: '获取线索或转化', channels: ['YouTube'], configuration: { startsAt: new Date(Date.now() + 86400000).toISOString(), endsAt: new Date(Date.now() + 172800000).toISOString() } });
   const googleConnection = await store.create<any>('platform_ad_connections', { tenant_id: 't1', provider: 'google', accountId: '1234567890', status: 'connected', currency: 'USD', tokenCipher: encryptSecret('secret') });
@@ -180,7 +178,7 @@ try {
     return Response.json({ results: [{ campaign: { resourceName: `${base}/campaigns/2`, status: 'PAUSED' }, campaignBudget: { totalAmountMicros: '200000000' } }] });
   }) as typeof fetch;
   const googleInput = { requestId: 'google_req_1', expectedVersion: googleTask.version, connectionId: googleConnection.id, action: 'create', google: { targetCpa: 10, videoAssetId: '1', logoAssetId: '2', finalUrl: 'https://example.com', businessName: 'Factory', headline: 'Factory direct', longHeadline: 'Buy from factory', description: 'Request a quote', locationIds: ['2840'] } };
-  assert.equal((await executeAdAction('t1', googleTask.id, googleInput)).status, 'VERIFIED');
-  assert.equal(googleWrites, 1);
+  await assert.rejects(executeAdAction('t1', googleTask.id, googleInput), (error: any) => error.code === 'RELEASE_RESTRICTED');
+  assert.equal(googleWrites, 0, 'unavailable Google cannot create platform ads');
   console.log('ad execution tests passed');
 } finally { globalThis.fetch = originalFetch; fs.rmSync(dir, { recursive: true, force: true }); }

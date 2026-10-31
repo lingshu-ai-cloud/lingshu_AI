@@ -1,5 +1,5 @@
 import { readLocalBusinessPreview } from '../platformAds/localBusinessPreview.js';
-import { getMetaBusinessOverview } from '../platformAds/businessOverview.js';
+import { getMetaAccountSpend, getMetaBusinessOverview } from '../platformAds/businessOverview.js';
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
@@ -11,6 +11,9 @@ import { getMetaAccountHistory } from '../platformAds/accountHistory.js';
 import { getHistoryAccounts } from '../platformAds/historyAccounts.js';
 import { getAccountDirectory } from '../platformAds/accountDirectory.js';
 import { getAccountAdAsset } from '../platformAds/accountAdAsset.js';
+import { parseAdReportPeriod } from '../../shared/adReportPeriod.js';
+import { getImportedMetaDelivery } from '../platformAds/metaImportedDelivery.js';
+import { getCreatedMetaDelivery } from '../platformAds/metaCreatedDelivery.js';
 export const platformAdMetricsRouter = Router();
 platformAdMetricsRouter.use(requireAuth);
 platformAdMetricsRouter.get('/local-business-preview', (req, res) => {
@@ -27,6 +30,14 @@ platformAdMetricsRouter.get('/connections/:id/overview/:accountId', async (req, 
   catch (error) {
     const status = error instanceof AdProviderError ? error.code === 'INVALID_INPUT' ? 400 : error.code === 'NOT_FOUND' ? 404 : 503 : 503;
     res.status(status).json({ error: error instanceof AdProviderError && error.code === 'NOT_CONFIGURED' ? 'Meta 连接配置待完善，请到账号管理核对授权。' : error instanceof AdProviderError ? error.message : 'Meta 经营报告暂不可用，请重试' });
+  }
+});
+platformAdMetricsRouter.get('/connections/:id/spend/:accountId', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try { res.json(await getMetaAccountSpend((res.locals as AuthLocals).tenantId, req.params.id, req.params.accountId, req.query)); }
+  catch (error) {
+    const status = error instanceof AdProviderError ? error.code === 'INVALID_INPUT' ? 400 : error.code === 'NOT_FOUND' ? 404 : 503 : 503;
+    res.status(status).json({ error: error instanceof AdProviderError ? error.message : 'Meta 账户消耗暂不可用，请重试' });
   }
 });
 platformAdMetricsRouter.get('/account-directory', async (_req, res) => {
@@ -56,11 +67,35 @@ platformAdMetricsRouter.get('/performance/:executionId', async (req, res) => {
   catch (error) { res.status(error instanceof PlatformAdCreativeError ? error.status : 503).json({ error: error instanceof PlatformAdCreativeError || error instanceof AdProviderError ? error.message : 'Meta 报告暂不可用，请稍后刷新' }); }
 });
 platformAdMetricsRouter.get('/tasks/:id/metrics', async (req, res) => {
-  try { res.json(await getAdTaskMetrics((res.locals as AuthLocals).tenantId, req.params.id)); }
+  try {
+    let period;
+    try { period = parseAdReportPeriod(req.query); } catch { throw new AdProviderError('请选择有效的历史日期或统计周期', 'INVALID_INPUT'); }
+    res.json(await getAdTaskMetrics((res.locals as AuthLocals).tenantId, req.params.id, period));
+  }
   catch (error) {
     const code = error instanceof AdProviderError ? error.code : 'METRICS_UNAVAILABLE';
-    const status = code === 'NOT_FOUND' ? 404 : 503, requestId = randomUUID();
+    const status = code === 'NOT_FOUND' ? 404 : code === 'INVALID_INPUT' ? 400 : 503, requestId = randomUUID();
     console.warn('[platform-ads:metrics-read-failed]', { requestId, taskId: req.params.id, code, status });
     res.status(status).json({ error: error instanceof AdProviderError ? error.message : '投放效果暂不可用', code, requestId });
+  }
+});
+platformAdMetricsRouter.get('/tasks/:id/imported-delivery', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try { res.json(await getImportedMetaDelivery((res.locals as AuthLocals).tenantId, req.params.id)); }
+  catch (error) {
+    const code = error instanceof AdProviderError ? error.code : 'DELIVERY_UNAVAILABLE';
+    const status = code === 'NOT_FOUND' ? 404 : code === 'INVALID_INPUT' ? 400 : 503;
+    console.warn('[platform-ads:delivery-read-failed]', { taskId: req.params.id, code, status });
+    res.status(status).json({ code, error: error instanceof AdProviderError ? error.message : '平台投放状态暂不可用' });
+  }
+});
+platformAdMetricsRouter.get('/tasks/:id/created-delivery', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try { res.json(await getCreatedMetaDelivery((res.locals as AuthLocals).tenantId, req.params.id)); }
+  catch (error) {
+    const code = error instanceof AdProviderError ? error.code : 'DELIVERY_UNAVAILABLE';
+    const status = code === 'NOT_FOUND' ? 404 : code === 'INVALID_INPUT' ? 400 : 503;
+    console.warn('[platform-ads:delivery-read-failed]', { taskId: req.params.id, code, status });
+    res.status(status).json({ code, error: error instanceof AdProviderError ? error.message : '平台投放状态暂不可用' });
   }
 });

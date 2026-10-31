@@ -5,22 +5,27 @@ import { readGrantedAdapter } from './accountDirectory.js';
 import { readAccountAdAsset } from './accountAdAsset.js';
 import { AdProviderError, type MetaAdsAdapter } from './metaAdapter.js';
 import { creativeReadCache } from './creativeReadCache.js';
+import { parseAdReportPeriod, resolveAdReportWindow, type AdReportPeriod } from '../../shared/adReportPeriod.js';
+import { createHash } from 'node:crypto';
 const cache = creativeReadCache<MetaBusinessOverview>(60_000);
+const spendCache = creativeReadCache<MetaAccountSpend>(60_000);
+export type MetaAccountSpend = Pick<MetaBusinessOverview, 'source' | 'accountId' | 'currency' | 'timezone' | 'window' | 'reportedAt' | 'totals'>;
 const fail = () => new AdProviderError('Meta 报告归属、日期、维度或分页不完整', 'INVALID_RESPONSE');
 const count = (v: unknown) => typeof v === 'string' && v.trim() || typeof v === 'number' ? Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : null : null;
-export function overviewDays(query: Record<string, unknown>): number {
+export function overviewDays(query: Record<string, unknown>): 7 | 30 {
   if (Object.keys(query).some(key => key !== 'days') || query.days !== undefined && (typeof query.days !== 'string' || !['7', '30'].includes(query.days))) throw new AdProviderError('请选择最近 7 天或 30 天', 'INVALID_INPUT');
-  return Number(query.days || 7);
+  return Number(query.days || 7) as 7 | 30;
 }
-export async function readMetaBusinessOverview(accountId: string, days: number, adapter: Pick<MetaAdsAdapter, 'request'>): Promise<MetaBusinessOverview> {
-  if (!/^\d+$/.test(accountId) || ![7, 30].includes(days)) throw new AdProviderError('账户或周期无效', 'INVALID_INPUT');
+export async function readMetaBusinessOverview(accountId: string, period: AdReportPeriod, adapter: Pick<MetaAdsAdapter, 'request'>, spendOnly = false): Promise<MetaBusinessOverview> {
+  if (!/^\d+$/.test(accountId)) throw new AdProviderError('账户或周期无效', 'INVALID_INPUT');
   const account = await adapter.request(`act_${accountId}`, { fields: 'id,name,currency,timezone_name' });
   if (String(account.id) !== `act_${accountId}` || !/^[A-Z]{3}$/.test(account.currency || '') || !account.timezone_name) throw fail();
-  const until = metaAccountDate(account.timezone_name);
-  const since = new Date(Date.parse(`${until}T12:00:00Z`) - (days - 1) * 86400000).toISOString().slice(0, 10);
+  let since: string, until: string;
+  try { ({ since, until } = resolveAdReportWindow(period, metaAccountDate(account.timezone_name))); }
+  catch { throw new AdProviderError('请选择有效的历史日期或统计周期', 'INVALID_INPUT'); }
   const validDates = new Set(metaDateRange(since, until));
   const common = { time_range: { since, until }, action_report_time: 'impression', use_unified_attribution_setting: true, limit: 100 };
-  const fields = [...new Set(['account_id', 'account_currency', 'date_start', 'date_stop', ...Object.values(META_PERFORMANCE_FIELDS).map(item => item.field)])].join(',');
+  const fields = spendOnly ? 'account_id,account_currency,date_start,date_stop,spend' : [...new Set(['account_id', 'account_currency', 'date_start', 'date_stop', ...Object.values(META_PERFORMANCE_FIELDS).map(item => item.field)])].join(',');
   async function read(extra: Record<string, unknown>, extraFields = '', key: (row: Record<string, any>) => string) {
     const rows: Array<Record<string, any>> = [], keys = new Set<string>(), cursors = new Set<string>();
     let after: string | undefined;
@@ -40,10 +45,11 @@ export async function readMetaBusinessOverview(accountId: string, days: number, 
     throw fail();
   }
   const totals = await read({ level: 'account', time_increment: 'all_days' }, '', () => 'account');
+  if (totals.some(row => row.date_start !== since || row.date_stop !== until)) throw fail();
+  if (spendOnly) return { source: 'provider', accountId, accountName: String(account.name || accountId), currency: account.currency, timezone: account.timezone_name, window: { since, until }, reportedAt: new Date().toISOString(), actionReportTime: 'impression', useUnifiedAttributionSetting: true, totals: totals.length ? normalizeMetaPerformance(totals[0]) : null, daily: [], audiences: [], topVideos: [], videoRankingComplete: false, warnings: [] };
   const daily = await read({ level: 'account', time_increment: 1 }, '', row => row.date_start === row.date_stop ? row.date_start : '');
   if (totals.length > 1 || (totals.length === 0) !== (daily.length === 0)) throw fail();
   // Aggregate totals must cover the requested account window, never an arbitrary partial row.
-  if (totals.some(row => row.date_start !== since || row.date_stop !== until)) throw fail();
   const warnings: string[] = [];
   const audiences: MetaBusinessOverview['audiences'] = [];
   for (const dimension of ['age', 'gender', 'country'] as MetaAudienceDimension[]) {
@@ -74,6 +80,21 @@ export async function readMetaBusinessOverview(accountId: string, days: number, 
   if (!videoRankingComplete) warnings.push('部分广告素材无法核验，高消耗视频仅展示已核验的结果，不作为完整排名。');
   return { source: 'provider', accountId, accountName: String(account.name || accountId), currency: account.currency, timezone: account.timezone_name, window: { since, until }, reportedAt: new Date().toISOString(), actionReportTime: 'impression', useUnifiedAttributionSetting: true,
     totals: totals.length ? normalizeMetaPerformance(totals[0]) : null, daily: daily.map(row => ({ date: row.date_start, ...normalizeMetaPerformance(row) })).sort((a, b) => a.date.localeCompare(b.date)), audiences, topVideos, videoRankingComplete, warnings };
+}
+export async function getMetaAccountSpend(tenantId: string, connectionId: string, accountId: string, query: Record<string, unknown>): Promise<MetaAccountSpend> {
+  let period: AdReportPeriod;
+  try { period = parseAdReportPeriod(query); } catch { throw new AdProviderError('请选择有效的历史日期或统计周期', 'INVALID_INPUT'); }
+  const granted = await readGrantedAdapter(tenantId, connectionId, accountId);
+  const fingerprint = (connection: typeof granted.connection) => createHash('sha256').update(JSON.stringify([connection.tokenCipher, connection.provider, connection.accountId, connection.currency, connection.updatedAt, connection.authorization])).digest('hex');
+  const identity = fingerprint(granted.connection);
+  const report = await spendCache(tenantId, `${connectionId}:${accountId}:${period}:${identity}:${Math.floor(Date.now() / 60_000)}`, async () => {
+    const { adapter } = granted;
+    const { source, currency, timezone, window, reportedAt, totals } = await readMetaBusinessOverview(accountId, period, adapter, true);
+    return { source, accountId, currency, timezone, window, reportedAt, totals };
+  });
+  const current = await readGrantedAdapter(tenantId, connectionId, accountId);
+  if (fingerprint(current.connection) !== identity) throw new AdProviderError('广告账户授权已变化，请重新查询', 'AUTH_CHECK_STALE');
+  return report;
 }
 export async function getMetaBusinessOverview(tenantId: string, connectionId: string, accountId: string, query: Record<string, unknown>) {
   const days = overviewDays(query);

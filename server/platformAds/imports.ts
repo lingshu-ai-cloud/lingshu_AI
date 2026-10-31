@@ -1,15 +1,17 @@
 import { createHash } from 'node:crypto';
 import { store } from '../storage/index.js';
-import { getConnectionCredential } from './connections.js';
+import { getConnection, getConnectionCredential } from './connections.js';
 import { AdProviderError, MetaAdsAdapter } from './metaAdapter.js';
 import { GoogleAdsAdapter, TikTokAdsAdapter } from './otherAdapters.js';
 import { getPlatformAdTask, PLATFORM_AD_TASKS_COLLECTION, withPlatformAdTaskLock, type PlatformAdTask } from './tasks.js';
+import { readAdRows } from './readPages.js';
 import { emptyAdPlanConfiguration } from '../../src/lib/platformAdsDomain.js';
+import { AD_EXECUTIONS, type AdExecution } from './execution.js';
 
 export const AD_IMPORTS = 'platform_ad_imports';
 export type AdImport = { id: string; tenant_id: string; provider: string; accountId: string; connectionId: string; campaignId: string; taskId: string; status: string; capability: 'read_only'; providerSnapshot: Record<string, unknown>; createdAt: string; updatedAt: string };
 export async function listAdImports(tenantId: string, taskId?: string) {
-  return (await store.list<AdImport>(AD_IMPORTS, { where: { tenant_id: tenantId, ...(taskId ? { taskId } : {}) }, sort: '-createdAt', perPage: 200 })).items;
+  return readAdRows<AdImport>(AD_IMPORTS, tenantId, taskId, Boolean(taskId), '-createdAt');
 }
 
 async function fetchCampaign(provider: string, accountId: string, accessToken: string, campaignId: string) {
@@ -44,6 +46,7 @@ export async function importPlatformAdCampaign(tenantId: string, userId: string,
   const campaignId = String(input.campaignId || '');
   if (!/^\d{1,30}$/.test(campaignId)) throw new AdProviderError('广告系列 ID 无效', 'INVALID_INPUT');
   const { connection, accessToken } = await getConnectionCredential(tenantId, connectionId);
+  if (connection.provider !== 'meta') throw new AdProviderError('该平台投流暂未开放', 'NOT_SUPPORTED');
   if (connection.currency !== 'USD' && !(connection.provider === 'meta' && connection.currency === 'CNY')) throw new AdProviderError('当前仅支持 USD 及 Meta CNY 账户导入；不进行币种转换', 'CURRENCY_MISMATCH');
   const key = `${tenantId}|${connection.provider}|${connection.accountId}|${campaignId}`;
   const taskId = createHash('sha256').update(`task:${key}`).digest('hex').slice(0, 15);
@@ -51,6 +54,13 @@ export async function importPlatformAdCampaign(tenantId: string, userId: string,
   return withPlatformAdTaskLock(tenantId, `import-${importId}`, async () => {
     // Refresh ownership on every attempt, including an otherwise idempotent retry.
     const campaign = await fetchCampaign(connection.provider, connection.accountId, accessToken, campaignId);
+    const receipts = (await readAdRows<AdExecution>(AD_EXECUTIONS, tenantId, undefined, true)).filter(receipt => receipt.action === 'create' && receipt.resourceId === campaignId && ['VERIFIED', 'EXECUTING', 'PROVIDER_ACCEPTED', 'UNKNOWN'].includes(receipt.status));
+    for (const receipt of receipts) {
+      const original = await getConnection(tenantId, receipt.connectionId);
+      if (original.provider !== connection.provider || original.accountId.replace(/^act_/, '') !== connection.accountId.replace(/^act_/, '')) continue;
+      if (receipt.status !== 'VERIFIED') throw new AdProviderError('此平台计划已有待核对的创建记录，请先核对原计划', 'RECONCILIATION_REQUIRED');
+      throw new AdProviderError('此平台计划已在灵枢的原计划中，请返回计划管理查看', 'ALREADY_LINKED');
+    }
     const existing = await store.getById<AdImport>(AD_IMPORTS, importId);
     if (existing && (existing.tenant_id !== tenantId || existing.accountId !== connection.accountId || existing.campaignId !== campaignId || existing.provider !== connection.provider)) throw new AdProviderError('导入映射冲突', 'IMPORT_CONFLICT');
     const knownTask = await getPlatformAdTask(tenantId, taskId);
@@ -66,7 +76,7 @@ export async function importPlatformAdCampaign(tenantId: string, userId: string,
         id: taskId, tenant_id: tenantId, created_by: userId, name: campaign.name.slice(0, 80), video: '平台已有素材（待同步）', market: '平台定向（待同步）',
         goal: `平台目标：${campaign.objective || '未提供'}`, budget: totalBudget || 0, currency: connection.currency, channels: connection.provider === 'meta' ? ['Facebook', 'Instagram'] : connection.provider === 'tiktok' ? ['TikTok'] : ['YouTube'],
         creationSource: 'platform_import', managementMode: 'manual', version: 1, authorization: null, proposal: null, sourceContext: null, managementHistory: [],
-        configuration: { ...emptyAdPlanConfiguration, dailyBudget }, status, createdAt: now, updatedAt: now,
+        configuration: { ...emptyAdPlanConfiguration, dailyBudget, accountConnectionId: connectionId }, status, createdAt: now, updatedAt: now,
       });
       if (!created) throw new AdProviderError('导入任务保存失败，可安全重试同一广告系列', 'STORAGE_ERROR');
     } else if (knownTask.creationSource !== 'platform_import') throw new AdProviderError('导入任务 ID 冲突', 'IMPORT_CONFLICT');

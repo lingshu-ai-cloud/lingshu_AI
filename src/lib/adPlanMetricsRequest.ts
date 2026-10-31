@@ -1,4 +1,5 @@
 import { platformAdsRequest } from './platformAds';
+import { adReportPeriodQuery, type AdReportPeriod } from '../../shared/adReportPeriod';
 
 const transient = (error: unknown) => {
   const e = error as { name?: string; status?: number; code?: string } | null;
@@ -15,8 +16,8 @@ function pause(signal: AbortSignal) {
   });
 }
 /** One recovery attempt for transient GET failures. Never retry auth, rate limits, invalid reports or writes. */
-export async function readAdPlanMetrics<T>(taskId: string, signal: AbortSignal, request = platformAdsRequest<T>, wait = pause): Promise<T> {
-  const path = `/tasks/${encodeURIComponent(taskId)}/metrics`;
+export async function readAdPlanMetrics<T>(taskId: string, signal: AbortSignal, request = platformAdsRequest<T>, wait = pause, period: AdReportPeriod = 7): Promise<T> {
+  const path = `/tasks/${encodeURIComponent(taskId)}/metrics${period === 7 ? '' : `?${adReportPeriodQuery(period)}`}`;
   try { return await request(path, { signal }); }
   catch (error) {
     if (signal.aborted || !transient(error)) throw error;

@@ -4,14 +4,16 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { metricQueryError, planMetricView } from '../lib/adPlanMetricState';
+import { planStatusText } from '../lib/adPlanRow';
 test('operating reads keep partial failures explicit and discard late responses after switching rows', async () => {
   const cells: any[] = [], effects: any[] = [], calls: string[] = []; let cursor = 0; const oldReplies: Array<(value: any) => void> = [];
   const exports: any = {};
   const source = readFileSync(new URL('./useAdPlanOperatingData.ts', import.meta.url), 'utf8');
   vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, {
-    exports, AbortController, Promise,
+    exports, AbortController, Promise, window: { addEventListener() {}, removeEventListener() {} },
     require(name: string) {
       if (name.includes('adPlanMetricState')) return { metricQueryError };
+      if (name === '../lib/auth') return { authHeader: () => ({ Authorization: 'fixture' }), AUTH_TOKEN_CHANGED_EVENT: 'auth-change' };
       if (name === 'react') return {
         useState(v: any) { const i = cursor++; if (!(i in cells)) cells[i] = { value: v }; return [cells[i].value, (next: any) => { cells[i].value = typeof next === 'function' ? next(cells[i].value) : next; }]; },
         useEffect(fn: any, deps: any[]) { const i = cursor++; const c = cells[i] || (cells[i] = {}); if (!c.deps || deps.some((d, n) => d !== c.deps[n])) { c.deps = deps; effects.push(() => { c.cleanup?.(); c.cleanup = fn(); }); } },
@@ -19,7 +21,7 @@ test('operating reads keep partial failures explicit and discard late responses 
       const request = async (path: string, options: any) => {
         assert.ok(!options.method, 'refresh only reads'); calls.push(path);
         if (path.includes('/old/')) return new Promise(done => { oldReplies.push(done); });
-        if (path.endsWith('/meta-audit')) throw Error('platform unavailable');
+        if (path.endsWith('/meta-audit') || path.endsWith('/created-delivery')) throw Error('platform unavailable');
         return path.endsWith('/metrics') ? { spend: 9 } : { runs: [] };
       }; return { platformAdsRequest: request, readAdPlanMetrics: (id: string, signal: AbortSignal) => request('/tasks/'+encodeURIComponent(id)+'/metrics', { signal }) };
     },
@@ -30,7 +32,7 @@ test('operating reads keep partial failures explicit and discard late responses 
   let result = render('new'); assert.equal(result.items.new.metrics.spend, 9); assert.ok(result.items.new.errors.includes('平台状态与预算读取失败'));
   oldReplies.forEach(done => done({ spend: 100, runs: [] })); await flush(); result = render('new');
   assert.equal(result.items.old, undefined); assert.equal(result.items.new.metrics.spend, 9); assert.equal(result.loading, false);
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, 7);
 });
 
 test('refresh retains last success, row retry only reads metrics, and version change clears cached results', async () => {
@@ -39,9 +41,10 @@ test('refresh retains last success, row retry only reads metrics, and version ch
   const exports: any = {};
   const source = readFileSync(new URL('./useAdPlanOperatingData.ts', import.meta.url), 'utf8');
   vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, {
-    exports, AbortController, Promise,
+    exports, AbortController, Promise, window: { addEventListener() {}, removeEventListener() {} },
     require(name: string) {
       if (name.includes('adPlanMetricState')) return { metricQueryError };
+      if (name === '../lib/auth') return { authHeader: () => ({ Authorization: 'fixture' }), AUTH_TOKEN_CHANGED_EVENT: 'auth-change' };
       if (name === 'react') return {
         useState(v: any) { const i = cursor++; if (!(i in cells)) cells[i] = { value: v }; return [cells[i].value, (next: any) => { cells[i].value = typeof next === 'function' ? next(cells[i].value) : next; }]; },
         useEffect(fn: any, deps: any[]) { const i = cursor++; const c = cells[i] || (cells[i] = {}); if (!c.deps || deps.some((d, n) => d !== c.deps[n])) { c.deps = deps; effects.push(() => { c.cleanup?.(); c.cleanup = fn(); }); } },
@@ -70,6 +73,88 @@ test('refresh retains last success, row retry only reads metrics, and version ch
   phase = 'pending'; result = render(2, 2); assert.equal(result.items.a, undefined);
   result = render(2, 2); assert.equal(result.items.a.metrics, undefined);
   release({ spend: 13 }); await flush();
+});
+
+test('account changes discard old plan metrics even when task ids match', async () => {
+  const cells: any[] = [], effects: any[] = []; let cursor = 0, identity = 'first', changed: () => void = () => {};
+  let release: (value: any) => void = () => {};
+  const pending = new Promise(resolve => { release = resolve; });
+  const exports: any = {};
+  vm.runInNewContext(ts.transpileModule(readFileSync(new URL('./useAdPlanOperatingData.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, {
+    exports, AbortController, Promise, window: { addEventListener(_name: string, fn: () => void) { changed = fn; }, removeEventListener() {} },
+    require(name: string) {
+      if (name === '../lib/auth') return { authHeader: () => ({ Authorization: identity }), AUTH_TOKEN_CHANGED_EVENT: 'auth-change' };
+      if (name.includes('adPlanMetricState')) return { metricQueryError };
+      if (name === 'react') return {
+        useState(v: any) { const i = cursor++; if (!(i in cells)) cells[i] = { value: v }; return [cells[i].value, (next: any) => { cells[i].value = typeof next === 'function' ? next(cells[i].value) : next; }]; },
+        useEffect(fn: any, deps: any[]) { const i = cursor++; const c = cells[i] || (cells[i] = {}); if (!c.deps || deps.some((d, n) => d !== c.deps[n])) { c.deps = deps; effects.push(() => { c.cleanup?.(); c.cleanup = fn(); }); } },
+      };
+      return { platformAdsRequest: async () => ({ runs: [] }), readAdPlanMetrics: () => identity === 'first' ? pending : Promise.resolve({ spend: 22 }) };
+    },
+  });
+  const render = () => { cursor = 0; const result = exports.useAdPlanOperatingData([{ id: 'same', version: 1, channels: [] }], 0, false); effects.splice(0).forEach(fn => fn()); return result; };
+  const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+  render(); identity = 'second'; changed(); assert.equal(render().items.same, undefined);
+  release({ spend: 999 }); await flush();
+  assert.equal(render().items.same.metrics.spend, 22);
+  identity = ''; changed(); assert.equal(render().items.same, undefined);
+});
+
+test('imported delivery and spend have independent read failures and recovery', async () => {
+  const cells: any[] = [], effects: any[] = [], calls: string[] = []; let cursor = 0, phase = 'metrics-failed';
+  const exports: any = {};
+  vm.runInNewContext(ts.transpileModule(readFileSync(new URL('./useAdPlanOperatingData.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, {
+    exports, AbortController, Promise, window: { addEventListener() {}, removeEventListener() {} },
+    require(name: string) {
+      if (name === '../lib/auth') return { authHeader: () => ({ Authorization: 'fixture' }), AUTH_TOKEN_CHANGED_EVENT: 'auth-change' };
+      if (name.includes('adPlanMetricState')) return { metricQueryError };
+      if (name === 'react') return {
+        useState(v: any) { const i = cursor++; if (!(i in cells)) cells[i] = { value: v }; return [cells[i].value, (next: any) => { cells[i].value = typeof next === 'function' ? next(cells[i].value) : next; }]; },
+        useEffect(fn: any, deps: any[]) { const i = cursor++; const c = cells[i] || (cells[i] = {}); if (!c.deps || deps.some((d, n) => d !== c.deps[n])) { c.deps = deps; effects.push(() => { c.cleanup?.(); c.cleanup = fn(); }); } },
+      };
+      const request = async (path: string) => {
+        calls.push(path);
+        if (path.endsWith('/meta-audit')) throw Error('creative unavailable');
+        if (path.endsWith('/created-delivery')) {
+          if (phase === 'pending-delivery') throw Object.assign(new Error('存在待核对的投放操作'), { code: 'RECONCILIATION_REQUIRED' });
+          return { effectiveStatus: 'ACTIVE', accountStatus: 1, adIssues: true, issueMessages: ['付款异常'] };
+        }
+        if (path.endsWith('/imported-delivery')) {
+          if (phase === 'delivery-failed') throw Error('delivery unavailable');
+          return { effectiveStatus: 'ACTIVE', accountStatus: 1, adIssues: true, issueMessages: ['付款异常'] };
+        }
+        if (path.endsWith('/metrics')) {
+          if (phase === 'metrics-failed') throw Error('report unavailable');
+          return { spend: 6.77 };
+        }
+        return { runs: [] };
+      };
+      return { platformAdsRequest: request, readAdPlanMetrics: (id: string) => request(`/tasks/${id}/metrics`) };
+    },
+  });
+  const task = { id: 'imported', version: 1, channels: ['Facebook'], creationSource: 'platform_import', status: 'active' } as any;
+  const render = (refresh: number) => { cursor = 0; const result = exports.useAdPlanOperatingData([task], refresh, false); effects.splice(0).forEach(fn => fn()); return result; };
+  const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+  render(0); await flush(); let result = render(0);
+  assert.equal(planStatusText(task, result.items.imported), '投放异常');
+  assert.equal(result.items.imported.delivery.issueMessages[0], '付款异常');
+  assert.ok(result.items.imported.metricsError);
+  assert.ok(!calls.some(path => path.endsWith('/meta-audit')));
+  phase = 'delivery-failed'; render(1); await flush(); result = render(1);
+  assert.equal(result.items.imported.metrics.spend, 6.77);
+  assert.equal(planStatusText(task, result.items.imported), '平台状态读取失败');
+  phase = 'ok'; render(2); await flush(); result = render(2);
+  assert.equal(planStatusText(task, result.items.imported), '投放异常');
+  assert.equal(result.items.imported.metrics.spend, 6.77);
+  task.creationSource = 'manual'; task.version = 2;
+  render(3); await flush(); result = render(3);
+  assert.equal(planStatusText(task, result.items.imported), '投放异常', 'status-only read survives a failed creative audit');
+  assert.ok(calls.some(path => path.endsWith('/created-delivery')));
+  phase = 'pending-delivery'; render(4); await flush(); result = render(4);
+  assert.equal(planStatusText(task, result.items.imported), '执行结果待核对');
+  assert.equal(result.items.imported.delivery, undefined);
+  phase = 'ok'; render(5); await flush(); result = render(5);
+  assert.equal(planStatusText(task, result.items.imported), '投放异常');
 });
 
 test('failure cell exposes cause and retry without expanding the plan or changing ads', () => {

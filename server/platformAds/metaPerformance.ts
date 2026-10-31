@@ -2,6 +2,7 @@ import { META_PERFORMANCE_FIELDS, metaAccountDate, metaDateRange, type MetaPerfo
 import { readExecutedCreative } from './executedCreative.js';
 import { creativeReadCache } from './creativeReadCache.js';
 import { PlatformAdCreativeError } from './creatives.js';
+import { safeMetaIssueText } from './metaIssueText.js';
 const cached = creativeReadCache<MetaPerformanceReport>(60_000);
 const accounts = creativeReadCache<{ id: string; name: string; currency: string; timezone_name: string }>(300_000);
 const n = (v: unknown) => (typeof v === 'number' || typeof v === 'string' && v.trim() !== '') && Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : null;
@@ -53,7 +54,7 @@ export async function getMetaPerformanceReport(tenantId: string, executionId: st
       configuredStatus: String(object.status || ''), effectiveStatus: String(object.effective_status || ''), objective: String(ctx.campaign.objective || ''), optimizationGoal: query.level === 'campaign' ? '' : String(ctx.adset.optimization_goal || ''),
       adConfiguredStatus: String(ctx.ad.status || ''), adEffectiveStatus: String(ctx.ad.effective_status || ''),
       attributionSpec: Array.isArray(ctx.adset.attribution_spec) ? ctx.adset.attribution_spec.map((a: any) => ({ event_type: String(a.event_type), window_days: Number(a.window_days) })) : [],
-      issues: (ctx.ad.issues_info || []).map((i: any) => ({ code: Number(i.error_code), message: String(i.error_summary || '平台广告异常') })),
+      issues: (ctx.ad.issues_info || []).map((i: any) => ({ code: Number(i.error_code), message: safeMetaIssueText(i.error_summary) || '平台广告异常' })),
       window: { since, until }, reportedAt: new Date().toISOString(), actionReportTime: 'impression', useUnifiedAttributionSetting: true,
       totals: total.data.length ? normalizeMetaPerformance(total.data[0]) : null, daily: daily.data.map((r: any) => ({ date: String(r.date_start), ...normalizeMetaPerformance(r) })),
       ...(maximum ? { historyScope: 'maximum' as const, windowAvailable: total.data.length > 0 } : {}),

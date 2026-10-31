@@ -69,6 +69,33 @@ try {
     assert.equal(body.hasMore, true);
     assert.equal((await request(`/connections/${connection.id}/campaigns`, 'tenant-b')).status, 404);
   } finally { TikTokAdsAdapter.prototype.campaigns = originalCampaigns; }
+  const { MetaAdsAdapter } = await import('./metaAdapter.js');
+  const metaConnection = await store.create<any>('platform_ad_connections', { tenant_id: 'tenant-a', provider: 'meta', accountId: '456', tokenCipher: encryptSecret('test-only-token'), status: 'connected', currency: 'CNY' });
+  const previousAccount = MetaAdsAdapter.prototype.account;
+  MetaAdsAdapter.prototype.account = async () => ({ id: 'act_456', account_id: '456', currency: 'CNY', account_status: 9 });
+  try {
+    const statusResponse = await request(`/connections/${metaConnection.id}/live-status`);
+    assert.equal(statusResponse.status, 200);
+    assert.equal((await statusResponse.json() as any).accountStatus, 9);
+    assert.equal((await request(`/connections/${metaConnection.id}/live-status`, 'tenant-b')).status, 404);
+    MetaAdsAdapter.prototype.account = async () => ({ id: 'act_999', account_id: '999', currency: 'CNY', account_status: 1 });
+    assert.notEqual((await request(`/connections/${metaConnection.id}/live-status`)).status, 200, 'wrong-account status is rejected');
+    MetaAdsAdapter.prototype.account = async () => {
+      await store.update('platform_ad_connections', metaConnection.id, { authorization: { status: 'revoked', reasonCode: 'AUTH_REVOKED' } });
+      return { id: 'act_456', account_id: '456', currency: 'CNY', account_status: 1 };
+    };
+    const revokedDuringRead = await request(`/connections/${metaConnection.id}/live-status`);
+    assert.equal(revokedDuringRead.status, 409);
+    assert.equal((await revokedDuringRead.json() as any).code, 'AUTH_REVOKED', 'a response cannot report an enabled account after authorization is revoked');
+    await store.update('platform_ad_connections', metaConnection.id, { authorization: { status: 'healthy', reasonCode: 'AUTH_VALID' } });
+    MetaAdsAdapter.prototype.account = async () => {
+      await store.update('platform_ad_connections', metaConnection.id, { tokenCipher: encryptSecret('replacement-test-token') });
+      return { id: 'act_456', account_id: '456', currency: 'CNY', account_status: 1 };
+    };
+    const changedDuringRead = await request(`/connections/${metaConnection.id}/live-status`);
+    assert.equal(changedDuringRead.status, 409);
+    assert.equal((await changedDuringRead.json() as any).code, 'AUTH_CHECK_STALE', 'a response from a replaced credential is discarded');
+  } finally { MetaAdsAdapter.prototype.account = previousAccount; }
   const originalList = store.list, originalGet = store.getById;
   store.list = async () => { throw new Error('private storage diagnostic'); };
   store.getById = async () => { throw new Error('private storage diagnostic'); };

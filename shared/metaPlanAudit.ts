@@ -4,7 +4,7 @@ export interface MetaPlanAuditEntry {
   campaignId: string; adsetId: string; creativeId: string; adId: string;
   pageId: string; videoId: string; linkUrl: string; objective: string; optimizationGoal: string; destinationType: string; billingEvent: string;
   spendCap: number | null; dailyBudget: number | null; startsAt: string; endsAt: string; countries: string[]; platforms: string[];
-  campaignStatus: string; adsetStatus: string; adStatus: string; adEffectiveStatus: string;
+  accountStatus?: number | null; campaignStatus: string; campaignEffectiveStatus?: string; adsetStatus: string; adsetEffectiveStatus?: string; adStatus: string; adEffectiveStatus: string;
   issues: Array<{ code: number; message: string }>;
   bindingId: string; sha256: string; mapping: 'creation_binding' | 'post_execution' | 'unmapped';
   checks: Array<{ name: string; status: 'pass' | 'warning' | 'mismatch'; detail: string }>;

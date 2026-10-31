@@ -5,6 +5,7 @@ import { store } from '../storage/index.js';
 import { validateDraftAdMaterial } from './creativeSelection.js';
 import { PlatformAdCreativeError } from './creatives.js';
 import { withPlatformAdTaskLock } from './taskLock.js';
+import { readAdRows } from './readPages.js';
 export { withPlatformAdTaskLock } from './taskLock.js';
 import { emptyAdPlanConfiguration, type AdManagement, type AdPlanConfiguration, type AdAuthorization, type AdProposal, type AdSourceContext, type AdManagementMode, type AdCurrency } from '../../src/lib/platformAdsDomain.js';
 
@@ -115,7 +116,17 @@ export async function listPlatformAdTasks(tenantId: string): Promise<PlatformAdT
   for (let page = 1;; page++) {
     const result = await store.list<StoredTask>(PLATFORM_AD_TASKS_COLLECTION, { where: { tenant_id: tenantId }, sort: '-createdAt', perPage: 200, page });
     tasks.push(...result.items.map(publicTask));
-    if (page >= result.totalPages) return tasks;
+    if (page >= result.totalPages) {
+      const missing = tasks.filter(task => task.creationSource === 'platform_import' && !task.configuration.accountConnectionId);
+      if (missing.length) {
+        const mappings = await readAdRows<{ id: string; tenant_id: string; taskId: string; connectionId: string; status: string }>('platform_ad_imports', tenantId, undefined, true);
+        for (const task of missing) {
+          const matches = mappings.filter(item => item.taskId === task.id && item.status === 'IMPORTED' && item.connectionId);
+          if (matches.length === 1) task.configuration.accountConnectionId = matches[0].connectionId;
+        }
+      }
+      return tasks;
+    }
   }
 }
 

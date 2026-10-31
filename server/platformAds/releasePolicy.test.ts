@@ -5,6 +5,9 @@ assert.equal(adReleasePolicy({ NODE_ENV: 'test' }).mode, 'full');
 assert.equal(adReleasePolicy({ PLATFORM_ADS_RELEASE_MODE: 'typo' }).mode, 'disabled');
 const previous = process.env.PLATFORM_ADS_RELEASE_MODE;
 try {
+  process.env.PLATFORM_ADS_RELEASE_MODE = 'full';
+  assert.doesNotThrow(() => assertAdReleaseAction('meta', 'create'));
+  for (const provider of ['tiktok', 'google']) for (const action of ['create', 'activate', 'pause', 'resume', 'adjust_budget']) assert.throws(() => assertAdReleaseAction(provider, action), /未开放/);
   process.env.PLATFORM_ADS_RELEASE_MODE = 'paused_only';
   for (const action of ['create', 'pause']) assert.doesNotThrow(() => assertAdReleaseAction('meta', action));
   for (const action of ['activate', 'resume', 'adjust_budget']) assert.throws(() => assertAdReleaseAction('meta', action), /未开放/);
