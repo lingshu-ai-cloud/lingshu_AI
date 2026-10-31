@@ -13,6 +13,9 @@ const originalEnvironment = {
   LINGSHU_LOCAL_PREVIEW: process.env.LINGSHU_LOCAL_PREVIEW,
   LINGSHU_LOCAL_PREVIEW_ORIGINS: process.env.LINGSHU_LOCAL_PREVIEW_ORIGINS,
   LINGSHU_PREVIEW_AUTH_EMAIL: process.env.LINGSHU_PREVIEW_AUTH_EMAIL,
+  LOCAL_ADMIN_EMAIL: process.env.LOCAL_ADMIN_EMAIL,
+  LOCAL_ADMIN_PASSWORD: process.env.LOCAL_ADMIN_PASSWORD,
+  PLATFORM_ADMIN_EMAILS: process.env.PLATFORM_ADMIN_EMAILS,
   LOCAL_DEMO_TOKEN_SECRET: process.env.LOCAL_DEMO_TOKEN_SECRET,
   LOCAL_AUTH_ACCOUNTS_FILE: process.env.LOCAL_AUTH_ACCOUNTS_FILE,
   LOCAL_TENANTS_DATA_FILE: process.env.LOCAL_TENANTS_DATA_FILE,
@@ -23,6 +26,9 @@ process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
 process.env.LINGSHU_LOCAL_PREVIEW = '1';
 process.env.LINGSHU_LOCAL_PREVIEW_ORIGINS = 'http://127.0.0.1:5177,http://127.0.0.1:5183';
 process.env.LINGSHU_PREVIEW_AUTH_EMAIL = 'beauty-showcase@local.test';
+process.env.LOCAL_ADMIN_EMAIL = 'developer-admin@local.test';
+process.env.LOCAL_ADMIN_PASSWORD = 'admin-preview-only-20261031';
+process.env.PLATFORM_ADMIN_EMAILS = 'developer-admin@local.test';
 process.env.LOCAL_DEMO_TOKEN_SECRET = 'local-preview-test-secret-with-at-least-thirty-two-bytes';
 process.env.LOCAL_AUTH_ACCOUNTS_FILE = accountsFile;
 process.env.LOCAL_TENANTS_DATA_FILE = tenantsFile;
@@ -91,6 +97,29 @@ if (!address || typeof address === 'string') throw new Error('test server did no
 const baseUrl = `http://127.0.0.1:${address.port}/auth/local-preview-session`;
 
 try {
+  const adminLogin = await fetch(`http://127.0.0.1:${address.port}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: 'developer-admin@local.test',
+      password: 'admin-preview-only-20261031',
+    }),
+  });
+  assert.equal(adminLogin.status, 200, 'the shared local administrator must be able to sign in');
+  const adminLoginBody = await adminLogin.json() as { token?: string };
+  assert.match(String(adminLoginBody.token), /^local-demo\.v1\./);
+  const adminSession = await fetch(`http://127.0.0.1:${address.port}/auth/me`, {
+    headers: { Authorization: `Bearer ${adminLoginBody.token}` },
+  });
+  assert.equal(adminSession.status, 200);
+  const adminSessionBody = await adminSession.json() as {
+    platformAdmin?: boolean;
+    user?: { email?: string; role?: string };
+  };
+  assert.equal(adminSessionBody.platformAdmin, true, 'the shared account must open the platform administrator surface');
+  assert.equal(adminSessionBody.user?.email, 'developer-admin@local.test');
+  assert.equal(adminSessionBody.user?.role, 'super_admin');
+
   const rejected = await fetch(baseUrl, { method: 'POST' });
   assert.equal(rejected.status, 403, 'a non-browser or non-loopback origin must not receive a token');
 
@@ -124,7 +153,7 @@ try {
   const created = createdAccounts.find(item => item.email === 'fresh-preview@local.test');
   assert.equal(created?.role, 'admin');
   assert.equal(created?.accountType, 'customer');
-  assert.equal(createdAccounts.length, 2);
+  assert.equal(createdAccounts.length, 3, 'existing preview, shared administrator and fresh preview identities must remain isolated');
   const createdTenants = JSON.parse(fs.readFileSync(tenantsFile, 'utf8')) as Array<typeof tenant>;
   const createdTenant = createdTenants.find(item => item.id === created?.tenantId);
   assert.equal(createdTenant?.subscriptionPlan, 'customer');

@@ -25,6 +25,11 @@ assert.match(source, /stableLocalAuthSecret/, '本地预览必须持久化独立
 assert.match(source, /LOCAL_DEMO_TOKEN_SECRET: localAuthSecret/, '本地预览后端必须复用机器本地的稳定签名密钥');
 assert.match(source, /LOCAL_DEMO_TOKEN_TTL_SECONDS: '86400'/, '本地预览登录应保持完整一天，不能在工作过程中提前失效');
 assert.match(source, /NODE_ENV: 'development'/, '受监督本地后端不能继承机器上的生产模式');
+assert.match(source, /const localPreviewAdminEmail = 'developer-admin@local\.test'/, '共享本地管理员必须使用约定邮箱');
+assert.match(source, /const localPreviewAdminPassword = 'admin-preview-only-20261031'/, '共享本地管理员必须使用约定的本地预览密码');
+assert.match(source, /LOCAL_ADMIN_EMAIL: localPreviewAdminEmail/, '受监督本地后端必须注入共享管理员邮箱');
+assert.match(source, /LOCAL_ADMIN_PASSWORD: localPreviewAdminPassword/, '受监督本地后端必须注入共享管理员密码');
+assert.match(source, /PLATFORM_ADMIN_EMAILS: localPreviewAdminEmail/, '共享本地管理员必须进入平台管理员白名单');
 assert.match(source, /SOCIAL_WEEKLY_EXECUTION_WORKER_ENABLED: 'true'/, '打开受监督应用时必须自动启动周内容扫描器');
 assert.match(source, /CONTENT_WORKER_SELF_HEAL_ENABLED: 'true'/, '本地 worker 心跳或扫描连续失效时必须由监督进程自动拉起');
 assert.match(source, /STARTER_198_ORCHESTRATOR_WORKER_ENABLED: 'true'/, '打开受监督应用时必须自动启动内容编排 worker');

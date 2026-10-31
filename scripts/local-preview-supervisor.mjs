@@ -45,6 +45,12 @@ const frontendOrigin = `http://127.0.0.1:${frontendPort}`;
 const localPreviewAuthEmail = String(
   process.env.LINGSHU_PREVIEW_AUTH_EMAIL || 'beauty-showcase@local.test',
 ).trim().toLowerCase();
+// Well-known, local-only administrator for shared development previews. This
+// credential is intentionally usable by every developer who runs the
+// loopback-only supervisor, but it is never injected into production or an
+// ordinary development server.
+const localPreviewAdminEmail = 'developer-admin@local.test';
+const localPreviewAdminPassword = 'admin-preview-only-20261031';
 
 function stableLocalAuthSecret() {
   const configured = String(process.env.LOCAL_DEMO_TOKEN_SECRET || '').trim();
@@ -120,6 +126,9 @@ const services = [
       // queue/scheduler migration makes a split local worker safe.
       PROCESS_ROLE: 'all',
       ENABLE_LOCAL_DEV_FALLBACK: 'true',
+      LOCAL_ADMIN_EMAIL: localPreviewAdminEmail,
+      LOCAL_ADMIN_PASSWORD: localPreviewAdminPassword,
+      PLATFORM_ADMIN_EMAILS: localPreviewAdminEmail,
       // Opening the supervised app also opens its local background runtime.
       // There is no front-end setup switch: readiness below proves that the
       // weekly scanner really started before this process is kept healthy.
