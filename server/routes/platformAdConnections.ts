@@ -102,7 +102,12 @@ platformAdConnectionsRouter.get('/connections/:id/live-status', async (req, res)
     const current = (await getConnectionCredential(tenantId, req.params.id)).connection;
     const fingerprint = (value: typeof connection) => JSON.stringify([value.provider, value.accountId, value.currency, value.status, value.tokenCipher, value.updatedAt, value.authorization]);
     if (fingerprint(current) !== fingerprint(connection)) throw new AdProviderError('广告账户授权已变化，请重新查询', 'AUTH_CHECK_STALE');
-    res.json({ accountStatus: account.account_status, checkedAt: new Date().toISOString() });
+    const rawBalance = account.is_prepay_account === true && typeof account.balance === 'string' && /^\d+$/.test(account.balance) ? Number(account.balance) : null;
+    const fractionDigits = new Intl.NumberFormat('en', { style: 'currency', currency: connection.currency }).resolvedOptions().maximumFractionDigits;
+    const balance = rawBalance !== null && Number.isSafeInteger(rawBalance)
+      ? { amount: rawBalance / 10 ** fractionDigits, currency: connection.currency }
+      : null;
+    res.json({ accountStatus: account.account_status, balance, checkedAt: new Date().toISOString() });
   } catch (error) { failure(res, error); }
 });
 platformAdConnectionsRouter.post('/connections/:id/authorization/check', async (req, res) => {

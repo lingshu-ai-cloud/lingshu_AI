@@ -72,11 +72,13 @@ try {
   const { MetaAdsAdapter } = await import('./metaAdapter.js');
   const metaConnection = await store.create<any>('platform_ad_connections', { tenant_id: 'tenant-a', provider: 'meta', accountId: '456', tokenCipher: encryptSecret('test-only-token'), status: 'connected', currency: 'CNY' });
   const previousAccount = MetaAdsAdapter.prototype.account;
-  MetaAdsAdapter.prototype.account = async () => ({ id: 'act_456', account_id: '456', currency: 'CNY', account_status: 9 });
+  MetaAdsAdapter.prototype.account = async () => ({ id: 'act_456', account_id: '456', currency: 'CNY', account_status: 9, is_prepay_account: true, balance: '1234' });
   try {
     const statusResponse = await request(`/connections/${metaConnection.id}/live-status`);
     assert.equal(statusResponse.status, 200);
-    assert.equal((await statusResponse.json() as any).accountStatus, 9);
+    const statusBody = await statusResponse.json() as any;
+    assert.equal(statusBody.accountStatus, 9);
+    assert.deepEqual(statusBody.balance, { amount: 12.34, currency: 'CNY' });
     assert.equal((await request(`/connections/${metaConnection.id}/live-status`, 'tenant-b')).status, 404);
     MetaAdsAdapter.prototype.account = async () => ({ id: 'act_999', account_id: '999', currency: 'CNY', account_status: 1 });
     assert.notEqual((await request(`/connections/${metaConnection.id}/live-status`)).status, 200, 'wrong-account status is rejected');

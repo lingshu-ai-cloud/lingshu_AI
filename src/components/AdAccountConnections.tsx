@@ -25,7 +25,8 @@ function ProviderLogos({ provider }: { provider: Provider }) {
   if (provider === 'google') return <SocialPlatformIcon platform="youtube" size={25}/>;
   return <SocialPlatformIcon platform="tiktok" size={25}/>;
 }
-const accountNotice = (account: AdConnection, live?: { accountStatus: number | null; checkedAt?: string }) => {
+type LiveAccountStatus = { accountStatus: number | null; balance: { amount: number; currency: string } | null; checkedAt?: string };
+const accountNotice = (account: AdConnection, live?: LiveAccountStatus) => {
   if (live?.accountStatus != null && live.accountStatus !== 1) return '账户受限，请检查';
   if (account.status !== 'connected' && !live) return '账户待检查';
   if (account.provider !== 'meta') return '暂无账户提醒';
@@ -35,9 +36,13 @@ const accountNotice = (account: AdConnection, live?: { accountStatus: number | n
   if (dates.some(date => !Number.isFinite(date))) return '授权待检查';
   if (dates.some(date => date <= Date.now())) return '授权已到期';
   if (authorization?.status === 'healthy' && dates.some(date => date <= Date.now() + 7 * 86400_000)) return '授权即将到期';
-  if (account.authorization?.status === 'healthy' && (!live || live.accountStatus !== 1 || !account.authorization.checkedAt || !Number.isFinite(Date.parse(account.authorization.checkedAt)) || Date.now() - Date.parse(account.authorization.checkedAt) > 24 * 3600_000)) return '待检查';
-  return ({ healthy: '付款待核验', expiring: '授权即将到期', expired: '授权已到期', revoked: '授权已撤销', missing_permissions: '授权权限不足', unknown: '授权待检查' } as const)[account.authorization?.status || 'unknown'];
+  if (live?.balance?.amount === 0) return '余额不足';
+  if (account.authorization?.status === 'healthy' && live?.accountStatus === 1) return '正常';
+  return ({ healthy: '待检查', expiring: '授权即将到期', expired: '授权已到期', revoked: '授权已撤销', missing_permissions: '授权权限不足', unknown: '授权待检查' } as const)[account.authorization?.status || 'unknown'];
 };
+const accountBalance = (account: AdConnection, live?: LiveAccountStatus) => live?.balance && live.balance.currency === account.currency
+  ? new Intl.NumberFormat('zh-CN', { style: 'currency', currency: live.balance.currency }).format(live.balance.amount)
+  : '暂不可获取';
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : '请求失败，请重试';
 export function normalizeAdAccountId(provider: Provider, value: string) {
   const trimmed = value.trim();
@@ -57,7 +62,7 @@ export default function AdAccountConnections({ onTaskImported, onContinue, initi
   const [provider, setProvider] = useState<Provider>(initialProvider === 'meta' ? initialProvider : 'meta');
   const directory = useContext(AdAccountDirectoryContext);
   const [data, setData] = useState<Connections>({ items: [], capabilities: [] });
-  const [liveStatus, setLiveStatus] = useState<Record<string, { accountStatus: number | null; checkedAt?: string }>>({});
+  const [liveStatus, setLiveStatus] = useState<Record<string, LiveAccountStatus>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [error, setError] = useState('');
@@ -86,7 +91,7 @@ export default function AdAccountConnections({ onTaskImported, onContinue, initi
     if (current === generation.current) setLiveStatus({});
     await Promise.all(items.filter(item => item.provider === 'meta').map(async item => {
       try {
-        const status = await platformAdsRequest<{ accountStatus: number; checkedAt: string }>(`/connections/${encodeURIComponent(item.id)}/live-status`);
+        const status = await platformAdsRequest<LiveAccountStatus>(`/connections/${encodeURIComponent(item.id)}/live-status`);
         if (current === generation.current && statusRun === statusGeneration.current) setLiveStatus(value => ({ ...value, [item.id]: status }));
       } catch { /* Failed reads stay unknown rather than appearing healthy. */ }
     }));
@@ -213,7 +218,7 @@ export default function AdAccountConnections({ onTaskImported, onContinue, initi
         {!accounts.length ? <p className="ads-muted">尚未连接 {platform.name} 广告账户。连接后可读取平台计划。</p> : accounts.map(account => <article className="ad-saved-account" key={account.id} aria-label={`${account.name} 广告账户`}>
           <header className="ad-saved-account-header"><strong>{account.name}</strong><span className="ad-saved-account-status">{account.status === 'connected' ? '已连接' : '使用受限，需处理'}</span></header>
           <dl className="ad-saved-account-facts"><div><dt>账户 ID</dt><dd>{account.accountId}</dd></div><div><dt>结算币种</dt><dd>{account.currency}</dd></div><div><dt>账户时区</dt><dd>{account.timezoneName || '待核验'}</dd></div></dl>
-          <dl className="ad-saved-account-facts ad-account-health"><div><dt>账户余额</dt><dd>暂不可获取</dd></div><div><dt>账户提醒</dt><dd role="status">{accountNotice(account, liveStatus[account.id])}</dd></div></dl>
+          <dl className="ad-saved-account-facts ad-account-health"><div><dt>账户余额</dt><dd>{accountBalance(account, liveStatus[account.id])}</dd></div><div><dt>账户提醒</dt><dd role="status">{accountNotice(account, liveStatus[account.id])}</dd></div></dl>
           <div className="ad-saved-account-actions"><button className="ads-button" disabled={busy} onClick={() => syncAndView(account)}>{busy ? '同步中…' : '同步并查看平台计划'}</button></div>
           <details className="ad-connect-help ad-saved-account-maintenance"><summary>连接与账户维护</summary>
             <div className="ad-saved-account-maintenance-items">
