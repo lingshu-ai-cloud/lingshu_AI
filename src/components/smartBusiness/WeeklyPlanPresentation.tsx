@@ -1,10 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Button, Drawer, Empty, Modal, Statistic, Tag } from 'antd';
-import { ArrowRight, CalendarRange, CircleDollarSign, Clapperboard, Eye, Megaphone, Send, UserRound } from 'lucide-react';
+import { ArrowRight, CalendarRange, Clapperboard, Eye, Megaphone, Send, Star, UserRound } from 'lucide-react';
 import type { ContentQueueItem, DigitalEmployeeOverview, PlanTask } from '../../lib/digitalEmployees';
 import { VIDEO_PRESENTATIONS, type VideoCreationPlan } from '../../lib/videoCreationPlan';
 import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS } from '../../../shared/benchmarkAnalysis';
-import { isSmartBusinessShowcaseEnabled, isSmartBusinessWeeklyPlanPreviewEnabled, smartBusinessShowcaseAds, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS } from '../../dev/smartBusinessShowcaseData';
+import { isSmartBusinessShowcaseEnabled, isSmartBusinessWeeklyPlanPreviewEnabled, smartBusinessShowcaseAds } from '../../dev/smartBusinessShowcaseData';
 import { SocialPlatformIcon } from '../SocialPlatformIcon';
 import { AuthenticatedVideo } from '../inspiration/InspirationMedia';
 import { buildSmartBusinessDisplayModel, inspirationReferenceNavigationDetail, platformLabels, platformOptions, referencePlanForPublication, weeklyVideoBudget, type Platform, type UnifiedPlanContent } from './smartBusinessDisplayModel';
@@ -75,40 +75,17 @@ export function WeeklyCommandCenter({
   const display = buildSmartBusinessDisplayModel(data);
   const mixedPlan = Boolean(data.plan?.businessPackage?.mixedContentSlots?.length);
   const hasWeeklyPlan = Boolean(data.goal || previewTotals);
-  const contentQueue = data.contentQueue?.items || [];
-  const operatingContext = data.plan?.businessPackage?.operatingContext;
   const packageBudget = weeklyVideoBudget(data);
-  const useShowcaseBudget = (isSmartBusinessShowcaseEnabled() || isSmartBusinessWeeklyPlanPreviewEnabled()) && display.contents.length === SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount;
-  const weeklyQueue = contentQueue.filter(item => item.origin === "weekly_plan");
   const dashboardMockScale = display.totals.versionCount === 2 && packageBudget.estimated === 210;
   const plannedOutputCount = dashboardMockScale ? 16 : display.totals.versionCount;
   const plannedDurationSeconds = dashboardMockScale ? 480 : display.totals.durationSeconds;
-  const estimatedContentCost = useShowcaseBudget ? display.totals.budgetMidCny : Math.max(
-    weeklyQueue.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0),
-    packageBudget.estimated,
-  );
-  const settledContentCost = weeklyQueue.reduce((sum, item) => sum + Number(item.settledCostCny || 0), 0);
-  const hasExplicitProductionRange = Boolean(
-    Number(operatingContext?.budget.productionMinCny || packageBudget.min) > 0
-    || Number(operatingContext?.budget.productionMaxCny || packageBudget.max) > 0,
-  );
-  const budgetMin = useShowcaseBudget ? display.totals.budgetMinCny : Math.max(
-    operatingContext?.budget.productionMinCny || 0,
-    packageBudget.min,
-    !hasExplicitProductionRange && weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 0.8 : 0,
-  );
-  const budgetMax = useShowcaseBudget ? display.totals.budgetMaxCny : Math.max(
-    operatingContext?.budget.productionMaxCny || 0,
-    packageBudget.max,
-    !hasExplicitProductionRange && weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 1.25 : 0,
-  );
   const previewDetails: Record<WeeklyCommandMetricId, { title: string; note: string; rows: Array<[string, string]> }> | null = previewTotals ? {
     waiting_review: { title: '待验收成片', note: '查看本周需要人工核对的成片方向。', rows: [['泡沫卸妆质地测试', '待验收'], ['包装打样镜头', '待验收'], ['低 MOQ 流程短片', '待验收']] },
     planned_videos: { title: '本周计划视频', note: '按发布平台拆分的内容数量。', rows: [['TikTok', '12 条'], ['Instagram', '8 条'], ['Facebook', '7 条'], ['YouTube', '5 条']] },
     planned_duration: { title: '本周视频总时长', note: '各平台成片预计总时长。', rows: [['TikTok', '360 秒'], ['Instagram', '240 秒'], ['Facebook', '280 秒'], ['YouTube', '200 秒']] },
-    budget_range: { title: '本周成本范围', note: '供当前周计划比较的制作成本区间。', rows: [['范围下限', `¥${previewTotals.budgetMin.toFixed(2)}`], ['范围上限', `¥${previewTotals.budgetMax.toFixed(2)}`]] },
-    estimated_cost: { title: '预计制作成本', note: '当前周计划的预计制作成本。', rows: [['预计合计', `¥${previewTotals.estimatedCost.toFixed(2)}`], ['成本范围', `¥${previewTotals.budgetMin.toFixed(0)}–${previewTotals.budgetMax.toFixed(0)}`]] },
-    settled_cost: { title: '已结算成本', note: '用于对比预计与已结算金额，不代表真实扣费记录。', rows: [['已结算', `¥${previewTotals.settledCost.toFixed(2)}`], ['预计制作', `¥${previewTotals.estimatedCost.toFixed(2)}`], ['差额', `¥${Math.max(0, previewTotals.estimatedCost - previewTotals.settledCost).toFixed(2)}`]] },
+    budget_range: { title: '独立制作', note: '平台适配沿用原创内容，不重复制作。', rows: [['状态', '以已确认的制作方案为准']] },
+    estimated_cost: { title: '预计积分', note: '制作方案冻结后按产品功能核算积分。', rows: [['当前', '待制作方案冻结']] },
+    settled_cost: { title: '已结算积分', note: '仅展示权威积分账本的结算。', rows: [['当前', '以积分账本为准']] },
   } : null;
 
   return <section className={`flex flex-col overflow-hidden bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
@@ -138,10 +115,10 @@ export function WeeklyCommandCenter({
         { id: "waiting_review", label: "待验收成片", value: `${previewTotals?.waitingReview ?? display.totals.waitingReviewCount} 条` },
         { id: "planned_videos", label: mixedPlan ? "本周计划内容" : "本周计划视频", value: `${previewTotals?.plannedVideos ?? plannedOutputCount} 条` },
         { id: "planned_duration", label: "本周视频总时长", value: previewTotals ? `${previewTotals.durationSeconds} 秒` : plannedDurationSeconds > 0 ? `${plannedDurationSeconds} 秒` : hasWeeklyPlan ? "待确认" : "0 秒" },
-        { id: "budget_range", label: "本周成本范围", value: previewTotals ? `¥${previewTotals.budgetMin.toFixed(0)}–${previewTotals.budgetMax.toFixed(0)}` : budgetMax > 0 ? `¥${budgetMin.toFixed(0)}–${budgetMax.toFixed(0)}` : hasWeeklyPlan ? "待核算" : "¥0–0" },
-        { id: "estimated_cost", label: "预计制作成本", value: previewTotals ? `¥${previewTotals.estimatedCost.toFixed(2)}` : estimatedContentCost > 0 ? `¥${estimatedContentCost.toFixed(2)}` : hasWeeklyPlan ? "待核算" : "¥0.00" },
-        { id: "settled_cost", label: "已结算成本", value: previewTotals ? `¥${previewTotals.settledCost.toFixed(2)}` : settledContentCost > 0 ? `¥${settledContentCost.toFixed(2)}` : hasWeeklyPlan ? "暂无结算" : "¥0.00" },
-      ].map(item => <button key={item.id} type="button" aria-label={`查看${item.label}`} onClick={() => previewTotals ? setPreviewMetric(item.id as WeeklyCommandMetricId) : onMetricClick?.(item.id as WeeklyCommandMetricId)} disabled={!onMetricClick && !previewTotals} className="group relative min-w-0 rounded-lg bg-white text-left outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-default disabled:hover:bg-white"><Statistic title={item.label} value={item.value} styles={{ title: { fontSize: 16, lineHeight: "24px", fontWeight: 400, color: "var(--color-text-secondary)", marginBottom: 12 }, content: { color: "var(--color-text-primary)", fontSize: 28, fontWeight: 600, lineHeight: "36px" } }}/>{(onMetricClick || previewTotals) && <ArrowRight aria-hidden size={16} className="absolute right-3 top-3 text-text-muted transition-colors group-hover:text-accent" />}</button>)}
+        { id: "budget_range", label: "独立制作", value: `${display.totals.originalCount} 条` },
+        { id: "estimated_cost", label: "预计积分", value: hasWeeklyPlan ? "待方案冻结" : "暂无计划" },
+        { id: "settled_cost", label: "已结算积分", value: "以积分账本为准" },
+      ].map(item => <button key={item.id} type="button" aria-label={`查看${item.label}`} onClick={() => previewTotals ? setPreviewMetric(item.id as WeeklyCommandMetricId) : onMetricClick?.(item.id as WeeklyCommandMetricId)} disabled={['budget_range', 'estimated_cost', 'settled_cost'].includes(item.id) || (!onMetricClick && !previewTotals)} className="group relative min-w-0 rounded-lg bg-white text-left outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent/40 disabled:cursor-default disabled:hover:bg-white"><Statistic title={item.label} value={item.value} styles={{ title: { fontSize: 16, lineHeight: "24px", fontWeight: 400, color: "var(--color-text-secondary)", marginBottom: 12 }, content: { color: "var(--color-text-primary)", fontSize: 28, fontWeight: 600, lineHeight: "36px" } }}/>{(onMetricClick || previewTotals) && !['budget_range', 'estimated_cost', 'settled_cost'].includes(item.id) && <ArrowRight aria-hidden size={16} className="absolute right-3 top-3 text-text-muted transition-colors group-hover:text-accent" />}</button>)}
     </div>
     {notice && <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/70 px-5 py-3">{notice}</div>}
     <Drawer open={Boolean(previewMetric && previewDetails)} onClose={() => setPreviewMetric(null)} title={previewMetric && previewDetails?.[previewMetric]?.title} width={420} destroyOnHidden>
@@ -173,7 +150,6 @@ export function WeeklyPlanDetailsDrawer({
     || [];
   const useShowcasePlanRows = isSmartBusinessShowcaseEnabled() || isSmartBusinessWeeklyPlanPreviewEnabled();
   const planByContentId = new Map(productionPlans.flatMap(plan => plan.contentId ? [[plan.contentId, plan] as const] : []));
-  const productionBudget = { min: display.totals.budgetMinCny, max: display.totals.budgetMaxCny };
   const trafficTasks = (data.plan?.tasks || []).filter(isPaidMediaPlanTask);
   const paidMediaBudget = Math.max(
     Number(data.plan?.businessPackage?.operatingContext?.budget.paidMediaCny || 0),
@@ -194,13 +170,8 @@ export function WeeklyPlanDetailsDrawer({
     return item.plannedPublishDate || '待排期';
   };
   const formatCost = (plan: VideoCreationPlan | undefined, item: UnifiedPlanContent) => {
-    const min = Number(item.estimatedCostRange?.minCny ?? plan?.estimatedCostRange?.minCny ?? 0);
-    const max = Number(item.estimatedCostRange?.maxCny ?? plan?.estimatedCostRange?.maxCny ?? 0);
     if (item.productionRole === 'platform_adaptation') return '已计入原内容';
-    if (min > 0 || max > 0) return min === max ? `¥${max.toFixed(2)}` : `¥${min.toFixed(2)}–${max.toFixed(2)}`;
-    const point = Math.max(Number(item.estimatedCostCny || 0), Number(plan?.estimatedCost || 0), Number(item.queueItem?.estimatedCostCny || 0));
-    if (point > 0) return `¥${point.toFixed(2)}`;
-    return plan?.productionRole === 'platform_adaptation' ? '已计入主片' : '待核算';
+    return plan?.productionRole === 'platform_adaptation' ? '已计入主片' : '待制作方案冻结';
   };
   const planRows = display.contents.map((item, index) => {
     const exactPlan = item.kind === 'image' ? undefined : planByContentId.get(item.contentId)
@@ -312,7 +283,7 @@ export function WeeklyPlanDetailsDrawer({
           <dl className="mt-5 grid gap-3 border-y border-border py-4 sm:grid-cols-4">
             <div><dt className="text-xs text-text-muted">{isMixedPlan ? '计划内容' : '计划视频'}</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.totals.versionCount} 条</dd>{display.totals.originalCount < display.totals.versionCount && <p className="mt-1 text-xs text-text-secondary">{display.totals.originalCount} 条原创制作 · {display.totals.versionCount - display.totals.originalCount} 条平台适配</p>}</div>
             <div><dt className="text-xs text-text-muted">视频总时长</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.totals.durationSeconds > 0 ? `${display.totals.durationSeconds} 秒` : '待确认'}</dd></div>
-            <div><dt className="text-xs text-text-muted">预计制作成本</dt><dd className="mt-1 text-base font-semibold tabular-nums text-text-primary">{productionBudget.max > 0 ? `¥${productionBudget.min.toFixed(0)}–${productionBudget.max.toFixed(0)}` : '待核算'}</dd><p className="mt-1 text-xs text-text-secondary">仅供参考，不限制生产</p></div>
+            <div><dt className="text-xs text-text-muted">预计积分</dt><dd className="mt-1 text-base font-semibold tabular-nums text-text-primary">待制作方案冻结</dd></div>
             <div><dt className="text-xs text-text-muted">目标平台</dt><dd className="mt-1 text-base font-semibold text-text-primary">{targetPlatforms.map(platform => platformLabels[platform]).join('、') || '待确认'}</dd></div>
           </dl>
         </section>
@@ -337,7 +308,7 @@ export function WeeklyPlanDetailsDrawer({
                   <p className="mt-2 flex items-center gap-1 text-xs text-text-muted"><CalendarRange size={13}/>{formatPublishTime(item)}</p>
                 </div>
                 <div className="flex min-w-[136px] flex-col items-start gap-3 sm:items-end">
-                  <div><p className="flex items-center gap-1 text-xs text-text-muted"><CircleDollarSign size={13}/>成本参考</p><p className="mt-1 text-sm font-semibold tabular-nums text-text-primary">{costLabel}</p></div>
+                  <div><p className="flex items-center gap-1 text-xs text-text-muted"><Star size={13}/>预计积分</p><p className="mt-1 text-sm font-semibold tabular-nums text-text-primary">{costLabel}</p></div>
                   <Button className="min-h-11 min-w-[104px]" onClick={() => setSelectedPlanId(item.id)} aria-label={`查看 ${item.title} 详情`}>查看详情</Button>
                 </div>
               </article>;
@@ -385,7 +356,7 @@ export function WeeklyPlanDetailsDrawer({
             {selectedPlan.item.thumbnailUrl ? <img src={selectedPlan.item.thumbnailUrl} alt={`${selectedPlan.reference?.title || selectedPlan.item.title} 爆款视频缩略图`} className="h-full w-full object-cover"/> : <span className="flex h-full items-center justify-center text-text-muted"><Clapperboard size={22}/></span>}
           </div>
           <div className="min-w-0"><h3 className="text-base font-semibold text-text-primary">{selectedPlan.item.title}</h3><p className="mt-2 text-sm text-text-secondary">{selectedPlan.item.productName} · {platformLabels[selectedPlan.item.platform]} · {formatPublishTime(selectedPlan.item)}</p></div>
-          <div className="sm:text-right"><p className="text-xs text-text-muted">预计制作成本</p><p className="mt-1 text-base font-semibold tabular-nums text-text-primary">{selectedPlan.costLabel}</p></div>
+          <div className="sm:text-right"><p className="text-xs text-text-muted">预计积分</p><p className="mt-1 text-base font-semibold tabular-nums text-text-primary">{selectedPlan.costLabel}</p></div>
         </header>
         {selectedPlan.item.kind === 'image' ? <p className="text-sm leading-6 text-text-secondary">这条产品图片尚在计划阶段。编导需先从现有爆款库确认可用参考及产品素材；非产品图片改走代拍，不会自动生成。</p> : <><section aria-label={`${selectedPlan.item.title} 内容结构`}>
           <h4 className="text-sm font-semibold text-text-primary">内容结构</h4>

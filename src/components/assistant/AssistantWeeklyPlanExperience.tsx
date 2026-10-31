@@ -5,9 +5,6 @@ import type { AssistantWeeklyPlanExperience } from './useAssistantWeeklyPlanExpe
 import { ThumbnailImage } from '../inspiration/InspirationMedia';
 import { SocialPlatformIcon, socialBrandLabel } from '../SocialPlatformIcon';
 import { balancedWeeklyPublishSlots } from '../../../shared/contracts/weeklyPublishSchedule';
-import { estimateWeeklyMixedProduction } from '../../../shared/contracts/weeklyMixedContentPlan';
-
-const money = (value: number) => `¥${value.toFixed(2)}`;
 
 export function AssistantWeeklyPlanCard({ experience }: { experience: AssistantWeeklyPlanExperience }) {
   const goal = experience.proposal?.goal;
@@ -112,16 +109,11 @@ export function AssistantWeeklyPlanOverlay({ experience, reduceMotion }: { exper
   const visibleDistributionPage = Math.min(distributionPage, distributionPageCount - 1);
   const visibleDistributionRows = distributionRows.slice(visibleDistributionPage * referencesPerPage, (visibleDistributionPage + 1) * referencesPerPage);
   const publicationCount = mixedSlots.length || pack?.operatingContext?.outputs.count || 0;
+  const originalCount = originalVideoSlots.length;
+  const originalImageCount = imageReferences.length;
   const adaptationCount = mixedSlots.filter(slot => slot.productionRole === 'adaptation').length;
   const facebookPublications = pack?.mixedContentSlots?.filter(slot => slot.platform === 'facebook').length || 0;
   const linkedinPublications = pack?.mixedContentSlots?.filter(slot => slot.platform === 'linkedin').length || 0;
-  // Display-only first-pass estimate. Adaptations reuse originals; retries and
-  // unconfirmed paid-media plans are deliberately not presented as actual spend.
-  const plannedVideoSeconds = referencePlans.reduce((total, plan) => total + Math.max(0, Number(plan.duration) || 0), 0);
-  const estimate = estimateWeeklyMixedProduction(mixedSlots, plannedVideoSeconds && originalVideoSlots.length
-    ? { videoGeneratedSeconds: plannedVideoSeconds / originalVideoSlots.length } : {});
-  const videoEstimate = estimate.videoOriginals * estimate.unitVideoMinCny;
-  const imageEstimate = Math.max(0, estimate.minCny - videoEstimate);
   return <>
     <Modal open={experience.modalOpen} onCancel={experience.close} width={820}
       title={<span className="flex items-center gap-2"><CalendarRange size={18} className="text-accent"/>制定本周运营计划</span>}
@@ -139,13 +131,13 @@ export function AssistantWeeklyPlanOverlay({ experience, reduceMotion }: { exper
           { key: 'cycle', label: '运行周期', children: `${goal.startsAt} 至 ${goal.endsAt}` },
           { key: 'scope', label: '目标市场', children: goal.scope || '按企业默认市场' },
           { key: 'platforms', label: '运营平台', children: goal.contentPlatforms.map(item => <Tag key={item}>{item}</Tag>) },
-          { key: 'outputs', label: '暂定发布计划', children: <span>{publicationCount} 个发布位<span className="block text-xs text-text-muted">独立制作 {estimate.videoOriginals + estimate.imageOriginals} 条（视频 {estimate.videoOriginals}、图文 {estimate.imageOriginals}）；跨平台复用 {adaptationCount} 条</span></span> },
+          { key: 'outputs', label: '暂定发布计划', children: <span>{publicationCount} 个发布位<span className="block text-xs text-text-muted">独立制作 {originalCount + originalImageCount} 条（视频 {originalCount}、图文 {originalImageCount}）；跨平台复用 {adaptationCount} 条</span></span> },
           ...(pack?.mixedContentSlots?.length ? [{ key: 'distribution', label: '平台分配', children: `Facebook ${facebookPublications} 条 · LinkedIn ${linkedinPublications} 条` }] : []),
         ]}/>
-        <section className="grid gap-3 sm:grid-cols-3" aria-label="本周预计成本">
-          <div className="rounded-lg border border-border bg-surface-2 p-4"><p className="text-xs text-text-muted">预计视频制作</p><strong className="mt-2 block text-base text-text-primary">{money(videoEstimate)}</strong><span className="mt-1 block text-xs text-text-muted">{estimate.videoOriginals} 条独立视频，按计划时长与低价模式首轮生成估算</span></div>
-          <div className="rounded-lg border border-border bg-surface-2 p-4"><p className="text-xs text-text-muted">预计图文制作</p><strong className="mt-2 block text-base text-text-primary">{money(imageEstimate)}</strong><span className="mt-1 block text-xs text-text-muted">{estimate.imageOriginals} 条独立图文；平台适配不重复生成</span></div>
-          <div className="rounded-lg border border-accent bg-surface p-4"><p className="text-xs text-text-muted">预计内容制作合计</p><strong className="mt-2 block text-base text-accent">{money(estimate.minCny)}</strong><span className="mt-1 block text-xs text-text-muted">仅供参考，不是实付金额或生产门槛</span></div>
+        <section className="grid gap-3 sm:grid-cols-3" aria-label="本周积分预估">
+          <div className="rounded-lg border border-border bg-surface-2 p-4"><p className="text-xs text-text-muted">预计视频积分</p><strong className="mt-2 block text-base text-text-primary">以积分账本为准</strong><span className="mt-1 block text-xs text-text-muted">{originalCount} 条独立视频</span></div>
+          <div className="rounded-lg border border-border bg-surface-2 p-4"><p className="text-xs text-text-muted">预计图文积分</p><strong className="mt-2 block text-base text-text-primary">以积分账本为准</strong><span className="mt-1 block text-xs text-text-muted">{originalImageCount} 条独立图文</span></div>
+          <div className="rounded-lg border border-accent bg-surface p-4"><p className="text-xs text-text-muted">预计制作积分</p><strong className="mt-2 block text-base text-accent">待制作方案冻结</strong><span className="mt-1 block text-xs text-text-muted">跨平台复用 {adaptationCount} 条，不重复生成</span></div>
         </section>
         <section aria-label="其他业务安排" className="rounded-lg border border-border bg-surface px-4 py-3 text-xs leading-5 text-text-secondary">
           <h3 className="font-semibold text-text-primary">其他业务安排</h3>
@@ -173,10 +165,10 @@ export function AssistantWeeklyPlanOverlay({ experience, reduceMotion }: { exper
       </div> : <div className="grid min-h-48 place-items-center text-text-muted"><Loader2 className="animate-spin"/></div>}
     </Modal>
     <Modal open={experience.overBudgetConfirmationOpen} onCancel={experience.cancelOverBudgetConfirmation}
-      title="确认超预算制作" okText="仍要继续生产" okButtonProps={{ loading: experience.busy }}
+      title="确认较高制作预留" okText="仍要继续生产" okButtonProps={{ loading: experience.busy }}
       cancelText="暂不生产" cancelButtonProps={{ disabled: experience.busy }}
       onOk={() => void experience.confirm()} mask={{ closable: false }} closable={!experience.busy}>
-      <p className="text-sm leading-6 text-text-primary">{experience.overBudgetConfirmationCount} 条成片的最高费用预留超过 ¥0.70/秒。该预留包含逐镜生成及重做额度，不是实际扣费；若继续，实际费用以供应商回执为准。</p>
+      <p className="text-sm leading-6 text-text-primary">{experience.overBudgetConfirmationCount} 条成片的制作预留高于当前标准。该预留包含逐镜生成及固定重做次数，用于内部成本保护，不是积分扣费。</p>
     </Modal>
     {experience.celebrating && <div className={`assistant-weekly-plan-celebration ${reduceMotion ? 'is-reduced' : ''}`} aria-live="polite"><span className="sr-only">周计划已开始运行</span>{!reduceMotion && Array.from({ length: 14 }, (_, index) => <i key={index} style={{ '--i': index } as React.CSSProperties}/>) }<div className="assistant-weekly-plan-collapse"><Sparkles size={18}/>周计划已开始运行</div></div>}
   </>;

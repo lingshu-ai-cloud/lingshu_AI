@@ -67,7 +67,7 @@ test('business health stays in the overview while MatrixView hosts the Digital E
   assert.match(home, /<BusinessHealthOverview[^>]*data=\{data\}/);
   assert.doesNotMatch(home, /<MatrixWorkSchedule/);
   assert.match(matrix, /<DigitalEmployeeWorkspace[^>]*data=\{data\}/);
-  assert.match(matrix, /publishingCalendar=\{<WeeklyPublishingCalendar/);
+  assert.doesNotMatch(matrix, /publishingCalendar=/);
   assert.doesNotMatch(matrix, /<AccountHealthPanel/);
   assert.doesNotMatch(matrix, /<MatrixWorkSchedule/);
   assert.doesNotMatch(matrix, /title="账号表现趋势"/);

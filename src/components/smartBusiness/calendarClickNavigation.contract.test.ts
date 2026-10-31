@@ -8,8 +8,10 @@ const connected = fs.readFileSync('src/components/smartBusiness/ConnectedAgentCa
 
 assert.match(dashboard, /function MatrixView\(\{[^}]*onNavigate[^}]*\}[\s\S]{0,900}<DigitalEmployeeWorkspace[^>]*onNavigate=\{onNavigate\}/,
   'Smart Business must forward product navigation into the three-column current-work surface');
-assert.match(workspace, /<DigitalEmployeeHomeWork data=\{data\} onNavigate=\{onNavigate\} publishingCalendar=\{publishingCalendar\}/,
-  'the business overview must provide the weekly calendar alongside the current-work projection');
+assert.match(workspace, /<DigitalEmployeeHomeWork data=\{data\} onNavigate=\{onNavigate\}\/>/,
+  'the business overview must provide the current weekly business swimlanes');
+assert.doesNotMatch(workspace, /publishingCalendar/,
+  'the business overview must not duplicate the publishing calendar owned by content creation');
 assert.doesNotMatch(workspace, /<RestoredAgentWorkCalendar|<ConnectedAgentCalendar/,
   'the former Agent work calendar must not remain duplicated in the business overview');
 assert.match(matrix, /<AgentWeeklyCalendar[^>]*onOpenProduction=\{onOpenContent\?task=>onOpenContent\(task\.id,task\.productionTaskId\)/,

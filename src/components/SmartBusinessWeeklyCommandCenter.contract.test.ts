@@ -59,32 +59,30 @@ const isPaidMediaPlanTask = paidMediaContext.isPaidMediaPlanTask as (task: Recor
 assert.equal(isPaidMediaPlanTask({ capabilityKey: 'business_readiness', kind: 'readiness', statusSource: 'weekly_plan', title: '盘点企业、产品与授权边界' }), false, 'readiness 中的 ad 字母不得误判为广告任务');
 assert.equal(isPaidMediaPlanTask({ capabilityKey: 'platform_ads', kind: 'campaign', statusSource: 'weekly_plan', title: '创建平台计划' }), true, '明确 ads 能力必须识别为投流任务');
 assert.equal(isPaidMediaPlanTask({ capabilityKey: 'business', kind: 'planning', statusSource: 'weekly_plan', title: '制定 TikTok 投流预算' }), true, '明确投流标题必须识别为投流任务');
-for (const label of ['待验收成片', '本周计划视频', '本周视频总时长', '本周成本范围', '预计制作成本', '已结算成本']) {
+for (const label of ['待验收成片', '本周计划视频', '本周视频总时长', '独立制作', '预计积分', '已结算积分']) {
   assert.match(commandCenter, new RegExp(label), `周经营计划必须展示“${label}”`);
   assert.match(commandCenter, new RegExp(`aria-label=\\{\`查看\\$\\{item\\.label\\}\`\\}`), `“${label}”所在指标必须提供可访问的详情入口`);
 }
 assert.match(commandCenter, /onMetricClick\?\.\(item\.id as WeeklyCommandMetricId\)/, '六项周计划指标必须把对应指标身份交给页面导航');
 assert.match(commandCenter, /const hasWeeklyPlan = Boolean\(data\.goal \|\| previewTotals\)/, '无周计划时必须使用明确的空数据口径，显式预览除外');
-for (const emptyValue of ['0 秒', '¥0–0', '¥0.00']) assert.match(commandCenter, new RegExp(emptyValue), `无周计划时必须显示可读的空数据“${emptyValue}”`);
-assert.match(commandCenter, /disabled=\{!onMetricClick && !previewTotals\}/, '无周计划且无预览时的只读空指标不得可点');
-assert.match(commandCenter, /\{\(onMetricClick \|\| previewTotals\) && <ArrowRight/, '详情箭头只出现在真实入口或显式预览中');
-for (const label of ['计划视频', '爆款视频缩略图', '内容结构', '数字人形象', '预计制作成本', '发布计划', '投流计划']) {
+for (const emptyValue of ['0 秒', '暂无计划', '以积分账本为准']) assert.match(commandCenter, new RegExp(emptyValue), `无周计划时必须显示可读的空数据“${emptyValue}”`);
+assert.match(commandCenter, /disabled=\{\['budget_range', 'estimated_cost', 'settled_cost'\]\.includes\(item\.id\)/, '没有权威积分报价时，积分占位指标不可点击到供应商成本详情');
+assert.match(commandCenter, /&& !\['budget_range', 'estimated_cost', 'settled_cost'\]\.includes\(item\.id\) && <ArrowRight/, '无积分详情时不显示箭头');
+for (const label of ['计划视频', '爆款视频缩略图', '内容结构', '数字人形象', '预计积分', '发布计划', '投流计划']) {
   assert.match(planDetails, new RegExp(label), `详细周计划必须用可视化卡片展示“${label}”`);
 }
 assert.match(planDetails, /display\.contents\.map\(\(item, index\)/, '详细周计划必须覆盖共享模型中的全部计划视频');
-assert.match(dashboardSource, /const showcaseWeeklyVideos = showcaseTotals \? smartBusinessShowcaseWeeklyVideos\(data, true\) : null;[\s\S]*const allContents = showcaseContents\.length \? showcaseContents : mappedContents;[\s\S]*versionCount: contents\.length/, '本地展示的 32 条计划必须进入统一内容清单，计数不得与实际行数脱节');
-assert.match(businessInterpretation, /useShowcaseBudget \? display\.totals\.budgetMidCny : Math\.max/, '经营解读必须与周计划清单使用同一份本地预算汇总，不能继续显示旧预算');
-assert.match(commandCenter, /operatingContext\?\.budget\.productionMinCny/, '制作成本范围必须读取制作预算，不得把投流预算混入');
-assert.match(commandCenter, /operatingContext\?\.budget\.productionMaxCny/, '制作成本上限必须与投流预算分开');
-assert.doesNotMatch(commandCenter, /operatingContext\?\.budget\.total(?:Min|Max)Cny/, '周计划制作成本卡不得显示包含投流费用的总预算');
-assert.match(commandCenter, /!hasExplicitProductionRange && weeklyQueue\.length/, '已有明确制作预算区间时不得再用预计成本比例放大区间');
-const planListStart = planDetails.indexOf('<section aria-label="计划视频清单">');
+assert.match(dashboardSource, /const showcaseWeeklyVideos = showcaseTotals \? smartBusinessShowcaseWeeklyVideos\(data, true\) : null;[\s\S]*const allContents = showcaseContents\.length \? showcaseContents : mixedContents\.length \? mixedContents : mappedContents;[\s\S]*versionCount: contents\.length/, '本地展示的计划必须进入统一内容清单，计数不得与实际行数脱节');
+assert.match(businessInterpretation, /积分：[\s\S]*以产品功能账本为准/, '经营解读只说明积分状态，不展示供应商制作费');
+assert.doesNotMatch(businessInterpretation, /¥|estimatedCostCny|settledCostCny/, '经营解读不能暴露内部成本金额');
+assert.doesNotMatch(commandCenter, /¥|productionMinCny|productionMaxCny|budgetMidCny/, '周经营计划不得显示供应商制作费');
+const planListStart = planDetails.indexOf('<section aria-label={isMixedPlan ?');
 const planListEnd = planDetails.indexOf('<section className="grid gap-4', planListStart);
 const planList = planDetails.slice(planListStart, planListEnd);
 const detailDialogStart = planDetails.indexOf('<Modal', planListEnd);
 const detailDialog = planDetails.slice(detailDialogStart);
 assert.ok(planListStart >= 0 && planListEnd > planListStart, '计划视频摘要清单必须存在');
-assert.match(planList, /planRows\.map[\s\S]*爆款视频缩略图[\s\S]*status\.label[\s\S]*单条预算[\s\S]*setSelectedPlanId\(item\.id\)[\s\S]*查看详情/, '初始清单必须逐条展示预览、身份状态、预算和明确的详情入口');
+assert.match(planList, /planRows\.map[\s\S]*参考缩略图[\s\S]*status\.label[\s\S]*预计积分[\s\S]*setSelectedPlanId\(item\.id\)[\s\S]*查看详情/, '初始清单必须逐条展示预览、身份状态、积分状态和明确的详情入口');
 assert.doesNotMatch(planList, /内容结构|数字人形象|presenterLabel|presenterModeLabel|\.segments/, '内容结构和数字人详情不得在初始清单中提前展开');
 assert.doesNotMatch(planDetails, /<Collapse|defaultActiveKey|accordion/, '计划视频不得默认展开折叠内容');
 assert.match(detailDialog, /open=\{Boolean\(selectedPlan\)\}[\s\S]*内容结构[\s\S]*数字人形象与制作依据/, '内容结构和数字人必须在用户点击后打开的二级详情中展示');
@@ -114,15 +112,15 @@ assert.match(dashboardSource, /durationSeconds: contents\.reduce\(\(sum, item\) 
 assert.match(dashboardSource, /operatingContext\?\.budget\.productionMinCny[\s\S]*operatingContext\?\.budget\.productionMaxCny[\s\S]*operatingContext\?\.budget\.productionCny/, '周计划统一展示模型必须只汇总制作预算');
 assert.match(dashboardSource, /plan\.productionRole === "platform_adaptation"[\s\S]*\? 0[\s\S]*plan\.estimatedCost/, '平台发布版本的单条预算必须计入母版，不能重复累加制作成本');
 assert.doesNotMatch(commandCenter, /<LsCalendar|WeeklyContentProgressPanel|本周发布日历/, '顶部周经营计划不得重复渲染发布日历');
-assert.match(publishingCalendar, /<h3[^>]*>发布日历<\/h3>[\s\S]{0,160}<Tag>\{calendarEvents\.length\} 项发布<\/Tag>/, '发布视图必须使用与员工排期一致的工作台标题栏');
-assert.match(publishingCalendar, /initialView="timeGridWeek"[^>]*\bshowAllEvents\b[^>]*fixedHeight="auto"[^>]*workspaceMode="expanded"[^>]*firstDay=\{display\.startsAt \? calendarWeekday\(display\.startsAt\) : 1\}/, '发布日历必须按真实计划起始日展示明确小时排期');
+assert.match(publishingCalendar, /<h3[^>]*>发布日历<\/h3>[\s\S]{0,220}<Tag>\{calendarEvents\.length\} \/ \{display\.contents\.length\} 个周计划发布位已排期/, '发布视图必须区分已排期内容和全部发布位');
+assert.match(publishingCalendar, /initialView="dayGridWeek"[^\n]*eventCardMode="media"[^\n]*dateOnly[^\n]*\bshowAllEvents\b[^\n]*fixedHeight="auto"[^\n]*workspaceMode="expanded"[^\n]*firstDay=\{display\.startsAt \? calendarWeekday\(display\.startsAt\) : 1\}/, '发布日历必须按真实计划起始日展示七列媒体卡');
 assert.match(publishingCalendar, /onMoveEvent=\{async \(event, scheduledAt\)[^]*reschedulePublication/, '发布日历拖拽必须持久化新的发布时间');
 assert.match(publishingCalendar, /identity: \{ kind: "platform", platform: item\.platform \}/, '发布卡必须使用目标社媒平台 Logo 作为身份，而不是失败封面');
 assert.match(publishingCalendar, /workspaceMode="expanded"/, '发布周视图必须像员工排期一样完整展开工作区');
-assert.doesNotMatch(publishingCalendar, /eventCardMode="media"|density="compact"|\bflush\b/, '发布日历不得继续使用与员工排期不一致的媒体大卡或贴边紧凑模式');
+assert.doesNotMatch(publishingCalendar, /density="compact"|\bflush\b/, '发布日历不得使用贴边紧凑模式');
 assert.doesNotMatch(commandCenter, /<section className=\{`[^`]*(?:rounded-lg|border border-border)/, '周经营计划不得再使用封闭卡片外框');
-assert.match(publishingCalendar, /const calendarEvents:[\s\S]*display\.contents\.map/, '每条本周内容都必须映射为一个日历事件');
-assert.doesNotMatch(publishingCalendar, /onEventClick=/, '发布卡点击必须由共享日历打开侧栏，不能直接导航离开');
+assert.match(publishingCalendar, /const calendarEvents:[\s\S]*display\.contents\.flatMap/, '每条有真实日期的本周内容都必须映射为一个日历事件');
+assert.match(publishingCalendar, /onEventClick=\{event => \{ if \(!event\.id\.startsWith\('manual-'\)\) return false;/, '周任务发布卡必须留在共享日历侧栏，只有单独任务交给外部点击处理');
 assert.match(publishingCalendar, /detailsTitle="内容制作进度"[^]*<WeeklyContentProgressPanel[^]*contentId=\{item\.contentId\}/, '每条内容必须在共享侧栏展示其真实制作进度');
 assert.match(publishingCalendar, /onOpenReference=\{item\.inspirationReference[^]*inspirationReferenceNavigationDetail/, '精确爆款详情必须保留为侧栏里的次级入口');
 assert.match(dashboardSource, /businessRef: \{ referenceId: reference\.referenceId \}[\s\S]*inspirationReference: reference/, '爆款跳转必须使用既有的嵌套引用协议');

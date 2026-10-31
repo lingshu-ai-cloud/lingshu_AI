@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 import type {SocialPaidOperationIntent,SocialVerifiedAccountTariff} from './socialContentTaskBudgetAuthority.js';
 import {productionBillingAccountRef} from '../starter198/socialContentProductionBudgetRoutes.js';
 import {getQwenAsrProviderBinding,getQwenProviderBinding} from '../agents/qwen.js';
+import {readFixedProductionPublishedTariff} from './fixedProductionPublishedTariffs.js';
 const sourceUrl='https://help.aliyun.com/zh/model-studio/model-pricing';
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 const plain=(s:string)=>s.replace(/<[^>]*>/g,'').replace(/&nbsp;|&#160;/g,' ').replace(/\s+/g,'');
@@ -48,6 +49,11 @@ function bindingFor(intent:SocialPaidOperationIntent) {
   try {const b=getQwenAsrProviderBinding();if(b.baseUrl!=='https://dashscope.aliyuncs.com/compatible-mode/v1'||(process.env.QWEN_ASR_MODEL||'qwen3-asr-flash')!==intent.model)return null;return b;}catch{return null;}
  }
  return null;
+}
+/** Production-time default: reviewed local prices, no network request. */
+export function readNativeVoiceFixedPublishedTariff(intent:SocialPaidOperationIntent,ports:{readBinding?:(intent:SocialPaidOperationIntent)=>{baseUrl:string;credentialSha256:string}|null;now?:()=>Date}={}):SocialVerifiedAccountTariff|null {
+ const binding=(ports.readBinding||bindingFor)(intent);if(!binding)return null;
+ return readFixedProductionPublishedTariff(intent,binding,ports.now?.()||new Date());
 }
 export function verifyNativeVoicePublishedTariff(t:SocialVerifiedAccountTariff):boolean {
  try {

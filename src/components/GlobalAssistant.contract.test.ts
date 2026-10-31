@@ -81,7 +81,7 @@ assert.match(weeklyPlanHookSource, /function guidanceQuestions[\s\S]{0,1200}miss
 assert.match(weeklyPlanHookSource, /const prepare[\s\S]{0,2400}setGuidance\([\s\S]{0,280}questions\[0\]/, '没有草稿时打开周计划应进入逐项问答，不能后台创建新计划');
 assert.match(weeklyPlanHookSource, /const answer[\s\S]*setDraft\(candidate\); setGuidance\(nextGuidance\);[\s\S]*saveDraft\(candidate, nextGuidance\)/, '收集完成后必须先核验并绑定爆款参考，再打开方案确认');
 assert.match(weeklyPlanHookSource, /const saveDraft[\s\S]*digitalEmployeeApi\.createGoal\(candidate\)[\s\S]*weekly_reference_shortage/, '缺少可用参考时不能建立周任务');
-assert.match(weeklyPlanHookSource, /next\.goal && next\.plan[\s\S]{0,160}weeklyReferenceReadiness\(next\.goal\.id\)[\s\S]{0,1300}setProposal\(next\); setModalOpen\(true\)/, '已有周计划必须先核验参考绑定，并打开单页确认');
+assert.match(weeklyPlanHookSource, /next\.goal && next\.plan[\s\S]*weeklyReferenceReadiness\(goalId\)[\s\S]*setProposal\(next\); setModalOpen\(true\)/, '已有周计划必须先核验参考绑定，并打开单页确认');
 assert.doesNotMatch(weeklyPlanHookSource, /const prepare[\s\S]{0,900}lingshu:navigate|const prepare[\s\S]{0,900}lingshu:open-weekly-plan/, '首页发送创建周计划后不得跳转到经营总览');
 assert.doesNotMatch(weeklyPlanHookSource, /我们就在这里制定本周计划|每次只问一个问题，最多 3 个/, '不得把内部流程说明直接回复给用户');
 assert.match(weeklyPlanHookSource, /function suggestedWeeklyObjectives[\s\S]{0,700}return \[[\s\S]{0,500}\];/, '缺少经营目标时必须生成三个企业上下文建议');
@@ -93,10 +93,10 @@ assert.match(conversationBubblesSource, /<AssistantWeeklyObjectiveChoices[\s\S]{
 assert.match(sendHookSource, /const sendWeeklyPlanGuidanceAnswer[\s\S]{0,500}visibleLabel[\s\S]{0,600}answerWeeklyPlan\(value\)/, '点击经营目标必须复用周计划回答链路并把选择写入对话');
 assert.match(conversationPanelSource, /onWeeklyPlanObjective=\{sendWeeklyPlanGuidanceAnswer\}/, '对话面板必须接通经营目标的直接选择动作');
 assert.match(weeklyPlanHookSource, /企业基础档案尚未建立。请先完成首页的新手卡片/, '完全缺少企业档案时必须指向真实新手入口，不能伪造企业资料');
-assert.match(weeklyPlanSource, /data-weekly-plan-modal="confirmation"[\s\S]*本周预计成本[\s\S]*本周任务流程/, '周计划必须在同一页先展示预计成本再展示任务流程');
-assert.match(weeklyPlanSource, /estimateWeeklyMixedProduction\(mixedSlots,[\s\S]*仅供参考，不是实付金额或生产门槛/, '预计成本只能作为展示，不得冒充实付或成为生产门槛');
+assert.match(weeklyPlanSource, /data-weekly-plan-modal="confirmation"[\s\S]*本周任务流程/, '周计划必须在同一页展示任务流程');
+assert.doesNotMatch(weeklyPlanSource, /本周预计成本|预计内容制作合计|money\(estimate\.minCny\)/, '用户界面不得显示供应商成本');
 assert.doesNotMatch(weeklyPlanSource, /有 \$\{overBudgetFilms\.length\} 条成片预计超过|标准上限 ¥\$\{decision\.allowedCostCny/, '确认页不得常驻展示逐条超预算长警告');
-assert.match(weeklyPlanSource, /overBudgetConfirmationOpen[\s\S]*最高费用预留超过 ¥0\.70\/秒[\s\S]*不是实际扣费/, '超预算时仍须说明预留不是实际扣费并单独确认');
+assert.match(weeklyPlanSource, /overBudgetConfirmationOpen[\s\S]*制作预留高于当前标准[\s\S]*不是积分扣费/, '超预算时仍须说明预留不是积分扣费并单独确认');
 assert.match(weeklyPlanSource, /title: '采集'[\s\S]*title: '生产'[\s\S]*title: '分发'/, '任务流程必须从左到右呈现采集、生产和分发');
 assert.match(weeklyPlanSource, /确认周计划并开始运营/, '周计划必须只有一个普通启动确认动作');
 assert.doesNotMatch(weeklyPlanSource, /确认方案，查看预算|<Steps|查看每条视频的成本估算|只有点击“确认预算并开始运营”后/, '周计划不得保留分步确认和已删除的辅助说明');
@@ -105,7 +105,7 @@ assert.match(weeklyPlanSource, /clipPath:[\s\S]*<ArrowDown[\s\S]*<ArrowRight/, '
 assert.match(weeklyPlanSource, /采集并筛选爆款参考[\s\S]*逐条分析爆款结构[\s\S]*编写适配脚本[\s\S]*完成镜头分镜/, '采集阶段必须将爆款分析与脚本分镜拆成可见步骤');
 assert.match(weeklyPlanSource, /originalSlotId[\s\S]*planBySlotId[\s\S]*SocialPlatformIcon[\s\S]*计划发往[\s\S]*来源\{row\.sourceLabel\}/, '分发阶段必须按原始内容关联参考、真实平台标识与发布建议');
 assert.doesNotMatch(weeklyPlanSource, /distributionTasks|phase\.title === '分发'[\s\S]{0,300}复盘本周工作/, '周复盘不得被当成分发任务');
-assert.match(weeklyPlanSource, /videoEstimate[\s\S]*imageEstimate[\s\S]*money\(estimate\.minCny\)/, '预计制作成本须按独立视频与图文数量计算，平台适配不得重复计费');
+assert.match(weeklyPlanSource, /originalCount[\s\S]*originalImageCount[\s\S]*跨平台复用 \{adaptationCount\}/, '发布位须区分独立视频、图文与复用，不向用户显示内部成本');
 assert.doesNotMatch(weeklyPlanSource, /暂无结算|暂无可核验支出|仅为发布建议，实际平台与时间由用户发布时确认/, '确认页须显示数值，不保留已删除的说明');
 assert.match(weeklyPlanSource, /imageReferences\.map\(\(slot, index\)[\s\S]*referenceThumbnailUrl/, '图文参考必须使用已分析图片作缩略图');
 assert.doesNotMatch(weeklyPlanSource, /\{plan\.referenceId\}|已绑定的爆款视频 ID/, '内部参考 ID 不得暴露在方案弹窗');

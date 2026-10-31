@@ -1,5 +1,5 @@
 import { Button } from 'antd';
-import { ArrowLeft, Check, Loader2, WalletCards } from 'lucide-react';
+import { ArrowLeft, Check, Loader2, Star } from 'lucide-react';
 
 import type { ContentPlatform } from '../lib/digitalEmployees';
 
@@ -9,8 +9,6 @@ type WeeklyPlanConfirmationCardProps = {
   platformPlanCounts: Array<{ platform: Exclude<ContentPlatform, 'all'>; count: number }>;
   promotionPlanCount: number;
   promotionBudgetCny: number;
-  productionBudgetMinCny: number;
-  productionBudgetMaxCny: number;
   onEdit: () => void;
   onConfirm: () => void;
 };
@@ -31,30 +29,26 @@ export default function WeeklyPlanConfirmationCard({
   platformPlanCounts,
   promotionPlanCount,
   promotionBudgetCny,
-  productionBudgetMinCny,
-  productionBudgetMaxCny,
   onEdit,
   onConfirm,
 }: WeeklyPlanConfirmationCardProps) {
-  const totalMin = productionBudgetMinCny + promotionBudgetCny;
-  const totalMax = productionBudgetMaxCny + promotionBudgetCny;
   return (
-    <section aria-label="费用参考与方案确认" className="rounded-lg border border-border bg-white p-5 sm:p-6">
+    <section aria-label="周计划方案确认" className="rounded-lg border border-border bg-white p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <div className="rounded-lg border border-border bg-surface-2 p-3 text-accent"><WalletCards size={22} /></div>
+          <div className="rounded-lg border border-border bg-surface-2 p-3 text-accent"><Star size={22} /></div>
           <div>
-            <p className="text-xs font-semibold text-accent">第 2 步 · 查看费用参考</p>
-            <h2 className="mt-1 text-xl font-semibold text-text-primary">本周预计需要 {money(totalMin)}–{money(totalMax)}</h2>
+            <p className="text-xs font-semibold text-accent">第 2 步 · 确认本周方案</p>
+            <h2 className="mt-1 text-xl font-semibold text-text-primary">确认后开始本周运营</h2>
           </div>
         </div>
-        <span className="rounded-full bg-surface-2 px-3 py-1.5 text-xs font-medium text-text-secondary">制作费用为估算，不设用户预算上限</span>
+        <span className="rounded-full bg-surface-2 px-3 py-1.5 text-xs font-medium text-text-secondary">内容积分按实际交付核算</span>
       </div>
 
       <dl className="mt-6 grid gap-3 sm:grid-cols-3">
         <div className="rounded-lg border border-border bg-surface-2 p-4">
-          <dt className="text-xs text-text-muted">内容制作成本参考</dt>
-          <dd className="mt-2 text-lg font-semibold text-text-primary">{money(productionBudgetMinCny)}–{money(productionBudgetMaxCny)}</dd>
+          <dt className="text-xs text-text-muted">预计制作积分</dt>
+          <dd className="mt-2 text-lg font-semibold text-text-primary">待制作方案冻结</dd>
           <p className="mt-1 text-xs text-text-secondary">{videoCount} 条视频</p>
         </div>
         <div className="rounded-lg border border-border bg-surface-2 p-4">
@@ -63,9 +57,9 @@ export default function WeeklyPlanConfirmationCard({
           <p className="mt-1 text-xs text-text-secondary">{promotionPlanCount > 0 ? `${promotionPlanCount} 条内容` : '本周不投流'}</p>
         </div>
         <div className="rounded-lg border border-accent bg-white p-4">
-          <dt className="text-xs text-text-secondary">预计费用范围</dt>
-          <dd className="mt-2 text-lg font-semibold text-accent">{money(totalMin)}–{money(totalMax)}</dd>
-          <p className="mt-1 text-xs text-text-secondary">按实际供应商用量结算；区间不限制制作</p>
+          <dt className="text-xs text-text-secondary">发布平台</dt>
+          <dd className="mt-2 text-lg font-semibold text-accent">{platformPlanCounts.filter(item => item.count > 0).length} 个</dd>
+          <p className="mt-1 text-xs text-text-secondary">实际积分以成功交付的产品功能为准</p>
         </div>
       </dl>
 

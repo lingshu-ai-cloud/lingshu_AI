@@ -35,6 +35,9 @@ test('provider cost aggregation prefers actual charges and keeps estimates unset
     actualCostCny: 2.7,
     estimatedUnsettledCostCny: 0.3,
     recordedCostCny: 3,
+    actualCostUsdEquivalent: 0.409091,
+    estimatedUnsettledCostUsdEquivalent: 0.045455,
+    fxVersion: 'usd-cny-budget-2026-10-30.v1',
     providerSegmentCount: 2,
     settlementStatus: 'partially_settled',
   });

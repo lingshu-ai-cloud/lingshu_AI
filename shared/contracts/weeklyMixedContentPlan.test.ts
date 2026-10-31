@@ -28,15 +28,25 @@ test('mixed recommendation requires three distinct actual account identities', (
   assert.throws(() => recommendWeeklyMixedContent({ facebookAccountIds: ['fb-a', ' '], linkedinAccountId: 'li' }), /distinct_accounts/);
 });
 
-test('quote counts only original production and published model rates, not adaptations', () => {
+test('USD estimate counts only deterministic original production, not adaptations', () => {
   const slots = recommendWeeklyMixedContent({ facebookAccountIds: ['fb-a', 'fb-b'], linkedinAccountId: 'li' });
   const quote = estimateWeeklyMixedProduction(slots);
   assert.equal(quote.publicationCount, 15);
   assert.equal(quote.videoOriginals, 6);
   assert.equal(quote.imageOriginals, 4);
-  assert.ok(quote.minCny > 25 && quote.maxCny > 100);
-  assert.equal(quote.basis.usdToCny, 7.2, 'exchange conversion is an explicit assumption, not a live rate');
+  assert.equal(quote.currency, 'USD');
+  assert.equal(quote.estimatedUsd, 27.788032);
+  assert.equal(quote.minCny, quote.maxCny, 'legacy CNY projection is the same deterministic task, not a range');
+  assert.equal(quote.fxVersion, 'usd-cny-budget-2026-10-30.v1');
   const adaptations = estimateWeeklyMixedProduction(slots.filter(slot => slot.productionRole === 'adaptation'));
   assert.equal(adaptations.minCny, 0);
   assert.equal(adaptations.maxCny, 0);
+  assert.equal(adaptations.estimatedUsd, 0);
+});
+
+test('planned generated seconds and fixed attempts control the USD estimate without tokens', () => {
+  const slots = recommendWeeklyMixedContent({ facebookAccountIds: ['fb-a', 'fb-b'], linkedinAccountId: 'li' });
+  const quote = estimateWeeklyMixedProduction(slots, { videoGeneratedSeconds: 12, videoAttempts: 2, imageAttempts: 2 });
+  assert.equal(quote.estimatedUsd, 22.848608);
+  assert.throws(() => estimateWeeklyMixedProduction(slots, { videoAttempts: 1.5 }), /basis_invalid/);
 });

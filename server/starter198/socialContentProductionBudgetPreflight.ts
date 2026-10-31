@@ -5,9 +5,10 @@ import { VOICE_ROUTE_AMENDMENT_STAGE, verifyVoiceRouteAmendment, type VoiceRoute
 import {verifyNativeHeyGenCatalogueApprovalCurrent,recoverNativeHeyGenCatalogueFrame} from './socialContentNativeHeyGenFirstFrame.js';
 import {validProductionBudgetMaximum,validOriginalProductionBudget} from '../../shared/contracts/productionBudgetPolicy.js';
 import {readHeyGenPublishedTariff} from '../lib/heygenPublishedPricing.js';
+import {readFixedProductionPublishedTariff} from '../lib/fixedProductionPublishedTariffs.js';
 import {heyGenRuntimeRouteEvidence,readTrustedHeyGenRuntimeBinding,type TrustedHeyGenRuntimeBinding} from './socialContentHeyGenRuntimeBinding.js';
 import {readSeedreamPublishedTariff} from '../lib/seedreamPublishedPricing.js';
-import {readNativeVoicePublishedTariff} from '../lib/studioVoicePublishedPricing.js';
+import {readNativeVoiceFixedPublishedTariff,readNativeVoicePublishedTariff} from '../lib/studioVoicePublishedPricing.js';
 import {readWanPublishedTariff} from '../lib/wanPublishedPricing.js';
 import fs from 'node:fs';
 import {getQwenProviderBinding} from '../agents/qwen.js';
@@ -445,8 +446,10 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
                 const presenterBinding=correction.correctionCause==='approved_first_frame_not_consumed_and_bound_voice_mismatch'
                   ?await readTrustedHeyGenRuntimeBinding({tenantId:scope.tenantId,presenterAssetId:recoveryPresenterGroups[0]!.presenterAssetId},{store,assertCurrent}):null;
                 const tariff=await input.ports?.readTariff?.(quoteIntent)
-                  ||(quoteIntent.provider==='heygen'&&quoteIntent.stage==='tts'&&presenterBinding?await readHeyGenPublishedTariff(quoteIntent,{readBinding:async()=>({...presenterBinding,accountRef:quoteIntent.accountRef})}):null)
-                  ||(['voice_alignment'].includes(quoteIntent.stage)?await readNativeVoicePublishedTariff(quoteIntent):null);
+                  ||(quoteIntent.provider==='heygen'&&quoteIntent.stage==='tts'&&presenterBinding
+                    ?readFixedProductionPublishedTariff(quoteIntent,{...presenterBinding,baseUrl:'https://api.heygen.com/v3/voices/speech',accountRef:quoteIntent.accountRef})
+                      ||await readHeyGenPublishedTariff(quoteIntent,{readBinding:async()=>({...presenterBinding,accountRef:quoteIntent.accountRef})}):null)
+                  ||(['voice_alignment'].includes(quoteIntent.stage)?readNativeVoiceFixedPublishedTariff(quoteIntent)||await readNativeVoicePublishedTariff(quoteIntent):null);
                 if(!tariff)throw Error('presenter_correction_voice_tariff_missing');
                 return rememberCorrectionQuote(quoteIntent,tariff);
               }
@@ -455,7 +458,9 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
               const originalId=`paid-plan:${paidProductionHash({scope,key:requirement.key,attempt:0})}`,original=status.entries.find(item=>item.operationId===originalId);
               if(!original||original.stage!=='presenter_video'||original.status!=='completed'||!original.receiptRef)throw Error('presenter_correction_original_receipt_missing');
               const liveBinding=await readTrustedHeyGenRuntimeBinding({tenantId:scope.tenantId,presenterAssetId:recoveryPresenterGroups.find(group=>group.groupId===binding.presenterGroupId)!.presenterAssetId},{store,assertCurrent});
-              const tariff=await input.ports?.readTariff?.(intent)||(liveBinding?await readHeyGenPublishedTariff(intent,{readBinding:async()=>liveBinding}):null);
+              const tariff=await input.ports?.readTariff?.(intent)||(liveBinding
+                ?readFixedProductionPublishedTariff(intent,{...liveBinding,baseUrl:'https://api.heygen.com/v3/videos',accountRef:intent.accountRef})
+                  ||await readHeyGenPublishedTariff(intent,{readBinding:async()=>liveBinding}):null);
               if(!tariff)throw Error('presenter_correction_video_tariff_missing');
               return rememberCorrectionQuote(intent,tariff);
             },verifyRejection:async()=>false,
@@ -626,7 +631,22 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     };
     const publishedReader=createSocialContentLocalPublishedTariffReader({readProviderBinding:readPublishedQwenBinding});
     const maasPublishedReader=createQwenMaaSPublishedTariffReader({readProviderBinding:readPublishedQwenBinding});
-    const authority = createSocialContentTaskBudgetAuthority({ ledgerRoot: ports?.ledgerRoot, ports: { assertCurrent, readApprovedPlan: async () => { await assertCurrent(); return planned.plan!; }, readVerifiedTariff: async intent=>await ports?.readTariff?.(intent)||await reader.read(intent)||(intent.provider==='heygen' && intent.stage==='tts' ? await readHeyGenPublishedTariff(intent,{readBinding:async operation=>{const binding=[...presenterBindings.values()].find(b=>operation.accountRef==='heygen:'+createHash('sha256').update(JSON.stringify({baseUrl:operation.model==='avatar_iv'?'https://api.heygen.com/v3/videos':'https://api.heygen.com/v3/voices/speech',credentialSha256:b.credentialSha256})).digest('hex'));return binding?{...binding,accountRef:operation.accountRef}:null;}}) : ['tts','voice_asr','voice_alignment'].includes(intent.stage)?await readNativeVoicePublishedTariff(intent):intent.provider==='seedream'?await readSeedreamPublishedTariff(intent,{baseUrl:process.env.SEEDREAM_BASE_URL||process.env.SEEDANCE_BASE_URL||'https://ark.cn-beijing.volces.com/api/v3',credentialSha256:createHash('sha256').update((process.env.SEEDREAM_API_KEY||process.env.SEEDANCE_API_KEY||'').trim()).digest('hex')}):intent.provider==='wan'?await readWanPublishedTariff(intent,{baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',credentialSha256:getQwenProviderBinding().credentialSha256}):intent.provider==='heygen'?await readHeyGenPublishedTariff(intent,{readBinding:async operation=>[...presenterBindings.values()].find(binding=>binding.accountRef===operation.accountRef)||null}):await maasPublishedReader.read(intent)||await publishedReader.read(intent)), verifyRejection: async () => false } });
+    const readFixedRuntimeTariff=async(intent:SocialPaidOperationIntent):Promise<SocialVerifiedAccountTariff|null>=>{
+      if(intent.provider==='qwen'&&['tts','voice_asr','voice_alignment'].includes(intent.stage))return readNativeVoiceFixedPublishedTariff(intent);
+      if(intent.provider==='seedream'||intent.provider==='seedance'){
+        const key=(intent.provider==='seedream'?process.env.SEEDREAM_API_KEY||process.env.SEEDANCE_API_KEY:process.env.SEEDANCE_API_KEY)||'';
+        if(!key.trim())return null;
+        return readFixedProductionPublishedTariff(intent,{baseUrl:(intent.provider==='seedream'?process.env.SEEDREAM_BASE_URL||process.env.SEEDANCE_BASE_URL:process.env.SEEDANCE_BASE_URL)||'https://ark.cn-beijing.volces.com/api/v3',credentialSha256:createHash('sha256').update(key.trim()).digest('hex')});
+      }
+      if(intent.provider==='wan')try{return readFixedProductionPublishedTariff(intent,{baseUrl:'https://dashscope.aliyuncs.com/api/v1',credentialSha256:getQwenProviderBinding().credentialSha256});}catch{return null;}
+      if(intent.provider==='heygen'){
+        const speech=intent.model!=='avatar_iv',baseUrl=speech?'https://api.heygen.com/v3/voices/speech':'https://api.heygen.com/v3/videos';
+        const binding=[...presenterBindings.values()].find(candidate=>intent.accountRef==='heygen:'+createHash('sha256').update(JSON.stringify({baseUrl,credentialSha256:candidate.credentialSha256})).digest('hex'));
+        return binding?readFixedProductionPublishedTariff(intent,{...binding,baseUrl,accountRef:intent.accountRef}):null;
+      }
+      return null;
+    };
+    const authority = createSocialContentTaskBudgetAuthority({ ledgerRoot: ports?.ledgerRoot, ports: { assertCurrent, readApprovedPlan: async () => { await assertCurrent(); return planned.plan!; }, readVerifiedTariff: async intent=>await ports?.readTariff?.(intent)||await reader.read(intent)||await readFixedRuntimeTariff(intent)||(intent.provider==='heygen' && intent.stage==='tts' ? await readHeyGenPublishedTariff(intent,{readBinding:async operation=>{const binding=[...presenterBindings.values()].find(b=>operation.accountRef==='heygen:'+createHash('sha256').update(JSON.stringify({baseUrl:operation.model==='avatar_iv'?'https://api.heygen.com/v3/videos':'https://api.heygen.com/v3/voices/speech',credentialSha256:b.credentialSha256})).digest('hex'));return binding?{...binding,accountRef:operation.accountRef}:null;}}) : ['tts','voice_asr','voice_alignment'].includes(intent.stage)?await readNativeVoicePublishedTariff(intent):intent.provider==='seedream'?await readSeedreamPublishedTariff(intent,{baseUrl:process.env.SEEDREAM_BASE_URL||process.env.SEEDANCE_BASE_URL||'https://ark.cn-beijing.volces.com/api/v3',credentialSha256:createHash('sha256').update((process.env.SEEDREAM_API_KEY||process.env.SEEDANCE_API_KEY||'').trim()).digest('hex')}):intent.provider==='wan'?await readWanPublishedTariff(intent,{baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',credentialSha256:getQwenProviderBinding().credentialSha256}):intent.provider==='heygen'?await readHeyGenPublishedTariff(intent,{readBinding:async operation=>[...presenterBindings.values()].find(binding=>binding.accountRef===operation.accountRef)||null}):await maasPublishedReader.read(intent)||await publishedReader.read(intent)), verifyRejection: async () => false } });
     // Quote the complete frozen plan before mutating the task ledger.  Besides
     // keeping over-budget retries free, the stage breakdown is durable in the
     // graph node failure reason and makes the degradation decision auditable.

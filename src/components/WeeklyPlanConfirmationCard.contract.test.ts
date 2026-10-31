@@ -6,11 +6,12 @@ const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'ut
 const workspaceSource = fs.readFileSync('src/components/ConfiguredDigitalEmployeeWorkspace.tsx', 'utf8');
 const goalPanelSource = fs.readFileSync('src/components/smartBusiness/WeeklyGoalPanel.tsx', 'utf8');
 
-assert.match(cardSource, /费用参考与方案确认/, 'the second step presents a reference range, not a budget gate');
-assert.match(cardSource, /内容制作成本参考/, 'the card must show the production cost range');
+assert.match(cardSource, /周计划方案确认/, 'the second step confirms the weekly plan');
+assert.match(cardSource, /预计制作积分/, 'the card must expose points rather than provider costs');
+assert.doesNotMatch(cardSource, /内容制作成本参考|totalMin|totalMax/, 'internal cost range must not be exposed');
 assert.match(cardSource, /投流计划/, 'the card must keep the confirmed promotion budget visible');
 assert.match(cardSource, /确认方案并开始运营/, 'the button confirms the plan without approving a production ceiling');
-assert.match(cardSource, /不设用户预算上限/, 'the reference range must not be presented as a production limit');
+assert.match(cardSource, /实际积分以成功交付的产品功能为准/, 'points follow delivered product features');
 assert.match(cardSource, /onConfirm/, 'the card must delegate confirmation to its parent');
 assert.doesNotMatch(cardSource, /digitalEmployeeApi|approveGoal|fetch\(/, 'the presentation component must not create a second execution path');
 

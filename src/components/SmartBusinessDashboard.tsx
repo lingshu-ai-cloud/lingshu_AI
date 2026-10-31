@@ -49,7 +49,7 @@ import WeeklyContentProgressPanel from "./smartBusiness/WeeklyContentProgressPan
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
 import { isSmartBusinessShowcaseEnabled, isSmartBusinessWeeklyPlanPreviewEnabled, smartBusinessShowcaseAds, smartBusinessShowcaseWeeklyVideos, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS } from "../dev/smartBusinessShowcaseData";
 import { TaskPreviewCards } from "./smartBusiness/TaskPreviewCards";
-import { buildSmartBusinessDisplayModel, engagingContentTitle, inspirationReferenceNavigationDetail, platformLabels, platformOptions, weeklyVideoBudget, type DisplayMetricSource, type Platform, type SmartBusinessDisplayModel, type UnifiedPlanContent } from './smartBusiness/smartBusinessDisplayModel';
+import { buildSmartBusinessDisplayModel, engagingContentTitle, inspirationReferenceNavigationDetail, platformLabels, platformOptions, type DisplayMetricSource, type Platform, type SmartBusinessDisplayModel, type UnifiedPlanContent } from './smartBusiness/smartBusinessDisplayModel';
 export type SmartBusinessView = "home" | "matrix" | "production" | "review";
 
 type AgentCard = {
@@ -197,14 +197,6 @@ export { WeeklyCommandCenter, WeeklyPlanDetailsDrawer } from './smartBusiness/We
 export function BusinessInterpretation({ data, onViewReview }: { data: DigitalEmployeeOverview; onViewReview: () => void }) {
   const [expanded, setExpanded] = useState(true);
   const display = buildSmartBusinessDisplayModel(data);
-  const weeklyItems = (data.contentQueue?.items || []).filter(item => item.origin === 'weekly_plan');
-  const packageBudget = weeklyVideoBudget(data);
-  const useShowcaseBudget = (isSmartBusinessShowcaseEnabled() || isSmartBusinessWeeklyPlanPreviewEnabled()) && display.contents.length === SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount;
-  const estimatedCost = useShowcaseBudget ? display.totals.budgetMidCny : Math.max(
-    weeklyItems.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0),
-    packageBudget.estimated,
-  );
-  const settledCost = weeklyItems.reduce((sum, item) => sum + Number(item.settledCostCny || 0), 0);
   const summary = data.review?.status === 'generated' ? data.review.summary : null;
   return <section aria-label="经营解读" className="col-span-full mx-5 mb-5 mt-2 border-t border-border px-1 pt-4">
     <header className="flex flex-wrap items-center justify-between gap-3">
@@ -212,9 +204,9 @@ export function BusinessInterpretation({ data, onViewReview }: { data: DigitalEm
       <div className="flex items-center gap-2"><Button type="text" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>{expanded ? '收起' : '展开'}</Button></div>
     </header>
     {expanded && <div className="mt-3 space-y-2 text-sm leading-7 text-text-primary">
-      <p><strong>当前进展：</strong>{data.goal ? `本周计划制作 ${display.totals.versionCount} 条视频，共 ${display.totals.durationSeconds} 秒；已完成 ${display.totals.completedCount} 条，待验收 ${display.totals.waitingReviewCount} 条。` : '尚未建立周经营计划，请先确定本周的视频产量与预算。'}</p>
+      <p><strong>当前进展：</strong>{data.goal ? `本周计划制作 ${display.totals.versionCount} 条视频，共 ${display.totals.durationSeconds} 秒；已完成 ${display.totals.completedCount} 条，待验收 ${display.totals.waitingReviewCount} 条。` : '尚未建立周经营计划，请先确定本周目标与内容产量。'}</p>
       <ul className="list-disc space-y-1 pl-5">
-        <li><strong>成本：</strong>{estimatedCost > 0 ? `已排期内容预计制作成本 ¥${estimatedCost.toFixed(2)}。` : '制作成本尚未核算。'}{settledCost > 0 ? `已结算 ¥${settledCost.toFixed(2)}。` : '当前暂无已结算成本。'}</li>
+        <li><strong>积分：</strong>制作积分以产品功能账本为准。</li>
         <li><strong>执行：</strong>{display.totals.blockedCount > 0 ? `${display.totals.blockedCount} 条内容待处理，建议先进入制作工作台补齐条件。` : display.totals.waitingReviewCount > 0 ? '有成片等待验收，建议优先确认后续发布。' : '按周排期推进制作，并在成片生成后完成验收与发布确认。'}</li>
         {summary?.highlights.slice(0, 3).map((highlight, index) => <li key={index}>{highlight}</li>)}
         {summary?.nextGoalSuggestion && <li><strong>建议：</strong>{summary.nextGoalSuggestion}</li>}

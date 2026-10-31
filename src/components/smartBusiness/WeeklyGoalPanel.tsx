@@ -5,7 +5,6 @@ import { day as shanghaiDay } from '../../../shared/mobile-domain.mjs';
 import { socialOperatingProfile } from '../../../shared/contracts/socialOperatingProfile';
 import { weeklyPublishingPlatforms } from '../../../shared/contracts/weeklyPublishingTargets';
 import { isContentProductionPlatform } from '../../../shared/contracts/contentProductionPlatforms';
-import { MASTER_VIDEO_COST_MAX_CNY, MASTER_VIDEO_COST_MIN_CNY } from '../../../shared/contracts/contentCostModel';
 import { scheduleWeeklyVideos } from '../../lib/weeklyGoalSchedule';
 import { buildPresetMatrixVideoPlans, WEEKLY_TASK_PACKAGE_PRESETS, weeklyTaskPackagePreset, type WeeklyTaskPackagePresetId } from '../../lib/weeklyTaskPackagePresets';
 import { defaultMatrixPlan } from '../../lib/weeklyMatrix';
@@ -108,8 +107,6 @@ export function GoalPanel({
   const promotions = form.promotionPlans || [];
   const platformPlanCounts = configuredPlatforms.map(platform => ({ platform, count: plans.filter(plan => plan.platform === platform).length }));
   const promotionBudgetCny = promotions.reduce((sum, item) => sum + item.budgetCny, 0);
-  const productionBudgetMinCny = plans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || MASTER_VIDEO_COST_MIN_CNY), 0);
-  const productionBudgetMaxCny = plans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || MASTER_VIDEO_COST_MAX_CNY), 0);
   const validPlanIds = new Set(plans.map(plan => plan.contentId).filter(Boolean));
   const promotionInvalid = promotions.some(item => !validPlanIds.has(item.contentId) || item.budgetCny <= 0);
   const hasErrors = businessLine !== 'customer_conversion' && (!plans.length || !form.contentPlatforms.length || plans.some(plan => !form.contentPlatforms.includes(plan.platform)) || promotionInvalid);
@@ -186,7 +183,7 @@ export function GoalPanel({
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
-      <Steps current={stage === 'plan' ? 0 : 1} responsive={false} items={[{ title: '确认执行方案' }, { title: '查看费用参考并启动' }]} />
+      <Steps current={stage === 'plan' ? 0 : 1} responsive={false} items={[{ title: '确认执行方案' }, { title: '确认并启动' }]} />
       {stage === 'budget' ? (
         <WeeklyPlanConfirmationCard
           busy={busy}
@@ -194,8 +191,6 @@ export function GoalPanel({
           platformPlanCounts={platformPlanCounts}
           promotionPlanCount={promotions.length}
           promotionBudgetCny={promotionBudgetCny}
-          productionBudgetMinCny={productionBudgetMinCny}
-          productionBudgetMaxCny={productionBudgetMaxCny}
           onEdit={() => setStage('plan')}
           onConfirm={confirmBudget}
         />

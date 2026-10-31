@@ -1,4 +1,5 @@
 import type { SocialProductionAsset } from './socialContentProductionPlan.js';
+import { budgetUsdFromCny, INTERNAL_BUDGET_FX } from '../../shared/contracts/internalBudgetFx.js';
 
 export type SocialProviderCostSettlementStatus =
   | 'estimated'
@@ -10,6 +11,10 @@ export interface SocialProviderCostSummary {
   actualCostCny: number;
   estimatedUnsettledCostCny: number;
   recordedCostCny: number;
+  /** Internal management equivalents only; not supplier-native receipts. */
+  actualCostUsdEquivalent: number;
+  estimatedUnsettledCostUsdEquivalent: number;
+  fxVersion: string;
   providerSegmentCount: number;
   settlementStatus: SocialProviderCostSettlementStatus;
 }
@@ -73,6 +78,9 @@ export function summarizeSelectedProviderCosts(input: {
     actualCostCny: roundedActual,
     estimatedUnsettledCostCny: roundedEstimate,
     recordedCostCny: +(roundedActual + roundedEstimate).toFixed(4),
+    actualCostUsdEquivalent: budgetUsdFromCny(roundedActual),
+    estimatedUnsettledCostUsdEquivalent: budgetUsdFromCny(roundedEstimate),
+    fxVersion: INTERNAL_BUDGET_FX.version,
     providerSegmentCount,
     settlementStatus,
   };

@@ -33,7 +33,8 @@ assert.equal(mixedPack.operatingContext?.outputs.count, 15);
 assert.equal(mixedPack.operatingContext?.outputs.originalCount, 10);
 assert.deepEqual(mixedPack.matrixPlan?.map(row => [row.platform, row.weeklyCount]), [['facebook', 5], ['facebook', 5], ['linkedin', 5]]);
 assert.ok((mixedPack.operatingContext?.budget.productionMinCny || 0) >= 25, 'public price estimate includes the six video originals');
-assert.ok((mixedPack.operatingContext?.budget.productionMaxCny || 0) > (mixedPack.operatingContext?.budget.productionMinCny || 0));
+assert.equal(mixedPack.operatingContext?.budget.productionMaxCny, mixedPack.operatingContext?.budget.productionMinCny,
+  'a frozen deterministic task has one cost estimate, not a token-derived range');
 assert.deepEqual(normalizePackage(mixedPack).mixedContentSlots, mixedSlots, 'persisted package retains the mixed slots');
 const imageBoundSlots = mixedSlots.map(slot => slot.kind === 'image' && slot.productionRole === 'original'
   ? { ...slot, referenceId: `image-${slot.slotId}`, referenceTitle: '爆款图文参考', referenceSourceUrl: 'https://example.com/post' }

@@ -8,7 +8,8 @@ const pointsDrawer = readFileSync(new URL('../PointsManagementDrawer.tsx', impor
 const pointsPolicy = readFileSync(new URL('../../../shared/pointsPolicy.ts', import.meta.url), 'utf8');
 
 test('digital employees expose the weekly views without duplicating business panels', () => {
-  assert.match(workspace, /<DigitalEmployeeHomeWork data=\{data\} onNavigate=\{onNavigate\} publishingCalendar=\{publishingCalendar\}/);
+  assert.match(workspace, /<DigitalEmployeeHomeWork data=\{data\} onNavigate=\{onNavigate\}\/>/);
+  assert.doesNotMatch(workspace, /publishingCalendar/);
   assert.doesNotMatch(workspace, /数字员工生产指挥舱|数字员工本周运营指标|发布与投流|客服承接|展开发布日历|InitialPreparationStatusPanel|\bSegmented\b/);
 });
 
@@ -19,7 +20,7 @@ test('content projects expose persisted production nodes in the shared Gantt com
   assert.match(productionBoard, /<Gantt/);
   assert.match(productionBoard, /readonly/);
   assert.match(productionBoard, /data-production-node/);
-  assert.match(productionBoard, /productionGanttTasks\(lanes\)/);
+  assert.match(productionBoard, /productionGanttTasks\(lanes, actualTasksOnly\)/);
   assert.match(productionBoard, /unit: 'week'/);
   assert.match(productionBoard, /unit: 'day'/);
   assert.match(productionBoard, /columns=\{\[\{ id: 'text', header: '内容'/);

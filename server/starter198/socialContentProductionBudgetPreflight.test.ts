@@ -49,21 +49,13 @@ test('product budget bounds are bound to the reviewed supply plan', () => {
   assert.ok(v2Branch>0&&v1Else>v2Branch&&legacyRoot>v1Else&&v1Call>legacyRoot,'legacy env/root is read only inside the v1 fallback branch');
 });
 
-test('formal quote and admission use the same production ceiling for every tenant', () => {
-  const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
-  try {
-    process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
-    assert.equal(formalPaidRouteExceedsInternalBudget('local_tenant_customer_aurelia_beauty', 12, 10), true);
-    assert.equal(formalPaidRouteExceedsInternalBudget('another-tenant', 12, 10), true);
-    assert.equal(formalPaidRouteExceedsInternalBudget('another-tenant',12,15),false);
-    assert.equal(formalPaidRouteExceedsInternalBudget('another-tenant',15,15),false);
-    assert.equal(formalPaidRouteExceedsInternalBudget('another-tenant',15.000001,15),true);
-    assert.equal(formalPaidRouteExceedsInternalBudget('another-tenant',30,30,60),false);
-    assert.equal(formalPaidRouteExceedsInternalBudget('local_tenant_customer_aurelia_beauty-suffix', 12, 10), true);
-  } finally {
-    if (configured === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
-    else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = configured;
-  }
+test('formal quote rejects invalid cost meters without imposing a tenant amount ceiling', () => {
+  assert.equal(formalPaidRouteExceedsInternalBudget('tenant-a', 12, 10), false);
+  assert.equal(formalPaidRouteExceedsInternalBudget('tenant-b', 15.000001, 15), false);
+  assert.equal(formalPaidRouteExceedsInternalBudget('tenant-c', 30, 10, 60), false);
+  assert.equal(formalPaidRouteExceedsInternalBudget('tenant-a', -0.01, 10), true);
+  assert.equal(formalPaidRouteExceedsInternalBudget('tenant-a', Number.NaN, 10), true);
+  assert.equal(formalPaidRouteExceedsInternalBudget('tenant-a', Number.POSITIVE_INFINITY, 10), true);
 });
 
 test('whole-film preflight reserves one retry only for retry-enabled generated product shots', () => {
@@ -252,7 +244,10 @@ for(const visualVersion of [false,true])test(`default presenter route prices sta
   const quoteJob=await f.store.getById<any>('content_execution_jobs',f.job.id);
   assert.equal(Boolean(quoteJob?.checkpoints?.['social.whole_film_budget']),false);
   const expensiveTariff=async(intent:any)=>intent.stage==='presenter_video'?{provider:intent.provider,model:intent.model,accountRef:intent.accountRef,stage:intent.stage,currency:'CNY' as const,verifiedAccountPrice:true,pricingBasis:'negotiated_verified_account' as const,evidenceRef:'controlled-expensive-presenter',checkedAt:new Date(Date.now()-1000).toISOString(),validUntil:new Date(Date.now()+3600000).toISOString(),meters:{providerSeconds:{priceCny:100,unitsPerPrice:1,minimumUnits:0,increment:1}}}:staticTariff(intent);
-  await assert.rejects(prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{...readers,ledgerRoot:path.join(f.root,'over-budget'),readTariff:expensiveTariff,preparePresenterFirstFrameReviews:async()=>{throw Error('over_budget_must_not_prepare');}}}),/formal_paid_route_budget_exceeded/);
+  let expensivePreparedGroups=0;
+  await assert.rejects(prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{...readers,ledgerRoot:path.join(f.root,'high-cost-task-budget'),readTariff:expensiveTariff,
+    preparePresenterFirstFrameReviews:async({groups})=>{expensivePreparedGroups=groups.length;},readConfirmedPresenterFirstFrame:async()=>null}}),/presenter_first_frame_confirmation_missing/);
+  assert.equal(expensivePreparedGroups,expectedGroupCount,'deterministic task cost must proceed to the normal preparation gate instead of a user price ceiling');
   const affordableTariff=async(intent:any)=>intent.stage==='presenter_video'?{provider:intent.provider,model:intent.model,accountRef:intent.accountRef,stage:intent.stage,currency:'CNY' as const,verifiedAccountPrice:true,pricingBasis:'negotiated_verified_account' as const,evidenceRef:'controlled-negotiated-presenter',checkedAt:new Date(Date.now()-1000).toISOString(),validUntil:new Date(Date.now()+3600000).toISOString(),meters:{providerSeconds:{priceCny:.1,unitsPerPrice:1,minimumUnits:0,increment:1}}}:staticTariff(intent);
   await assert.rejects(prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{...readers,ledgerRoot:path.join(f.root,'unapproved-task-budget'),
     preparePresenterFirstFrameReviews:async({groups})=>{admissionOrder.push(`prepare:${groups.length}`);},
@@ -277,7 +272,7 @@ for(const visualVersion of [false,true])test(`default presenter route prices sta
   const quotes=Object.values(result.reserved.quotes);assert.ok(quotes.reduce((n,q)=>n+q.upperBoundCny,0)<=6);
   assert.ok(gets.some(u=>u.endsWith('/avatars/looks/original-look')));
   assert.ok(gets.some(u=>u.endsWith('/users/me')));
-  assert.ok(gets.some(u=>u.includes('10060327')));
-  assert.ok(gets.some(u=>u.includes('ecb.europa.eu')));
+  assert.equal(gets.some(u=>u.includes('10060327')),false,'fixed HeyGen pricing must not scrape the public price article during admission');
+  assert.equal(gets.some(u=>u.includes('ecb.europa.eu')),false,'fixed management FX must not call a live exchange-rate service during admission');
  } finally {globalThis.fetch=originalFetch;if(oldKey===undefined)delete process.env.HEYGEN_API_KEY;else process.env.HEYGEN_API_KEY=oldKey;if(oldDash===undefined)delete process.env.DASHSCOPE_API_KEY;else process.env.DASHSCOPE_API_KEY=oldDash;if(oldBase===undefined)delete process.env.DASHSCOPE_BASE_URL;else process.env.DASHSCOPE_BASE_URL=oldBase;if(oldAsrBase===undefined)delete process.env.QWEN_ASR_BASE_URL;else process.env.QWEN_ASR_BASE_URL=oldAsrBase;if(oldSeedream===undefined)delete process.env.SEEDREAM_API_KEY;else process.env.SEEDREAM_API_KEY=oldSeedream;f.clean();}
 });

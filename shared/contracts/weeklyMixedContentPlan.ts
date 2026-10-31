@@ -1,3 +1,7 @@
+import { budgetCnyFromUsd, INTERNAL_BUDGET_FX } from './internalBudgetFx.js';
+import { PRODUCTION_MODEL_PRICE_CATALOG, PRODUCTION_MODEL_PRICE_CATALOG_VERSION,
+  productionPriceToEstimatedUsd } from './productionModelPricingCatalog.js';
+
 /** Planning only: these slots do not authorize production or publishing. */
 export type WeeklyMixedContentKind = 'video' | 'image';
 export interface WeeklyMixedContentSlot {
@@ -22,59 +26,67 @@ export interface WeeklyMixedContentSlot {
   contentTheme?: string;
 }
 
-/** Read-only quote inputs. The amount is an estimate, never paid-call authority. */
+/** Versioned, conservative planning assumptions; not a supplier quote or point price. */
+export const WEEKLY_MIXED_USD_RATE_CARD = Object.freeze({
+  version: `${PRODUCTION_MODEL_PRICE_CATALOG_VERSION}:weekly-mixed.v2`,
+  videoModel: PRODUCTION_MODEL_PRICE_CATALOG.seedanceFast720pEstimate.model,
+  videoConfiguration: PRODUCTION_MODEL_PRICE_CATALOG.seedanceFast720pEstimate.configuration,
+  videoUsdPerSecond: productionPriceToEstimatedUsd(PRODUCTION_MODEL_PRICE_CATALOG.seedanceFast720pEstimate.meters[0]!),
+  imageModel: PRODUCTION_MODEL_PRICE_CATALOG.seedreamProPlanningImage.model,
+  imageConfiguration: PRODUCTION_MODEL_PRICE_CATALOG.seedreamProPlanningImage.configuration,
+  imageUsdPerImage: productionPriceToEstimatedUsd(PRODUCTION_MODEL_PRICE_CATALOG.seedreamProPlanningImage.meters[0]!),
+  sourceRef: 'docs/architecture/adr/2026-10-30-internal-usd-production-cost.md',
+});
+
+/** Read-only quote inputs, frozen per task before production. */
 export interface WeeklyMixedEstimateBasis {
-  /** Illustrative generated seconds for each original video, not publication duration. */
+  /** Generated seconds per original video, not publication duration. */
   videoGeneratedSeconds: number;
-  videoLowCnyPerSecond: number;
-  videoHighCnyPerSecond: number;
-  videoMaxAttempts: number;
-  /** GPT Image 2 low-quality output tokens per image, estimated from public pricing. */
-  imageOutputTokensMin: number;
-  imageOutputTokensMax: number;
-  imageInputTokensMin: number;
-  imageInputTokensMax: number;
-  textInputTokensMin: number;
-  textInputTokensMax: number;
-  usdToCny: number;
+  videoUsdPerSecond: number;
+  imageUsdPerImage: number;
+  videoAttempts: number;
+  imageAttempts: number;
 }
 
 const DEFAULT_ESTIMATE_BASIS: WeeklyMixedEstimateBasis = {
   videoGeneratedSeconds: 30,
-  videoLowCnyPerSecond: 0.14,
-  videoHighCnyPerSecond: 0.28,
-  videoMaxAttempts: 2,
-  imageOutputTokensMin: 334, imageOutputTokensMax: 400,
-  imageInputTokensMin: 4_000, imageInputTokensMax: 40_000,
-  textInputTokensMin: 500, textInputTokensMax: 2_000,
-  usdToCny: 7.2,
+  videoUsdPerSecond: WEEKLY_MIXED_USD_RATE_CARD.videoUsdPerSecond,
+  imageUsdPerImage: WEEKLY_MIXED_USD_RATE_CARD.imageUsdPerImage,
+  videoAttempts: 1,
+  imageAttempts: 1,
 };
 
-/** Public rate references: GPT Image 2 standard $4/M image input, $15/M image
- * output, $2.50/M text input (https://developers.openai.com/api/docs/pricing);
- * Seedance 1.0 480p ¥0.14/s and 720p ¥0.28/s
- * (https://docs.volcengine.com/docs/large-model-of-image-generation/package-billing-instructions).
- * Generated seconds, attempts, token amounts and 7.2 FX are planning assumptions,
- * not live quotes, supplier receipts or paid-call authority. */
+/** A deterministic management estimate. Existing CNY fields are compatibility
+ * projections for legacy planning contracts, never paid-call authority. */
 export function estimateWeeklyMixedProduction(slots: readonly WeeklyMixedContentSlot[],
-  overrides: Partial<WeeklyMixedEstimateBasis> = {}) {
+  overrides: Partial<Pick<WeeklyMixedEstimateBasis, 'videoGeneratedSeconds' | 'videoAttempts' | 'imageAttempts'>> = {}) {
   const basis = { ...DEFAULT_ESTIMATE_BASIS, ...overrides };
-  if (Object.values(basis).some(value => !Number.isFinite(value) || value < 0) || basis.usdToCny <= 0)
+  if (Object.values(basis).some(value => !Number.isFinite(value) || value <= 0) ||
+    !Number.isSafeInteger(basis.videoAttempts) || !Number.isSafeInteger(basis.imageAttempts))
     throw new Error('weekly_mixed_estimate_basis_invalid');
   const originals = slots.filter(slot => slot.productionRole === 'original');
   const videos = originals.filter(slot => slot.kind === 'video').length;
   const images = originals.filter(slot => slot.kind === 'image').length;
-  const imageCost = (output: number, imageInput: number, textInput: number) =>
-    (output * 15 + imageInput * 4 + textInput * 2.5) / 1_000_000 * basis.usdToCny;
-  const round = (value: number) => Math.round(value * 100) / 100;
-  const unitVideoMinCny = round(basis.videoGeneratedSeconds * basis.videoLowCnyPerSecond);
-  const unitVideoMaxCny = round(basis.videoGeneratedSeconds * basis.videoHighCnyPerSecond * basis.videoMaxAttempts);
-  const minCny = round(videos * unitVideoMinCny + images * imageCost(
-    basis.imageOutputTokensMin, basis.imageInputTokensMin, basis.textInputTokensMin));
-  const maxCny = round(videos * unitVideoMaxCny + images * imageCost(
-    basis.imageOutputTokensMax, basis.imageInputTokensMax, basis.textInputTokensMax));
-  return { minCny, maxCny, videoOriginals: videos, imageOriginals: images,
-    publicationCount: slots.length, unitVideoMinCny, unitVideoMaxCny, basis };
+  const roundUsd = (value: number) => {
+    if (!Number.isFinite(value) || value * 1_000_000 > Number.MAX_SAFE_INTEGER)
+      throw new Error('weekly_mixed_estimate_overflow');
+    return value === 0 ? 0 : Math.ceil(value * 1_000_000 - 1e-6) / 1_000_000;
+  };
+  const roundCny = (value: number) => value === 0 ? 0 : Math.ceil(value * 100 - 1e-6) / 100;
+  const unitVideoUsd = roundUsd(basis.videoGeneratedSeconds * basis.videoUsdPerSecond * basis.videoAttempts);
+  const unitImageUsd = roundUsd(basis.imageUsdPerImage * basis.imageAttempts);
+  const estimatedUsd = roundUsd(videos * unitVideoUsd + images * unitImageUsd);
+  const unitVideoCny = roundCny(budgetCnyFromUsd(unitVideoUsd));
+  const projectedCny = roundCny(budgetCnyFromUsd(estimatedUsd));
+  return {
+    estimatedUsd, currency: 'USD' as const, priceVersion: WEEKLY_MIXED_USD_RATE_CARD.version,
+    fxVersion: INTERNAL_BUDGET_FX.version, unitVideoUsd, unitImageUsd,
+    // Legacy planning readers still require min/max CNY. Both describe this
+    // single deterministic task, not a token range or an execution limit.
+    minCny: projectedCny, maxCny: projectedCny,
+    videoOriginals: videos, imageOriginals: images, publicationCount: slots.length,
+    unitVideoMinCny: unitVideoCny, unitVideoMaxCny: unitVideoCny, basis,
+  };
 }
 
 /** The initial 15-publication recommendation, before topics or reference selection. */
