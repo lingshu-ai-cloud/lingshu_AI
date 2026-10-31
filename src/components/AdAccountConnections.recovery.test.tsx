@@ -7,7 +7,8 @@ const exports: any = {}, cells: any[] = [], effects: (() => void)[] = [], reques
 let cursor = 0;
 const listeners = new Map<string, () => void>(), responders = new Map<string, () => Promise<any>>();
 const documentListeners = new Map<string, () => void>();
-const connection = { id: 'saved', accountId: 'act_1', provider: 'meta', name: 'Original', currency: 'USD', timezoneName: 'UTC', updatedAt: new Date().toISOString(), status: 'connected', authorization: { status: 'healthy', reasonCode: 'VERIFIED', checkedAt: new Date().toISOString() } };
+let liveBalance = 10;
+const connection = { id: 'saved', accountId: 'act_1', provider: 'meta', name: 'Original', currency: 'CNY', timezoneName: 'UTC', updatedAt: new Date().toISOString(), status: 'connected', authorization: { status: 'healthy', reasonCode: 'VERIFIED', checkedAt: new Date().toISOString() } };
 const jsx = (type: any, props: any) => ({ type, props });
 const cell = () => cells[cursor++] ?? (cells[cursor - 1] = {});
 vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText, {
@@ -26,7 +27,7 @@ vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.Sc
       requests.push(path);
       if (responders.has(path)) return responders.get(path)!();
       if (path === '/connections') return { items: [connection], capabilities: [{ provider: 'meta', oauthConfigured: true }, { provider: 'tiktok', configured: true }] };
-      if (path.endsWith('/live-status')) return { accountStatus: 1, checkedAt: new Date().toISOString() };
+      if (path.endsWith('/live-status')) return { accountStatus: 1, balance: { amount: liveBalance, currency: 'CNY' }, checkedAt: new Date().toISOString() };
       if (path.endsWith('/authorization/check')) throw new Error('服务暂时无法连接');
       throw new Error(`Unexpected endpoint: ${path}`);
     } };
@@ -47,9 +48,13 @@ let tree = render(); await flush(); tree = render();
 assert.ok(!nodes(tree).some(node => node.type === 'input'), 'regular Meta customers never paste tokens');
 await nodes(tree).find(node => node.type === 'button' && content(node) === '检查连接是否可用').props.onClick(); await flush(); tree = render();
 assert.match(content(tree), /本次授权检查未完成，保留上次检查结果/);
-assert.match(content(tree), /账户余额暂不可获取/);
-assert.match(content(tree), /账户提醒付款待核验/);
-assert.ok(!content(tree).includes('账户余额0'), 'unknown balance is never represented as zero');
+assert.match(content(tree), /账户余额¥10\.00/);
+assert.match(content(tree), /账户提醒正常/);
+liveBalance = 0;
+documentListeners.get('visibilitychange')!(); await flush(); tree = render();
+assert.match(content(tree), /账户余额¥0\.00/);
+assert.match(content(tree), /账户提醒余额不足/);
+liveBalance = 10;
 const priorChecks = requests.filter(path => path.endsWith('/live-status')).length;
 documentListeners.get('visibilitychange')!(); await flush(); tree = render();
 assert.equal(requests.filter(path => path.endsWith('/live-status')).length, priorChecks + 1, 'visible account dialog refreshes status immediately');

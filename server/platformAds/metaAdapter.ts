@@ -45,7 +45,7 @@ export class MetaAdsAdapter {
     }
     return data;
   }
-  account(id: string) { return this.request(`act_${metaAccountId(id)}`, { fields: 'id,account_id,name,business_name,currency,account_status,timezone_id,timezone_name,timezone_offset_hours_utc,min_campaign_group_spend_cap,min_daily_budget' }); }
+  account(id: string) { return this.request(`act_${metaAccountId(id)}`, { fields: 'id,account_id,name,business_name,currency,account_status,timezone_id,timezone_name,timezone_offset_hours_utc,min_campaign_group_spend_cap,min_daily_budget,is_prepay_account,balance' }); }
   /** Resolve only the selected Page's existing grant. Never persist or expose it. */
   async pageCreativeAdapter(pageId: string) {
     if (!/^\d+$/.test(pageId)) throw new AdProviderError('主页 ID 无效', 'INVALID_INPUT');
